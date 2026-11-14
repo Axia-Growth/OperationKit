@@ -210,7 +210,7 @@ export function AgentsSkillsTab() {
               key={m}
               onClick={() => setViewMode(m)}
               className={cn(
-                'flex-1 px-4 py-2.5 text-[12px] font-medium capitalize transition-colors',
+                'flex-1 px-4 py-2.5 text-xs font-medium capitalize transition-colors',
                 viewMode === m
                   ? 'border-b-2 border-accent text-accent'
                   : 'text-fg-3 hover:text-fg-1',
@@ -236,7 +236,7 @@ export function AgentsSkillsTab() {
               )}
             >
               <div className="flex items-center justify-between gap-2">
-                <span className="text-[13px] font-medium">{agent.label || formatName(agent.name)}</span>
+                <span className="text-sm font-medium">{agent.label || formatName(agent.name)}</span>
                 {agent.source && agent.source !== 'persona' ? (
                   <Badge tone={agent.source === 'registry' ? 'verify' : 'info'}>{SOURCE_LABEL[agent.source]}</Badge>
                 ) : (
@@ -246,9 +246,9 @@ export function AgentsSkillsTab() {
                 )}
               </div>
               {agent.source && agent.source !== 'persona' && agent.description && (
-                <div className="mt-0.5 line-clamp-2 text-[12px] text-fg-3">{agent.description}</div>
+                <div className="mt-0.5 line-clamp-2 text-xs text-fg-3">{agent.description}</div>
               )}
-              <div className="mt-0.5 flex items-center gap-2 font-mono text-[12px] text-fg-3">
+              <div className="mt-0.5 flex items-center gap-2 font-mono text-xs text-fg-3">
                 {agent.size > 0 && <span>{formatBytes(agent.size)}</span>}
                 <span>· {skillsForAgent(agent.slug).length} {skillsForAgent(agent.slug).length === 1 ? 'skill' : 'skills'}</span>
                 {!agent.assignable && <span className="text-flag-blocked">· not assignable</span>}
@@ -271,14 +271,14 @@ export function AgentsSkillsTab() {
                 )}
               >
                 <div className="flex items-center justify-between gap-2">
-                  <span className="text-[13px] font-medium">{formatName(skill.parent ? skill.name.slice(skill.parent.length + 1) : skill.name)}</span>
+                  <span className="text-sm font-medium">{formatName(skill.parent ? skill.name.slice(skill.parent.length + 1) : skill.name)}</span>
                   {skill.parent && <Badge tone="neutral">sub-skill</Badge>}
                   {rs?.needs_improvement && <Badge tone="verify">needs work</Badge>}
                 </div>
                 {skill.description && (
-                  <div className="mt-0.5 line-clamp-2 text-[12px] text-fg-3">{skill.description}</div>
+                  <div className="mt-0.5 line-clamp-2 text-xs text-fg-3">{skill.description}</div>
                 )}
-                <div className="mt-1 flex flex-wrap items-center gap-2 font-mono text-[12px] text-fg-3">
+                <div className="mt-1 flex flex-wrap items-center gap-2 font-mono text-xs text-fg-3">
                   <span>{consumers.length} agent{consumers.length !== 1 ? 's' : ''}</span>
                   {typeof rs?.usage_count === 'number' && <span>· {rs.usage_count} uses</span>}
                   {!!rs?.failure_count && <span className="text-flag-blocked">· {rs.failure_count} fails</span>}
@@ -314,36 +314,36 @@ export function AgentsSkillsTab() {
                   <Badge tone={agent?.assignable ? 'accent' : 'neutral'}>
                     {agent?.assignable ? 'assignable' : 'not assignable'}
                   </Badge>
-                  <h3 className="font-display text-[15px] font-semibold text-fg-0">
+                  <h3 className="font-display text-lg font-semibold text-fg-0">
                     {agent?.label || formatName(selected.key)}
                   </h3>
                 </div>
-                {agent?.description && <p className="text-[12px] leading-relaxed text-fg-2">{agent.description}</p>}
+                {agent?.description && <p className="text-xs leading-relaxed text-fg-2">{agent.description}</p>}
                 {agent?.note && (
-                  <p className="rounded-md border border-line bg-surface-1 p-2.5 text-[12px] leading-relaxed text-fg-2" data-testid="agent-note">
+                  <p className="rounded-md border border-line bg-surface-1 p-2.5 text-xs leading-relaxed text-fg-2" data-testid="agent-note">
                     {agent.note}
                   </p>
                 )}
                 {agent?.open_href && (
                   <a
                     href={agent.open_href}
-                    className="inline-flex items-center gap-1 text-[12px] text-accent-hover underline-offset-2 hover:text-accent hover:underline"
+                    className="inline-flex items-center gap-1 text-xs text-accent-hover underline-offset-2 hover:text-accent hover:underline"
                   >
                     Open in Bots <ExternalLink className="h-3 w-3" />
                   </a>
                 )}
                 {agent?.kind === 'routing-only' && (agent.source ?? 'persona') === 'persona' && (
-                  <p className="text-[12px] text-fg-3">
+                  <p className="text-xs text-fg-3">
                     Normally invoked via the CLAUDE.md routing table or spawned as a sub-agent.
                     Still selectable as an objective's primary agent.
                   </p>
                 )}
                 <div>
-                  <div className="mb-1.5 text-[12px] font-medium uppercase tracking-wide text-fg-3">
+                  <div className="mb-1.5 text-xs font-medium uppercase tracking-eyebrow text-fg-3">
                     Skills used ({agentSkills.length})
                   </div>
                   {agentSkills.length === 0 ? (
-                    <p className="text-[12px] text-fg-3">
+                    <p className="text-xs text-fg-3">
                       This agent declares no <code className="font-mono text-fg-2">skills:</code> in its frontmatter.
                     </p>
                   ) : (
@@ -372,19 +372,19 @@ export function AgentsSkillsTab() {
                   <Badge tone="accent">skill</Badge>
                   {rs?.parent && <Badge tone="neutral">sub-skill of {rs.parent}</Badge>}
                   {rs?.needs_improvement && <Badge tone="verify">needs work</Badge>}
-                  <h3 className="font-display text-[15px] font-semibold text-fg-0">{formatName(selected.key)}</h3>
+                  <h3 className="font-display text-lg font-semibold text-fg-0">{formatName(selected.key)}</h3>
                 </div>
-                {rs?.description && <p className="text-[12px] leading-relaxed text-fg-2">{rs.description}</p>}
-                <div className="flex flex-wrap gap-4 text-[12px] text-fg-2">
+                {rs?.description && <p className="text-xs leading-relaxed text-fg-2">{rs.description}</p>}
+                <div className="flex flex-wrap gap-4 text-xs text-fg-2">
                   <span><span className="font-mono text-fg-0">{rs?.usage_count ?? 0}</span> uses</span>
                   <span><span className={cn('font-mono', rs?.failure_count ? 'text-flag-blocked' : 'text-fg-0')}>{rs?.failure_count ?? 0}</span> failures</span>
                 </div>
                 <div>
-                  <div className="mb-1.5 text-[12px] font-medium uppercase tracking-wide text-fg-3">
+                  <div className="mb-1.5 text-xs font-medium uppercase tracking-eyebrow text-fg-3">
                     Consuming agents ({consumers.length})
                   </div>
                   {consumers.length === 0 ? (
-                    <p className="text-[12px] text-fg-3">
+                    <p className="text-xs text-fg-3">
                       No agent declares this skill — it is routed by slug or reached through a parent skill.
                     </p>
                   ) : (
@@ -400,11 +400,11 @@ export function AgentsSkillsTab() {
                     fed by an unvalidated skill->skill block the frontmatter layer
                     does not declare (obj 707012). */}
                 <div>
-                  <div className="mb-1.5 text-[12px] font-medium uppercase tracking-wide text-fg-3">
+                  <div className="mb-1.5 text-xs font-medium uppercase tracking-eyebrow text-fg-3">
                     Tools reached ({rs?.tools?.length ?? 0})
                   </div>
                   {!rs?.tools?.length ? (
-                    <p className="text-[12px] text-fg-3">Declares no tools.</p>
+                    <p className="text-xs text-fg-3">Declares no tools.</p>
                   ) : (
                     <div className="flex flex-wrap gap-1.5">
                       {rs.tools.map(t => (
@@ -415,7 +415,7 @@ export function AgentsSkillsTab() {
                 </div>
                 {!!rs?.subskills?.length && (
                   <div>
-                    <div className="mb-1.5 text-[12px] font-medium uppercase tracking-wide text-fg-3">
+                    <div className="mb-1.5 text-xs font-medium uppercase tracking-eyebrow text-fg-3">
                       Sub-skills ({rs.subskills.length})
                     </div>
                     <div className="flex flex-wrap gap-1.5">
@@ -444,7 +444,7 @@ function FileToggle({ showFile, setShowFile, content }: { showFile: boolean; set
         {showFile ? 'Hide definition' : 'View definition'}
       </Button>
       {showFile && (
-        <pre className="mt-2 max-h-[40vh] overflow-auto whitespace-pre-wrap break-words rounded-md border border-line bg-surface-1 p-4 font-mono text-[12px] leading-relaxed text-fg-1">
+        <pre className="mt-2 max-h-[40vh] overflow-auto whitespace-pre-wrap break-words rounded-md border border-line bg-surface-1 p-4 font-mono text-xs leading-relaxed text-fg-1">
           {content || 'Loading…'}
         </pre>
       )}

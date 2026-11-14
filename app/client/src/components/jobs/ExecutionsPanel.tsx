@@ -7,6 +7,7 @@ import type {
   JobExecutionDetailResponse, JobExecutionLogEntry, JobExecutionStatus, JobExecutionSummary, JobExecutionsResponse,
 } from '../../../../shared/job-executions'
 import { fetchFlowRun } from '../../hooks/useFlows'
+import { Listbox, ListboxItem } from '@ui-sdk/react/listbox'
 import { Alert, Badge, Button, Modal, cn } from '../ui'
 
 /**
@@ -185,8 +186,8 @@ export function ExecutionsPanel({
     >
       <div className="flex shrink-0 items-center justify-between gap-3 border-b border-line px-4 py-3">
         <div className="min-w-0">
-          <div className="text-[12px] font-semibold uppercase tracking-[0.08em] text-fg-3">Executions</div>
-          <h2 id="executions-title" className="truncate text-[15px] font-semibold text-fg-0" title={target.title}>{target.title}</h2>
+          <div className="text-xs font-semibold uppercase tracking-eyebrow text-fg-3">Executions</div>
+          <h2 id="executions-title" className="truncate text-lg font-semibold text-fg-0" title={target.title}>{target.title}</h2>
         </div>
         <button
           type="button"
@@ -204,15 +205,22 @@ export function ExecutionsPanel({
         {/* Run list */}
         <nav aria-label="Runs" className="max-h-[38vh] shrink-0 overflow-y-auto border-b border-line sm:max-h-none sm:w-[300px] sm:border-b-0 sm:border-r">
           {list == null ? (
-            <div className="flex items-center gap-2 p-4 text-[13px] text-fg-2"><Loader2 className="h-4 w-4 animate-spin" /> Loading runs…</div>
+            <div className="flex items-center gap-2 p-4 text-sm text-fg-2"><Loader2 className="h-4 w-4 animate-spin" /> Loading runs…</div>
           ) : list.length === 0 ? (
-            <div className="p-4 text-[13px] text-fg-2">No runs recorded yet. A run appears here the moment it fires.</div>
+            <div className="p-4 text-sm text-fg-2">No runs recorded yet. A run appears here the moment it fires.</div>
           ) : (
-            <ul role="listbox" aria-label="Recorded runs">
+            // UI SDK listbox (obj 900819): one tab stop, Up/Down/Home/End and
+            // typeahead move the selection, and the selection drives the log.
+            <Listbox
+              aria-label="Recorded runs"
+              value={selected}
+              onValueChange={v => { if (v != null) setSelected(v) }}
+              className="outline-none"
+            >
               {list.map(e => (
-                <ExecutionRow key={e.key} e={e} active={e.key === selected} onClick={() => setSelected(e.key)} />
+                <ExecutionRow key={e.key} e={e} active={e.key === selected} />
               ))}
-            </ul>
+            </Listbox>
           )}
         </nav>
 
@@ -228,7 +236,7 @@ export function ExecutionsPanel({
               onOpenDiagram={onOpenDiagram}
             />
           ) : list && list.length > 0 ? (
-            <p className="text-[13px] text-fg-2">Pick a run on the left to read its log.</p>
+            <p className="text-sm text-fg-2">Pick a run on the left to read its log.</p>
           ) : null}
         </section>
       </div>
@@ -236,36 +244,35 @@ export function ExecutionsPanel({
   )
 }
 
-function ExecutionRow({ e, active, onClick }: { e: JobExecutionSummary; active: boolean; onClick: () => void }) {
+function ExecutionRow({ e, active }: { e: JobExecutionSummary; active: boolean }) {
   const m = STATUS_META[e.status] ?? STATUS_META.running
   const Icon = m.icon
   const src = SOURCE_LABEL[e.source] ?? e.source
   return (
-    <li role="option" aria-selected={active}>
-      <button
-        type="button"
-        onClick={onClick}
-        data-testid={`execution-${e.key}`}
-        className={cn(
-          'flex w-full items-start gap-2.5 border-b border-line px-3 py-2.5 text-left hover:bg-surface-3',
-          active && 'bg-surface-selected shadow-[inset_2px_0_0_var(--accent-text)]',
-        )}
-      >
-        <Icon className={cn('mt-0.5 h-4 w-4 shrink-0', STATUS_TEXT[m.tone], e.status === 'running' && 'animate-spin')} strokeWidth={1.75} />
-        <span className="min-w-0 flex-1">
-          <span className="block font-mono text-[12.5px] text-fg-0" title={e.started_at}>{formatStamp(e.started_at)}</span>
-          <span className="block text-[12px] text-fg-2">
-            <span className={STATUS_TEXT[m.tone]}>{m.label}</span>
-            {e.duration_ms != null && e.status !== 'skipped' ? ` in ${formatDuration(e.duration_ms)}` : ''}
-            {src ? <span className="text-fg-3"> · {src}</span> : null}
-          </span>
-          {e.reason && (e.status === 'failed' || e.status === 'skipped' || e.status === 'alert') && (
-            <span className="mt-0.5 block truncate text-[12px] text-fg-3" title={e.reason}>{e.reason}</span>
-          )}
+    <ListboxItem
+      value={e.key}
+      label={`${formatStamp(e.started_at)} ${m.label}`}
+      data-testid={`execution-${e.key}`}
+      className={cn(
+        'flex w-full cursor-pointer items-start gap-2.5 border-b border-line px-3 py-2.5 text-left outline-none hover:bg-surface-3',
+        'focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent/60',
+        active && 'bg-surface-selected shadow-[inset_2px_0_0_var(--accent-text)]',
+      )}
+    >
+      <Icon className={cn('mt-0.5 h-4 w-4 shrink-0', STATUS_TEXT[m.tone], e.status === 'running' && 'animate-spin')} strokeWidth={1.75} />
+      <span className="min-w-0 flex-1">
+        <span className="block font-mono text-sm text-fg-0" title={e.started_at}>{formatStamp(e.started_at)}</span>
+        <span className="block text-xs text-fg-2">
+          <span className={STATUS_TEXT[m.tone]}>{m.label}</span>
+          {e.duration_ms != null && e.status !== 'skipped' ? ` in ${formatDuration(e.duration_ms)}` : ''}
+          {src ? <span className="text-fg-3"> · {src}</span> : null}
         </span>
-        <span className="shrink-0 font-mono text-[12px] text-fg-3">{runLabel(e)}</span>
-      </button>
-    </li>
+        {e.reason && (e.status === 'failed' || e.status === 'skipped' || e.status === 'alert') && (
+          <span className="mt-0.5 block truncate text-xs text-fg-3" title={e.reason}>{e.reason}</span>
+        )}
+      </span>
+      <span className="shrink-0 font-mono text-xs text-fg-3">{runLabel(e)}</span>
+    </ListboxItem>
   )
 }
 
@@ -314,8 +321,8 @@ function ExecutionDetail({
     <div className="space-y-4" data-testid="execution-detail">
       <header className="flex flex-wrap items-center gap-2">
         <ExecutionStatusBadge status={e.status} />
-        <span className="font-mono text-[13px] text-fg-0" title={e.started_at}>{formatStamp(e.started_at)}</span>
-        <span className="text-[12px] text-fg-2">
+        <span className="font-mono text-sm text-fg-0" title={e.started_at}>{formatStamp(e.started_at)}</span>
+        <span className="text-xs text-fg-2">
           {e.status === 'skipped' ? 'nothing ran' : `took ${e.ended_at ? formatDuration(e.duration_ms) : '…'}`}
           {SOURCE_LABEL[e.source] ? ` · ${SOURCE_LABEL[e.source]}` : ''}
           {e.cost_usd ? ` · $${e.cost_usd.toFixed(2)}` : ''}
@@ -349,26 +356,26 @@ function ExecutionDetail({
 
       {detail?.command && (
         <div>
-          <h4 className="mb-1 text-[12px] font-semibold uppercase tracking-[0.08em] text-fg-3">Command</h4>
-          <code className="block break-all rounded-md border border-line bg-surface-2 px-2 py-1.5 font-mono text-[12px] text-fg-1">{detail.command}</code>
+          <h4 className="mb-1 text-xs font-semibold uppercase tracking-eyebrow text-fg-3">Command</h4>
+          <code className="block break-all rounded-md border border-line bg-surface-2 px-2 py-1.5 font-mono text-xs text-fg-1">{detail.command}</code>
         </div>
       )}
 
       {detail && e.kind === 'script' && (
         <div>
-          <h4 className="mb-1 text-[12px] font-semibold uppercase tracking-[0.08em] text-fg-3">
+          <h4 className="mb-1 text-xs font-semibold uppercase tracking-eyebrow text-fg-3">
             Output{detail.output_truncated ? ' (last 64KB)' : ''}
           </h4>
           {detail.output
-            ? <pre data-testid="execution-output" className="max-h-[50vh] overflow-auto whitespace-pre-wrap break-words rounded-md border border-line bg-surface-0 p-3 font-mono text-[12px] leading-relaxed text-fg-1">{detail.output}</pre>
-            : <p className="text-[12.5px] text-fg-3">{e.status === 'running' ? 'The script is still running.' : e.routine_run_id == null ? 'Output was not kept for runs before execution history.' : 'No output.'}</p>}
+            ? <pre data-testid="execution-output" className="max-h-[50vh] overflow-auto whitespace-pre-wrap break-words rounded-md border border-line bg-surface-0 p-3 font-mono text-xs leading-relaxed text-fg-1">{detail.output}</pre>
+            : <p className="text-sm text-fg-3">{e.status === 'running' ? 'The script is still running.' : e.routine_run_id == null ? 'Output was not kept for runs before execution history.' : 'No output.'}</p>}
         </div>
       )}
 
       {flowRun && <FlowSteps run={flowRun} />}
 
       {!detail && !flowRun && !error && (
-        <div className="flex items-center gap-2 text-[13px] text-fg-2"><Loader2 className="h-4 w-4 animate-spin" /> Loading the run…</div>
+        <div className="flex items-center gap-2 text-sm text-fg-2"><Loader2 className="h-4 w-4 animate-spin" /> Loading the run…</div>
       )}
     </div>
   )
@@ -377,16 +384,16 @@ function ExecutionDetail({
 function Timeline({ entries }: { entries: JobExecutionLogEntry[] }) {
   return (
     <div>
-      <h4 className="mb-2 text-[12px] font-semibold uppercase tracking-[0.08em] text-fg-3">What happened</h4>
+      <h4 className="mb-2 text-xs font-semibold uppercase tracking-eyebrow text-fg-3">What happened</h4>
       <ol className="relative space-y-2.5 border-l border-line pl-4" data-testid="execution-log">
         {entries.map((l, i) => (
           <li key={i} className="relative">
             <span className={cn('absolute -left-[21px] top-1.5 h-2 w-2 rounded-full ring-2 ring-surface-1', LEVEL_DOT[l.level])} aria-hidden />
             <div className="flex flex-wrap items-baseline gap-x-2">
-              <span className={cn('text-[13px] font-medium', l.level === 'error' ? 'text-signal-alarm' : l.level === 'warn' ? 'text-signal-amber' : 'text-fg-0')}>{l.label}</span>
-              {l.at && <span className="font-mono text-[12px] text-fg-3" title={l.at}>{formatStamp(l.at)}</span>}
+              <span className={cn('text-sm font-medium', l.level === 'error' ? 'text-signal-alarm' : l.level === 'warn' ? 'text-signal-amber' : 'text-fg-0')}>{l.label}</span>
+              {l.at && <span className="font-mono text-xs text-fg-3" title={l.at}>{formatStamp(l.at)}</span>}
             </div>
-            {l.detail && <p className="mt-0.5 whitespace-pre-wrap break-words text-[12.5px] leading-snug text-fg-2">{l.detail}</p>}
+            {l.detail && <p className="mt-0.5 whitespace-pre-wrap break-words text-sm leading-snug text-fg-2">{l.detail}</p>}
           </li>
         ))}
       </ol>
@@ -412,7 +419,7 @@ function FlowSteps({ run }: { run: FlowRunDetailResponse }) {
   const steps = run.steps
   return (
     <div>
-      <h4 className="mb-2 flex items-center gap-2 text-[12px] font-semibold uppercase tracking-[0.08em] text-fg-3">
+      <h4 className="mb-2 flex items-center gap-2 text-xs font-semibold uppercase tracking-eyebrow text-fg-3">
         <Workflow className="h-3.5 w-3.5" /> Workflow run #{run.run.id} · v{run.run.version} · {steps.length} {steps.length === 1 ? 'step' : 'steps'}
       </h4>
       {run.run.error && (
@@ -421,14 +428,14 @@ function FlowSteps({ run }: { run: FlowRunDetailResponse }) {
         </Alert>
       )}
       {steps.length === 0 ? (
-        <p className="text-[12.5px] text-fg-3">{run.run.status === 'queued' ? 'Queued — the engine has not started it yet.' : 'No steps recorded.'}</p>
+        <p className="text-sm text-fg-3">{run.run.status === 'queued' ? 'Queued — the engine has not started it yet.' : 'No steps recorded.'}</p>
       ) : (
         <ol className="space-y-1.5" data-testid="execution-steps">
           {steps.map((s, i) => <FlowStepRow key={`${s.node_id}-${s.iteration}-${s.attempt}-${i}`} step={s} />)}
         </ol>
       )}
       {run.waits.length > 0 && (
-        <p className="mt-2 flex items-center gap-1.5 text-[12.5px] text-signal-amber">
+        <p className="mt-2 flex items-center gap-1.5 text-sm text-signal-amber">
           <Clock className="h-3.5 w-3.5" /> Parked on {run.waits.map(w => `${w.node_id} (${w.reason})`).join(', ')} — resolve it from the workflow diagram.
         </p>
       )}
@@ -451,7 +458,7 @@ function FlowStepRow({ step: s }: { step: FlowStepSummary }) {
         aria-expanded={open}
       >
         <ChevronRight className={cn('h-3.5 w-3.5 shrink-0 text-fg-3 transition-transform', open && 'rotate-90', !hasBody && 'opacity-0')} />
-        <span className="min-w-0 flex-1 truncate font-mono text-[12.5px] text-fg-0">
+        <span className="min-w-0 flex-1 truncate font-mono text-sm text-fg-0">
           {s.node_id}
           {s.iteration > 0 && <span className="text-fg-3"> [{s.iteration}]</span>}
           {s.attempt > 1 && <span className="text-fg-3"> · attempt {s.attempt}</span>}
@@ -459,19 +466,19 @@ function FlowStepRow({ step: s }: { step: FlowStepSummary }) {
         {s.simulated && <Badge tone="neutral" mono>{s.simulated}</Badge>}
         {s.effect && s.effect !== 'read' && <Badge tone="neutral" mono>{s.effect}</Badge>}
         <Badge tone={stepTone(s.status)} mono>{s.status}</Badge>
-        <span className="w-16 shrink-0 text-right font-mono text-[12px] text-fg-3">{formatDuration(span(s.started_at, s.ended_at))}</span>
+        <span className="w-16 shrink-0 text-right font-mono text-xs text-fg-3">{formatDuration(span(s.started_at, s.ended_at))}</span>
       </button>
       {open && hasBody && (
         <div className="space-y-2 border-t border-line px-3 py-2">
           {s.error && (
-            <p className="text-[12.5px] text-signal-alarm">
+            <p className="text-sm text-signal-alarm">
               {[s.error.type, s.error.title].filter(Boolean).join(': ')}
               {s.error.detail ? <span className="block whitespace-pre-wrap text-fg-2">{s.error.detail}</span> : null}
             </p>
           )}
           {input && <JsonBlock label="Input" body={input} />}
           {output && <JsonBlock label="Output" body={output} />}
-          {s.cost_usd > 0 && <p className="font-mono text-[12px] text-fg-3">cost ${s.cost_usd.toFixed(4)}</p>}
+          {s.cost_usd > 0 && <p className="font-mono text-xs text-fg-3">cost ${s.cost_usd.toFixed(4)}</p>}
         </div>
       )}
     </li>
@@ -481,8 +488,8 @@ function FlowStepRow({ step: s }: { step: FlowStepSummary }) {
 function JsonBlock({ label, body }: { label: string; body: string }) {
   return (
     <div>
-      <div className="mb-0.5 text-[12px] font-semibold uppercase tracking-[0.08em] text-fg-3">{label}</div>
-      <pre className="max-h-64 overflow-auto whitespace-pre-wrap break-words rounded border border-line bg-surface-0 p-2 font-mono text-[12px] text-fg-1">{body}</pre>
+      <div className="mb-0.5 text-xs font-semibold uppercase tracking-eyebrow text-fg-3">{label}</div>
+      <pre className="max-h-64 overflow-auto whitespace-pre-wrap break-words rounded border border-line bg-surface-0 p-2 font-mono text-xs text-fg-1">{body}</pre>
     </div>
   )
 }

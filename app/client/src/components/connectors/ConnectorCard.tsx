@@ -78,12 +78,12 @@ export function ConnectorCard({
         <div className="flex flex-wrap items-start justify-between gap-3 p-4 sm:p-5">
           <div className="min-w-0 flex-1">
             <div className="flex flex-wrap items-center gap-2">
-              <h2 id={`connector-${c.id}`} className="font-display text-[16px] font-semibold tracking-[-0.01em] text-fg-0">
+              <h2 id={`connector-${c.id}`} className="font-display text-lg font-semibold tracking-tight text-fg-0">
                 {c.name}
               </h2>
               <StateBadge status={c.status} available={c.available} />
             </div>
-            <p className="mt-1 max-w-prose text-[13px] leading-relaxed text-fg-2">{c.description}</p>
+            <p className="mt-1 max-w-prose text-sm leading-relaxed text-fg-2">{c.description}</p>
             {c.products.length > 0 && (
               <ul className="mt-3 flex flex-wrap gap-1.5" aria-label={`What ${c.name} covers`}>
                 {c.products.map(p => (
@@ -99,25 +99,25 @@ export function ConnectorCard({
         <div className="border-t border-line-soft p-4 sm:p-5">
           {connected ? (
             <div className="space-y-4">
-              {c.status.error && <p className="text-[13px] text-signal-alarm">{c.status.error}</p>}
+              {c.status.error && <p className="text-sm text-signal-alarm">{c.status.error}</p>}
               <dl className="grid grid-cols-1 gap-x-6 gap-y-3 sm:grid-cols-2">
                 <div>
-                  <dt className="text-[12px] uppercase tracking-wider text-fg-3">Connected as</dt>
-                  <dd className="break-all text-[13px] text-fg-0">{c.status.account ?? '—'}</dd>
+                  <dt className="text-xs uppercase tracking-eyebrow text-fg-3">Connected as</dt>
+                  <dd className="break-all text-sm text-fg-0">{c.status.account ?? '—'}</dd>
                 </div>
                 {c.status.details.map(d => (
                   <div key={d.label}>
-                    <dt className="text-[12px] uppercase tracking-wider text-fg-3">{d.label}</dt>
-                    <dd className="break-all text-[13px] text-fg-1">{d.value}</dd>
+                    <dt className="text-xs uppercase tracking-eyebrow text-fg-3">{d.label}</dt>
+                    <dd className="break-all text-sm text-fg-1">{d.value}</dd>
                   </div>
                 ))}
                 <div>
-                  <dt className="text-[12px] uppercase tracking-wider text-fg-3">Connected</dt>
-                  <dd className="text-[13px] text-fg-1">{fmtDate(c.status.connected_at)}</dd>
+                  <dt className="text-xs uppercase tracking-eyebrow text-fg-3">Connected</dt>
+                  <dd className="text-sm text-fg-1">{fmtDate(c.status.connected_at)}</dd>
                 </div>
                 <div>
-                  <dt className="text-[12px] uppercase tracking-wider text-fg-3">Last checked</dt>
-                  <dd className="text-[13px] text-fg-1">{fmtDate(c.status.checked_at)}</dd>
+                  <dt className="text-xs uppercase tracking-eyebrow text-fg-3">Last checked</dt>
+                  <dd className="text-sm text-fg-1">{fmtDate(c.status.checked_at)}</dd>
                 </div>
               </dl>
               <div className="flex flex-wrap gap-2">
@@ -142,7 +142,7 @@ export function ConnectorCard({
             </div>
           ) : !c.available ? (
             <div className="space-y-2">
-              <p className="text-[13px] text-fg-2">{c.unavailable_reason}</p>
+              <p className="text-sm text-fg-2">{c.unavailable_reason}</p>
               {hasGuidedWizard && (
                 <Button variant="secondary" onClick={() => setShowWizard(true)}>
                   Setup guide
@@ -174,7 +174,7 @@ export function ConnectorCard({
             >
               {tokenFields.map(f => (
                 <div key={f.key}>
-                  <label htmlFor={`${c.id}-${f.key}`} className="mb-1 block text-[12px] font-medium text-fg-1">
+                  <label htmlFor={`${c.id}-${f.key}`} className="mb-1 block text-xs font-medium text-fg-1">
                     {f.label}
                   </label>
                   <input
@@ -185,9 +185,9 @@ export function ConnectorCard({
                     value={fields[f.key] ?? ''}
                     onChange={e => setFields(prev => ({ ...prev, [f.key]: e.target.value }))}
                     placeholder={f.placeholder}
-                    className="min-h-[44px] w-full rounded-md border border-line bg-surface-1 px-3 font-mono text-[13px] text-fg-0 outline-none transition-colors duration-fast ease-out placeholder:text-fg-3 hover:border-line-strong focus:border-accent focus-visible:ring-2 focus-visible:ring-accent/40 sm:min-h-[36px]"
+                    className="min-h-[44px] w-full rounded-md border border-line bg-surface-1 px-3 font-mono text-sm text-fg-0 outline-none transition-colors duration-fast ease-out placeholder:text-fg-3 hover:border-line-strong focus:border-accent focus-visible:ring-2 focus-visible:ring-accent/40 sm:min-h-[36px]"
                   />
-                  {f.help && <p className="mt-1 text-[12px] leading-relaxed text-fg-3">{f.help}</p>}
+                  {f.help && <p className="mt-1 text-xs leading-relaxed text-fg-3">{f.help}</p>}
                 </div>
               ))}
               <Button type="submit" variant="primary" loading={busy === 'connect'} disabled={!canSubmitToken}>
@@ -215,8 +215,8 @@ export function ConnectorCard({
             className="flex min-h-[44px] w-full items-center justify-between gap-3 px-4 py-2 text-left transition-colors duration-fast ease-out hover:bg-surface-3 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent/50 sm:px-5"
           >
             <span>
-              <span className="block text-[13px] font-medium text-fg-0">Who can use it</span>
-              <span className="block text-[12px] text-fg-3">{accessSummary(c.access)}</span>
+              <span className="block text-sm font-medium text-fg-0">Who can use it</span>
+              <span className="block text-xs text-fg-3">{accessSummary(c.access)}</span>
             </span>
             <svg
               aria-hidden="true"
@@ -229,7 +229,7 @@ export function ConnectorCard({
           </button>
           {showAccess && (
             <div id={`connector-access-${c.id}`} className="px-4 pb-5 pt-1 sm:px-5">
-              <p className="mb-3 text-[12px] leading-relaxed text-fg-3">
+              <p className="mb-3 text-xs leading-relaxed text-fg-3">
                 Agents never see the credential itself. A session only gets it when it starts, and only for the agents and workspaces picked here.
               </p>
               <AccessEditor

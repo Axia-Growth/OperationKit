@@ -113,7 +113,10 @@ export function enqueuePreviewDeploy(
   branchName: string | null | undefined,
   objectiveId?: number | null,
 ): boolean {
-  if (!prNumber || prNumber <= 0 || !branchName) return false
+  // Must be a real positive integer: the internal pr-created route passes the
+  // body value through, and a string like "../x" passed the old truthy check
+  // into the job file name (CodeQL path-injection, obj 900838).
+  if (typeof prNumber !== 'number' || !Number.isSafeInteger(prNumber) || prNumber <= 0 || !branchName) return false
   return writeJob({
     action: 'deploy',
     pr_number: prNumber,
@@ -132,7 +135,7 @@ export function enqueuePreviewTeardown(
   prNumber: number | null | undefined,
   objectiveId?: number | null,
 ): boolean {
-  if (!prNumber || prNumber <= 0) return false
+  if (typeof prNumber !== 'number' || !Number.isSafeInteger(prNumber) || prNumber <= 0) return false
   return writeJob({
     action: 'teardown',
     pr_number: prNumber,

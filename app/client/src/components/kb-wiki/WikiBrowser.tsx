@@ -97,13 +97,13 @@ export function WikiBrowser({
             aria-label="Filter pages"
             wrapClassName="w-full sm:w-72"
           />
-          <span className="text-[12px] text-fg-3">
+          <span className="text-xs text-fg-3">
             {filter ? `${shown} of ${total} pages` : `${total} page${total === 1 ? '' : 's'}`}
           </span>
         </div>
 
         {groups.length === 0 && (
-          <p className="text-[13px] text-fg-2">No pages match “{filter}”.</p>
+          <p className="text-sm text-fg-2">No pages match “{filter}”.</p>
         )}
 
         {groups.map(g => {
@@ -111,9 +111,9 @@ export function WikiBrowser({
           const list = open ? g.pages : g.pages.slice(0, GROUP_PREVIEW)
           return (
             <section key={g.kind} aria-labelledby={`wiki-group-${g.kind}`} className="flex flex-col gap-1.5">
-              <h4 id={`wiki-group-${g.kind}`} className="flex items-baseline gap-2 font-display text-[13.5px] font-semibold tracking-[-0.01em] text-fg-0">
+              <h4 id={`wiki-group-${g.kind}`} className="flex items-baseline gap-2 font-display text-base font-semibold tracking-tight text-fg-0">
                 {g.label}
-                <span className="font-mono text-[12px] font-normal text-fg-3">{g.pages.length}</span>
+                <span className="font-mono text-xs font-normal text-fg-3">{g.pages.length}</span>
               </h4>
               <ul className="flex flex-col divide-y divide-line-soft rounded-md border border-line-soft bg-surface-1">
                 {list.map(p => (
@@ -123,8 +123,8 @@ export function WikiBrowser({
                       onClick={() => onOpenNote(p.rel)}
                       className="flex min-h-[44px] w-full flex-col items-start gap-0.5 px-3 py-2 text-left transition-colors duration-fast hover:bg-surface-3 focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent"
                     >
-                      <span className="text-[13.5px] font-medium text-fg-0">{p.title}</span>
-                      {p.summary && <span className="line-clamp-2 text-[12.5px] leading-snug text-fg-2">{p.summary}</span>}
+                      <span className="text-base font-medium text-fg-0">{p.title}</span>
+                      {p.summary && <span className="line-clamp-2 text-sm leading-snug text-fg-2">{p.summary}</span>}
                     </button>
                   </li>
                 ))}
@@ -140,17 +140,17 @@ export function WikiBrowser({
       </div>
 
       <aside className="flex min-w-0 flex-col gap-2" aria-labelledby="wiki-recent-title">
-        <h4 id="wiki-recent-title" className="flex items-center gap-2 font-display text-[13.5px] font-semibold tracking-[-0.01em] text-fg-0">
+        <h4 id="wiki-recent-title" className="flex items-center gap-2 font-display text-base font-semibold tracking-tight text-fg-0">
           <History className="h-4 w-4 text-fg-2" aria-hidden="true" />
           Recent changes
         </h4>
         {logError && <Alert tone="amber" title="Couldn't load recent changes">{logError}</Alert>}
         {!logError && !recent && (
-          <p className="text-[12.5px] text-fg-3">Nothing has changed yet. Every file read, chat imported, answer saved and cleanup run is listed here.</p>
+          <p className="text-sm text-fg-3">Nothing has changed yet. Every file read, chat imported, answer saved and cleanup run is listed here.</p>
         )}
         {recent && (
           <div
-            className="cc-prose max-h-[520px] overflow-y-auto break-words rounded-md border border-line-soft bg-surface-1 px-3 py-2 text-[12.5px] [&_h2]:mb-1 [&_h2]:mt-3 [&_h2]:text-[13px] [&_h2]:font-medium [&_h2]:leading-snug [&_h2]:text-fg-1"
+            className="cc-prose max-h-[520px] overflow-y-auto break-words rounded-md border border-line-soft bg-surface-1 px-3 py-2 text-sm [&_h2]:mb-1 [&_h2]:mt-3 [&_h2]:text-sm [&_h2]:font-medium [&_h2]:leading-snug [&_h2]:text-fg-1"
             onClick={openLinksIn(logRel ?? 'log.md', onOpenNote)}
             dangerouslySetInnerHTML={{ __html: renderMarkdown(wikilinksToLinks(recent, logRel ?? 'log.md', pages ?? undefined)) }}
           />

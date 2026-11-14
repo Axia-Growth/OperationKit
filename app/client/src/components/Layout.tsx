@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, useMemo, type ReactNode, type MouseEvent as ReactMouseEvent } from 'react'
+import { useState, useEffect, useMemo, type ReactNode, type MouseEvent as ReactMouseEvent } from 'react'
 import { Moon, Sun } from 'lucide-react'
 import { useBoardTheme } from '../preview/BoardShell'
 import { useBranding } from '../hooks/useBranding'
@@ -9,9 +9,11 @@ import { useWorkspaces, invalidateWorkspacesCache } from '../hooks/useWorkspaces
 import { api } from '../lib/api'
 import { OrgSwitcher } from './OrgSwitcher'
 import type { Workspace } from '@operationkit/shared'
-import { CommandPalette } from './CommandPalette'
+import { CommandPalette } from './lazy-overlays'
 import { AlertBell } from './AlertBell'
 import { NavIcon, type NavIconName } from './nav-icons'
+import { Tooltip } from './ui/Tooltip'
+import { Menu, MenuContent, MenuGroup, MenuGroupLabel, MenuItem, MenuSeparator, MenuTrigger } from './ui/Menu'
 import { HAS_CHAT_PAGE } from '../lib/optional-pages'
 import { SYSTEM_ROUTE, LEGACY_SYSTEM_ROUTES, AGENTS_ROUTE, JOBS_ROUTE, agentsTabRoute } from '../lib/routes'
 
@@ -130,7 +132,7 @@ export function Layout({ children, selectedWorkspaces, onWorkspacesChange, pageS
     if (e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return
     e.preventDefault()
     navigate(href)
-    setUserMenuOpen(false)
+    setUserMenu(null)
   }
   const isAdmin = user?.role === 'admin'
   const { theme, toggleTheme } = useBoardTheme()
@@ -201,27 +203,9 @@ export function Layout({ children, selectedWorkspaces, onWorkspacesChange, pageS
     loading: orgsLoading,
   }
 
-  const [userMenuOpen, setUserMenuOpen] = useState(false)
+  // Which avatar menu is open. Desktop and mobile each have their own trigger.
+  const [userMenu, setUserMenu] = useState<'desktop' | 'mobile' | null>(null)
   const [paletteOpen, setPaletteOpen] = useState(false)
-  const userMenuRef = useRef<HTMLDivElement>(null)
-  const userMenuMobileRef = useRef<HTMLDivElement>(null)
-
-  // Outside-click + Escape close the open menus.
-  useEffect(() => {
-    function handleClick(e: MouseEvent) {
-      const t = e.target as Node
-      if (userMenuRef.current && !userMenuRef.current.contains(t) && userMenuMobileRef.current && !userMenuMobileRef.current.contains(t)) setUserMenuOpen(false)
-    }
-    function handleKey(e: KeyboardEvent) {
-      if (e.key === 'Escape') setUserMenuOpen(false)
-    }
-    document.addEventListener('mousedown', handleClick)
-    document.addEventListener('keydown', handleKey)
-    return () => {
-      document.removeEventListener('mousedown', handleClick)
-      document.removeEventListener('keydown', handleKey)
-    }
-  }, [])
 
   // ⌘K / Ctrl+K — desktop only via media-query gate; we still listen everywhere
   // but the palette UI is hidden under <sm anyway.
@@ -250,7 +234,7 @@ export function Layout({ children, selectedWorkspaces, onWorkspacesChange, pageS
     }
     if (isAdmin) {
       items.push(
-        { label: 'Org settings', hint: '/settings/org', onSelect: () => { navigate('/settings/org') } },
+        { label: 'Workspace settings', hint: '/settings/workspaces', onSelect: () => { navigate('/settings/workspaces') } },
         { label: 'Agent registry', hint: agentsTabRoute('registry'), onSelect: () => { navigate(agentsTabRoute('registry')) } },
         { label: 'Agent templates', hint: agentsTabRoute('templates'), onSelect: () => { navigate(agentsTabRoute('templates')) } },
       )
@@ -258,24 +242,40 @@ export function Layout({ children, selectedWorkspaces, onWorkspacesChange, pageS
     return items
   }, [navItems, accountRows, adminRows, canSeeSettings, isAdmin, navigate])
 
-  // The avatar dropdown body — identical on desktop and mobile (rowClass sets the touch height).
-  const renderAccountMenu = (rowClass: string) => (
-    <>
-      {accountRows.map(item => (
-        <AccountMenuRow key={item.href} item={item} active={isMenuActive(item)} rowClass={rowClass} onClick={onNavClick(item.href)} />
-      ))}
-      {adminRows.map(item => (
-        <AccountMenuRow key={item.href} item={item} active={isMenuActive(item)} rowClass={rowClass} onClick={onNavClick(item.href)} />
-      ))}
-      <div className="my-1 border-t border-line-soft" />
-      <button
-        role="menuitem"
-        onClick={() => { logout(); setUserMenuOpen(false) }}
-        className={`w-full px-3 text-left text-sm text-fg-1 outline-none transition-colors duration-fast ease-out hover:bg-surface-3 hover:text-fg-0 focus-visible:bg-surface-3 ${rowClass}`}
-      >
+  // The avatar dropdown, identical on desktop and mobile, on the UI SDK menu
+  // behavior (obj 900819): arrows, typeahead, Escape, focus back to the avatar.
+  // Rows stay real links, so Cmd/middle-click still opens a new tab.
+  const renderAccountMenu = (username: string) => (
+    <MenuContent aria-label="Account" side="bottom" align="end" className="w-60">
+      <MenuGroup>
+        <MenuGroupLabel className="mb-1 border-b border-line-soft px-2.5 pb-2">
+          <span className="block text-base font-medium text-fg-0">{username}</span>
+          {isAdmin && (
+            <span className="mt-0.5 inline-block rounded-sm bg-status-review/20 px-1.5 py-0.5 text-xs text-status-review">admin</span>
+          )}
+        </MenuGroupLabel>
+        {[...accountRows, ...adminRows].map(item => {
+          const active = isMenuActive(item)
+          return (
+            <MenuItem
+              key={item.href}
+              value={item.href}
+              label={item.label}
+              current={active}
+              icon={<NavIcon name={item.icon} variant={active ? 'solid' : 'outline'} className="h-4 w-4" />}
+              onSelect={() => navigate(item.href)}
+              render={<a href={item.href} onClick={e => { if (e.button === 0 && !e.metaKey && !e.ctrlKey && !e.shiftKey && !e.altKey) e.preventDefault() }} />}
+            >
+              {item.label}
+            </MenuItem>
+          )
+        })}
+      </MenuGroup>
+      <MenuSeparator />
+      <MenuItem value="logout" label="Log out" onSelect={() => logout()}>
         Log out
-      </button>
-    </>
+      </MenuItem>
+    </MenuContent>
   )
 
   return (
@@ -305,7 +305,7 @@ export function Layout({ children, selectedWorkspaces, onWorkspacesChange, pageS
                 href={item.href}
                 onClick={onNavClick(item.href)}
                 aria-current={active ? 'page' : undefined}
-                className={`inline-flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-[13px] font-medium outline-none transition-colors duration-fast ease-out focus-visible:ring-2 focus-visible:ring-accent/60 ${
+                className={`inline-flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-sm font-medium outline-none transition-colors duration-fast ease-out focus-visible:ring-2 focus-visible:ring-accent/60 ${
                   active ? 'bg-surface-selected text-fg-0' : 'text-fg-2 hover:bg-surface-3 hover:text-fg-0'
                 }`}
               >
@@ -328,7 +328,7 @@ export function Layout({ children, selectedWorkspaces, onWorkspacesChange, pageS
           >
             <NavIcon name="search" className="h-3.5 w-3.5" />
             <span>Jump to page…</span>
-            <span className="font-mono text-[12px] text-fg-3">⌘K</span>
+            <span className="font-mono text-xs text-fg-3">⌘K</span>
           </button>
           {showWorkspace && !hideWorkspaceSelector && (
             <OrgSwitcher {...orgSwitcherProps} triggerClassName="text-xs" />
@@ -339,42 +339,31 @@ export function Layout({ children, selectedWorkspaces, onWorkspacesChange, pageS
         {user && (
           <div className="flex items-center gap-1">
             <AlertBell />
-            <button
-              type="button"
-              onClick={toggleTheme}
-              className="inline-flex h-8 w-8 items-center justify-center rounded-md text-fg-2 outline-none transition-colors duration-fast ease-out hover:bg-surface-3 hover:text-fg-0 focus-visible:ring-2 focus-visible:ring-accent/60"
-              aria-label={theme === 'light' ? 'Switch to dark mode' : 'Switch to light mode'}
-            >
-              {theme === 'light' ? <Moon className="h-4 w-4" /> : <Sun className="h-4 w-4" />}
-            </button>
-          <div ref={userMenuRef} className="relative">
-            <button
-              onClick={() => setUserMenuOpen(!userMenuOpen)}
-              aria-haspopup="menu"
-              aria-expanded={userMenuOpen}
+            <Tooltip content={theme === 'light' ? 'Dark mode' : 'Light mode'} type="description" side="bottom">
+              <button
+                type="button"
+                onClick={toggleTheme}
+                className="inline-flex h-8 w-8 items-center justify-center rounded-md text-fg-2 outline-none transition-colors duration-fast ease-out hover:bg-surface-3 hover:text-fg-0 focus-visible:ring-2 focus-visible:ring-accent/60"
+                aria-label={theme === 'light' ? 'Switch to dark mode' : 'Switch to light mode'}
+              >
+                {theme === 'light' ? <Moon className="h-4 w-4" /> : <Sun className="h-4 w-4" />}
+              </button>
+            </Tooltip>
+          <Menu open={userMenu === 'desktop'} onOpenChange={o => setUserMenu(o ? 'desktop' : null)}>
+            <MenuTrigger
               aria-label="Account menu"
-              className={`inline-flex items-center gap-2 rounded-md px-2 py-1.5 text-sm outline-none transition-colors duration-fast ease-out focus-visible:ring-2 focus-visible:ring-accent/60 ${
-                menuActive || userMenuOpen ? 'bg-surface-3 text-fg-0' : 'text-fg-2 hover:bg-surface-3 hover:text-fg-0'
+              className={`inline-flex items-center gap-2 rounded-md px-2 py-1.5 text-base outline-none transition-colors duration-fast ease-out focus-visible:ring-2 focus-visible:ring-accent/60 ${
+                menuActive || userMenu === 'desktop' ? 'bg-surface-3 text-fg-0' : 'text-fg-2 hover:bg-surface-3 hover:text-fg-0'
               }`}
             >
-              <div className="flex h-6 w-6 items-center justify-center rounded-full border border-line bg-surface-3 text-[12px] font-semibold text-fg-1">
+              <span className="flex h-6 w-6 items-center justify-center rounded-full border border-line bg-surface-3 text-xs font-semibold text-fg-1">
                 {user.username[0].toUpperCase()}
-              </div>
+              </span>
               <span className="hidden lg:inline">{user.username}</span>
               <NavIcon name="chevron" className="h-3 w-3 text-fg-3" />
-            </button>
-            {userMenuOpen && (
-              <div role="menu" className="absolute right-0 top-full z-50 mt-1.5 w-56 rounded-md border border-line bg-surface-1 py-1 shadow-pop">
-                <div className="border-b border-line-soft px-3 py-2">
-                  <div className="text-sm font-medium text-fg-0">{user.username}</div>
-                  {isAdmin && (
-                    <span className="mt-0.5 inline-block rounded-sm bg-status-review/20 px-1.5 py-0.5 text-[12px] text-status-review">admin</span>
-                  )}
-                </div>
-                <div className="pt-1">{renderAccountMenu('py-1.5')}</div>
-              </div>
-            )}
-          </div>
+            </MenuTrigger>
+            {renderAccountMenu(user.username)}
+          </Menu>
           </div>
         )}
       </header>
@@ -402,30 +391,17 @@ export function Layout({ children, selectedWorkspaces, onWorkspacesChange, pageS
             >
               {theme === 'light' ? <Moon className="h-4 w-4" /> : <Sun className="h-4 w-4" />}
             </button>
-          <div ref={userMenuMobileRef} className="relative">
-            <button
-              onClick={() => setUserMenuOpen(!userMenuOpen)}
-              aria-haspopup="menu"
-              aria-expanded={userMenuOpen}
+          <Menu open={userMenu === 'mobile'} onOpenChange={o => setUserMenu(o ? 'mobile' : null)}>
+            <MenuTrigger
               aria-label="Account menu"
-              className={`flex h-7 w-7 items-center justify-center rounded-full border text-[12px] font-semibold text-fg-1 ${
-                menuActive || userMenuOpen ? 'border-line-strong bg-surface-4' : 'border-line bg-surface-3'
+              className={`flex h-7 w-7 items-center justify-center rounded-full border text-xs font-semibold text-fg-1 ${
+                menuActive || userMenu === 'mobile' ? 'border-line-strong bg-surface-4' : 'border-line bg-surface-3'
               }`}
             >
               {user.username[0].toUpperCase()}
-            </button>
-            {userMenuOpen && (
-              <div role="menu" className="absolute right-0 top-full z-50 mt-1.5 w-56 rounded-md border border-line bg-surface-1 py-1 shadow-pop">
-                <div className="border-b border-line-soft px-3 py-2">
-                  <div className="text-sm font-medium text-fg-0">{user.username}</div>
-                  {isAdmin && (
-                    <span className="mt-0.5 inline-block rounded-sm bg-status-review/20 px-1.5 py-0.5 text-[12px] text-status-review">admin</span>
-                  )}
-                </div>
-                <div className="pt-1">{renderAccountMenu('min-h-[44px]')}</div>
-              </div>
-            )}
-          </div>
+            </MenuTrigger>
+            {renderAccountMenu(user.username)}
+          </Menu>
           </div>
         )}
       </header>
@@ -455,7 +431,7 @@ export function Layout({ children, selectedWorkspaces, onWorkspacesChange, pageS
                 style={{ minHeight: 44 }}
               >
                 <NavIcon name={item.icon} variant={active ? 'solid' : 'outline'} className={`h-5 w-5 ${active ? 'text-accent' : ''}`} />
-                <span className="text-[12px] font-medium">{item.shortLabel ?? item.label}</span>
+                <span className="text-xs font-medium">{item.shortLabel ?? item.label}</span>
               </a>
             )
           })}
@@ -472,31 +448,3 @@ export function Layout({ children, selectedWorkspaces, onWorkspacesChange, pageS
     </div>
   )
 }
-
-function AccountMenuRow({
-  item,
-  active,
-  rowClass,
-  onClick,
-}: {
-  item: AccountMenuItem
-  active: boolean
-  rowClass: string
-  onClick: (e: ReactMouseEvent<HTMLAnchorElement>) => void
-}) {
-  return (
-    <a
-      href={item.href}
-      onClick={onClick}
-      role="menuitem"
-      aria-current={active ? 'page' : undefined}
-      className={`flex items-center gap-2.5 px-3 text-sm outline-none transition-colors duration-fast ease-out focus-visible:bg-surface-3 ${rowClass} ${
-        active ? 'bg-surface-selected text-fg-0 shadow-[inset_2px_0_0_var(--accent-text)]' : 'text-fg-1 hover:bg-surface-3 hover:text-fg-0'
-      }`}
-    >
-      <NavIcon name={item.icon} variant={active ? 'solid' : 'outline'} className={`h-4 w-4 ${active ? 'text-accent' : 'text-fg-3'}`} />
-      {item.label}
-    </a>
-  )
-}
-

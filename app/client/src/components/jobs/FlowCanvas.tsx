@@ -3,10 +3,13 @@ import {
   Background, Controls, Handle, MiniMap, Position, ReactFlow, type NodeProps, type NodeTypes,
 } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
+import './flow-canvas.css'
+import { useBoardTheme } from '../../preview/BoardShell'
 import type { FlowNodeRunStatus } from '../../../../shared/flow/types'
 import type { FlowNodeChange } from '../../../../shared/flow/diff'
 import { buildFlowGraph, type FlowNodeData, type FlowRFNode } from '../../lib/flow-graph'
 import { cn } from '../ui'
+import { EFFECT_STYLE, KIND_TINT, STATUS_STYLE } from './flow-colors'
 
 /**
  * Read-only workflow canvas, viewer V2 (card B7, docs/design/WORKFLOWS.md §6.2).
@@ -19,38 +22,13 @@ import { cn } from '../ui'
  * edit toolbar. The only interaction is click-to-inspect (and pan/zoom).
  */
 
-export const STATUS_STYLE: Record<FlowNodeRunStatus, { color: string; style: 'solid' | 'dashed' | 'dotted'; label: string }> = {
-  succeeded: { color: '#2f8f4e', style: 'solid', label: 'succeeded' },
-  failed: { color: '#c22b2b', style: 'dashed', label: 'failed' },
-  running: { color: '#2b6fc2', style: 'solid', label: 'running' },
-  waiting: { color: '#c2952b', style: 'dotted', label: 'waiting' },
-  skipped: { color: '#9a9a9a', style: 'solid', label: 'skipped' },
-  mocked: { color: '#888888', style: 'dotted', label: 'mocked' },
-}
-
-/** Kind tint (LLM and agent stand out: "where the LLM loop sits", §6.2). */
-const KIND_TINT: Partial<Record<string, { bg: string; accent: string }>> = {
-  llm: { bg: 'rgba(122, 76, 194, 0.14)', accent: '#7a4cc2' },
-  agent: { bg: 'rgba(43, 95, 194, 0.12)', accent: '#2b5fc2' },
-  trigger: { bg: 'rgba(120, 120, 120, 0.08)', accent: '#6b7280' },
-  end: { bg: 'rgba(120, 120, 120, 0.08)', accent: '#6b7280' },
-  branch: { bg: 'rgba(120, 120, 120, 0.06)', accent: '#8b8b8b' },
-  check: { bg: 'rgba(47, 143, 78, 0.07)', accent: '#2f8f4e' },
-  wait: { bg: 'rgba(194, 149, 43, 0.08)', accent: '#c2952b' },
-}
-
-/** Effect class (§3.2): write = amber, SEND / SPEND = warning colours. */
-export const EFFECT_STYLE: Record<string, { bg: string; border: string; text: string }> = {
-  write: { bg: 'rgba(166, 133, 0, 0.12)', border: '#a68500', text: 'write' },
-  send: { bg: 'rgba(194, 86, 43, 0.14)', border: '#c2562b', text: 'SEND' },
-  spend: { bg: 'rgba(194, 43, 85, 0.14)', border: '#c22b55', text: 'SPEND' },
-}
+export { STATUS_STYLE, EFFECT_STYLE }
 
 function ChangeTag({ change, author }: { change?: FlowNodeChange; author?: string }) {
   if (!change) return null
   return (
     <span
-      className="absolute -right-2 -top-2.5 rounded-full border border-accent bg-surface-0 px-1.5 py-px font-mono text-[12px] font-semibold uppercase tracking-wide text-accent-hover shadow-sm"
+      className="absolute -right-2 -top-2.5 rounded-full border border-accent bg-surface-0 px-1.5 py-px font-mono text-xs font-semibold uppercase tracking-eyebrow text-accent-hover shadow-sm"
       title={`${change === 'added' ? 'added' : 'changed'} in this version${author ? ` by ${author}` : ''}`}
       data-testid="flow-node-change"
     >
@@ -99,15 +77,15 @@ const FlowStepNode = memo(function FlowStepNode({ data }: NodeProps<FlowRFNode>)
     >
       <Handle type="target" position={Position.Top} isConnectable={false} isConnectableStart={false} isConnectableEnd={false} className={HIDDEN_HANDLE} />
       <ChangeTag change={d.change} author={d.changeAuthor} />
-      {d.label && <div className="truncate text-[12px] font-medium text-fg-2">{d.label}</div>}
-      <div className="truncate text-[12.5px] font-semibold text-fg-0">{d.title}</div>
-      <div className="flex min-w-0 items-center gap-1.5 text-[12px] text-fg-2">
+      {d.label && <div className="truncate text-xs font-medium text-fg-2">{d.label}</div>}
+      <div className="truncate text-sm font-semibold text-fg-0">{d.title}</div>
+      <div className="flex min-w-0 items-center gap-1.5 text-xs text-fg-2">
         {eff && (
-          <span className="shrink-0 rounded px-1 font-mono text-[12px] font-semibold" style={{ color: eff.border, border: `1px solid ${eff.border}` }}>
+          <span className="shrink-0 rounded px-1 font-mono text-xs font-semibold" style={{ color: eff.border, border: `1px solid ${eff.border}` }}>
             {eff.text}
           </span>
         )}
-        {d.effect === 'read' && d.kind !== 'trigger' && <span className="shrink-0 font-mono text-[12px] text-fg-3">read</span>}
+        {d.effect === 'read' && d.kind !== 'trigger' && <span className="shrink-0 font-mono text-xs text-fg-3">read</span>}
         <span className="truncate">{[d.approval, ...d.lines].filter(Boolean).join(' · ')}</span>
       </div>
       <Handle type="source" position={Position.Bottom} isConnectable={false} isConnectableStart={false} isConnectableEnd={false} className={HIDDEN_HANDLE} />
@@ -132,10 +110,10 @@ const FlowLoopNode = memo(function FlowLoopNode({ data }: NodeProps<FlowRFNode>)
       <Handle type="target" position={Position.Top} isConnectable={false} isConnectableStart={false} isConnectableEnd={false} className={HIDDEN_HANDLE} />
       <ChangeTag change={d.change} author={d.changeAuthor} />
       <div className="min-w-0 px-3 pt-1.5">
-        <div className="truncate text-[12.5px] font-semibold text-fg-0" title={d.label ? `${d.label} — ${d.title}` : d.title}>
+        <div className="truncate text-sm font-semibold text-fg-0" title={d.label ? `${d.label} — ${d.title}` : d.title}>
           {d.label ? `${d.label} — ` : ''}{d.title}
         </div>
-        <div className="flex min-w-0 items-center gap-1.5 text-[12px] text-fg-2">
+        <div className="flex min-w-0 items-center gap-1.5 text-xs text-fg-2">
           <span className="shrink-0">{d.lines.join(' · ')}</span>
           {d.loopCounts && (
             <span className="truncate rounded bg-surface-1 px-1 font-mono text-fg-1" data-testid={`flow-loop-counts-${d.id}`} title={d.loopCounts}>
@@ -167,6 +145,7 @@ export interface FlowCanvasProps {
 export function FlowCanvas({
   definition, status, steps, changes, changeAuthor, approvedNodes, version, selectedNodeId, onSelectNode, className,
 }: FlowCanvasProps) {
+  const { theme } = useBoardTheme()
   const graph = useMemo(
     () => buildFlowGraph(definition, { status, steps, changes, changeAuthor, approvedNodes, version }),
     [definition, status, steps, changes, changeAuthor, approvedNodes, version],
@@ -195,10 +174,10 @@ export function FlowCanvas({
   const viewport = { x: Math.max(PAD, (width - graph.width * zoom) / 2), y: PAD, zoom }
 
   if (graph.nodes.length === 0) {
-    return <div className="flex h-40 items-center justify-center rounded-lg border border-line text-[12px] text-fg-3">No nodes to draw.</div>
+    return <div className="flex h-40 items-center justify-center rounded-lg border border-line text-xs text-fg-3">No nodes to draw.</div>
   }
   return (
-    <div ref={wrapRef} className={cn('overflow-hidden rounded-lg border border-line bg-surface-0', className)} style={{ height }} data-testid="flow-canvas">
+    <div ref={wrapRef} className={cn('ok-flow overflow-hidden rounded-lg border border-line bg-surface-0', className)} style={{ height }} data-testid="flow-canvas">
       <ReactFlow
         key={width > 0 ? `w${Math.round(width / 50)}-${graph.nodes.length}-${String(version ?? '')}` : 'measuring'}
         defaultViewport={viewport}
@@ -227,6 +206,8 @@ export function FlowCanvas({
         maxZoom={1.6}
         onNodeClick={(_, n) => onSelectNode?.(n.id)}
         onPaneClick={() => onSelectNode?.(null)}
+        colorMode={theme}
+        // MIT-licensed; the attribution stays, muted in our tokens (flow-canvas.css).
         proOptions={{ hideAttribution: false }}
       >
         <Background gap={20} size={1} />
@@ -242,7 +223,7 @@ export function FlowCanvasLegend() {
   const item = 'inline-flex items-center gap-1.5'
   const sw = 'inline-block h-3 w-3 rounded-sm border-2'
   return (
-    <div className="flex flex-wrap gap-x-4 gap-y-1.5 text-[12px] text-fg-2" data-testid="flow-canvas-legend">
+    <div className="flex flex-wrap gap-x-4 gap-y-1.5 text-xs text-fg-2" data-testid="flow-canvas-legend">
       <span className={item}>⏰ trigger</span>
       <span className={item}>🔧 tool</span>
       <span className={item}>🔌 MCP connector</span>
@@ -257,7 +238,7 @@ export function FlowCanvasLegend() {
         <span key={k} className={item}><span className={sw} style={{ borderColor: v.color, borderStyle: v.style }} />{v.label}</span>
       ))}
       <span className={item}>
-        <span className="rounded-full border border-accent px-1 font-mono text-[12px] uppercase text-accent-hover">changed</span> vs previous version
+        <span className="rounded-full border border-accent px-1 font-mono text-xs uppercase text-accent-hover">changed</span> vs previous version
       </span>
     </div>
   )

@@ -62,7 +62,7 @@ export function VersionHistoryModal({ scope, secretKey, onClose, onRolledBack }:
       <div className="p-6">
         <div className="mb-4 flex items-center justify-between">
           <h2 id="secret-history-title" className="text-lg font-semibold text-fg-0">
-            Version history — <span className="font-mono text-base">{secretKey}</span>
+            Version history — <span className="font-mono text-lg">{secretKey}</span>
           </h2>
           <button onClick={onClose} className="text-fg-3 hover:text-fg-1" type="button">
             <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
@@ -71,22 +71,22 @@ export function VersionHistoryModal({ scope, secretKey, onClose, onRolledBack }:
           </button>
         </div>
 
-        <p className="mb-3 text-[12px] text-fg-3">
+        <p className="mb-3 text-xs text-fg-3">
           Scope: <span className="text-fg-2">{SCOPE_LABELS[scope.scopeType]}</span>
           {scope.workspace && <span className="text-fg-2"> · {scope.workspace}</span>}
           {scope.userId != null && <span className="text-fg-2"> · user #{scope.userId}</span>}
         </p>
 
         {error && (
-          <div className="mb-3 rounded bg-signal-alarm/10 px-3 py-2 text-sm text-signal-alarm">{error}</div>
+          <div className="mb-3 rounded bg-signal-alarm/10 px-3 py-2 text-base text-signal-alarm">{error}</div>
         )}
 
         {loading ? (
-          <div className="text-sm text-fg-3">Loading…</div>
+          <div className="text-base text-fg-3">Loading…</div>
         ) : versions.length === 0 ? (
-          <div className="text-sm text-fg-3">No version history.</div>
+          <div className="text-base text-fg-3">No version history.</div>
         ) : (
-          <table className="w-full text-sm">
+          <table className="w-full text-base">
             <thead className="border-b border-border">
               <tr className="text-left text-xs text-fg-2">
                 <th className="py-2 font-medium">Version</th>
@@ -98,11 +98,11 @@ export function VersionHistoryModal({ scope, secretKey, onClose, onRolledBack }:
             <tbody>
               {versions.map((v, i) => (
                 <tr key={v.version} className="border-b border-border last:border-b-0">
-                  <td className="py-2 text-fg-1">v{v.version}{i === 0 && <span className="ml-1 text-[12px] uppercase text-accent">current</span>}</td>
+                  <td className="py-2 text-fg-1">v{v.version}{i === 0 && <span className="ml-1 text-xs uppercase text-accent">current</span>}</td>
                   <td className="py-2 text-fg-2">
                     {v.changedBy ?? '—'}
                     {/* obj 719065: an agent-relayed value names the relaying agent */}
-                    {v.via && <div className="mt-0.5 text-[12px] leading-snug text-fg-3">via {v.via}</div>}
+                    {v.via && <div className="mt-0.5 text-xs leading-snug text-fg-3">via {v.via}</div>}
                   </td>
                   <td className="py-2 text-fg-3 text-xs">{v.changedAt?.slice(0, 16).replace('T', ' ')}</td>
                   <td className="py-2 text-right">
@@ -117,7 +117,7 @@ export function VersionHistoryModal({ scope, secretKey, onClose, onRolledBack }:
         )}
 
         {/* obj 900498 — this secret's own audit trail (who rotated / used / tried to reveal it). */}
-        <h3 className="mb-2 mt-5 text-xs font-medium uppercase tracking-wider text-fg-3">Activity</h3>
+        <h3 className="mb-2 mt-5 text-xs font-medium uppercase tracking-eyebrow text-fg-3">Activity</h3>
         <AuditLogPanel scopeQuery={q} secretKey={secretKey} pageSize={20} />
       </div>
       {confirmDialog}

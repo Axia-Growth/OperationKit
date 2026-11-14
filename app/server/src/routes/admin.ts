@@ -14,6 +14,7 @@ import emailRouter from './admin-email.js'
 import opsRouter from './admin-ops.js'
 import jobsRouter from './admin-jobs.js'
 import queueAutostartRouter from './admin-queue-autostart.js'
+import kbSearchRouter from './admin-kb-search.js'
 
 const router = Router()
 
@@ -25,5 +26,6 @@ router.use(emailRouter)  // /api/admin/email, /setup-status (obj 900497)
 router.use(opsRouter)
 router.use(jobsRouter)
 router.use(queueAutostartRouter)  // /api/admin/queue-autostart (obj 900625)
+router.use(kbSearchRouter)  // /api/admin/kb-search (obj 900816)
 
 export default router

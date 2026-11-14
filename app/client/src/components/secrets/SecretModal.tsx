@@ -39,6 +39,7 @@ import {
   SCOPE_HINTS, SCOPE_HINTS_CREATE, SCOPE_LABELS, sameScope,
   type Scope,
 } from './scope'
+import { Select } from '../ui/Select'
 
 interface SecretModalProps {
   principals: SecretPrincipals | null
@@ -140,8 +141,8 @@ export function SecretModal({ principals, initialScope, editing, onClose, onSave
     setError('')
     setFanout(null)
     if (!key.trim()) { setError('Key is required.'); return }
-    if (multiOrg && workspaces.length === 0) { setError('Pick at least one organization for this scope.'); return }
-    if (!multiOrg && needsWorkspace && !target.workspace) { setError('Pick an organization for this scope.'); return }
+    if (multiOrg && workspaces.length === 0) { setError('Pick at least one workspace for this scope.'); return }
+    if (!multiOrg && needsWorkspace && !target.workspace) { setError('Pick a workspace for this scope.'); return }
     if (needsUser && ((multiOrg && !userId) || (!multiOrg && target.userId == null))) {
       setError('Pick a user for this scope.'); return
     }
@@ -246,7 +247,7 @@ export function SecretModal({ principals, initialScope, editing, onClose, onSave
         </div>
 
         {error && (
-          <div className="mb-3 rounded bg-signal-alarm/10 px-3 py-2 text-sm text-signal-alarm">{error}</div>
+          <div className="mb-3 rounded bg-signal-alarm/10 px-3 py-2 text-base text-signal-alarm">{error}</div>
         )}
 
         {/* Partial-failure report. Per-organization truth: what landed, what did
@@ -256,14 +257,14 @@ export function SecretModal({ principals, initialScope, editing, onClose, onSave
             data-testid="modal-fanout-results"
             className="mb-3 rounded border border-signal-amber/30 bg-signal-amber/10 px-3 py-2"
           >
-            <p className="text-sm font-medium text-signal-amber">
+            <p className="text-base font-medium text-signal-amber">
               {fanout.some(r => r.ok)
-                ? `Created in ${fanout.filter(r => r.ok).length} of ${fanout.length} organizations — ${fanout.filter(r => !r.ok).length} failed.`
-                : `Not created — all ${fanout.length} organizations failed.`}
+                ? `Created in ${fanout.filter(r => r.ok).length} of ${fanout.length} workspaces — ${fanout.filter(r => !r.ok).length} failed.`
+                : `Not created — all ${fanout.length} workspaces failed.`}
             </p>
             <ul className="mt-1.5 space-y-1">
               {fanout.map(r => (
-                <li key={r.slug} data-testid={`fanout-${r.ok ? 'ok' : 'fail'}-${r.slug}`} className="flex gap-2 text-[12px] leading-relaxed">
+                <li key={r.slug} data-testid={`fanout-${r.ok ? 'ok' : 'fail'}-${r.slug}`} className="flex gap-2 text-xs leading-relaxed">
                   <span className={`flex-none font-medium ${r.ok ? 'text-signal-verify' : 'text-signal-alarm'}`}>
                     {r.ok ? '✓' : '✕'}
                   </span>
@@ -274,8 +275,8 @@ export function SecretModal({ principals, initialScope, editing, onClose, onSave
                 </li>
               ))}
             </ul>
-            <p className="mt-1.5 text-[12px] text-fg-3">
-              The failed organizations are still selected — re-enter the value and submit again to retry just those.
+            <p className="mt-1.5 text-xs text-fg-3">
+              The failed workspaces are still selected — re-enter the value and submit again to retry just those.
             </p>
           </div>
         )}
@@ -289,7 +290,7 @@ export function SecretModal({ principals, initialScope, editing, onClose, onSave
               onChange={e => setKey(e.target.value)}
               disabled={isEdit}
               placeholder="e.g. OPENAI_API_KEY"
-              className="w-full rounded border border-border bg-surface px-2 py-1.5 font-mono text-sm text-fg-0 outline-none focus:border-accent disabled:opacity-50"
+              className="w-full rounded border border-border bg-surface px-2 py-1.5 font-mono text-base text-fg-0 outline-none focus:border-accent disabled:opacity-50"
             />
           </div>
 
@@ -297,34 +298,32 @@ export function SecretModal({ principals, initialScope, editing, onClose, onSave
               at any scope from any view — and an existing one re-scoped. */}
           <div className="rounded border border-border bg-surface p-3">
             <div>
-              <label htmlFor="secret-scope-type" className="mb-1 block text-[12px] uppercase tracking-wider text-fg-3">Scope</label>
-              <select
+              <label htmlFor="secret-scope-type" className="mb-1 block text-xs uppercase tracking-eyebrow text-fg-3">Scope</label>
+              <Select
                 id="secret-scope-type"
                 value={scopeType}
-                onChange={e => { setScopeType(e.target.value as SecretScopeType); setFanout(null) }}
-                data-testid="modal-scope-type"
+                onChange={v => { setScopeType(v as SecretScopeType); setFanout(null) }}
                 aria-describedby="secret-scope-hint"
-                className="rounded border border-border bg-surface-raised px-2 py-1.5 text-sm text-fg-0 outline-none transition-colors duration-fast ease-out hover:border-fg-3 focus:border-accent"
               >
                 {scopeOptions.map(s => (
                   <option key={s} value={s}>{SCOPE_LABELS[s]}</option>
                 ))}
-              </select>
+              </Select>
               {/* Inline, always-visible — not a hover tooltip. This sentence is
                   the whole reason "Organization" is no longer ambiguous. */}
-              <p id="secret-scope-hint" data-testid="modal-scope-hint" className="mt-1.5 text-[12px] leading-relaxed text-fg-3">
+              <p id="secret-scope-hint" data-testid="modal-scope-hint" className="mt-1.5 text-xs leading-relaxed text-fg-3">
                 {(isEdit ? SCOPE_HINTS : SCOPE_HINTS_CREATE)[scopeType]}
               </p>
             </div>
 
             {needsWorkspace && (multiOrg ? (
               <fieldset className="mt-3">
-                <legend className="mb-1 text-[12px] uppercase tracking-wider text-fg-3">
-                  Organizations <span className="normal-case tracking-normal text-fg-3">(pick one or more)</span>
+                <legend className="mb-1 text-xs uppercase tracking-eyebrow text-fg-3">
+                  Workspaces <span className="normal-case tracking-normal text-fg-3">(pick one or more)</span>
                 </legend>
                 {orgs.length === 0 ? (
-                  <p className="rounded border border-dashed border-border px-3 py-4 text-center text-[12px] text-fg-3">
-                    No organizations available to you.
+                  <p className="rounded border border-dashed border-border px-3 py-4 text-center text-xs text-fg-3">
+                    No workspaces available to you.
                   </p>
                 ) : (
                   <>
@@ -337,7 +336,7 @@ export function SecretModal({ principals, initialScope, editing, onClose, onSave
                         return (
                           <label
                             key={o.slug}
-                            className={`flex min-h-[44px] cursor-pointer items-center gap-2.5 border-b border-border px-3 text-sm last:border-b-0 transition-colors duration-fast ease-out hover:bg-surface-overlay/60 ${checked ? 'text-fg-0' : 'text-fg-2'}`}
+                            className={`flex min-h-[44px] cursor-pointer items-center gap-2.5 border-b border-border px-3 text-base last:border-b-0 transition-colors duration-fast ease-out hover:bg-surface-overlay/60 ${checked ? 'text-fg-0' : 'text-fg-2'}`}
                           >
                             <input
                               type="checkbox"
@@ -352,15 +351,15 @@ export function SecretModal({ principals, initialScope, editing, onClose, onSave
                       })}
                     </div>
                     <div className="mt-1.5 flex items-center gap-3">
-                      <p className="text-[12px] text-fg-3" data-testid="modal-org-selection-summary">
+                      <p className="text-xs text-fg-3" data-testid="modal-org-selection-summary">
                         {workspaces.length === 0
-                          ? 'No organizations selected.'
-                          : `${workspaces.length} of ${orgs.length} selected — ${workspaces.length} secret ${workspaces.length === 1 ? 'row' : 'rows'} will be created, one per organization.`}
+                          ? 'No workspaces selected.'
+                          : `${workspaces.length} of ${orgs.length} selected — ${workspaces.length} secret ${workspaces.length === 1 ? 'row' : 'rows'} will be created, one per workspace.`}
                       </p>
                       <button
                         type="button"
                         onClick={() => { setFanout(null); setWorkspaces(workspaces.length === orgs.length ? [] : orgs.map(o => o.slug)) }}
-                        className="ml-auto flex-none rounded px-1.5 py-1 text-[12px] text-accent transition-colors duration-fast ease-out hover:bg-surface-overlay hover:text-accent-hover"
+                        className="ml-auto flex-none rounded px-1.5 py-1 text-xs text-accent transition-colors duration-fast ease-out hover:bg-surface-overlay hover:text-accent-hover"
                       >
                         {workspaces.length === orgs.length ? 'Clear all' : 'Select all'}
                       </button>
@@ -370,41 +369,37 @@ export function SecretModal({ principals, initialScope, editing, onClose, onSave
               </fieldset>
             ) : (
               <div className="mt-3">
-                <label htmlFor="secret-scope-org" className="mb-1 block text-[12px] uppercase tracking-wider text-fg-3">Organization</label>
-                <select
+                <label htmlFor="secret-scope-org" className="mb-1 block text-xs uppercase tracking-eyebrow text-fg-3">Workspace</label>
+                <Select
                   id="secret-scope-org"
                   value={workspaces[0] || ''}
-                  onChange={e => setWorkspaces(e.target.value ? [e.target.value] : [])}
-                  data-testid="modal-scope-organization"
-                  className="rounded border border-border bg-surface-raised px-2 py-1.5 text-sm text-fg-0 outline-none transition-colors duration-fast ease-out hover:border-fg-3 focus:border-accent"
+                  onChange={v => setWorkspaces(v ? [v] : [])}
                 >
                   <option value="">— select —</option>
                   {orgs.map(o => (
                     <option key={o.slug} value={o.slug}>{o.name}</option>
                   ))}
-                </select>
+                </Select>
               </div>
             ))}
 
             {needsUser && (
               <div className="mt-3">
-                <label htmlFor="secret-scope-user" className="mb-1 block text-[12px] uppercase tracking-wider text-fg-3">User</label>
-                <select
+                <label htmlFor="secret-scope-user" className="mb-1 block text-xs uppercase tracking-eyebrow text-fg-3">User</label>
+                <Select
                   id="secret-scope-user"
                   value={userId}
-                  onChange={e => setUserId(e.target.value)}
-                  data-testid="modal-scope-user"
-                  className="rounded border border-border bg-surface-raised px-2 py-1.5 text-sm text-fg-0 outline-none transition-colors duration-fast ease-out hover:border-fg-3 focus:border-accent"
+                  onChange={v => setUserId(v)}
                 >
                   <option value="">— select —</option>
                   {users.map(u => (
                     <option key={u.id} value={String(u.id)}>{u.username}</option>
                   ))}
-                </select>
+                </Select>
               </div>
             )}
             {scopeChanged && (
-              <p className="mt-1 text-[12px] text-accent">
+              <p className="mt-1 text-xs text-accent">
                 Moving from {SCOPE_LABELS[initialScope.scopeType]} — the value is carried over untouched.
               </p>
             )}
@@ -422,9 +417,9 @@ export function SecretModal({ principals, initialScope, editing, onClose, onSave
               onChange={e => setDescription(e.target.value)}
               data-testid="modal-description"
               placeholder="What is this for? e.g. Stripe live key — billing worker"
-              className="w-full rounded border border-border bg-surface px-2 py-1.5 text-sm text-fg-0 outline-none focus:border-accent"
+              className="w-full rounded border border-border bg-surface px-2 py-1.5 text-base text-fg-0 outline-none focus:border-accent"
             />
-            <p className="mt-1 text-[12px] text-fg-3">Visible to anyone who can see this secret. Never put the value here.</p>
+            <p className="mt-1 text-xs text-fg-3">Visible to anyone who can see this secret. Never put the value here.</p>
           </div>
 
           <div>
@@ -437,7 +432,7 @@ export function SecretModal({ principals, initialScope, editing, onClose, onSave
                 className="mb-1.5 flex items-center justify-between rounded border border-dashed border-border bg-surface px-2 py-1.5 text-xs text-fg-3"
               >
                 <span>Current value: <span className="font-mono">{'••••••••'}</span> (v{editing?.version})</span>
-                <span className="text-[12px]">write-only — never shown</span>
+                <span className="text-xs">write-only — never shown</span>
               </div>
             )}
             <input
@@ -449,9 +444,9 @@ export function SecretModal({ principals, initialScope, editing, onClose, onSave
               onChange={e => setValue(e.target.value)}
               data-testid="modal-value"
               placeholder={isEdit ? 'type a new value to rotate' : 'secret value'}
-              className="w-full rounded border border-border bg-surface px-2 py-1.5 font-mono text-sm text-fg-0 outline-none focus:border-accent"
+              className="w-full rounded border border-border bg-surface px-2 py-1.5 font-mono text-base text-fg-0 outline-none focus:border-accent"
             />
-            <p className="mt-1 text-[12px] text-fg-3">
+            <p className="mt-1 text-xs text-fg-3">
               Stored encrypted. The value is never returned by the API or shown again.
               {isEdit && ' Rotating saves a new version; the old one stays in History (encrypted) so you can roll back.'}
               {isEdit && ' Leave it blank to change only the scope or description.'}
@@ -459,19 +454,19 @@ export function SecretModal({ principals, initialScope, editing, onClose, onSave
           </div>
 
           <div className="flex justify-end gap-2 pt-2">
-            <button type="button" onClick={onClose} className="rounded px-3 py-1.5 text-sm text-fg-2 hover:bg-surface-overlay">Cancel</button>
+            <button type="button" onClick={onClose} className="rounded px-3 py-1.5 text-base text-fg-2 hover:bg-surface-overlay">Cancel</button>
             <button
               type="submit"
               disabled={saving}
               data-testid="modal-submit"
-              className="rounded bg-accent px-3 py-1.5 text-sm font-medium text-accent-fg transition-colors duration-fast ease-out hover:bg-accent-hover disabled:cursor-not-allowed disabled:opacity-50"
+              className="rounded bg-accent px-3 py-1.5 text-base font-medium text-accent-fg transition-colors duration-fast ease-out hover:bg-accent-hover disabled:cursor-not-allowed disabled:opacity-50"
             >
               {saving
                 ? 'Saving...'
                 : isEdit
                   ? (value ? 'Rotate value' : scopeChanged ? 'Move' : 'Save')
                   : multiOrg && workspaces.length > 1
-                    ? `Create in ${workspaces.length} organizations`
+                    ? `Create in ${workspaces.length} workspaces`
                     : 'Create'}
             </button>
           </div>

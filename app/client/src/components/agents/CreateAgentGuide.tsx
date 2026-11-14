@@ -34,7 +34,7 @@ export const SETUP_PROMPT =
   `- Skill: how-to instructions an agent follows for a kind of task.\n` +
   `- Tool: an integration an agent can reach (see Settings → Integrations) — connect it there, then reference ` +
   `it from the skill/agent.\n` +
-  `- Assignment (only if needed): scopes an agent or skill to one organization, project, or user instead of ` +
+  `- Assignment (only if needed): scopes an agent or skill to one workspace, project, or user instead of ` +
   `applying globally.\n\n` +
   `Ask me what the agent/skill is for, then use the platform API (docs/api/README.md, GET /api/openapi.json) ` +
   `to set it up rather than describing steps for me to click through.`
@@ -51,7 +51,7 @@ const NOUNS: Array<{ term: string; text: string }> = [
 
 const tile = 'flex flex-col gap-2 rounded-lg border border-line bg-surface-1 p-4'
 const linkBtn = cn(
-  'inline-flex min-h-[40px] items-center rounded-md border border-line bg-surface-0 px-3 text-[13px] font-medium text-fg-1',
+  'inline-flex min-h-[40px] items-center rounded-md border border-line bg-surface-0 px-3 text-sm font-medium text-fg-1',
   'transition-colors duration-fast hover:border-line-strong hover:text-fg-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/50',
 )
 
@@ -78,8 +78,8 @@ export function CreateAgentGuide() {
 
   return (
     <section aria-labelledby="create-agent-guide" className="mb-6 rounded-xl border border-line bg-surface-0 p-4 sm:p-5">
-      <h2 id="create-agent-guide" className="font-display text-[16px] font-semibold text-fg-0">Make a new bot, agent or skill</h2>
-      <ul className="mt-2 space-y-0.5 text-[13px] leading-relaxed text-fg-2">
+      <h2 id="create-agent-guide" className="font-display text-lg font-semibold text-fg-0">Make a new bot, agent or skill</h2>
+      <ul className="mt-2 space-y-0.5 text-sm leading-relaxed text-fg-2">
         {NOUNS.map(n => (
           <li key={n.term}><span className="font-medium text-fg-0">{n.term}</span> — {n.text}</li>
         ))}
@@ -87,19 +87,19 @@ export function CreateAgentGuide() {
 
       <ol className="mt-4 grid gap-3 md:grid-cols-3">
         <li className={tile}>
-          <p className="text-[12px] font-semibold uppercase tracking-[0.06em] text-fg-3">1 · Easiest</p>
+          <p className="text-xs font-semibold uppercase tracking-eyebrow text-fg-3">1 · Easiest</p>
           {hasDevBot === false ? (
             <>
-              <h3 className="text-[14px] font-semibold text-fg-0">Ask an assistant</h3>
-              <p className="text-[12.5px] leading-relaxed text-fg-2">
+              <h3 className="text-base font-semibold text-fg-0">Ask an assistant</h3>
+              <p className="text-sm leading-relaxed text-fg-2">
                 Copy this prompt into your coding assistant. It asks what you need and sets it up through the platform API.
               </p>
               <div><CopyButton value={SETUP_PROMPT} label="Copy setup prompt" /></div>
             </>
           ) : (
             <>
-              <h3 className="text-[14px] font-semibold text-fg-0">Ask {devBotName}</h3>
-              <p className="text-[12.5px] leading-relaxed text-fg-2">
+              <h3 className="text-base font-semibold text-fg-0">Ask {devBotName}</h3>
+              <p className="text-sm leading-relaxed text-fg-2">
                 It asks a few questions, writes the file for you, and tells you exactly where it goes.
               </p>
               <div className="flex flex-wrap gap-2" aria-busy={hasDevBot === null}>
@@ -111,20 +111,20 @@ export function CreateAgentGuide() {
           )}
         </li>
         <li className={tile}>
-          <p className="text-[12px] font-semibold uppercase tracking-[0.06em] text-fg-3">2 · Start from a template</p>
-          <h3 className="text-[14px] font-semibold text-fg-0">Add a starter bot</h3>
-          <p className="text-[12.5px] leading-relaxed text-fg-2">Pick a ready-made bot, add it, then change its instructions to fit.</p>
+          <p className="text-xs font-semibold uppercase tracking-eyebrow text-fg-3">2 · Start from a template</p>
+          <h3 className="text-base font-semibold text-fg-0">Add a starter bot</h3>
+          <p className="text-sm leading-relaxed text-fg-2">Pick a ready-made bot, add it, then change its instructions to fit.</p>
           <div><Link to={agentsTabRoute('templates')} className={linkBtn}>Browse templates</Link></div>
         </li>
         <li className={tile}>
-          <p className="text-[12px] font-semibold uppercase tracking-[0.06em] text-fg-3">3 · Already have the file</p>
-          <h3 className="text-[14px] font-semibold text-fg-0">Paste or import it</h3>
-          <p className="text-[12.5px] leading-relaxed text-fg-2">Paste a bot file {devBotName} wrote, or upload one someone sent you. It is checked before it is added.</p>
+          <p className="text-xs font-semibold uppercase tracking-eyebrow text-fg-3">3 · Already have the file</p>
+          <h3 className="text-base font-semibold text-fg-0">Paste or import it</h3>
+          <p className="text-sm leading-relaxed text-fg-2">Paste a bot file {devBotName} wrote, or upload one someone sent you. It is checked before it is added.</p>
           <div><Link to={`${agentsTabRoute('templates')}&paste=1`} className={linkBtn}>Paste a bot file</Link></div>
         </li>
       </ol>
       {hasDevBot && (
-        <div className="mt-3 flex flex-wrap items-center justify-between gap-2 text-[12px] text-fg-3">
+        <div className="mt-3 flex flex-wrap items-center justify-between gap-2 text-xs text-fg-3">
           <span>Using an outside assistant instead? Copy the setup prompt.</span>
           <CopyButton value={SETUP_PROMPT} label="Copy setup prompt" />
         </div>

@@ -370,7 +370,8 @@ function writeHookVideos(abs: string, file: string, videos: VideoMeta[]): HookPa
 // <vault-workspace>/<hookbase>/<ts>-<sanitized-filename>. The owner prefix is what
 // keeps two owners' uploads in separate object trees inside the shared bucket.
 export function hookVideoObjectPath(owner: ContentOwner, file: string, filename: string): string {
-  const base = file.replace(/\.md$/, '')
+  // :file is a decoded route param; keep it to one safe path segment.
+  const base = file.replace(/\.md$/, '').replace(/[^A-Za-z0-9._-]/g, '_').replace(/^\.+/, '_').slice(0, 120) || 'hook'
   const safeName = filename.replace(/[^A-Za-z0-9._-]/g, '_').slice(-80) || 'video'
   const ts = Date.now()
   return `${owner.vault_workspace}/${base}/${ts}-${safeName}`

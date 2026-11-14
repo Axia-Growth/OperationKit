@@ -1,3 +1,7 @@
+/* UI SDK adds the few behavior styles it needs (hidden popups, inert page) in
+   this cascade layer; declaring it first keeps every app style above it. */
+@layer ui-sdk;
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
@@ -110,6 +114,8 @@
   --success: var(--brand-verify, #1a7f37);
   --warning: #9a6700;
   --danger:  var(--brand-caution, #d1242f);
+  /* Text on a solid danger fill (badges), both themes. */
+  --on-danger: #ffffff;
   --info:    #0969da;
   /* back-compat names for the same four */
   --ok-verify: var(--success);

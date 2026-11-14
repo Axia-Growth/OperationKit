@@ -56,12 +56,11 @@ export function AgentsHub({ workspace }: { workspace: Workspace }) {
       <PageHeader title="Agents & Skills" description={COPY[tab]} />
       {/* One clear way in to creating something, on every tab (obj 900672). */}
       <CreateAgentGuide />
-      <div className="mb-5">
-        <Tabs items={TABS} value={tab} onChange={select} />
-      </div>
-      {tab === 'registry' && <SettingsAgents showSetupPrompt={false} />}
-      {tab === 'board' && <AgentsPage workspace={workspace} embedded />}
-      {tab === 'templates' && <AgentTemplatesPage embedded />}
+      <Tabs items={TABS} value={tab} onChange={select} label="Agents and skills sections" panelClassName="mt-5">
+        {tab === 'registry' && <SettingsAgents showSetupPrompt={false} />}
+        {tab === 'board' && <AgentsPage workspace={workspace} embedded />}
+        {tab === 'templates' && <AgentTemplatesPage embedded />}
+      </Tabs>
     </PageContainer>
   )
 }

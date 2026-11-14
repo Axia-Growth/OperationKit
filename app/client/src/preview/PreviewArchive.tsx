@@ -12,8 +12,9 @@ import { api } from '../lib/api'
 import { relativeTime } from '../lib/time'
 import { AgentMonogram, STATUS_META } from '../components/design/primitives'
 import { ObjectiveModal } from '../components/ObjectiveModal'
-import { ObjectiveSearchPanel } from '../components/ObjectiveSearchPanel'
+import { ObjectiveSearchPanel } from '../components/lazy-overlays'
 import { SessionViewer } from '../components/SessionViewer'
+import { SegmentedControl } from '../components/ui/SegmentedControl'
 
 type Tab = 'done' | 'cancelled'
 
@@ -116,65 +117,51 @@ export function PreviewArchive({ workspaces }: { workspaces: Workspace[] }) {
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <div className="flex flex-wrap items-center gap-3 border-b border-line px-4 py-2">
-        <h1 className="text-sm font-medium text-fg-0">Archive</h1>
-        <div className="flex items-center gap-1">
-          {([
-            { key: 'done' as const, label: 'Done', count: done.length },
-            { key: 'cancelled' as const, label: 'Retired', count: cancelledLoaded ? cancelled.length : null },
-          ]).map(t => (
-            <button
-              key={t.key}
-              type="button"
-              onClick={() => setTab(t.key)}
-              aria-pressed={tab === t.key}
-              className={`rounded-full border px-2.5 py-1 text-[12px] ${
-                tab === t.key
-                  ? 'border-accent bg-surface-2 text-fg-0'
-                  : 'border-line text-fg-2 hover:border-line-strong hover:text-fg-1'
-              }`}
-            >
-              {t.label}
-              {t.count != null && (
-                <span className="ml-1.5 font-mono text-[12px] text-fg-3">{t.count}</span>
-              )}
-            </button>
-          ))}
-        </div>
+        <h1 className="text-base font-medium text-fg-0">Archive</h1>
+        <SegmentedControl
+          label="Archive list"
+          value={tab}
+          onChange={k => setTab(k as Tab)}
+          items={[
+            { key: 'done', label: 'Done', count: done.length },
+            { key: 'cancelled', label: 'Retired', ...(cancelledLoaded ? { count: cancelled.length } : {}) },
+          ]}
+        />
         <label className="relative min-w-[180px] flex-1 max-w-md">
           <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-fg-3" />
           <input
             value={query}
             onChange={e => setQuery(e.target.value)}
             placeholder="Filter this library…"
-            className="w-full rounded-md border border-line bg-surface-2 py-1.5 pl-8 pr-3 text-sm text-fg-0 placeholder-fg-3 outline-none focus:border-line-strong"
+            className="w-full rounded-md border border-line bg-surface-2 py-1.5 pl-8 pr-3 text-base text-fg-0 placeholder-fg-3 outline-none focus:border-line-strong"
           />
         </label>
         <button
           type="button"
           onClick={() => setSearchOpen(true)}
           title="Search objectives (all stages) — press /"
-          className="inline-flex items-center gap-1.5 rounded-md border border-line bg-surface-2 px-2.5 py-1.5 text-sm text-fg-2 hover:border-line-strong hover:text-fg-1"
+          className="inline-flex items-center gap-1.5 rounded-md border border-line bg-surface-2 px-2.5 py-1.5 text-base text-fg-2 hover:border-line-strong hover:text-fg-1"
         >
           <Search className="h-4 w-4" />
           <span className="hidden md:inline">Search</span>
-          <span className="hidden font-mono text-[12px] text-fg-3 md:inline">/</span>
+          <span className="hidden font-mono text-xs text-fg-3 md:inline">/</span>
         </button>
         <button
           type="button"
           onClick={() => navigate('/')}
-          className="text-[12px] text-fg-2 hover:text-fg-0"
+          className="text-xs text-fg-2 hover:text-fg-0"
         >
           Back to board
         </button>
       </div>
 
       {error && (
-        <div className="border-b border-line px-4 py-2 text-sm text-[color:var(--ok-alarm)]">{error}</div>
+        <div className="border-b border-line px-4 py-2 text-base text-[color:var(--ok-alarm)]">{error}</div>
       )}
 
       <div className="min-h-0 flex-1 overflow-y-auto">
         {rows.length === 0 && !loading ? (
-          <div className="px-4 py-12 text-center text-sm text-fg-3">
+          <div className="px-4 py-12 text-center text-base text-fg-3">
             {q ? 'No matches in this library.' : tab === 'done' ? 'No done objectives.' : 'No retired objectives.'}
           </div>
         ) : (
@@ -193,12 +180,12 @@ export function PreviewArchive({ workspaces }: { workspaces: Workspace[] }) {
                       <AgentMonogram agent={obj.agent_context} size="sm" />
                       <div className="min-w-0 flex-1">
                         <div className="flex items-baseline gap-2">
-                          <span className="truncate text-[14px] font-medium text-fg-0">{obj.title || 'Untitled'}</span>
-                          <span className="shrink-0 text-[12px] uppercase text-fg-3 font-semibold tracking-[0.06em]">
+                          <span className="truncate text-base font-medium text-fg-0">{obj.title || 'Untitled'}</span>
+                          <span className="shrink-0 text-xs uppercase text-fg-3 font-semibold tracking-eyebrow">
                             {shortOf(obj.workspace as Workspace)}
                           </span>
                         </div>
-                        <div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[12px] text-fg-2">
+                        <div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-fg-2">
                           <span className={meta.tone}>{meta.label}</span>
                           {obj.project && <span>{obj.project}</span>}
                           {obj.assigned_usernames && obj.assigned_usernames.length > 0 ? (
@@ -210,7 +197,7 @@ export function PreviewArchive({ workspaces }: { workspaces: Workspace[] }) {
                           {obj.pr_url && <span>#{obj.pr_number ?? 'PR'}</span>}
                         </div>
                       </div>
-                      <span className="shrink-0 pt-0.5 font-mono text-[12px] text-fg-3">{relativeTime(obj.updated_at)}</span>
+                      <span className="shrink-0 pt-0.5 font-mono text-xs text-fg-3">{relativeTime(obj.updated_at)}</span>
                     </button>
                     <div className="mt-1.5 flex shrink-0 items-center gap-1">
                       {(obj.status === 'cancelled' || obj.status === 'done') && (
@@ -239,12 +226,12 @@ export function PreviewArchive({ workspaces }: { workspaces: Workspace[] }) {
           </ul>
         )}
         {loading && (
-          <div className="px-4 py-3 text-center text-[12px] text-fg-3">
+          <div className="px-4 py-3 text-center text-xs text-fg-3">
             {source.length > 0 ? `Loading archive… ${source.length} so far` : 'Loading archive…'}
           </div>
         )}
         {!loading && q && rows.length !== topLevel.length && (
-          <div className="px-4 py-3 text-center text-[12px] text-fg-3">
+          <div className="px-4 py-3 text-center text-xs text-fg-3">
             Showing {rows.length} of {topLevel.length}
           </div>
         )}

@@ -43,6 +43,13 @@ export const DESIGN_FRAME_CSP = [
   "frame-ancestors 'self'",
   "base-uri https: 'self'",
   "object-src 'none'",
+  // obj 900838: the proxied page is third-party HTML served from OUR origin.
+  // `stripPreviewScripts` (CodeQL bad-tag-filter / multi-char-sanitization on
+  // design-frame.ts) is a best-effort filter, not a boundary — an onerror=
+  // attribute survives it. The sandbox gives the page an opaque origin: no
+  // cookies, no same-origin /api calls, no parent DOM. postMessage to the
+  // overlay bridge still works.
+  "sandbox allow-scripts",
 ].join('; ')
 
 export function isDesignFramePath(pathname: string): boolean {

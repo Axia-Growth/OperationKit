@@ -33,6 +33,8 @@ import {
   type QueuedFollowUp,
 } from '../services/followup-queue.js'
 import { appendVisibleError } from '../services/unanswered-followup.js'
+import { decideDelegatedApproval, recordDelegatedApproval } from '../services/delegated-approvals.js'
+import { logActivity } from './feed.js'
 
 // Default cap on the non-incremental first-open payload: the most recent N
 // messages. Older history loads on demand via ?from&to; the live tail via
@@ -374,7 +376,33 @@ router.post('/:id/message', async (req: AuthRequest, res) => {
   const existingSessionId = resolveFollowUpSessionId(db, objective)
   // obj 718944: provenance comes from how THIS request authenticated (cookie =
   // typed in the UI), never from the message text.
-  const sender = senderFromRequest(req)
+  let sender = senderFromRequest(req)
+  // obj 900839 — a bot message that names an approval action (merge,
+  // prod_migration, deploy) is checked against the owner's delegation grants.
+  // No `approval` field = unchanged behaviour. A claimed approval with no
+  // active grant for this bot × this card's workspace × this action is REFUSED
+  // (default deny), not quietly delivered as a plain bot message.
+  const delegation = decideDelegatedApproval(db, req, objective, req.body ?? {}, String(message))
+  if (delegation.kind === 'denied') {
+    res.status(delegation.status).json({ error: delegation.error, code: delegation.code })
+    return
+  }
+  if (delegation.kind === 'allowed') sender = delegation.sender
+  const noteDelegatedApproval = (sessionId: string) => {
+    if (delegation.kind !== 'allowed' || !req.agentKey) return
+    try {
+      recordDelegatedApproval(db, delegation, {
+        objective,
+        message: String(message),
+        agentKey: { id: req.agentKey.id, label: req.agentKey.label },
+        actor: req.user?.username ?? 'unknown',
+        sessionId,
+        logLine: logActivity,
+      })
+    } catch (err) {
+      console.error(`[delegated-approval] audit failed for card ${objective.id}:`, err)
+    }
+  }
 
   // Respond BEFORE the (re)spawn so the client isn't blocked for 3-5s (obj 700253).
   // For the current tmux architecture sessions hold no live stdin, so every
@@ -453,6 +481,7 @@ router.post('/:id/message', async (req: AuthRequest, res) => {
       try {
         recordFollowUpInJsonl(existingSessionId, fullMessage, undefined, sender, { queued: true })
         enqueueFollowUp(db, objective.id, existingSessionId, fullMessage, sender)
+        noteDelegatedApproval(existingSessionId)
       } catch (err) {
         const code = (err as NodeJS.ErrnoException)?.code
         console.error(`[objectives] message → queue write failed for ${req.params.id}:`, err)
@@ -490,6 +519,7 @@ router.post('/:id/message', async (req: AuthRequest, res) => {
   // show the bubble even if spawn is still in flight (or later throws).
   try {
     recordFollowUpInJsonl(existingSessionId, fullMessage, undefined, sender)
+    noteDelegatedApproval(existingSessionId)
   } catch (err) {
     const code = (err as NodeJS.ErrnoException)?.code
     console.error(`[objectives] message → jsonl write failed for ${req.params.id}:`, err)

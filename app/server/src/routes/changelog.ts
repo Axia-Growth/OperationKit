@@ -14,6 +14,7 @@ import {
   type MergedPRPayload,
 } from '../services/changelog.js'
 import type { ChangelogEntry } from '@operationkit/shared'
+import { resolveBrandName, resolveBrandTokens } from '../services/branding-config.js'
 
 // ── helpers ──
 
@@ -25,11 +26,13 @@ function esc(s: unknown): string {
     .replace(/"/g, '&quot;')
 }
 
-const CATEGORY_STYLE: Record<string, { label: string; bg: string; fg: string }> = {
-  feature: { label: 'New', bg: '#e0f2fe', fg: '#0369a1' },
-  fix: { label: 'Fix', bg: '#fef3c7', fg: '#92400e' },
-  improvement: { label: 'Improved', bg: '#dcfce7', fg: '#166534' },
-  infra: { label: 'Infra', bg: '#ede9fe', fg: '#5b21b6' },
+// Category badges are tinted from semantic tones (styles below), so they read
+// in light and dark (polish F3 #900804).
+const CATEGORY_STYLE: Record<string, { label: string; tone: 'info' | 'warning' | 'success' | 'ai' }> = {
+  feature: { label: 'New', tone: 'info' },
+  fix: { label: 'Fix', tone: 'warning' },
+  improvement: { label: 'Improved', tone: 'success' },
+  infra: { label: 'Infra', tone: 'ai' },
 }
 
 function monthKey(iso: string): { key: string; label: string } {
@@ -62,7 +65,7 @@ function renderEntry(e: ChangelogEntry): string {
   <article class="card">
     <div class="badges">
       <span class="badge platform">${esc(e.platform)}</span>
-      <span class="badge cat" style="background:${cat.bg};color:${cat.fg}">${esc(cat.label)}</span>
+      <span class="badge cat tone-${cat.tone}">${esc(cat.label)}</span>
       <span class="date">${esc(fmtDate(e.merged_at))}</span>
     </div>
     <h3 class="headline">${esc(e.headline || e.title_eng)}</h3>
@@ -73,7 +76,9 @@ function renderEntry(e: ChangelogEntry): string {
   </article>`
 }
 
-function renderPage(entries: ChangelogEntry[], banner?: string): string {
+export function renderPage(entries: ChangelogEntry[], banner?: string): string {
+  const brand = resolveBrandName()
+  const accent = resolveBrandTokens().accent
   // Group by month, preserving merged_at DESC order.
   const groups: { key: string; label: string; items: ChangelogEntry[] }[] = []
   for (const e of entries) {
@@ -102,11 +107,26 @@ function renderPage(entries: ChangelogEntry[], banner?: string): string {
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>What's Shipping</title>
+<title>What's shipping · ${esc(brand)}</title>
+<meta name="color-scheme" content="light dark" />
+<link rel="icon" href="/api/branding/favicon" />
 <style>
+  /* The install's brand accent and name; light and dark follow the visitor's
+     system setting (polish F3 #900804). */
   :root {
-    --ink: #0f172a; --muted: #64748b; --line: #e2e8f0; --bg: #f8fafc;
-    --card: #ffffff; --accent: #2563eb;
+    --ink: #1f2328; --muted: #59636e; --line: #d1d9e0; --bg: #f6f8fa;
+    --card: #ffffff; --soft: #f6f8fa; --body: #31373d;
+    --accent: ${esc(accent)};
+    --info: #0969da; --warning: #9a6700; --success: #1a7f37; --ai: #8250df;
+    --banner-bg: #fff8c5; --banner-line: #d4a72c66; --banner-fg: #6f4e00;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --ink: #f0f6fc; --muted: #9198a1; --line: #3d444d; --bg: #0d1117;
+      --card: #151b23; --soft: #0d1117; --body: #d1d7e0;
+      --info: #4493f8; --warning: #d29922; --success: #3fb950; --ai: #ab7df8;
+      --banner-bg: #bb800926; --banner-line: #bb800966; --banner-fg: #e3b341;
+    }
   }
   * { box-sizing: border-box; }
   body {
@@ -115,15 +135,18 @@ function renderPage(entries: ChangelogEntry[], banner?: string): string {
     line-height: 1.55; -webkit-font-smoothing: antialiased;
   }
   .hero {
-    background: linear-gradient(135deg, #1e293b 0%, #2563eb 100%);
-    color: #fff; padding: 72px 24px 56px;
+    background: var(--card); border-bottom: 1px solid var(--line);
+    color: var(--ink); padding: 64px 24px 48px;
   }
+  .hero .brand { display: flex; align-items: center; gap: 10px; margin-bottom: 18px; color: var(--muted); font-size: 14px; font-weight: 600; }
+  .hero .brand img { width: 22px; height: 22px; border-radius: 5px; }
+  .hero .bar { width: 40px; height: 3px; border-radius: 2px; background: var(--accent); margin-bottom: 18px; }
   .hero-inner { max-width: 760px; margin: 0 auto; }
   .hero h1 { margin: 0 0 10px; font-size: 40px; letter-spacing: -0.02em; font-weight: 700; }
-  .hero p { margin: 0; font-size: 18px; opacity: 0.85; }
+  .hero p { margin: 0; font-size: 18px; color: var(--muted); }
   .wrap { max-width: 760px; margin: 0 auto; padding: 40px 24px 80px; }
   .banner {
-    background: #fffbeb; border: 1px solid #fde68a; color: #92400e;
+    background: var(--banner-bg); border: 1px solid var(--banner-line); color: var(--banner-fg);
     padding: 10px 14px; border-radius: 8px; font-size: 13px; margin-bottom: 28px;
   }
   .month { margin-bottom: 40px; }
@@ -135,16 +158,20 @@ function renderPage(entries: ChangelogEntry[], banner?: string): string {
   .card {
     background: var(--card); border: 1px solid var(--line); border-radius: 14px;
     padding: 22px 24px; margin-bottom: 16px;
-    box-shadow: 0 1px 2px rgba(15,23,42,0.04);
+    box-shadow: 0 1px 2px color-mix(in srgb, var(--ink) 4%, transparent);
   }
   .badges { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; flex-wrap: wrap; }
   .badge {
     font-size: 12px; font-weight: 600; padding: 3px 10px; border-radius: 999px;
   }
-  .badge.platform { background: #f1f5f9; color: #334155; }
+  .badge.platform { background: var(--soft); color: var(--body); border: 1px solid var(--line); }
+  .badge.tone-info { background: color-mix(in srgb, var(--info) 14%, transparent); color: var(--info); }
+  .badge.tone-warning { background: color-mix(in srgb, var(--warning) 16%, transparent); color: var(--warning); }
+  .badge.tone-success { background: color-mix(in srgb, var(--success) 14%, transparent); color: var(--success); }
+  .badge.tone-ai { background: color-mix(in srgb, var(--ai) 14%, transparent); color: var(--ai); }
   .date { margin-left: auto; font-size: 12px; color: var(--muted); }
   .headline { margin: 4px 0 8px; font-size: 21px; font-weight: 650; letter-spacing: -0.01em; }
-  .body { margin: 0 0 12px; color: #334155; font-size: 15.5px; }
+  .body { margin: 0 0 12px; color: var(--body); font-size: 15.5px; }
   .how { margin: 8px 0 12px; }
   .how summary {
     cursor: pointer; font-size: 13px; color: var(--accent); font-weight: 600;
@@ -154,8 +181,8 @@ function renderPage(entries: ChangelogEntry[], banner?: string): string {
   .how summary::before { content: "▸ "; }
   .how[open] summary::before { content: "▾ "; }
   .how-body {
-    margin-top: 8px; font-size: 14.5px; color: #475569;
-    background: #f8fafc; border-left: 3px solid var(--line); padding: 10px 14px; border-radius: 6px;
+    margin-top: 8px; font-size: 14.5px; color: var(--body);
+    background: var(--soft); border-left: 3px solid var(--line); padding: 10px 14px; border-radius: 6px;
   }
   .shots { display: flex; flex-direction: column; gap: 10px; margin: 12px 0; }
   .shot {
@@ -172,8 +199,10 @@ function renderPage(entries: ChangelogEntry[], banner?: string): string {
 </head>
 <body>
   <header class="hero"><div class="hero-inner">
-    <h1>What's Shipping</h1>
-    <p>The latest improvements across our platforms.</p>
+    <div class="brand"><img src="/api/branding/favicon" alt="" onerror="this.remove()" />${esc(brand)}</div>
+    <div class="bar" aria-hidden="true"></div>
+    <h1>What's shipping</h1>
+    <p>The latest improvements, as they ship.</p>
   </div></header>
   <main class="wrap">
     ${banner ? `<div class="banner">${esc(banner)}</div>` : ''}
@@ -190,8 +219,9 @@ function privatePage(): string {
 <meta name="viewport" content="width=device-width, initial-scale=1"/>
 <title>Private changelog</title>
 <style>body{margin:0;height:100vh;display:flex;align-items:center;justify-content:center;
-font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;background:#f8fafc;color:#475569}
-.box{text-align:center}h1{font-size:22px;color:#0f172a;margin:0 0 8px}p{margin:0;font-size:14px}</style>
+font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;background:#f6f8fa;color:#59636e}
+.box{text-align:center}h1{font-size:22px;color:#1f2328;margin:0 0 8px}p{margin:0;font-size:14px}
+@media (prefers-color-scheme: dark){body{background:#0d1117;color:#9198a1}h1{color:#f0f6fc}}</style>
 </head><body><div class="box"><h1>This changelog is private</h1>
 <p>A valid access token is required to view this page.</p></div></body></html>`
 }

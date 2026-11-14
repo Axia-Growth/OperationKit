@@ -5,7 +5,7 @@
  */
 import { useState, useEffect, useCallback } from 'react'
 import { api } from '../lib/api'
-import { Card, CardHeader, CardBody, Tabs, Alert, Skeleton, cn, type TabItem } from './ui'
+import { Card, CardHeader, CardBody, SegmentedControl, Alert, Skeleton, cn, type TabItem } from './ui'
 
 const TZ = 'America/New_York'
 
@@ -99,7 +99,7 @@ export function CostModule() {
   }, [load, period, customStart, customEnd])
 
   const dateInputCls =
-    'min-h-[36px] rounded-md border border-line bg-surface-2 px-2.5 font-mono text-[12.5px] text-fg-1 ' +
+    'min-h-[36px] rounded-md border border-line bg-surface-2 px-2.5 font-mono text-sm text-fg-1 ' +
     'transition-colors duration-fast hover:border-line-strong focus:border-[color:var(--accent-line)] focus:outline-none focus:ring-2 focus:ring-accent/40'
 
   return (
@@ -108,10 +108,11 @@ export function CostModule() {
         title="Estimated spend"
         eyebrow="Usage spend"
         actions={
-          <Tabs
+          <SegmentedControl
             items={PERIOD_TABS}
             value={period}
             onChange={k => setPeriod(k as Period)}
+            label="Period"
           />
         }
       />
@@ -125,7 +126,7 @@ export function CostModule() {
               onChange={e => setCustomStart(e.target.value)}
               className={dateInputCls}
             />
-            <span className="font-mono text-[12px] text-fg-3">→</span>
+            <span className="font-mono text-xs text-fg-3">→</span>
             <input
               type="date"
               value={customEnd}
@@ -144,20 +145,20 @@ export function CostModule() {
           <>
             <div className="flex flex-wrap items-end gap-x-6 gap-y-1">
               <div>
-                <div className="font-mono text-3xl font-semibold tabular-nums text-fg-0">${data.totals.cost_usd.toFixed(2)}</div>
-                <div className="mt-1 font-mono text-[12px] text-fg-3">
+                <div className="font-mono text-2xl font-semibold tabular-nums text-fg-0">${data.totals.cost_usd.toFixed(2)}</div>
+                <div className="mt-1 font-mono text-xs text-fg-3">
                   {data.start === data.end ? data.start : `${data.start} → ${data.end}`} · Eastern
                 </div>
               </div>
-              <div className="pb-1 font-mono text-[13px] text-fg-2">
+              <div className="pb-1 font-mono text-sm text-fg-2">
                 {fmtTokens(data.totals.tokens)} tokens · {data.totals.sessions} sessions
               </div>
             </div>
 
             {data.by_account.length > 0 && (
               <div className="mt-4 border-t border-line-soft pt-3">
-                <div className="mb-2 text-[12px] uppercase tracking-[0.1em] text-fg-3 font-semibold tracking-[0.06em]">By account</div>
-                <div className="flex flex-wrap gap-x-6 gap-y-1 font-mono text-[13px]">
+                <div className="mb-2 text-xs uppercase tracking-eyebrow text-fg-3 font-semibold">By account</div>
+                <div className="flex flex-wrap gap-x-6 gap-y-1 font-mono text-sm">
                   {data.by_account.map(a => (
                     <div key={a.account_id} className="text-fg-2">
                       <span className="text-fg-1">{ACCT_LABELS[a.account_id] || a.account_id}</span>
@@ -180,7 +181,7 @@ export function CostModule() {
             <Skeleton className="mb-1 h-3.5 w-36" />
           </div>
         ) : (
-          <div className="text-[13px] text-fg-3">No data</div>
+          <div className="text-sm text-fg-3">No data</div>
         )}
       </CardBody>
     </Card>

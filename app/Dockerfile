@@ -69,12 +69,31 @@ RUN curl -fsSL https://x.ai/cli/install.sh | bash \
 # Browsers cache to a shared path so all ccuser-* accounts use one install
 # (~600MB once vs per-user). The @playwright/mcp package is the MCP server
 # that Claude Code sessions speak to; installing it globally means
-# `npx @playwright/mcp@latest` is a no-download invocation at runtime.
+# `npx @playwright/mcp@<pinned>` is a no-download invocation at runtime.
 # `--with-deps chromium` apt-installs the X11/font/audio libs Chromium needs.
+#
+# PINNED (obj 900024). These two ARGs are the ONLY place the versions are
+# written besides app/server/src/lib/browser-pins.ts, and
+# `browser-pins.test.ts` fails the gate if the two disagree — so an update is
+# one deliberate edit in two files, never a silent drift at `npm install` time.
+# To update: see "Updating the card browser" in docs/wiki/Card-Browser-Lockdown.md.
+ARG PLAYWRIGHT_VERSION=1.65.0
+ARG PLAYWRIGHT_MCP_VERSION=0.0.85
 ENV PLAYWRIGHT_BROWSERS_PATH=/usr/local/share/playwright
-RUN npm install -g playwright @playwright/mcp \
-  && npx playwright install --with-deps chromium \
+RUN npm install -g "playwright@${PLAYWRIGHT_VERSION}" "@playwright/mcp@${PLAYWRIGHT_MCP_VERSION}" \
+  && npx "playwright@${PLAYWRIGHT_VERSION}" install --with-deps chromium \
   && chmod -R a+rX /usr/local/share/playwright \
+  # Chromium's setuid sandbox helper. The card browser runs as a non-root
+  # `ccuser-*` account, and WITH the sandbox on (obj 900024) — so chrome_sandbox
+  # has to be root-owned and setuid, which `playwright install` does not do.
+  # Without this, a sandboxed Chromium fails to launch rather than falling back,
+  # which is the correct direction to fail but a confusing one to debug.
+  # Belt and braces: where unprivileged user namespaces are available Chromium
+  # uses those instead and never touches this binary.
+  && for s in /usr/local/share/playwright/chromium-*/chrome-linux64/chrome_sandbox \
+              /usr/local/share/playwright/chromium-*/chrome-linux/chrome_sandbox; do \
+       [ -f "$s" ] && chown root:root "$s" && chmod 4755 "$s" || true; \
+     done \
   && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
@@ -84,6 +103,8 @@ COPY package.json ./
 COPY shared/package.json ./shared/
 COPY server/package.json ./server/
 COPY client/package.json ./client/
+# obj 900816: .npmrc skips onnxruntime-node's ~400 MB CUDA download (embeddings run on CPU).
+COPY .npmrc ./
 
 RUN npm install
 
@@ -95,6 +116,15 @@ RUN npm run build --workspace=client
 
 # Install tsx globally for running TypeScript server
 RUN npm install -g tsx
+# obj 900816: knowledge-base semantic search. Bake the default local embedding
+# model into the image so a fresh install embeds its knowledge base fully
+# offline (no paid API, no download at runtime). ~23 MB. The build fails if the
+# model cannot be fetched AND run, so an image never ships with dead search.
+# Non-Linux onnxruntime binaries are dropped (~150 MB) — the image is Linux-only.
+ENV CC_EMBED_MODEL_DIR=/app/models
+RUN rm -rf node_modules/onnxruntime-node/bin/napi-v6/darwin node_modules/onnxruntime-node/bin/napi-v6/win32 \
+  && tsx server/src/scripts/fetch-embedding-model.ts \
+  && chmod -R a+rX /app/models
 
 # Create data directory for SQLite
 RUN mkdir -p /app/data

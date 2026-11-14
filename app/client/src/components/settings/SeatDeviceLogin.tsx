@@ -117,10 +117,10 @@ export function SeatDeviceLogin<S>({
 
   return (
     <div className="space-y-3 rounded-md border border-line bg-surface-1 p-4" aria-live="polite">
-      <p className="text-[13px] font-medium text-fg-0">Sign in to {engine}</p>
+      <p className="text-sm font-medium text-fg-0">Sign in to {engine}</p>
 
       {phase === 'starting' && (
-        <div className="flex items-center gap-2 text-[13px] text-fg-2">
+        <div className="flex items-center gap-2 text-sm text-fg-2">
           <Spinner /> Starting the sign-in…
         </div>
       )}
@@ -137,7 +137,7 @@ export function SeatDeviceLogin<S>({
 
       {phase === 'waiting' && (
         <div className="space-y-3">
-          <ol className="space-y-3 text-[13px] text-fg-2">
+          <ol className="space-y-3 text-sm text-fg-2">
             <li>
               <span className="text-fg-1">1. Open this page and sign in with the subscription account:</span>
               {url && (
@@ -145,7 +145,7 @@ export function SeatDeviceLogin<S>({
                   href={url}
                   target="_blank"
                   rel="noreferrer"
-                  className="mt-1.5 flex min-h-[44px] items-center break-all rounded-md border border-line bg-surface-2 px-3 font-mono text-[12.5px] text-accent-hover underline-offset-2 transition-colors duration-fast ease-out hover:border-line-strong hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/50"
+                  className="mt-1.5 flex min-h-[44px] items-center break-all rounded-md border border-line bg-surface-2 px-3 font-mono text-sm text-accent-hover underline-offset-2 transition-colors duration-fast ease-out hover:border-line-strong hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/50"
                 >
                   {url}
                 </a>
@@ -157,7 +157,7 @@ export function SeatDeviceLogin<S>({
                 <div className="mt-1.5 flex flex-wrap items-center gap-2">
                   <span
                     data-testid="seat-user-code"
-                    className="select-all rounded-md border border-line bg-surface-3 px-4 py-2 font-mono text-2xl font-semibold tracking-[0.2em] text-fg-0"
+                    className="select-all rounded-md border border-line bg-surface-3 px-4 py-2 font-mono text-2xl font-semibold tracking-eyebrow text-fg-0"
                   >
                     {userCode}
                   </span>
@@ -167,7 +167,7 @@ export function SeatDeviceLogin<S>({
             )}
           </ol>
           <div className="flex flex-wrap items-center justify-between gap-2">
-            <span className="flex items-center gap-2 text-[13px] text-fg-2">
+            <span className="flex items-center gap-2 text-sm text-fg-2">
               <Spinner /> Waiting for approval…
             </span>
             <Button variant="ghost" onClick={cancel}>Cancel</Button>

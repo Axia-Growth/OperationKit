@@ -34,11 +34,14 @@ import { initBotJobsSchema } from './schema/bot-jobs.js'
 import { initAgentWebhooksSchema } from './schema/agent-webhooks.js'
 import { initEmailSchema } from './schema/email.js'
 import { initAccountabilitySchema } from './schema/accountability.js'
+import { initSupervisorSchema } from './schema/supervisor.js'
 import { initStallWatchdogSchema } from './schema/stall-watchdog.js'
 import { initMcpServersSchema } from './schema/mcp-servers.js'
 import { initQueueAutostartSchema } from './schema/queue-autostart.js'
 import { initFlowSchema, enableFlowsOnce } from './schema/flow.js'
 import { initRoutineRunsSchema } from './schema/routine-runs.js'
+import { initKbEmbeddingsSchema } from './schema/kb-embeddings.js'
+import { initDelegationGrantsSchema } from './schema/delegation-grants.js'
 import { installWriteScrubber } from './write-scrubber.js'
 import { redactForStorage } from '../services/secret-redaction.js'
 
@@ -1093,6 +1096,8 @@ export function initDb(): Database.Database {
   // additive — no existing table is altered in place and no behaviour changes
   // until a caller writes one of the new columns.
   initAccountabilitySchema(db)
+  // High Agency supervisor run log (obj 900795). Additive CREATE TABLE only.
+  initSupervisorSchema(db)
   // Sprint 7.8 (obj 900620): workspace MCP servers. Additive table only.
   initMcpServersSchema(db)
   // Workflow engine tables (obj 900638, docs/design/WORKFLOWS.md §4.3). Additive
@@ -1105,6 +1110,12 @@ export function initDb(): Database.Database {
   if (enableFlowsOnce(db)) console.log('[flows] settings.flows_enabled switched on (one-time, obj 900675)')
   // Per-run routine history (obj 900676): one row per routine fire. Additive table only.
   initRoutineRunsSchema(db)
+  // Knowledge-base semantic index (obj 900816): chunk + doc + job tables. The
+  // sqlite-vec `kb_vec` table is created lazily by services/kb-semantic/store.ts.
+  initKbEmbeddingsSchema(db)
+  // Delegated approvals (obj 900839): owner-issued bot grants + their audit log.
+  // Additive tables only; no rows = the approval gate is unchanged (default deny).
+  initDelegationGrantsSchema(db)
   // ── Secret scrubbing on persistence (obj 715532) ──────────────────────────
   // Installed LAST so migrations above run unwrapped. From here on, writes to
   // activity_log / objectives / session_events / … have known secret values and

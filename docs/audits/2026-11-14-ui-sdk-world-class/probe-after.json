@@ -1,0 +1,263 @@
+{
+ "screens": {
+  "board": {
+   "stops": 37,
+   "noFocusRing": [],
+   "small": [
+    "Draft Q1 pricing page copy(192x19)",
+    "Clean up stale secrets(192x19)"
+   ],
+   "buttons": 36,
+   "unnamedButtons": 0,
+   "nativeSelects": 0,
+   "comboboxes": 0,
+   "tablists": 0,
+   "tabpanels": 0,
+   "tooltips": 1,
+   "smallTargets": 2
+  },
+  "card-viewer": {
+   "stops": 19,
+   "noFocusRing": [],
+   "small": [],
+   "buttons": 24,
+   "unnamedButtons": 0,
+   "nativeSelects": 0,
+   "comboboxes": 0,
+   "tablists": 0,
+   "tabpanels": 0,
+   "tooltips": 2,
+   "smallTargets": 0
+  },
+  "archive": {
+   "stops": 17,
+   "noFocusRing": [],
+   "small": [
+    "Back to board(77x16)"
+   ],
+   "buttons": 16,
+   "unnamedButtons": 0,
+   "nativeSelects": 0,
+   "comboboxes": 0,
+   "tablists": 0,
+   "tabpanels": 0,
+   "tooltips": 1,
+   "smallTargets": 1
+  },
+  "chat": {
+   "stops": 19,
+   "noFocusRing": [],
+   "small": [],
+   "buttons": 16,
+   "unnamedButtons": 0,
+   "nativeSelects": 0,
+   "comboboxes": 0,
+   "tablists": 0,
+   "tabpanels": 0,
+   "tooltips": 2,
+   "smallTargets": 0
+  },
+  "knowledge": {
+   "stops": 12,
+   "noFocusRing": [],
+   "small": [],
+   "buttons": 11,
+   "unnamedButtons": 0,
+   "nativeSelects": 0,
+   "comboboxes": 0,
+   "tablists": 0,
+   "tabpanels": 0,
+   "tooltips": 1,
+   "smallTargets": 0
+  },
+  "kb-setup": {
+   "stops": 16,
+   "noFocusRing": [],
+   "small": [
+    "Context(49x16)"
+   ],
+   "buttons": 15,
+   "unnamedButtons": 0,
+   "nativeSelects": 0,
+   "comboboxes": 1,
+   "tablists": 0,
+   "tabpanels": 0,
+   "tooltips": 1,
+   "smallTargets": 1
+  },
+  "jobs": {
+   "stops": 14,
+   "noFocusRing": [],
+   "small": [],
+   "buttons": 15,
+   "unnamedButtons": 0,
+   "nativeSelects": 0,
+   "comboboxes": 0,
+   "tablists": 1,
+   "tabpanels": 0,
+   "tooltips": 1,
+   "smallTargets": 0
+  },
+  "agents": {
+   "stops": 29,
+   "noFocusRing": [],
+   "small": [
+    "Settings → Integrations(140x18)"
+   ],
+   "buttons": 26,
+   "unnamedButtons": 0,
+   "nativeSelects": 0,
+   "comboboxes": 0,
+   "tablists": 2,
+   "tabpanels": 2,
+   "tooltips": 1,
+   "smallTargets": 1
+  },
+  "system": {
+   "stops": 11,
+   "noFocusRing": [],
+   "small": [],
+   "buttons": 12,
+   "unnamedButtons": 0,
+   "nativeSelects": 0,
+   "comboboxes": 0,
+   "tablists": 0,
+   "tabpanels": 0,
+   "tooltips": 1,
+   "smallTargets": 0
+  },
+  "settings-models": {
+   "stops": 36,
+   "noFocusRing": [],
+   "small": [
+    "Make Claude Fable 5.2 the default(16x16)",
+    "Make Claude Fable 5.2 the planner(16x16)"
+   ],
+   "buttons": 42,
+   "unnamedButtons": 0,
+   "nativeSelects": 0,
+   "comboboxes": 3,
+   "tablists": 1,
+   "tabpanels": 1,
+   "tooltips": 7,
+   "smallTargets": 2
+  },
+  "settings-api-mcp": {
+   "stops": 20,
+   "noFocusRing": [],
+   "small": [
+    "http://localhost:3912/api/openapi.json(304x18)",
+    "http://localhost:3912/api/agent(248x18)",
+    "docs/api/README.md(130x18)",
+    "docs/api/AGENT-PROMPT.md(175x18)"
+   ],
+   "buttons": 22,
+   "unnamedButtons": 0,
+   "nativeSelects": 0,
+   "comboboxes": 0,
+   "tablists": 1,
+   "tabpanels": 1,
+   "tooltips": 1,
+   "smallTargets": 4
+  },
+  "settings-secrets": {
+   "stops": 15,
+   "noFocusRing": [],
+   "small": [],
+   "buttons": 20,
+   "unnamedButtons": 0,
+   "nativeSelects": 0,
+   "comboboxes": 1,
+   "tablists": 2,
+   "tabpanels": 2,
+   "tooltips": 1,
+   "smallTargets": 0
+  },
+  "settings-integrations": {
+   "stops": 13,
+   "noFocusRing": [],
+   "small": [],
+   "buttons": 17,
+   "unnamedButtons": 0,
+   "nativeSelects": 0,
+   "comboboxes": 1,
+   "tablists": 1,
+   "tabpanels": 1,
+   "tooltips": 1,
+   "smallTargets": 0
+  },
+  "settings-workspaces": {
+   "stops": 22,
+   "noFocusRing": [],
+   "small": [],
+   "buttons": 27,
+   "unnamedButtons": 0,
+   "nativeSelects": 0,
+   "comboboxes": 0,
+   "tablists": 2,
+   "tabpanels": 2,
+   "tooltips": 1,
+   "smallTargets": 0
+  },
+  "settings-branding": {
+   "stops": 35,
+   "noFocusRing": [],
+   "small": [
+    "INPUT(16x16)",
+    "INPUT(14x14)",
+    "INPUT(14x14)",
+    "INPUT(14x14)",
+    "A link(32x18)"
+   ],
+   "buttons": 23,
+   "unnamedButtons": 0,
+   "nativeSelects": 0,
+   "comboboxes": 0,
+   "tablists": 1,
+   "tabpanels": 1,
+   "tooltips": 1,
+   "smallTargets": 5
+  },
+  "settings-email": {
+   "stops": 13,
+   "noFocusRing": [],
+   "small": [],
+   "buttons": 18,
+   "unnamedButtons": 0,
+   "nativeSelects": 0,
+   "comboboxes": 0,
+   "tablists": 1,
+   "tabpanels": 1,
+   "tooltips": 1,
+   "smallTargets": 0
+  },
+  "setup": {
+   "stops": 15,
+   "noFocusRing": [],
+   "small": [],
+   "buttons": 8,
+   "unnamedButtons": 0,
+   "nativeSelects": 0,
+   "comboboxes": 0,
+   "tablists": 0,
+   "tabpanels": 0,
+   "tooltips": 1,
+   "smallTargets": 0
+  }
+ },
+ "chk": {
+  "palette": {
+   "dialog": true,
+   "combobox": "combobox",
+   "activedescendant": true,
+   "activedescendantAfterArrow": true,
+   "focusAfterEscape": "Switch to dark mode"
+  },
+  "accountMenu": {
+   "role": "menuitem",
+   "text": "Settings",
+   "afterArrow": "System",
+   "focusAfterEscape": "Account menu"
+  }
+ }
+}

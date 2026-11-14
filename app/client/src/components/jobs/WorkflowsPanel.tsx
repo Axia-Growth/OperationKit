@@ -11,6 +11,14 @@ import { FlowNodeInspector } from './FlowNodeInspector'
 import { FlowSelfTestPanel } from './FlowSelfTestPanel'
 import { NewWorkflowDialog, type NewWorkflowResult } from './NewWorkflowDialog'
 import { FlowRunWaitsPanel } from './FlowRunWaitsPanel'
+import { Select } from '../ui/Select'
+import { SegmentedControl } from '../ui/SegmentedControl'
+import { toast } from '../ui/Toaster'
+
+const CHART_VIEWS = [
+  { key: 'canvas', label: 'Canvas' },
+  { key: 'mermaid', label: 'Mermaid' },
+]
 
 /**
  * Jobs → Workflows (obj 900640, card B4; docs/design/WORKFLOWS.md §6, §7.1).
@@ -95,11 +103,11 @@ export function WorkflowsPanel({
       cell: f => (
         <div className="min-w-0">
           <div className="truncate font-medium text-fg-0" title={f.name}>{f.name}</div>
-          <div className="truncate font-mono text-[12px] text-fg-3">{f.slug}</div>
+          <div className="truncate font-mono text-xs text-fg-3">{f.slug}</div>
         </div>
       ),
     },
-    { key: 'workspace', header: 'Organization', hideOnMobile: true, cell: f => <Badge tone="neutral">{labelOf(f.workspace)}</Badge> },
+    { key: 'workspace', header: 'Workspace', hideOnMobile: true, cell: f => <Badge tone="neutral">{labelOf(f.workspace)}</Badge> },
     {
       key: 'status',
       header: 'Version',
@@ -124,7 +132,7 @@ export function WorkflowsPanel({
           <span>{f.trigger.on}{f.trigger.cron ? ` · ${f.trigger.cron}` : ''}</span>
         ) : '—',
     },
-    { key: 'nodes', header: 'Nodes', hideOnMobile: true, cell: f => <span className="text-[12px] text-fg-2">{kindsLine(f.kinds)}</span> },
+    { key: 'nodes', header: 'Nodes', hideOnMobile: true, cell: f => <span className="text-xs text-fg-2">{kindsLine(f.kinds)}</span> },
     {
       key: 'last',
       header: 'Last run',
@@ -135,7 +143,7 @@ export function WorkflowsPanel({
         <div className="flex items-center justify-end gap-1.5">
           {f.routine?.auto_paused_at && <Badge tone="alarm">auto-paused</Badge>}
           <RunStatusBadge run={f.last_run} />
-          {f.last_run && <span className="font-mono text-[12px] text-fg-3">{relativeTime(f.last_run.created_at)}</span>}
+          {f.last_run && <span className="font-mono text-xs text-fg-3">{relativeTime(f.last_run.created_at)}</span>}
         </div>
       ),
     },
@@ -155,8 +163,8 @@ export function WorkflowsPanel({
 
       <section className="space-y-2">
         <div className="flex items-center justify-between gap-2">
-          <h3 className="flex items-center gap-2 text-[12px] font-semibold uppercase tracking-[0.06em] text-fg-3">
-            <Workflow className="h-3.5 w-3.5" strokeWidth={1.75} /> Workflows
+          <h3 className="flex items-center gap-2 text-xs font-semibold uppercase tracking-eyebrow text-fg-3">
+            <Workflow className="h-3.5 w-3.5" /> Workflows
             <span className="font-mono">{flows.length}</span>
           </h3>
           {workspaces.length > 0 && (
@@ -164,14 +172,14 @@ export function WorkflowsPanel({
               variant="primary"
               size="sm"
               onClick={() => setNewOpen(true)}
-              leftIcon={<Plus className="h-3.5 w-3.5" strokeWidth={2} />}
+              leftIcon={<Plus className="h-3.5 w-3.5" />}
               data-testid="new-workflow-button"
             >
               New workflow
             </Button>
           )}
         </div>
-        <p className="max-w-3xl text-[12.5px] leading-snug text-fg-2">
+        <p className="max-w-3xl text-sm leading-snug text-fg-2">
           Automated workflows run as typed steps with no agent session per run. The model is used only where a
           workflow has an LLM step. Each one has a home card on the board. Pick a row to see its flow chart.
         </p>
@@ -184,7 +192,7 @@ export function WorkflowsPanel({
           mobileTitle={f => <span className="font-medium text-fg-0">{f.name}</span>}
           rowActions={f => <FlowRunNowButton flow={f} disabled={!flowsEnabled || f.published_version == null} onRunNow={onRunNow} />}
           empty={{
-            icon: <GitBranch className="h-5 w-5" strokeWidth={1.6} />,
+            icon: <GitBranch className="h-5 w-5" />,
             title: 'No workflows yet',
             description: 'Start one with New workflow: describe the goal and a builder agent drafts and self-tests it. Agents can do the same over the API or MCP (create_workflow).',
           }}
@@ -217,30 +225,24 @@ function FlowRunNowButton({
   onRunNow: (flowId: number) => Promise<{ ok: boolean; reason?: string }>
 }) {
   const [busy, setBusy] = useState(false)
-  const [toast, setToast] = useState<string | null>(null)
+  // "Queued" is a moment, not a state: a ui/Toaster toast (UI SDK, live
+  // region; obj 900819), then the run's own status takes over in the table.
   const run = useCallback(async () => {
     setBusy(true)
-    setToast(null)
     const r = await onRunNow(flow.id)
     setBusy(false)
-    setToast(r.ok ? 'Queued' : `Blocked: ${r.reason ?? 'error'}`)
-  }, [flow.id, onRunNow])
-  // "Queued" is a moment, not a state: the run's own status takes over in the table and chart.
-  useEffect(() => {
-    if (toast !== 'Queued') return
-    const t = setTimeout(() => setToast(null), 4000)
-    return () => clearTimeout(t)
-  }, [toast])
+    if (r.ok) toast.success(`Queued: ${flow.name}`)
+    else toast.error(`Blocked: ${flow.name}`, { description: r.reason ?? 'error' })
+  }, [flow.id, flow.name, onRunNow])
   return (
     <div className="flex items-center gap-2">
-      {toast && <span className="max-w-[160px] truncate font-mono text-[12px] text-fg-2" title={toast}>{toast}</span>}
       <Button
         variant="secondary"
         size="sm"
         onClick={e => { e.stopPropagation(); void run() }}
         disabled={busy || disabled}
         title={disabled ? 'Needs a published version and settings.flows_enabled = 1' : undefined}
-        leftIcon={<Play className={cn('h-3.5 w-3.5', busy && 'animate-pulse')} strokeWidth={1.75} />}
+        leftIcon={<Play className={cn('h-3.5 w-3.5', busy && 'animate-pulse')} />}
       >
         {busy ? 'Queuing…' : 'Run now'}
       </Button>
@@ -332,7 +334,7 @@ function FlowDetail({
     {
       key: 'error',
       header: 'Error',
-      cell: r => r.error ? <span className="line-clamp-1 text-[12px] text-signal-alarm" title={r.error.title}>{r.error.type}: {r.error.title}</span> : <span className="text-fg-3">—</span>,
+      cell: r => r.error ? <span className="line-clamp-1 text-xs text-signal-alarm" title={r.error.title}>{r.error.type}: {r.error.title}</span> : <span className="text-fg-3">—</span>,
     },
     { key: 'dur', header: 'Took', mono: true, align: 'right', hideOnMobile: true, cell: r => duration(r) },
     { key: 'cost', header: 'Cost', mono: true, align: 'right', hideOnMobile: true, cell: r => (r.spent_usd > 0 ? `$${r.spent_usd.toFixed(3)}` : '—') },
@@ -343,8 +345,8 @@ function FlowDetail({
     <section className="space-y-3 rounded-lg border border-line bg-surface-1 p-4" data-testid="flow-detail">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0">
-          <h3 className="text-[15px] font-semibold text-fg-0">{flow.name}</h3>
-          <div className="mt-1 flex flex-wrap items-center gap-1.5 text-[12px] text-fg-2">
+          <h3 className="text-lg font-semibold text-fg-0">{flow.name}</h3>
+          <div className="mt-1 flex flex-wrap items-center gap-1.5 text-xs text-fg-2">
             <span className="font-mono">{flow.slug}</span>
             <Badge tone="neutral">{labelOf(flow.workspace)}</Badge>
             <Badge tone={flow.status === 'active' ? 'verify' : 'neutral'} mono>{flow.status}</Badge>
@@ -356,23 +358,22 @@ function FlowDetail({
             )}
             {flow.objective_id != null && (
               <a className="inline-flex items-center gap-1 text-accent-hover hover:underline" href={`/o/${flow.objective_id}`}>
-                <ExternalLink className="h-3 w-3" strokeWidth={1.75} /> home card #{flow.objective_id}
+                <ExternalLink className="h-3 w-3" /> home card #{flow.objective_id}
               </a>
             )}
           </div>
         </div>
         <div className="flex items-center gap-2">
           {detail && detail.versions.length > 1 && (
-            <select
+            <Select
               aria-label="Version"
-              className="rounded-md border border-line bg-surface-1 px-2 py-1.5 text-[12px] text-fg-0"
-              value={detail.version ?? ''}
-              onChange={e => { setRunId(null); setSelectedNode(null); setVersion(Number(e.target.value)) }}
+              value={detail.version == null ? '' : String(detail.version)}
+              onChange={v => { setRunId(null); setSelectedNode(null); setVersion(Number(v)) }}
             >
               {detail.versions.map(v => (
                 <option key={v.version} value={v.version}>v{v.version}{v.published ? ' (published)' : ' (draft)'}</option>
               ))}
-            </select>
+            </Select>
           )}
           <FlowRunNowButton flow={flow} disabled={!flowsEnabled || flow.published_version == null} onRunNow={async id => { const r = await onRunNow(id); void reload(); return r }} />
         </div>
@@ -380,12 +381,12 @@ function FlowDetail({
 
       {flow.routine?.auto_paused_at && (
         <Alert tone="alarm" title="Schedule auto-paused">
-          <span className="font-mono text-[12px]">{flow.routine.auto_pause_reason}</span> — use Resume in the banner on the Jobs tab.
+          <span className="font-mono text-xs">{flow.routine.auto_pause_reason}</span> — use Resume in the banner on the Jobs tab.
         </Alert>
       )}
       {error && <Alert tone="alarm" title="Could not load workflow">{error}</Alert>}
 
-      <div className="flex flex-wrap items-center justify-between gap-2 text-[12px] text-fg-2">
+      <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-fg-2">
         <span data-testid="flow-status-caption">
           {shownRun
             ? <>Node status from run <span className="font-mono">#{shownRun.id}</span> ({shownRun.status}, {relativeTime(shownRun.created_at)} ago){runDetail ? '' : ' — the latest run of this version'}</>
@@ -393,23 +394,11 @@ function FlowDetail({
         </span>
         <div className="flex items-center gap-2">
           {runId != null && <Button variant="ghost" size="sm" onClick={() => setRunId(null)}>Back to latest run</Button>}
-          <div className="inline-flex rounded-md border border-line p-0.5" role="group" aria-label="Chart view">
-            {(['canvas', 'mermaid'] as const).map(v => (
-              <button
-                key={v}
-                type="button"
-                className={cn('rounded px-2 py-0.5 text-[12px]', view === v ? 'bg-surface-2 text-fg-0' : 'text-fg-2 hover:text-fg-1')}
-                aria-pressed={view === v}
-                onClick={() => setView(v)}
-              >
-                {v === 'canvas' ? 'Canvas' : 'Mermaid'}
-              </button>
-            ))}
-          </div>
+          <SegmentedControl label="Chart view" items={CHART_VIEWS} value={view} onChange={k => setView(k === 'mermaid' ? 'mermaid' : 'canvas')} />
         </div>
       </div>
       {detail?.changes && (
-        <div className="text-[12px] text-fg-2" data-testid="flow-version-changes">
+        <div className="text-xs text-fg-2" data-testid="flow-version-changes">
           <span className="font-mono">v{detail.version}</span> vs <span className="font-mono">v{detail.changes.base_version}</span>
           {' '}by <span className="font-mono">{detail.changes.author}</span>:{' '}
           {[
@@ -487,10 +476,10 @@ function FlowDetail({
 
       {runDetail && runDetail.steps.length > 0 && (
         <div className="space-y-1">
-          <h4 className="text-[12px] font-semibold uppercase tracking-[0.06em] text-fg-3">
+          <h4 className="text-xs font-semibold uppercase tracking-eyebrow text-fg-3">
             Steps of run #{runDetail.run.id}{runDetail.run.mode !== 'live' ? ` (${runDetail.run.mode} self-test — nothing was sent)` : ''}
           </h4>
-          <ul className="divide-y divide-line rounded-md border border-line text-[12px]">
+          <ul className="divide-y divide-line rounded-md border border-line text-xs">
             {runDetail.steps.map((s, i) => (
               <li key={i} className="flex flex-wrap items-center gap-2 px-2 py-1.5">
                 <span className="w-32 truncate font-mono text-fg-0">{s.node_id}{s.iteration ? `[${s.iteration}]` : ''}</span>
@@ -507,7 +496,7 @@ function FlowDetail({
                 )}
                 {s.error && (
                   <span className="inline-flex min-w-0 flex-1 items-center gap-1 truncate text-signal-alarm" title={s.error.detail ?? s.error.title}>
-                    <AlertTriangle className="h-3 w-3 shrink-0" strokeWidth={1.75} /> {s.error.type}: {s.error.title}
+                    <AlertTriangle className="h-3 w-3 shrink-0" /> {s.error.type}: {s.error.title}
                   </span>
                 )}
               </li>
@@ -518,7 +507,7 @@ function FlowDetail({
 
       <div className="space-y-1">
         <div className="flex items-center justify-between gap-2">
-          <h4 className="text-[12px] font-semibold uppercase tracking-[0.06em] text-fg-3">Recent runs</h4>
+          <h4 className="text-xs font-semibold uppercase tracking-eyebrow text-fg-3">Recent runs</h4>
           {onOpenRunLog && (detail?.runs.length ?? 0) > 0 && (
             <Button variant="ghost" size="sm" onClick={() => onOpenRunLog(flow, null)}>All executions</Button>
           )}

@@ -1,0 +1,17 @@
+/* Workflow Mermaid diagram colours from theme tokens (polish F3 #900804).
+   The server's classDefs carry only stroke width/dash; Mermaid puts the class
+   on each node's <g>, so these rules colour the shape. !important beats the
+   inline style Mermaid writes from its own theme. */
+.ok-flow-diagram .node.llm :is(rect, polygon, path, circle) { fill: color-mix(in srgb, var(--st-ai) 16%, var(--surface-1)) !important; stroke: var(--st-ai) !important; }
+.ok-flow-diagram .node.agent :is(rect, polygon, path, circle) { fill: color-mix(in srgb, var(--info) 14%, var(--surface-1)) !important; stroke: var(--info) !important; }
+.ok-flow-diagram .node.write :is(rect, polygon, path, circle) { fill: color-mix(in srgb, var(--warning) 14%, var(--surface-1)) !important; stroke: var(--warning) !important; }
+.ok-flow-diagram .node.send :is(rect, polygon, path, circle) { fill: color-mix(in srgb, var(--danger) 10%, var(--surface-1)) !important; stroke: color-mix(in srgb, var(--danger) 60%, var(--warning)) !important; }
+.ok-flow-diagram .node.spend :is(rect, polygon, path, circle) { fill: color-mix(in srgb, var(--danger) 14%, var(--surface-1)) !important; stroke: var(--danger) !important; }
+.ok-flow-diagram .node.succeeded :is(rect, polygon, path, circle) { stroke: var(--success) !important; }
+.ok-flow-diagram .node.failed :is(rect, polygon, path, circle) { stroke: var(--danger) !important; }
+.ok-flow-diagram .node.running :is(rect, polygon, path, circle) { stroke: var(--info) !important; }
+.ok-flow-diagram .node.waiting :is(rect, polygon, path, circle) { stroke: var(--warning) !important; }
+.ok-flow-diagram .node.skipped :is(rect, polygon, path, circle) { fill: var(--surface-3) !important; stroke: var(--line-strong) !important; }
+.ok-flow-diagram .node.skipped .nodeLabel { color: var(--fg-3) !important; }
+.ok-flow-diagram .node.mocked :is(rect, polygon, path, circle) { stroke: var(--fg-3) !important; }
+.ok-flow-diagram .node .nodeLabel { color: var(--fg-0); }

@@ -113,7 +113,7 @@ export function Composer({
         {/* obj 719065 — a pasted key: offer to save it instead of sending it */}
         {candidate && !secretForm && (
           <div role="alert" className="cc-pop-in mb-2 flex flex-col gap-2 rounded-md border border-status-human/30 bg-status-human/5 px-3 py-2 sm:flex-row sm:items-center sm:justify-between">
-            <div className="flex items-start gap-2 text-[12.5px] text-fg-1">
+            <div className="flex items-start gap-2 text-sm text-fg-1">
               <KeyRound className="mt-0.5 h-3.5 w-3.5 shrink-0 text-status-human" aria-hidden />
               <span>
                 This looks like a key{candidate.suggestedName ? <> (<span className="font-mono text-fg-0">{candidate.suggestedName}</span>)</> : ''}. Save it as a secret instead of sending it as chat text?
@@ -128,7 +128,7 @@ export function Composer({
         {/* obj 900670 — same masked form the agent's request uses, inline. */}
         {secrets && secretForm && (
           <div className="cc-pop-in mb-2 space-y-2 rounded-md border border-status-human/30 bg-status-human/5 px-3 py-2.5">
-            <div className="flex items-center gap-2 text-[12.5px] text-fg-1">
+            <div className="flex items-center gap-2 text-sm text-fg-1">
               <KeyRound className="h-3.5 w-3.5 shrink-0 text-status-human" aria-hidden />
               <span>Save as a secret — your message keeps a [REDACTED] marker in its place.</span>
             </div>
@@ -204,7 +204,7 @@ export function Composer({
             }
             disabled={inputDisabled}
             rows={1}
-            className="min-w-0 flex-1 resize-none bg-transparent py-1.5 font-sans text-base text-fg-0 placeholder-fg-3 focus:outline-none disabled:opacity-50 sm:text-sm"
+            className="min-w-0 flex-1 resize-none bg-transparent py-1.5 font-sans text-lg text-fg-0 placeholder-fg-3 focus:outline-none disabled:opacity-50 sm:text-base"
           />
           <div className="flex shrink-0 items-center gap-1.5">
             {isActive && (

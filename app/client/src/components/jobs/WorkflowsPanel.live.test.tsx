@@ -196,6 +196,6 @@ describe('Workflows viewer v2 — side panel + version tags', () => {
     expect(caption).toContain('1 changed')
     expect(caption).toContain('1 removed (old_step)')
     // the version picker is there (2 versions)
-    expect(container.querySelector('select[aria-label="Version"]')).not.toBeNull()
+    expect(container.querySelector('button[role="combobox"][aria-label="Version"]')).not.toBeNull()
   })
 })

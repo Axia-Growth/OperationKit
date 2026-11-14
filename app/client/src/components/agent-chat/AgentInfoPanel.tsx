@@ -162,15 +162,15 @@ export function AgentInfoPanel({
         <div className="flex items-start gap-3">
           <AgentAvatar agent={agent} />
           <div className="min-w-0 flex-1">
-            <h3 className="font-display text-[15px] font-semibold text-fg-0">About {agent.name}</h3>
-            {description && <p className="mt-0.5 text-[13px] leading-relaxed text-fg-2">{description}</p>}
+            <h3 className="font-display text-lg font-semibold text-fg-0">About {agent.name}</h3>
+            {description && <p className="mt-0.5 text-sm leading-relaxed text-fg-2">{description}</p>}
           </div>
           <Button variant="ghost" size="sm" onClick={onClose} className="min-h-[44px] sm:min-h-0">Close</Button>
         </div>
 
         <div>
-          <h4 className="mb-1.5 text-[12px] font-semibold uppercase tracking-[0.06em] text-fg-3">How to use</h4>
-          <div className="space-y-2 text-[13.5px] leading-relaxed text-fg-1">
+          <h4 className="mb-1.5 text-xs font-semibold uppercase tracking-eyebrow text-fg-3">How to use</h4>
+          <div className="space-y-2 text-base leading-relaxed text-fg-1">
             {blocks.map((b, i) =>
               b.kind === 'p' ? (
                 <p key={i}>{b.text}</p>
@@ -185,8 +185,8 @@ export function AgentInfoPanel({
 
         {prompts.length > 0 && (
           <div>
-            <h4 className="mb-1.5 text-[12px] font-semibold uppercase tracking-[0.06em] text-fg-3">Example prompts</h4>
-            <p className="mb-2 text-[12px] text-fg-2">Pick one to put it in the message box. You can edit it before you send.</p>
+            <h4 className="mb-1.5 text-xs font-semibold uppercase tracking-eyebrow text-fg-3">Example prompts</h4>
+            <p className="mb-2 text-xs text-fg-2">Pick one to put it in the message box. You can edit it before you send.</p>
             <ul className="flex flex-wrap gap-2" aria-label="Example prompts">
               {prompts.map(p => (
                 <li key={p}>
@@ -194,7 +194,7 @@ export function AgentInfoPanel({
                     type="button"
                     onClick={() => onUsePrompt(p)}
                     className={cn(
-                      'min-h-[40px] rounded-full border border-line bg-surface-0 px-3.5 text-left text-[13px] text-fg-1 transition-all duration-fast',
+                      'min-h-[40px] rounded-full border border-line bg-surface-0 px-3.5 text-left text-sm text-fg-1 transition-all duration-fast',
                       'hover:-translate-y-px hover:border-line-strong hover:text-fg-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/50',
                     )}
                   >
@@ -207,22 +207,22 @@ export function AgentInfoPanel({
         )}
 
         <div>
-          <h4 className="mb-1.5 text-[12px] font-semibold uppercase tracking-[0.06em] text-fg-3">What it can reach</h4>
+          <h4 className="mb-1.5 text-xs font-semibold uppercase tracking-eyebrow text-fg-3">What it can reach</h4>
           {reach.length ? (
-            <ul className="list-disc space-y-1 pl-5 text-[13px] text-fg-1">
+            <ul className="list-disc space-y-1 pl-5 text-sm text-fg-1">
               {reach.map(r => <li key={r}>{r}</li>)}
             </ul>
           ) : (
-            <p className="text-[13px] text-fg-1">Only this conversation — it has no tools, so it answers from its instructions.</p>
+            <p className="text-sm text-fg-1">Only this conversation — it has no tools, so it answers from its instructions.</p>
           )}
         </div>
 
         <div>
           <div className="mb-1.5 flex flex-wrap items-baseline gap-x-2">
-            <h4 id={`${id}-instructions`} className="text-[12px] font-semibold uppercase tracking-[0.06em] text-fg-3">Instructions</h4>
-            <span className="text-[12px] text-fg-3">Read-only</span>
+            <h4 id={`${id}-instructions`} className="text-xs font-semibold uppercase tracking-eyebrow text-fg-3">Instructions</h4>
+            <span className="text-xs text-fg-3">Read-only</span>
           </div>
-          <p className="mb-2 text-[12px] text-fg-2">
+          <p className="mb-2 text-xs text-fg-2">
             What {agent.name} is told before every conversation (its system prompt). {instructionsHome(agent)}
           </p>
           {instructions ? (
@@ -231,21 +231,21 @@ export function AgentInfoPanel({
               aria-readonly="true"
               tabIndex={0}
               data-testid="agent-instructions"
-              className="max-h-72 overflow-y-auto whitespace-pre-wrap break-words rounded-md border border-line bg-surface-0 p-3 font-mono text-[12.5px] leading-relaxed text-fg-1 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/50"
+              className="max-h-72 overflow-y-auto whitespace-pre-wrap break-words rounded-md border border-line bg-surface-0 p-3 font-mono text-sm leading-relaxed text-fg-1 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/50"
             >
               {instructions}
             </pre>
           ) : error ? (
-            <p className="text-[13px] text-fg-2">{error}</p>
+            <p className="text-sm text-fg-2">{error}</p>
           ) : detail ? (
-            <p className="text-[13px] text-fg-2">This bot has no instructions to show.</p>
+            <p className="text-sm text-fg-2">This bot has no instructions to show.</p>
           ) : (
             <SkeletonText lines={3} />
           )}
         </div>
 
         {generated && (
-          <p className="text-[12px] text-fg-3" data-testid="about-generated-note">
+          <p className="text-xs text-fg-3" data-testid="about-generated-note">
             {about.pending
               ? 'Parts of this About were written from the bot’s instructions and tools. An updated version is being written now.'
               : 'Parts of this About were written automatically from the bot’s instructions and tools, and are rewritten whenever the bot changes.'}

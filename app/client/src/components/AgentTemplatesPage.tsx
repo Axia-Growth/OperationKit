@@ -114,7 +114,7 @@ function errorProblems(err: unknown): { message: string; errors: Problem[] } {
 function ProblemList({ items, tone }: { items: Problem[]; tone: 'alarm' | 'amber' }) {
   if (!items.length) return null
   return (
-    <ul className={cn('mt-1.5 space-y-1 text-[12.5px]', tone === 'alarm' ? 'text-signal-alarm' : 'text-signal-amber')}>
+    <ul className={cn('mt-1.5 space-y-1 text-sm', tone === 'alarm' ? 'text-signal-alarm' : 'text-signal-amber')}>
       {items.map((p, i) => (
         <li key={i}>
           <span className="font-mono">{p.field}</span>
@@ -148,7 +148,7 @@ function TemplateCard({
         <div className="flex items-start gap-3">
           <span
             className={cn(
-              'grid h-10 w-10 shrink-0 place-items-center rounded-md font-mono text-[13px] font-semibold text-surface-0',
+              'grid h-10 w-10 shrink-0 place-items-center rounded-md font-mono text-sm font-semibold text-surface-0',
               COLOUR_TW[t.colour ?? 'grey'] ?? COLOUR_TW.grey,
             )}
             aria-hidden="true"
@@ -156,7 +156,7 @@ function TemplateCard({
             {monogram(t)}
           </span>
           <div className="min-w-0 flex-1">
-            <h3 className="font-display text-[15px] font-semibold leading-snug text-fg-0">{t.name}</h3>
+            <h3 className="font-display text-lg font-semibold leading-snug text-fg-0">{t.name}</h3>
             <div className="mt-1 flex flex-wrap items-center gap-1.5">
               <Badge mono>v{t.version}</Badge>
               <Badge>{t.source === 'starter' ? 'Starter' : 'Local'}</Badge>
@@ -164,8 +164,8 @@ function TemplateCard({
             </div>
           </div>
         </div>
-        <p className="text-[13px] leading-relaxed text-fg-1">{t.description}</p>
-        <dl className="space-y-1.5 text-[12px]">
+        <p className="text-sm leading-relaxed text-fg-1">{t.description}</p>
+        <dl className="space-y-1.5 text-xs">
           {t.tools.length > 0 && (
             <div className="flex flex-wrap gap-1">
               <dt className="sr-only">Tools</dt>
@@ -186,7 +186,7 @@ function TemplateCard({
           )}
         </dl>
         <div className="mt-auto flex items-center justify-between gap-2 pt-1">
-          <span className="truncate text-[12px] text-fg-3">by {t.author}</span>
+          <span className="truncate text-xs text-fg-3">by {t.author}</span>
           {action}
         </div>
       </CardBody>
@@ -331,7 +331,7 @@ export function AgentTemplatesPage({ embedded = false }: { embedded?: boolean } 
     <Shell>
       {embedded ? (
         <div className="mb-5 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-          <p className="max-w-3xl text-[13px] leading-relaxed text-fg-2">Each agent is one file you can copy, share and re-import. Add a starter agent, import a file someone sent you, or export an agent to share it.</p>
+          <p className="max-w-3xl text-sm leading-relaxed text-fg-2">Each agent is one file you can copy, share and re-import. Add a starter agent, import a file someone sent you, or export an agent to share it.</p>
           <div className="flex shrink-0 gap-2">{importActions}</div>
         </div>
       ) : (
@@ -354,8 +354,8 @@ export function AgentTemplatesPage({ embedded = false }: { embedded?: boolean } 
         <Card className="mb-6">
           <CardBody>
             <form id="paste-agent-file" onSubmit={e => { e.preventDefault(); void checkPasted() }}>
-              <label htmlFor="paste-agent-text" className="block font-display text-[15px] font-semibold text-fg-0">Paste an agent file</label>
-              <p className="mt-1 max-w-3xl text-[12.5px] leading-relaxed text-fg-2">
+              <label htmlFor="paste-agent-text" className="block font-display text-lg font-semibold text-fg-0">Paste an agent file</label>
+              <p className="mt-1 max-w-3xl text-sm leading-relaxed text-fg-2">
                 Paste the whole file — for example one a bot wrote for you in chat, starting at the first <span className="font-mono">---</span>.
                 It is checked before anything is added.
               </p>
@@ -366,7 +366,7 @@ export function AgentTemplatesPage({ embedded = false }: { embedded?: boolean } 
                 rows={10}
                 spellCheck={false}
                 placeholder={'---\nname: Sales Follow-up\nslug: sales-follow-up\n...\n---\nYou help ...'}
-                className="mt-3 w-full rounded-md border border-line bg-surface-0 px-3 py-2 font-mono text-[12.5px] text-fg-0 placeholder:text-fg-3 focus:border-accent focus:outline-none focus:ring-2 focus:ring-accent/30"
+                className="mt-3 w-full rounded-md border border-line bg-surface-0 px-3 py-2 font-mono text-sm text-fg-0 placeholder:text-fg-3 focus:border-accent focus:outline-none focus:ring-2 focus:ring-accent/30"
               />
               <div className="mt-3 flex flex-wrap gap-2">
                 <Button type="submit" variant="primary" disabled={!pasteText.trim()}>Check it</Button>
@@ -382,25 +382,25 @@ export function AgentTemplatesPage({ embedded = false }: { embedded?: boolean } 
           <CardBody>
             <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
               <div className="min-w-0">
-                <p className="text-[12px] text-fg-3">Checking <span className="font-mono">{pending.filename}</span></p>
+                <p className="text-xs text-fg-3">Checking <span className="font-mono">{pending.filename}</span></p>
                 {pending.result.ok ? (
                   <>
-                    <h2 className="mt-1 font-display text-[16px] font-semibold text-fg-0">
-                      {pending.result.agent.name} <span className="font-mono text-[12px] font-normal text-fg-2">{pending.result.agent.slug}</span>
+                    <h2 className="mt-1 font-display text-lg font-semibold text-fg-0">
+                      {pending.result.agent.name} <span className="font-mono text-xs font-normal text-fg-2">{pending.result.agent.slug}</span>
                     </h2>
-                    <p className="mt-1 text-[13px] text-fg-1">{pending.result.agent.description}</p>
-                    <p className="mt-1 text-[12px] text-fg-2">v{pending.result.agent.version} · by {pending.result.agent.author}</p>
+                    <p className="mt-1 text-sm text-fg-1">{pending.result.agent.description}</p>
+                    <p className="mt-1 text-xs text-fg-2">v{pending.result.agent.version} · by {pending.result.agent.author}</p>
                     {pendingExists && (
-                      <p className="mt-2 text-[12.5px] text-signal-amber">An agent with this slug already exists. Replacing it overwrites its instructions.</p>
+                      <p className="mt-2 text-sm text-signal-amber">An agent with this slug already exists. Replacing it overwrites its instructions.</p>
                     )}
                   </>
                 ) : (
-                  <p className="mt-1 text-[13px] font-medium text-signal-alarm">This file can't be imported yet. Fix these and try again:</p>
+                  <p className="mt-1 text-sm font-medium text-signal-alarm">This file can't be imported yet. Fix these and try again:</p>
                 )}
                 {!pending.result.ok && <ProblemList items={pending.result.errors} tone="alarm" />}
                 {pending.result.warnings.length > 0 && (
                   <>
-                    <p className="mt-2 text-[12px] text-fg-3">Notes (the file still imports):</p>
+                    <p className="mt-2 text-xs text-fg-3">Notes (the file still imports):</p>
                     <ProblemList items={pending.result.warnings} tone="amber" />
                   </>
                 )}
@@ -425,7 +425,7 @@ export function AgentTemplatesPage({ embedded = false }: { embedded?: boolean } 
       )}
 
       <section aria-labelledby="tpl-available" className="mb-8">
-        <h2 id="tpl-available" className="mb-3 font-display text-[16px] font-semibold text-fg-0">Available templates</h2>
+        <h2 id="tpl-available" className="mb-3 font-display text-lg font-semibold text-fg-0">Available templates</h2>
         {!data && !loadError ? (
           <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3" aria-busy="true">
             {[0, 1, 2].map(i => <Skeleton key={i} className="h-56 rounded-lg" />)}
@@ -443,7 +443,7 @@ export function AgentTemplatesPage({ embedded = false }: { embedded?: boolean } 
           <Alert tone="amber" title="Some template files could not be read" className="mt-4">
             {data.problems.map(p => (
               <div key={p.path} className="mt-1">
-                <span className="font-mono text-[12px]">{p.path}</span>
+                <span className="font-mono text-xs">{p.path}</span>
                 <ProblemList items={p.errors} tone="alarm" />
               </div>
             ))}
@@ -452,7 +452,7 @@ export function AgentTemplatesPage({ embedded = false }: { embedded?: boolean } 
       </section>
 
       <section aria-labelledby="tpl-installed" className="mb-8">
-        <h2 id="tpl-installed" className="mb-3 font-display text-[16px] font-semibold text-fg-0">Agents on this install</h2>
+        <h2 id="tpl-installed" className="mb-3 font-display text-lg font-semibold text-fg-0">Agents on this install</h2>
         <Card>
           {!data ? (
             <CardBody><div className="space-y-3" aria-busy="true">{[0, 1, 2].map(i => <Skeleton key={i} className="h-10" />)}</div></CardBody>
@@ -463,12 +463,12 @@ export function AgentTemplatesPage({ embedded = false }: { embedded?: boolean } 
               {data.installed.filter(a => !a.archived).map(a => (
                 <li key={a.slug} className="flex flex-col gap-2 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
                   <div className="min-w-0">
-                    <p className="text-[13.5px] font-medium text-fg-0">
-                      {a.name} <span className="font-mono text-[12px] font-normal text-fg-3">{a.slug}</span>
+                    <p className="text-base font-medium text-fg-0">
+                      {a.name} <span className="font-mono text-xs font-normal text-fg-3">{a.slug}</span>
                     </p>
                     <div className="mt-1 flex flex-wrap items-center gap-1.5">
                       {a.version ? <Badge mono>v{a.version}</Badge> : <Badge>No file yet</Badge>}
-                      {a.author && <span className="text-[12px] text-fg-2">by {a.author}</span>}
+                      {a.author && <span className="text-xs text-fg-2">by {a.author}</span>}
                       {a.origin === 'template' && <Badge tone="info">From template</Badge>}
                       {a.origin === 'import' && <Badge tone="info">Imported</Badge>}
                     </div>
@@ -476,7 +476,7 @@ export function AgentTemplatesPage({ embedded = false }: { embedded?: boolean } 
                   <a
                     href={`/api/agent-templates/agents/${encodeURIComponent(a.slug)}/export`}
                     download={`${a.slug}.agent.yaml`}
-                    className="inline-flex min-h-[44px] items-center justify-center rounded-md border border-line bg-surface-1 px-4 text-[13px] font-medium text-fg-1 transition-colors duration-fast hover:border-line-strong hover:bg-surface-3 hover:text-fg-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/50 sm:min-h-[36px]"
+                    className="inline-flex min-h-[44px] items-center justify-center rounded-md border border-line bg-surface-1 px-4 text-sm font-medium text-fg-1 transition-colors duration-fast hover:border-line-strong hover:bg-surface-3 hover:text-fg-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/50 sm:min-h-[36px]"
                     aria-label={`Export ${a.name} as an agent file`}
                   >
                     Export
@@ -489,11 +489,11 @@ export function AgentTemplatesPage({ embedded = false }: { embedded?: boolean } 
       </section>
 
       <section aria-labelledby="tpl-path">
-        <h2 id="tpl-path" className="mb-1 font-display text-[16px] font-semibold text-fg-0">Import from a folder on the server</h2>
-        <p className="mb-3 max-w-prose text-[13px] text-fg-2">
+        <h2 id="tpl-path" className="mb-1 font-display text-lg font-semibold text-fg-0">Import from a folder on the server</h2>
+        <p className="mb-3 max-w-prose text-sm text-fg-2">
           For files already copied to this server. For safety, only these folders are allowed:{' '}
           {data ? data.import_roots.map((r, i) => (
-            <span key={r}>{i > 0 && ', '}<span className="font-mono text-[12px] text-fg-1">{r}</span></span>
+            <span key={r}>{i > 0 && ', '}<span className="font-mono text-xs text-fg-1">{r}</span></span>
           )) : '…'}
         </p>
         <form
@@ -506,7 +506,7 @@ export function AgentTemplatesPage({ embedded = false }: { embedded?: boolean } 
             value={serverPath}
             onChange={e => setServerPath(e.target.value)}
             placeholder="…/agent-imports/my-agent/agent.yaml"
-            className="min-h-[44px] flex-1 rounded-md border border-line bg-surface-1 px-3 font-mono text-[13px] text-fg-0 placeholder:text-fg-3 transition-colors duration-fast hover:border-line-strong focus:border-accent focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/50 sm:min-h-[36px]"
+            className="min-h-[44px] flex-1 rounded-md border border-line bg-surface-1 px-3 font-mono text-sm text-fg-0 placeholder:text-fg-3 transition-colors duration-fast hover:border-line-strong focus:border-accent focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/50 sm:min-h-[36px]"
           />
           <Button type="submit" loading={busy === 'path'} disabled={!serverPath.trim()}>Import</Button>
         </form>

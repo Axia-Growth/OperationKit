@@ -99,7 +99,7 @@ export function SetupChecklist({ links = DEFAULT_SETUP_LINKS, refreshKey = 0, cl
   const extra: Partial<Record<SetupStepId, ReactNode>> = {
     branding: !links.branding ? (
       <div className="space-y-2">
-        <p className="text-[12px] text-fg-3">
+        <p className="text-xs text-fg-3">
           Set <code className="font-mono">OK_BRAND_NAME</code> and drop a <code className="font-mono">logo.svg</code> / <code className="font-mono">logo.png</code> into
           the data folder&apos;s <code className="font-mono">branding/</code> directory (the installer asks for both), or keep the default look.
         </p>
@@ -127,12 +127,12 @@ export function SetupChecklist({ links = DEFAULT_SETUP_LINKS, refreshKey = 0, cl
               </span>
               <div className="min-w-0 flex-1 space-y-1.5">
                 <div className="flex flex-wrap items-center gap-2">
-                  <span className="text-[12px] font-medium uppercase tracking-wider text-fg-3">Step {i + 1}</span>
-                  <span className={cn('text-[13.5px] font-medium', step.done ? 'text-fg-2' : 'text-fg-0')}>{copy.title}</span>
+                  <span className="text-xs font-medium uppercase tracking-eyebrow text-fg-3">Step {i + 1}</span>
+                  <span className={cn('text-base font-medium', step.done ? 'text-fg-2' : 'text-fg-0')}>{copy.title}</span>
                   <span className="sr-only">{step.done ? '(done)' : '(to do)'}</span>
                   {step.id === 'email' && !step.done && step.configured && <Badge tone="amber">send a test</Badge>}
                 </div>
-                <p className="text-[12.5px] text-fg-2">{copy.body}</p>
+                <p className="text-sm text-fg-2">{copy.body}</p>
                 {extra[step.id]}
               </div>
               <div className="flex shrink-0 flex-col items-end gap-1.5 sm:flex-row sm:items-start">
@@ -143,7 +143,7 @@ export function SetupChecklist({ links = DEFAULT_SETUP_LINKS, refreshKey = 0, cl
                   <Link
                     to={href}
                     className={cn(
-                      'inline-flex min-h-[32px] items-center gap-1 rounded-md px-3 text-[12.5px] font-medium transition-colors',
+                      'inline-flex min-h-[32px] items-center gap-1 rounded-md px-3 text-sm font-medium transition-colors',
                       step.done ? 'text-fg-2 hover:text-fg-0' : 'bg-accent text-accent-fg hover:bg-accent-hover',
                     )}
                   >
@@ -162,17 +162,17 @@ export function SetupChecklist({ links = DEFAULT_SETUP_LINKS, refreshKey = 0, cl
           </span>
           <div className="min-w-0 flex-1 space-y-1.5">
             <div className="flex flex-wrap items-center gap-2">
-              <span className="text-[12px] font-medium uppercase tracking-wider text-fg-3">Step {status.steps.length + 1}</span>
-              <span className={cn('text-[13.5px] font-medium', kbDone ? 'text-fg-2' : 'text-fg-0')}>{KB_SETUP_STEP.title}</span>
+              <span className="text-xs font-medium uppercase tracking-eyebrow text-fg-3">Step {status.steps.length + 1}</span>
+              <span className={cn('text-base font-medium', kbDone ? 'text-fg-2' : 'text-fg-0')}>{KB_SETUP_STEP.title}</span>
               <span className="sr-only">{kbDone ? '(done)' : '(to do)'}</span>
             </div>
-            <p className="text-[12.5px] text-fg-2">{KB_SETUP_STEP.body}</p>
+            <p className="text-sm text-fg-2">{KB_SETUP_STEP.body}</p>
           </div>
           <div className="flex shrink-0 flex-col items-end gap-1.5 sm:flex-row sm:items-start">
             <Link
               to={KB_SETUP_STEP.href}
               className={cn(
-                'inline-flex min-h-[32px] items-center gap-1 rounded-md px-3 text-[12.5px] font-medium transition-colors',
+                'inline-flex min-h-[32px] items-center gap-1 rounded-md px-3 text-sm font-medium transition-colors',
                 kbDone ? 'text-fg-2 hover:text-fg-0' : 'bg-accent text-accent-fg hover:bg-accent-hover',
               )}
             >

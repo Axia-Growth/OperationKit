@@ -1,6 +1,7 @@
 import { forwardRef } from 'react'
 import type { ButtonHTMLAttributes, ReactNode } from 'react'
 import { cn } from './cn'
+import { Tooltip } from './Tooltip'
 
 /* Button — token-bound action primitive (obj 900750: GitHub-style). Variants:
      primary   = accent fill + accent-fg text (the one brand accent; primary
@@ -10,7 +11,8 @@ import { cn } from './cn'
      danger    = neutral button with danger text; tints red on hover
    Sizes meet the 44px mobile hit-target at `md`+ via min-h. */
 type Variant = 'primary' | 'secondary' | 'ghost' | 'danger'
-type Size = 'sm' | 'md'
+// Control heights (polish F1): xs 24px, sm 32px, md 36px (44px on touch).
+type Size = 'xs' | 'sm' | 'md'
 
 const VARIANT: Record<Variant, string> = {
   primary:
@@ -32,8 +34,9 @@ const DISABLED_GHOST = 'disabled:cursor-not-allowed disabled:text-fg-3'
 const disabledFor = (v: Variant) => (v === 'ghost' ? DISABLED_GHOST : DISABLED)
 
 const SIZE: Record<Size, string> = {
-  sm: 'h-8 px-3 text-[12.5px] gap-1.5',
-  md: 'min-h-[44px] sm:min-h-[36px] px-4 text-[13px] gap-2',
+  xs: 'h-6 px-2 text-xs gap-1',
+  sm: 'h-8 px-3 text-sm gap-1.5',
+  md: 'min-h-[44px] sm:min-h-9 px-4 text-sm gap-2',
 }
 
 /* Spinner — token-bound loading glyph. Reduced-motion safe (`.cc-spin`
@@ -68,7 +71,7 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button
       disabled={disabled || loading}
       aria-busy={loading || undefined}
       className={cn(
-        'inline-flex select-none items-center whitespace-nowrap justify-center rounded-md font-medium tracking-[-0.01em]',
+        'inline-flex select-none items-center whitespace-nowrap justify-center rounded-md font-medium tracking-tight',
         'transition-colors duration-fast ease-out focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-1 focus-visible:ring-offset-surface-0',
         VARIANT[variant],
         loading ? 'disabled:cursor-wait' : disabledFor(variant),
@@ -86,28 +89,35 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button
 /* IconButton — square, icon-only action. 44px tap target on mobile. */
 interface IconButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
   variant?: Variant
+  /** md = 36px desktop control, sm = 28px for dense rows; both stay 44px on touch. */
+  size?: 'sm' | 'md'
   label: string
   children: ReactNode
 }
 export const IconButton = forwardRef<HTMLButtonElement, IconButtonProps>(function IconButton(
-  { variant = 'ghost', label, className, children, ...rest },
+  { variant = 'ghost', size = 'md', label, className, children, ...rest },
   ref,
 ) {
+  // The label is the accessible name AND a tooltip that shows on hover and on
+  // keyboard focus (ui/Tooltip, obj 900819); the native title= showed on hover only.
   return (
-    <button
-      ref={ref}
-      aria-label={label}
-      title={label}
-      className={cn(
-        'inline-grid min-h-[44px] min-w-[44px] place-items-center rounded-md sm:min-h-[34px] sm:min-w-[34px]',
-        'transition-colors duration-fast ease-out focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/50',
-        VARIANT[variant],
-        disabledFor(variant),
-        className,
-      )}
-      {...rest}
-    >
-      {children}
-    </button>
+    <Tooltip content={label} type="label">
+      <button
+        ref={ref}
+        type="button"
+        aria-label={label}
+        className={cn(
+          'inline-grid min-h-[44px] min-w-[44px] place-items-center rounded-md',
+          size === 'sm' ? 'sm:min-h-7 sm:min-w-7' : 'sm:min-h-9 sm:min-w-9',
+          'transition-colors duration-fast ease-out focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/50',
+          VARIANT[variant],
+          disabledFor(variant),
+          className,
+        )}
+        {...rest}
+      >
+        {children}
+      </button>
+    </Tooltip>
   )
 })

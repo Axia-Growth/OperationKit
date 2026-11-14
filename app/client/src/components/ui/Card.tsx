@@ -1,5 +1,6 @@
 import type { ReactNode, HTMLAttributes } from 'react'
 import { cn } from './cn'
+import { Eyebrow } from './Eyebrow'
 
 /* Card — Mission Control surface. surface-2 fill, 1px hairline, NO shadow
    (shadows are overlay-only in this system). The workhorse container every
@@ -41,9 +42,9 @@ export function CardHeader({
     <div className={cn('flex flex-wrap items-start justify-between gap-3 border-b border-line-soft px-4 py-3', className)}>
       <div className="min-w-0">
         {eyebrow && (
-          <div className="mb-1 text-[12px] font-semibold uppercase tracking-[0.08em] text-fg-2">{eyebrow}</div>
+          <Eyebrow className="mb-1 block text-fg-2">{eyebrow}</Eyebrow>
         )}
-        <h3 className="truncate font-display text-[15px] font-semibold tracking-[-0.01em] text-fg-0">{title}</h3>
+        <h3 className="truncate font-display text-lg font-semibold tracking-tight text-fg-0">{title}</h3>
       </div>
       {actions && <div className="flex min-w-0 max-w-full items-center gap-1.5">{actions}</div>}
     </div>

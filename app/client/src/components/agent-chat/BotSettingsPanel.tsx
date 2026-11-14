@@ -2,6 +2,8 @@ import { useMemo, useState } from 'react'
 import { api } from '../../lib/api'
 import { Alert, Button, cn } from '../ui'
 import { HighAgencySection } from './HighAgencySection'
+import { WorkspaceAccessSection } from './WorkspaceAccessSection'
+import { DelegationSection } from './DelegationSection'
 import {
   PROVIDER_LABELS,
   type AgentsResponse,
@@ -11,6 +13,7 @@ import {
   type ToolCatalogEntry,
   type ToolGroup,
 } from './types'
+import { Select } from '../ui/Select'
 
 /* A bot's settings, on the bot's own page (obj 900671).
 
@@ -72,6 +75,9 @@ export function BotSettingsPanel({
     return base.filter(t => catalog.some(c => c.name === t))
   })
   const [saving, setSaving] = useState(false)
+  // obj 900797: a grant/revoke can change where High Agency may wake (or switch
+  // it off), so the High Agency section reloads after one.
+  const [accessVersion, setAccessVersion] = useState(0)
   const [error, setError] = useState<string | null>(null)
   const [saved, setSaved] = useState(false)
 
@@ -141,14 +147,14 @@ export function BotSettingsPanel({
   }
 
   const inputCls =
-    'min-h-[40px] w-full rounded-md border border-line bg-surface-0 px-2 text-[13px] text-fg-0 focus:border-accent focus:outline-none focus:ring-2 focus:ring-accent/30 disabled:opacity-60'
+    'min-h-[40px] w-full rounded-md border border-line bg-surface-0 px-2 text-sm text-fg-0 focus:border-accent focus:outline-none focus:ring-2 focus:ring-accent/30 disabled:opacity-60'
   const enabledNames = new Set(agent.effective_tools ?? agent.tools)
 
   return (
     <section aria-label={`Settings for ${agent.name}`} className="border-b border-line bg-surface-1 px-3 py-3 sm:px-6">
       <div className="mx-auto flex max-w-[760px] flex-col gap-4">
         <div className="flex items-center justify-between gap-2">
-          <h3 className="font-display text-[14px] font-semibold text-fg-0">Bot settings</h3>
+          <h3 className="font-display text-base font-semibold text-fg-0">Bot settings</h3>
           {/* A real, visible button (Operator's 2026-11-12 walkthrough: the old ghost
               "Done" read as plain text on this surface, so he closed the panel
               with the header Settings toggle instead). Secondary, not primary,
@@ -166,12 +172,12 @@ export function BotSettingsPanel({
         </div>
 
         {!isAdmin && (
-          <p className="text-[12px] text-fg-2">Only an admin can change a bot&apos;s model or tools.</p>
+          <p className="text-xs text-fg-2">Only an admin can change a bot&apos;s model or tools.</p>
         )}
 
         <div className="grid gap-3 sm:grid-cols-2">
           <div>
-            <label htmlFor={`bot-model-${agent.slug}`} className="mb-1 block text-[12px] font-medium text-fg-1">Default model</label>
+            <label htmlFor={`bot-model-${agent.slug}`} className="mb-1 block text-xs font-medium text-fg-1">Default model</label>
             <input
               id={`bot-model-${agent.slug}`}
               list={datalistId}
@@ -184,18 +190,17 @@ export function BotSettingsPanel({
             <datalist id={datalistId}>
               {suggestions.map(m => <option key={m} value={m} />)}
             </datalist>
-            <p className="mt-1 text-[12px] text-fg-2">
+            <p className="mt-1 text-xs text-fg-2">
               Answers now with <span className="text-fg-1">{PROVIDER_LABELS[agent.answered_by.id]}{agent.answered_by.model ? ` · ${agent.answered_by.model}` : ''}</span>. Leave empty for the default.
             </p>
           </div>
           <div>
-            <label htmlFor={`bot-provider-${agent.slug}`} className="mb-1 block text-[12px] font-medium text-fg-1">AI provider</label>
-            <select
+            <label htmlFor={`bot-provider-${agent.slug}`} className="mb-1 block text-xs font-medium text-fg-1">AI provider</label>
+            <Select className="w-full"
               id={`bot-provider-${agent.slug}`}
               value={provider}
               disabled={!isAdmin || saving}
-              onChange={e => { setProvider(e.target.value as ProviderId | ''); setSaved(false) }}
-              className={inputCls}
+              onChange={v => { setProvider(v as ProviderId | ''); setSaved(false) }}
             >
               <option value="">{fileDefaults.provider ? `${PROVIDER_LABELS[fileDefaults.provider]} (from the bot file)` : 'Automatic (install default)'}</option>
               {PROVIDERS.map(p => (
@@ -203,12 +208,12 @@ export function BotSettingsPanel({
                   {PROVIDER_LABELS[p]}{meta.providers && !meta.providers[p] ? ' — not set up' : ''}
                 </option>
               ))}
-            </select>
+            </Select>
           </div>
         </div>
 
         <fieldset className="flex flex-col gap-2" disabled={!isAdmin || saving}>
-          <legend className="mb-1 text-[12px] font-medium text-fg-1">Tools</legend>
+          <legend className="mb-1 text-xs font-medium text-fg-1">Tools</legend>
           <label className="flex items-start gap-2 rounded-md border border-line bg-surface-0 px-3 py-2">
             <input
               type="checkbox"
@@ -218,15 +223,15 @@ export function BotSettingsPanel({
               aria-describedby={`bot-all-tools-help-${agent.slug}`}
             />
             <span>
-              <span className="block text-[13px] font-medium text-fg-0">All tools</span>
-              <span id={`bot-all-tools-help-${agent.slug}`} className="block text-[12px] text-fg-2">
+              <span className="block text-sm font-medium text-fg-0">All tools</span>
+              <span id={`bot-all-tools-help-${agent.slug}`} className="block text-xs text-fg-2">
                 Every tool below, plus any added later. Email and calendar stay draft-only. Secrets must be ticked on their own.
               </span>
             </span>
           </label>
           {byGroup.map(({ group, tools: entries }) => (
             <div key={group}>
-              <p className="mb-1 text-[12px] font-semibold uppercase tracking-wide text-fg-2">{GROUP_LABELS[group]}</p>
+              <p className="mb-1 text-xs font-semibold uppercase tracking-eyebrow text-fg-2">{GROUP_LABELS[group]}</p>
               <div className="grid gap-1 sm:grid-cols-2">
                 {entries.map(t => {
                   // obj 900749: an explicit-only tool (secret use) is never implied by "All tools".
@@ -243,8 +248,8 @@ export function BotSettingsPanel({
                         aria-label={t.label}
                       />
                       <span>
-                        <span className="block text-[13px] text-fg-0">{t.label}</span>
-                        <span className="block text-[12px] text-fg-2">{t.description}</span>
+                        <span className="block text-sm text-fg-0">{t.label}</span>
+                        <span className="block text-xs text-fg-2">{t.description}</span>
                       </span>
                     </label>
                   )
@@ -265,14 +270,18 @@ export function BotSettingsPanel({
           <div className="flex flex-wrap items-center gap-2">
             <Button variant="primary" size="sm" loading={saving} onClick={() => void save()}>Save</Button>
             <Button variant="ghost" size="sm" disabled={saving || !cfg} onClick={() => void reset()}>Reset to file</Button>
-            {saved && <span role="status" className="text-[12px] text-fg-2">Saved.</span>}
+            {saved && <span role="status" className="text-xs text-fg-2">Saved.</span>}
             {cfg?.updated_by && !saved && (
-              <span className="text-[12px] text-fg-2">Changed by {cfg.updated_by}</span>
+              <span className="text-xs text-fg-2">Changed by {cfg.updated_by}</span>
             )}
           </div>
         )}
 
-        <HighAgencySection agent={agent} isAdmin={isAdmin} />
+        <WorkspaceAccessSection agent={agent} isAdmin={isAdmin} onChanged={() => setAccessVersion(v => v + 1)} />
+
+        <DelegationSection agent={agent} isAdmin={isAdmin} />
+
+        <HighAgencySection key={accessVersion} agent={agent} isAdmin={isAdmin} />
       </div>
     </section>
   )

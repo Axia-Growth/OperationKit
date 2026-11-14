@@ -45,11 +45,11 @@ export function KbSetupStep({ index = 4, workspace, done: doneProp, className }:
         ? <CheckCircle2 className="mt-0.5 h-5 w-5 shrink-0 text-signal-verify" aria-label="Done" />
         : <Circle className="mt-0.5 h-5 w-5 shrink-0 text-fg-3" aria-label="Not done" />}
       <div className="min-w-0 flex-1">
-        <p className="font-mono text-[12px] uppercase tracking-[0.12em] text-fg-3">Step {index}</p>
-        <p className={cn('mt-0.5 font-display text-[15px] font-semibold tracking-[-0.01em]', done ? 'text-fg-2' : 'text-fg-0')}>
+        <p className="font-mono text-xs uppercase tracking-eyebrow text-fg-3">Step {index}</p>
+        <p className={cn('mt-0.5 font-display text-lg font-semibold tracking-tight', done ? 'text-fg-2' : 'text-fg-0')}>
           {KB_SETUP_STEP.title}
         </p>
-        <p className="mt-1 text-[13px] leading-relaxed text-fg-2">{KB_SETUP_STEP.body}</p>
+        <p className="mt-1 text-sm leading-relaxed text-fg-2">{KB_SETUP_STEP.body}</p>
         <a
           href={KB_SETUP_STEP.href}
           onClick={e => {
@@ -58,7 +58,7 @@ export function KbSetupStep({ index = 4, workspace, done: doneProp, className }:
             navigate(KB_SETUP_STEP.href)
           }}
           className={cn(
-            'mt-3 inline-flex min-h-[44px] items-center gap-1.5 rounded-md border px-3 text-[12.5px] font-medium transition-colors sm:min-h-[32px]',
+            'mt-3 inline-flex min-h-[44px] items-center gap-1.5 rounded-md border px-3 text-sm font-medium transition-colors sm:min-h-[32px]',
             done
               ? 'border-line bg-surface-1 text-fg-1 hover:border-line-strong hover:text-fg-0'
               : 'border-transparent bg-accent text-accent-fg hover:bg-accent-hover',

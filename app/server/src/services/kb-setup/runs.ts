@@ -14,6 +14,7 @@ import { appendLog, compileWiki } from '../kb-wiki/wiki.js'
 import { extractForSetup, setupKindFor, skipReason } from './extract.js'
 import { redactSecrets, describeFindings, type SecretFinding } from './secrets.js'
 import { CATEGORY_HINT, classifyFile, foldGlossary, sectionFor, type FileCategory, type SectionKey } from './taxonomy.js'
+import { noteKbWrite } from '../kb-semantic/service.js'
 import {
   cleanQuestions, closeQuestionItem, detectAmbiguousNames, ensureAnchorCard, fileQuestions, mergeQuestions, questionId,
   type OpenQuestion,
@@ -509,6 +510,7 @@ function decorateSourceNote(kb: string, sourceNote: string, relPath: string, cat
     text = text.replace(/\n## Content \(as extracted\)\n/, `\n## Secrets removed\n\n${describeFindings(secrets)} were found in this file and replaced with [REDACTED]. The original file was NOT kept; rotate these credentials.\n\n## Content (as extracted)\n`)
   }
   fs.writeFileSync(abs, text)
+  noteKbWrite(abs) // obj 900816: semantic index
 }
 
 interface ItemOutcome { item: RunItem; cost: number; aiFailed?: boolean }
@@ -585,6 +587,7 @@ async function processItem(kb: string, run: Run, item: RunItem, deps: RunDeps): 
   fs.mkdirSync(path.join(kb, 'sources/files'), { recursive: true })
   for (const old of [prev?.original].filter((p): p is string => !!p && p !== originalRel)) { try { fs.rmSync(path.join(kb, old), { force: true }) } catch { /* gone */ } }
   fs.writeFileSync(path.join(kb, originalRel), findings.length ? (textual ? redactSecrets(buf.toString('utf8')).text : markdown) : buf)
+  noteKbWrite(path.join(kb, originalRel), ...[prev?.original].filter((p): p is string => !!p && p !== originalRel).map(p => path.join(kb, p))) // obj 900816: semantic index
   if (findings.length) warnings.push(`${describeFindings(findings)} removed; the original file was not kept.`)
 
   const before = new Set(index.all.map(e => e.rel))
@@ -602,7 +605,7 @@ async function processItem(kb: string, run: Run, item: RunItem, deps: RunDeps): 
   for (const rel of prev?.pages ?? []) {
     if (nowPages.has(rel)) continue
     const abs = path.join(kb, rel)
-    if (fs.existsSync(abs)) fs.writeFileSync(abs, removeSourceSection(fs.readFileSync(abs, 'utf8'), item.path, res.sourceNoteRel))
+    if (fs.existsSync(abs)) { fs.writeFileSync(abs, removeSourceSection(fs.readFileSync(abs, 'utf8'), item.path, res.sourceNoteRel)); noteKbWrite(abs) } // obj 900816: semantic index
   }
 
   const pages: PageChange[] = [...nowPages].map(rel => {

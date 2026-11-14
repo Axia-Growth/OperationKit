@@ -8,7 +8,7 @@ import {
   Sparkles, UploadCloud, XCircle,
 } from 'lucide-react'
 import {
-  Alert, Badge, Button, Card, CardBody, CardHeader, CopyButton, PageContainer, PageHeader, Skeleton, SkeletonText, cn,
+  Alert, Badge, Button, Card, CardBody, CardHeader, CopyButton, PageContainer, PageHeader, ProgressBar, Skeleton, SkeletonText, cn,
 } from '../ui'
 import { useWorkspaces } from '../../hooks/useWorkspaces'
 import { useNavigate } from '../../context/nav'
@@ -19,6 +19,7 @@ import {
   type SetupStatus,
 } from '../../lib/kbSetup'
 import { fixtureApi, type KbSetupFixture } from './KbSetupPage.fixture'
+import { Select } from '../ui/Select'
 
 const POLL_MS = 2000
 
@@ -57,15 +58,15 @@ function ServerKbSetup({ workspace, pollMs }: { workspace: string; pollMs?: numb
     )
   }
   const picker = !fixed && slugs.length > 1 ? (
-    <label className="flex items-center gap-2 text-[12.5px] text-fg-2">
+    <label className="flex items-center gap-2 text-sm text-fg-2">
       Workspace
-      <select
+      <Select
+        aria-label="Workspace"
         value={ws}
-        onChange={e => setPicked(e.target.value)}
-        className="h-8 rounded-md border border-line bg-surface-1 px-2 text-[12.5px] text-fg-0"
+        onChange={v => setPicked(v)}
       >
         {slugs.map(s => <option key={s} value={s}>{labelOf(s)}</option>)}
-      </select>
+      </Select>
     </label>
   ) : null
   return <KbSetupView key={ws} workspace={ws} kb={kb} pollMs={pollMs} picker={picker} />
@@ -214,7 +215,7 @@ function UploadState({
         title: `Added ${r.saved.length} ${r.saved.length === 1 ? 'file' : 'files'}`,
         body: r.skipped.length ? (
           <ul className="mt-1 space-y-0.5">
-            {r.skipped.map(s => <li key={s.path}><span className="font-mono text-[12px]">{s.path}</span> — {s.reason}</li>)}
+            {r.skipped.map(s => <li key={s.path}><span className="font-mono text-xs">{s.path}</span> — {s.reason}</li>)}
           </ul>
         ) : undefined,
       })
@@ -284,8 +285,8 @@ function UploadState({
             <UploadCloud className="h-6 w-6" aria-hidden="true" />
           </div>
           <div>
-            <p className="font-display text-[16px] font-semibold text-fg-0">Drop files or whole folders here</p>
-            <p className="mt-1 text-[13px] text-fg-2">Folders keep their structure. Up to 50 MB per file.</p>
+            <p className="font-display text-lg font-semibold text-fg-0">Drop files or whole folders here</p>
+            <p className="mt-1 text-sm text-fg-2">Folders keep their structure. Up to 50 MB per file.</p>
           </div>
           <div className="flex flex-wrap justify-center gap-2">
             <Button onClick={() => filesInput.current?.click()} disabled={!!busy} leftIcon={<FileUp className="h-4 w-4" aria-hidden="true" />}>
@@ -303,7 +304,7 @@ function UploadState({
 
         {progress && (
           <div aria-label="Upload progress">
-            <div className="mb-1 flex justify-between text-[12.5px] text-fg-2">
+            <div className="mb-1 flex justify-between text-sm text-fg-2">
               <span>Uploading…</span>
               <span className="font-mono">{progress.sent} / {progress.total} files</span>
             </div>
@@ -315,11 +316,11 @@ function UploadState({
         <Card>
           <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <div className="min-w-0">
-              <p className="text-[12px] font-mono uppercase tracking-[0.12em] text-fg-3">Waiting to be read</p>
+              <p className="text-xs font-mono uppercase tracking-eyebrow text-fg-3">Waiting to be read</p>
               {status ? (
-                <p className="mt-0.5 font-display text-[20px] font-semibold text-fg-0" data-testid="intake-count">
+                <p className="mt-0.5 font-display text-xl font-semibold text-fg-0" data-testid="intake-count">
                   {waiting} {waiting === 1 ? 'file' : 'files'}
-                  <span className="ml-2 text-[13px] font-normal text-fg-2">{formatBytes(Number(status.intake.bytes))}</span>
+                  <span className="ml-2 text-sm font-normal text-fg-2">{formatBytes(Number(status.intake.bytes))}</span>
                 </p>
               ) : <Skeleton className="mt-1 h-6 w-32" />}
             </div>
@@ -336,12 +337,12 @@ function UploadState({
           {status?.intake.folder && (
             <div className="mt-3 border-t border-line-soft pt-3">
               <div className="flex min-w-0 items-center gap-2">
-                <code className="min-w-0 flex-1 truncate rounded-sm bg-surface-inset px-2 py-1 font-mono text-[12px] text-fg-1" title={status.intake.folder}>
+                <code className="min-w-0 flex-1 truncate rounded-sm bg-surface-inset px-2 py-1 font-mono text-xs text-fg-1" title={status.intake.folder}>
                   {status.intake.folder}
                 </code>
                 <CopyButton value={status.intake.folder} label="Copy path" />
               </div>
-              <p className="mt-1 text-[12px] text-fg-3">or copy files into this folder on the server</p>
+              <p className="mt-1 text-xs text-fg-3">or copy files into this folder on the server</p>
             </div>
           )}
         </Card>
@@ -349,7 +350,7 @@ function UploadState({
 
       <Card inset className="h-fit">
         <CardHeader title="What gets read" />
-        <CardBody className="space-y-4 text-[13px]">
+        <CardBody className="space-y-4 text-sm">
           <ul className="space-y-1.5">
             {READ_KINDS.map(k => (
               <li key={k} className="flex items-center gap-2 text-fg-1">
@@ -358,7 +359,7 @@ function UploadState({
             ))}
           </ul>
           <div>
-            <p className="mb-1.5 text-[12px] font-mono uppercase tracking-[0.12em] text-fg-3">Skipped</p>
+            <p className="mb-1.5 text-xs font-mono uppercase tracking-eyebrow text-fg-3">Skipped</p>
             <ul className="space-y-1.5">
               {SKIP_KINDS.map(k => (
                 <li key={k} className="flex items-center gap-2 text-fg-2">
@@ -367,7 +368,7 @@ function UploadState({
               ))}
             </ul>
           </div>
-          <p className="flex gap-2 rounded-md bg-surface-inset p-2.5 text-[12.5px] text-fg-2">
+          <p className="flex gap-2 rounded-md bg-surface-inset p-2.5 text-sm text-fg-2">
             <ShieldAlert className="mt-0.5 h-3.5 w-3.5 shrink-0 text-signal-amber" aria-hidden="true" />
             Passwords and API keys found inside files are removed before anything is read, and flagged so you can change them.
           </p>
@@ -378,15 +379,6 @@ function UploadState({
 }
 
 // ── Progress ─────────────────────────────────────────────────────────────────
-
-function ProgressBar({ pct, tone = 'accent' }: { pct: number; tone?: 'accent' | 'amber' }) {
-  const v = Math.max(0, Math.min(100, pct))
-  return (
-    <div className="h-2 w-full overflow-hidden rounded-full bg-surface-3" role="progressbar" aria-valuenow={v} aria-valuemin={0} aria-valuemax={100}>
-      <div className={cn('h-full rounded-full transition-[width] duration-300', tone === 'amber' ? 'bg-signal-amber' : 'bg-accent')} style={{ width: `${v}%` }} />
-    </div>
-  )
-}
 
 const ITEM_META: Record<ItemStatus, { label: string; tone: 'neutral' | 'info' | 'verify' | 'amber' | 'alarm'; icon: ReactNode }> = {
   pending: { label: 'Waiting', tone: 'neutral', icon: <Circle className="h-4 w-4 text-fg-3" aria-hidden="true" /> },
@@ -436,14 +428,14 @@ function ProgressState({
         <CardBody className="space-y-4">
           <div>
             <div className="mb-1.5 flex items-baseline justify-between gap-3">
-              <span className="font-display text-[22px] font-semibold text-fg-0" data-testid="run-progress">
-                {finished} <span className="text-[14px] font-normal text-fg-2">of {total} files</span>
+              <span className="font-display text-2xl font-semibold text-fg-0" data-testid="run-progress">
+                {finished} <span className="text-base font-normal text-fg-2">of {total} files</span>
               </span>
-              <span className="font-mono text-[12.5px] text-fg-2">{pct}%</span>
+              <span className="font-mono text-sm text-fg-2">{pct}%</span>
             </div>
             <ProgressBar pct={pct} tone={run.status === 'paused' ? 'amber' : 'accent'} />
             {run.current && run.status === 'running' && (
-              <p className="mt-2 truncate text-[12.5px] text-fg-2">
+              <p className="mt-2 truncate text-sm text-fg-2">
                 Reading <span className="font-mono text-fg-1">{run.current}</span>
               </p>
             )}
@@ -453,7 +445,7 @@ function ProgressState({
               <Badge key={s} tone={ITEM_META[s].tone}>{ITEM_META[s].label} {n}</Badge>
             ))}
           </div>
-          <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1 rounded-md bg-surface-inset px-3 py-2 text-[13px]">
+          <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1 rounded-md bg-surface-inset px-3 py-2 text-sm">
             <span className="text-fg-2">Estimated cost</span>
             <span className="font-mono font-medium text-fg-0">{formatUsd(run.est_cost_usd)}</span>
             {noCeiling ? (
@@ -502,11 +494,11 @@ function FileRow({ item }: { item: RunItem }) {
     <li className="flex items-center gap-3 px-4 py-2">
       <span className="shrink-0" title={m.label}>{m.icon}</span>
       <div className="min-w-0 flex-1">
-        <p className="truncate font-mono text-[12.5px] text-fg-0" title={item.path}>{item.path}</p>
-        {note && <p className="truncate text-[12px] text-fg-3">{note}</p>}
+        <p className="truncate font-mono text-sm text-fg-0" title={item.path}>{item.path}</p>
+        {note && <p className="truncate text-xs text-fg-3">{note}</p>}
       </div>
       {!!item.secrets?.length && <Badge tone="amber"><ShieldAlert className="h-3 w-3" aria-hidden="true" />Secret removed</Badge>}
-      <span className="hidden shrink-0 text-[12px] text-fg-3 sm:inline">{formatBytes(item.bytes)}</span>
+      <span className="hidden shrink-0 text-xs text-fg-3 sm:inline">{formatBytes(item.bytes)}</span>
     </li>
   )
 }
@@ -516,8 +508,8 @@ function FileRow({ item }: { item: RunItem }) {
 function Stat({ label, value, tone }: { label: string; value: number; tone?: 'alarm' | 'amber' }) {
   return (
     <div className="rounded-lg border border-line bg-surface-2 px-3 py-2.5">
-      <p className="text-[12px] text-fg-2">{label}</p>
-      <p className={cn('font-display text-[24px] font-semibold leading-tight',
+      <p className="text-xs text-fg-2">{label}</p>
+      <p className={cn('font-display text-2xl font-semibold leading-tight',
         tone === 'alarm' && value > 0 ? 'text-signal-alarm' : tone === 'amber' && value > 0 ? 'text-signal-amber' : 'text-fg-0')}>
         {value}
       </p>
@@ -531,7 +523,7 @@ function PageList({ title, pages }: { title: string; pages: PageChange[] }) {
     <Card inset>
       <CardHeader title={title} eyebrow={`${pages.length} ${pages.length === 1 ? 'page' : 'pages'}`} />
       {pages.length === 0 ? (
-        <p className="px-4 py-3 text-[13px] text-fg-3">None this time.</p>
+        <p className="px-4 py-3 text-sm text-fg-3">None this time.</p>
       ) : (
         <ul className="max-h-[360px] divide-y divide-line-soft overflow-y-auto">
           {pages.map(p => (
@@ -540,11 +532,11 @@ function PageList({ title, pages }: { title: string; pages: PageChange[] }) {
                 <a
                   href="/knowledge"
                   onClick={e => { if (!e.metaKey && !e.ctrlKey && !e.shiftKey && e.button === 0) { e.preventDefault(); navigate('/knowledge') } }}
-                  className="block truncate text-[13px] font-medium text-fg-0 hover:text-accent-hover"
+                  className="block truncate text-sm font-medium text-fg-0 hover:text-accent-hover"
                 >
                   {p.title}
                 </a>
-                <p className="truncate font-mono text-[12px] text-fg-3">{p.rel}</p>
+                <p className="truncate font-mono text-xs text-fg-3">{p.rel}</p>
               </div>
               <Badge>{sectionLabel(p.section)}</Badge>
             </li>
@@ -587,7 +579,7 @@ function SummaryState({
           <ul className="mt-1.5 space-y-1" data-testid="secrets-list">
             {secrets.map(x => (
               <li key={x.path}>
-                <span className="font-mono text-[12px] text-fg-1">{x.path}</span>
+                <span className="font-mono text-xs text-fg-1">{x.path}</span>
                 <span className="text-fg-3"> — </span>
                 {x.findings.map(f => `${f.kind} on line ${f.line}`).join(', ')}
               </li>
@@ -604,8 +596,8 @@ function SummaryState({
             const any = Number(v.created) + Number(v.updated) > 0
             return (
               <div key={sec.key} className="bg-surface-2 px-4 py-3" data-section={sec.key}>
-                <p className={cn('text-[13px] font-medium', any ? 'text-fg-0' : 'text-fg-3')}>{sec.label}</p>
-                <p className="mt-1 text-[12.5px] text-fg-2">
+                <p className={cn('text-sm font-medium', any ? 'text-fg-0' : 'text-fg-3')}>{sec.label}</p>
+                <p className="mt-1 text-sm text-fg-2">
                   <span className={cn('font-mono', Number(v.created) > 0 && 'text-signal-verify')}>{Number(v.created)} new</span>
                   <span className="text-fg-3"> · </span>
                   <span className="font-mono">{Number(v.updated)} updated</span>
@@ -647,9 +639,9 @@ function QuestionsPanel({ questions, kb, onAnswered }: { questions: OpenQuestion
         actions={<HelpCircle className="h-4 w-4 text-fg-3" aria-hidden="true" />}
       />
       <CardBody className="space-y-3">
-        <p className="text-[12.5px] text-fg-2">The agent was not sure about these. Your answers go into the knowledge base. They are also in your decision queue.</p>
+        <p className="text-sm text-fg-2">The agent was not sure about these. Your answers go into the knowledge base. They are also in your decision queue.</p>
         {questions === null ? <SkeletonText lines={3} /> : open.length === 0 ? (
-          <p className="text-[13px] text-fg-3">Nothing to answer right now.</p>
+          <p className="text-sm text-fg-3">Nothing to answer right now.</p>
         ) : open.map(q => <QuestionRow key={q.id} q={q} kb={kb} onAnswered={onAnswered} />)}
       </CardBody>
     </Card>
@@ -669,16 +661,16 @@ function QuestionRow({ q, kb, onAnswered }: { q: OpenQuestion; kb: KbSetupApi; o
     <div className="rounded-md border border-line bg-surface-1 p-3" data-testid="open-question">
       <div className="mb-1 flex flex-wrap items-center gap-1.5">
         <Badge tone={q.kind === 'conflict' ? 'amber' : q.kind === 'secret' ? 'alarm' : 'info'}>{KIND_LABEL[q.kind] ?? q.kind}</Badge>
-        {q.files.slice(0, 2).map(f => <span key={f} className="truncate font-mono text-[12px] text-fg-3">{f}</span>)}
+        {q.files.slice(0, 2).map(f => <span key={f} className="truncate font-mono text-xs text-fg-3">{f}</span>)}
       </div>
-      <label htmlFor={id} className="block text-[13.5px] leading-snug text-fg-0">{q.ask}</label>
+      <label htmlFor={id} className="block text-base leading-snug text-fg-0">{q.ask}</label>
       <textarea
         id={id}
         value={text}
         onChange={e => setText(e.target.value)}
         rows={2}
         placeholder="Your answer"
-        className="mt-2 w-full resize-y rounded-md border border-line bg-surface-0 px-2.5 py-1.5 text-[13px] text-fg-0 placeholder:text-fg-3 focus:border-accent focus:outline-none"
+        className="mt-2 w-full resize-y rounded-md border border-line bg-surface-0 px-2.5 py-1.5 text-sm text-fg-0 placeholder:text-fg-3 focus:border-accent focus:outline-none"
       />
       <div className="mt-2 flex flex-wrap gap-2">
         <Button size="sm" variant="primary" disabled={!text.trim() || !!busy} loading={busy === 'save'}
@@ -686,7 +678,7 @@ function QuestionRow({ q, kb, onAnswered }: { q: OpenQuestion; kb: KbSetupApi; o
         <Button size="sm" variant="ghost" disabled={!!busy} loading={busy === 'dismiss'}
           onClick={() => send({ dismiss: true }, 'dismiss')}>Dismiss</Button>
       </div>
-      {err && <p className="mt-1.5 text-[12px] text-signal-alarm">{err}</p>}
+      {err && <p className="mt-1.5 text-xs text-signal-alarm">{err}</p>}
     </div>
   )
 }

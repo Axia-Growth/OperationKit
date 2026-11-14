@@ -79,7 +79,7 @@ export function WikiSection({
     <Card inset className="mt-5">
       <CardHeader eyebrow="Wiki" title="Your knowledge base" />
       <CardBody className="flex flex-col gap-4">
-        <p className="max-w-[72ch] text-[13px] leading-relaxed text-fg-2">
+        <p className="max-w-[72ch] text-sm leading-relaxed text-fg-2">
           Everything you upload or import is turned into linked pages — one per person, company and topic — each
           fact pointing back to where it came from. Answers you save become pages too, and a regular cleanup keeps
           the links tidy. The graph shows how every page connects.
@@ -93,7 +93,9 @@ export function WikiSection({
           ]}
           value={tab}
           onChange={k => setTab(k as Tab)}
-        />
+          label="Knowledge base views"
+          panelClassName="mt-4 flex flex-col gap-4"
+        >
         {tab === 'graph' && <WorkspaceGraph workspace={workspace} onOpenNote={onOpenNote} refreshKey={refreshKey + localKey} />}
         {error && tab === 'wiki' && <Alert tone="alarm" title="Couldn't load the wiki">{error}</Alert>}
         {tab === 'wiki' && (
@@ -110,6 +112,7 @@ export function WikiSection({
         {tab === 'cleanup' && (
           <CleanupPanel workspace={workspace} pages={data?.pages ?? null} isAdmin={user?.role === 'admin'} onOpenNote={onOpenNote} onChanged={changed} />
         )}
+        </Tabs>
       </CardBody>
     </Card>
   )

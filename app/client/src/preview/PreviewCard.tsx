@@ -55,7 +55,7 @@ export function PreviewCard({
           <button
             type="button"
             onClick={() => onOpen(objective)}
-            className="min-w-0 flex-1 text-left text-[14px] font-medium leading-snug text-fg-0 hover:text-accent"
+            className="min-w-0 flex-1 text-left text-base font-medium leading-snug text-fg-0 hover:text-accent"
           >
             {objective.title}
           </button>
@@ -72,11 +72,11 @@ export function PreviewCard({
           )}
         </div>
         {(objective.last_session_summary || objective.description) && (
-          <p className="mt-1.5 line-clamp-2 pl-7 text-[12px] leading-relaxed text-fg-2">
+          <p className="mt-1.5 line-clamp-2 pl-7 text-xs leading-relaxed text-fg-2">
             {objective.last_session_summary || objective.description}
           </p>
         )}
-        <div className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 pl-7 text-[12px] text-fg-2">
+        <div className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 pl-7 text-xs text-fg-2">
           <span className={meta.tone}>{meta.label}</span>
           {isLive && <LiveBadge />}
           {objective.project && <span>{objective.project}</span>}
@@ -101,7 +101,7 @@ export function PreviewCard({
         </div>
         {/* Board-Project chip + org chip — only rendered when data is present (obj 710597) */}
         {(objective.project_name || (objective.workspace && showOrgChip)) && (
-          <div className="mt-1 flex flex-wrap items-center gap-1.5 pl-7 text-[12px] text-fg-2">
+          <div className="mt-1 flex flex-wrap items-center gap-1.5 pl-7 text-xs text-fg-2">
             {objective.project_name && (
               <span
                 className="inline-flex items-center gap-1 rounded-full border border-line px-1.5 py-px"
@@ -123,7 +123,7 @@ export function PreviewCard({
             {objective.workspace && showOrgChip && (
               <span
                 className="inline-flex items-center gap-1 rounded-full border border-line/80 bg-surface-2 px-1.5 py-px font-medium"
-                title={`Organization: ${objective.workspace}`}
+                title={`Workspace: ${objective.workspace}`}
                 data-testid="org-chip"
               >
                 <Building2 className="h-2.5 w-2.5 opacity-60" aria-hidden="true" />

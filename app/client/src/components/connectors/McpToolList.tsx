@@ -15,17 +15,17 @@ export function McpToolList({
   onToggle?: (name: string, enabled: boolean) => void
   busyTool?: string | null
 }) {
-  if (tools.length === 0) return <p className="text-[12.5px] text-fg-3">This server lists no tools.</p>
+  if (tools.length === 0) return <p className="text-sm text-fg-3">This server lists no tools.</p>
   return (
     <ul className="divide-y divide-line-soft overflow-hidden rounded-md border border-line bg-surface-1" aria-label="Tools">
       {tools.map(t => (
         <li key={t.name} className="flex items-start gap-3 px-3 py-2">
           <div className="min-w-0 flex-1">
-            <div className={cn('font-mono text-[12.5px]', t.enabled ? 'text-fg-0' : 'text-fg-3 line-through')}>{t.name}</div>
-            {t.description && <div className="mt-0.5 line-clamp-2 text-[12px] leading-relaxed text-fg-2">{t.description}</div>}
+            <div className={cn('font-mono text-sm', t.enabled ? 'text-fg-0' : 'text-fg-3 line-through')}>{t.name}</div>
+            {t.description && <div className="mt-0.5 line-clamp-2 text-xs leading-relaxed text-fg-2">{t.description}</div>}
           </div>
           {onToggle && (
-            <label className="mt-0.5 inline-flex shrink-0 cursor-pointer items-center gap-1.5 text-[12px] text-fg-2">
+            <label className="mt-0.5 inline-flex shrink-0 cursor-pointer items-center gap-1.5 text-xs text-fg-2">
               <input
                 type="checkbox"
                 className="h-4 w-4 accent-[color:var(--accent)]"

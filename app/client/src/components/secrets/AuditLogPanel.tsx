@@ -15,6 +15,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { api } from '../../lib/api'
 import type { SecretAuditEntry, SecretAuditPage } from '@operationkit/shared'
 import { fmtTime } from './SecretRow'
+import { Select } from '../ui/Select'
 
 /** Plain-language label per action. Unknown actions fall back to the raw string. */
 export const AUDIT_ACTION_LABELS: Record<string, string> = {
@@ -99,25 +100,23 @@ export function AuditLogPanel({ scopeQuery, secretKey, refreshToken, pageSize = 
       {!perSecret && (
         <div className="mb-3 flex flex-wrap items-end gap-3">
           <div>
-            <label htmlFor="audit-action" className="mb-1 block text-[12px] uppercase tracking-wider text-fg-3">Action</label>
-            <select
+            <label htmlFor="audit-action" className="mb-1 block text-xs uppercase tracking-eyebrow text-fg-3">Action</label>
+            <Select
               id="audit-action"
               value={action}
-              onChange={e => setAction(e.target.value)}
-              data-testid="audit-action-filter"
-              className="rounded border border-border bg-surface px-2 py-1.5 text-sm text-fg-0 outline-none focus:border-accent"
+              onChange={v => setAction(v)}
             >
               {FILTERABLE.map(a => (
                 <option key={a || 'all'} value={a}>{a ? AUDIT_ACTION_LABELS[a] ?? a : 'All actions'}</option>
               ))}
-            </select>
+            </Select>
           </div>
           <form
             onSubmit={e => { e.preventDefault(); setAppliedKey(keyFilter.trim()) }}
             className="flex items-end gap-2"
           >
             <div>
-              <label htmlFor="audit-key" className="mb-1 block text-[12px] uppercase tracking-wider text-fg-3">Key</label>
+              <label htmlFor="audit-key" className="mb-1 block text-xs uppercase tracking-eyebrow text-fg-3">Key</label>
               <input
                 id="audit-key"
                 value={keyFilter}
@@ -128,13 +127,13 @@ export function AuditLogPanel({ scopeQuery, secretKey, refreshToken, pageSize = 
             </div>
             <button type="submit" className="rounded px-2 py-1.5 text-xs text-accent hover:bg-surface-overlay">Filter</button>
           </form>
-          <p className="ml-auto max-w-sm text-[12px] text-fg-3">
+          <p className="ml-auto max-w-sm text-xs text-fg-3">
             Append-only: rows cannot be edited or deleted. Values are never logged.
           </p>
         </div>
       )}
 
-      {error && <div className="mb-2 rounded bg-signal-alarm/10 px-3 py-2 text-sm text-signal-alarm">{error}</div>}
+      {error && <div className="mb-2 rounded bg-signal-alarm/10 px-3 py-2 text-base text-signal-alarm">{error}</div>}
 
       <div className="overflow-x-auto rounded border border-border">
         <table className="w-full text-xs">
@@ -170,7 +169,7 @@ export function AuditLogPanel({ scopeQuery, secretKey, refreshToken, pageSize = 
         </table>
       </div>
       <div className="mt-2 flex items-center gap-3">
-        {loading && <span className="text-[12px] text-fg-3">Loading…</span>}
+        {loading && <span className="text-xs text-fg-3">Loading…</span>}
         {next != null && !loading && (
           <button type="button" onClick={() => void load(next)} className="text-xs text-accent hover:underline" data-testid="audit-load-more">
             Load more
@@ -192,7 +191,7 @@ export function AuditLogPanel({ scopeQuery, secretKey, refreshToken, pageSize = 
         className="flex w-full items-center justify-between px-4 py-3 text-left"
       >
         <span>
-          <span className="text-sm font-medium text-fg-0">Audit log</span>
+          <span className="text-base font-medium text-fg-0">Audit log</span>
           <span className="ml-2 text-xs text-fg-3">who created, rotated, deleted, used or tried to reveal a secret</span>
         </span>
         <span className="text-xs text-fg-3">{open ? 'Hide' : 'Show'}</span>

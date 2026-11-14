@@ -502,6 +502,12 @@ export const AGENT_OPENAPI = {
         properties: {
           message: { type: 'string' },
           filePaths: { type: 'array', items: { type: 'string' }, description: 'Absolute paths already on the VPS' },
+          approval: {
+            type: 'string',
+            enum: ['merge', 'prod_migration', 'deploy'],
+            description: 'Delegated approval (obj 900839). Set ONLY when this message approves that one action on the owner\'s behalf. The server checks for an active, unexpired, unrevoked grant from the key\'s owner for this bot, this card\'s workspace and this action; with one the worker sees a DELEGATED stamp, without one the message is refused with 403 (default deny).',
+          },
+          owner_bot: { type: 'string', maxLength: 64, description: 'The bot that is approving (bot-registry name). Defaults to the agent key label. Only read together with approval.' },
         },
       },
     },
@@ -757,6 +763,7 @@ export const AGENT_OPENAPI = {
         requestBody: { required: true, content: { 'application/json': { schema: { $ref: '#/components/schemas/MessageRequest' } } } },
         responses: {
           '200': { description: 'Card now working' },
+          '403': { description: 'approval was set but no active delegation grant covers this bot, workspace and action (code no_active_grant, unknown_bot, …)' },
           '409': { description: 'Card is done/cancelled — reopen first' },
         },
       },
@@ -1137,8 +1144,20 @@ export const AGENT_OPENAPI = {
           { name: 'q', in: 'query', required: true, schema: { type: 'string' } },
           { name: 'workspace', in: 'query', schema: { type: 'string' } },
           { name: 'limit', in: 'query', schema: { type: 'integer', maximum: 20 } },
+          { name: 'mode', in: 'query', schema: { type: 'string', enum: ['hybrid', 'keyword', 'semantic'], default: 'hybrid' }, description: 'hybrid = full-text + semantic (reciprocal rank fusion), exact names/IDs/card numbers first; keyword = full-text only; semantic = embeddings only' },
         ],
-        responses: { '200': { description: '{ results: [{ path, snippet }] }' } },
+        responses: { '200': { description: '{ results: [{ path, snippet, score, match: exact|both|keyword|semantic, heading?, line?, keyword_rank, semantic_rank, similarity }], mode, mode_used, semantic: { available, reason? } } — mode_used is keyword when semantic search is unavailable' }, '400': { description: 'q missing or unknown mode' } },
+      },
+    },
+    '/api/docs/related': {
+      get: {
+        tags: ['vault'],
+        summary: 'Pages most similar to one page (semantic search)',
+        parameters: [
+          { name: 'path', in: 'query', required: true, schema: { type: 'string' }, description: 'Absolute path of a page inside the knowledge base' },
+          { name: 'limit', in: 'query', schema: { type: 'integer', maximum: 20 } },
+        ],
+        responses: { '200': { description: '{ path, related: [{ path, heading, similarity, snippet }], semantic: { available, reason? } } — empty when semantic search is off or the page is not embedded yet' } },
       },
     },
     '/api/docs/file': {
@@ -1195,12 +1214,23 @@ export const AGENT_OPENAPI = {
     '/api/kb-wiki/graph': {
       get: {
         tags: ['vault'],
-        summary: 'The whole knowledge base as one graph (obj 900674): every page, and one link per pair of connected pages with how they connect (vault:read)',
+        summary: 'The whole knowledge base as one graph (obj 900674): every markdown page in the workspace knowledge folder (obj 900815; kind = its top folder), and one link per pair of connected pages with how they connect (vault:read)',
         parameters: [
           { name: 'workspace', in: 'query', required: true, schema: { type: 'string' } },
           { name: 'limit', in: 'query', schema: { type: 'integer', minimum: 1, maximum: 2000, default: 2000 }, description: 'Keep at most this many pages, best connected first' },
         ],
-        responses: { '200': { description: '{ root, nodes: [{ rel, title, kind, degree }], links: [{ a, b, kinds, label, weight }], counts: { pages, links, isolated, by_kind }, truncated }' }, '404': { description: 'Knowledge base switched off' } },
+        responses: { '200': { description: '{ root, nodes: [{ rel, title, kind, degree }], links: [{ a, b, kinds, label, weight }], counts: { pages, links, isolated, unresolved, by_kind }, truncated }' }, '404': { description: 'Knowledge base switched off' } },
+      },
+    },
+    '/api/kb-wiki/graph/unresolved': {
+      get: {
+        tags: ['vault'],
+        summary: 'Links written on knowledge-base pages that match no indexed page (obj 900815), grouped by target, most-written first (vault:read)',
+        parameters: [
+          { name: 'workspace', in: 'query', required: true, schema: { type: 'string' } },
+          { name: 'limit', in: 'query', schema: { type: 'integer', minimum: 1, maximum: 1000, default: 200 } },
+        ],
+        responses: { '200': { description: '{ total, targets: [{ target, count, from }] }' }, '404': { description: 'Knowledge base switched off' } },
       },
     },
     '/api/kb-wiki/graph/related': {

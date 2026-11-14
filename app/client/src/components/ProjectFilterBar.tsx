@@ -4,6 +4,7 @@ import type { Project } from '@operationkit/shared'
 import { useConfirm } from './ui'
 import { ALL_PROJECTS, UNASSIGNED_PROJECT, type ProjectSelection } from '../lib/projectFilter'
 import { FilterDropdown, DropdownOption } from './FilterDropdown'
+import { Select } from './ui/Select'
 
 export interface OrgOption {
   slug: string
@@ -94,7 +95,7 @@ export function ProjectFilterBar({
     try {
       if (editing === 'new') {
         if (needsOrgPick && !draftOrg) {
-          setError('Pick an organization for this project')
+          setError('Pick a workspace for this project')
           setBusy(false)
           return
         }
@@ -168,7 +169,7 @@ export function ProjectFilterBar({
                   onClick={() => { onSelect(p.id); close() }}
                   data-project-id={p.id}
                   trailing={typeof p.objective_count === 'number'
-                    ? <span className="font-mono text-[12px] text-fg-3">{p.objective_count}</span>
+                    ? <span className="font-mono text-xs text-fg-3">{p.objective_count}</span>
                     : undefined}
                 >
                   {chipLabel(p)}
@@ -190,16 +191,15 @@ export function ProjectFilterBar({
                 {editing !== null ? (
                   <form onSubmit={submitEditor} className="flex flex-col gap-1.5">
                     {editing === 'new' && needsOrgPick && (
-                      <select
+                      <Select
                         value={draftOrg}
-                        onChange={e => setDraftOrg(e.target.value)}
-                        aria-label="Organization for the new project"
-                        className="rounded-md border border-line bg-surface-2 px-2 py-1 text-[12px] text-fg-0 focus:border-accent focus:outline-none"
+                        onChange={v => setDraftOrg(v)}
+                        aria-label="Workspace for the new project"
                       >
                         {orgChoices.map(o => (
                           <option key={o.slug} value={o.slug}>{o.label}</option>
                         ))}
-                      </select>
+                      </Select>
                     )}
                     <div className="flex items-center gap-1">
                       <input
@@ -211,7 +211,7 @@ export function ProjectFilterBar({
                         }}
                         placeholder={editing === 'new' ? 'New project name' : 'Project name'}
                         aria-label={editing === 'new' ? 'New project name' : 'Rename project'}
-                        className="min-w-0 flex-1 rounded-md border border-line bg-surface-2 px-2 py-1 text-[12px] text-fg-0 placeholder:text-fg-3 focus:border-accent focus:outline-none"
+                        className="min-w-0 flex-1 rounded-md border border-line bg-surface-2 px-2 py-1 text-xs text-fg-0 placeholder:text-fg-3 focus:border-accent focus:outline-none"
                       />
                       <button
                         type="submit"
@@ -236,7 +236,7 @@ export function ProjectFilterBar({
                     <button
                       type="button"
                       onClick={openCreate}
-                      className="inline-flex flex-1 items-center gap-1.5 rounded-md px-1.5 py-1 text-[12px] text-fg-2 transition-colors duration-fast ease-out hover:bg-surface-3 hover:text-fg-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/50"
+                      className="inline-flex flex-1 items-center gap-1.5 rounded-md px-1.5 py-1 text-xs text-fg-2 transition-colors duration-fast ease-out hover:bg-surface-3 hover:text-fg-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/50"
                     >
                       <Plus className="h-3.5 w-3.5" />
                       New project
@@ -267,7 +267,7 @@ export function ProjectFilterBar({
                   </div>
                 )}
                 {error && (
-                  <div className="mt-1.5 rounded-md border border-line bg-surface-2 px-2 py-1 text-[12px] text-[color:var(--ok-alarm)]">
+                  <div className="mt-1.5 rounded-md border border-line bg-surface-2 px-2 py-1 text-xs text-[color:var(--ok-alarm)]">
                     {error}
                   </div>
                 )}

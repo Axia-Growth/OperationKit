@@ -7,6 +7,7 @@ import { useRoutines, isAutoPaused, type RoutineSummary, type StrategyOption, ty
 import { RoutineAutoPauseBanner } from './RoutineAutoPauseBanner'
 import { HostCronJobs } from './jobs/HostCronJobs'
 import { QueueAutostartPanel } from './settings/QueueAutostartPanel'
+import { KnowledgeIndexPanel } from './jobs/KnowledgeIndexPanel'
 import { useAuth } from '../context/AuthContext'
 import { ExecutionsPanel, type ExecutionsTarget } from './jobs/ExecutionsPanel'
 import { WorkflowsPanel, RunStatusBadge } from './jobs/WorkflowsPanel'
@@ -22,6 +23,7 @@ import {
   PageHeader,
   Toolbar,
   Tabs,
+  SegmentedControl,
   Badge,
   Button,
   StatusPill,
@@ -33,14 +35,14 @@ import {
   type TabItem,
   type PipelineStatus,
 } from './ui'
+import { Select } from './ui/Select'
+import { toast } from './ui/Toaster'
 
 // Form field tokens (mirrors ConfigPage's input/select styling).
 const fieldCls =
-  'w-full min-w-0 rounded-md border border-line bg-surface-1 px-3 py-2 text-[13px] text-fg-0 ' +
+  'w-full min-w-0 rounded-md border border-line bg-surface-1 px-3 py-2 text-sm text-fg-0 ' +
   'placeholder-fg-3 transition-colors focus:border-accent focus:outline-none'
-const selectCls =
-  'w-full rounded-md border border-line bg-surface-1 px-2.5 py-2 text-[13px] text-fg-0 focus:border-accent focus:outline-none'
-const labelCls = 'block text-[12px] font-medium uppercase tracking-[0.08em] text-fg-3 mb-1'
+const labelCls = 'block text-xs font-medium uppercase tracking-eyebrow text-fg-3 mb-1'
 
 interface JobsBoardProps {
   workspace: Workspace
@@ -288,7 +290,7 @@ export function JobsBoard(_props: JobsBoardProps) {
           {r.kind === 'flow' && r.flow_id != null && (
             <button
               type="button"
-              className="shrink-0 text-[12px] text-accent-hover hover:underline"
+              className="shrink-0 text-xs text-accent-hover hover:underline"
               onClick={e => { e.stopPropagation(); openFlow(r.flow_id as number) }}
             >
               diagram
@@ -299,7 +301,7 @@ export function JobsBoard(_props: JobsBoardProps) {
     },
     {
       key: 'workspace',
-      header: 'Organization',
+      header: 'Workspace',
       cell: r => <Badge tone="neutral">{labelOf(r.workspace)}</Badge>,
     },
     {
@@ -307,8 +309,8 @@ export function JobsBoard(_props: JobsBoardProps) {
       header: 'Owner',
       cell: r =>
         r.strategy_title ? (
-          <span className="inline-flex items-center gap-1 text-[12px] text-accent-hover" title={`Owned by strategy #${r.strategy_objective_id}`}>
-            <Target className="h-3 w-3 shrink-0" strokeWidth={1.75} />
+          <span className="inline-flex items-center gap-1 text-xs text-accent-hover" title={`Owned by strategy #${r.strategy_objective_id}`}>
+            <Target className="h-3 w-3 shrink-0" />
             <span className="truncate max-w-[160px]">{r.strategy_title}</span>
           </span>
         ) : (
@@ -370,18 +372,18 @@ export function JobsBoard(_props: JobsBoardProps) {
           <div className="min-w-0">
             <div className="truncate font-medium text-fg-0" title={job.title}>{job.title}</div>
             {job.job_disposition === 'needs_review' && job.job_review_note && (
-              <div className="mt-1 rounded-md bg-signal-amber/10 px-2 py-1 text-[12px] leading-snug text-signal-amber">
+              <div className="mt-1 rounded-md bg-signal-amber/10 px-2 py-1 text-xs leading-snug text-signal-amber">
                 {job.job_review_note}
               </div>
             )}
             {summary && (
-              <p className="mt-1 line-clamp-2 text-[12px] leading-snug text-fg-2">{summary}</p>
+              <p className="mt-1 line-clamp-2 text-xs leading-snug text-fg-2">{summary}</p>
             )}
             {spawned.length > 0 && (
               <div className="mt-1 flex flex-col gap-0.5">
                 {spawned.map(s => (
-                  <span key={s.id} className="inline-flex items-center gap-1 text-[12px] text-accent-hover">
-                    <ExternalLink className="h-3 w-3" strokeWidth={1.75} />
+                  <span key={s.id} className="inline-flex items-center gap-1 text-xs text-accent-hover">
+                    <ExternalLink className="h-3 w-3" />
                     spawned #{s.id}: {s.title}
                   </span>
                 ))}
@@ -393,7 +395,7 @@ export function JobsBoard(_props: JobsBoardProps) {
     },
     {
       key: 'workspace',
-      header: 'Organization',
+      header: 'Workspace',
       hideOnMobile: true,
       cell: job => <Badge tone="neutral">{labelOf(job.workspace)}</Badge>,
     },
@@ -444,18 +446,18 @@ export function JobsBoard(_props: JobsBoardProps) {
       cell: r => (
         <div className="min-w-0">
           <div className="flex items-center gap-1.5">
-            <Workflow className="h-3.5 w-3.5 shrink-0 text-fg-3" strokeWidth={1.75} aria-label="workflow" />
+            <Workflow className="h-3.5 w-3.5 shrink-0 text-fg-3" aria-label="workflow" />
             <span className="truncate font-medium text-fg-0" title={r.flow_name}>{r.flow_name}</span>
           </div>
           {r.error && (
-            <p className="mt-1 line-clamp-2 text-[12px] leading-snug text-signal-alarm">
+            <p className="mt-1 line-clamp-2 text-xs leading-snug text-signal-alarm">
               {r.error.type}: {r.error.title}
             </p>
           )}
         </div>
       ),
     },
-    { key: 'workspace', header: 'Organization', hideOnMobile: true, cell: r => <Badge tone="neutral">{labelOf(r.workspace)}</Badge> },
+    { key: 'workspace', header: 'Workspace', hideOnMobile: true, cell: r => <Badge tone="neutral">{labelOf(r.workspace)}</Badge> },
     { key: 'status', header: 'Status', cell: r => <RunStatusBadge run={r} /> },
     { key: 'id', header: 'Run', mono: true, hideOnMobile: true, cell: r => <Badge tone="neutral" mono>run #{r.id}</Badge> },
     { key: 'created', header: 'Age', mono: true, align: 'right', sortable: true, sortValue: r => r.created_at, cell: r => relativeTime(r.created_at) },
@@ -489,14 +491,14 @@ export function JobsBoard(_props: JobsBoardProps) {
             )}
             {!routinesEnabled && (
               <Badge tone="alarm">
-                <Pause className="h-3 w-3" strokeWidth={1.75} /> scheduler paused
+                <Pause className="h-3 w-3" /> scheduler paused
               </Badge>
             )}
             <Button
               variant="primary"
               size="sm"
               onClick={() => setAuthoring(true)}
-              leftIcon={<Plus className="h-3.5 w-3.5" strokeWidth={2} />}
+              leftIcon={<Plus className="h-3.5 w-3.5" />}
             >
               New strategy job
             </Button>
@@ -512,14 +514,14 @@ export function JobsBoard(_props: JobsBoardProps) {
 
       {/* Workflows | Runs (obj 900640; Workflows first since obj 900675) */}
       <Toolbar
-        left={<Tabs items={VIEW_TABS} value={view} onChange={k => setView(k === 'runs' ? 'runs' : 'workflows')} />}
-        right={view === 'runs' ? <Tabs items={kindTabs} value={kindFilter} onChange={k => setKindFilter(k as KindFilter)} /> : undefined}
+        left={<Tabs items={VIEW_TABS} value={view} onChange={k => setView(k === 'runs' ? 'runs' : 'workflows')} label="Workflows views" />}
+        right={view === 'runs' ? <SegmentedControl items={kindTabs} value={kindFilter} onChange={k => setKindFilter(k as KindFilter)} label="Run kind" /> : undefined}
       />
 
       {/* Workspace filter */}
       {wsOptions.length > 0 && (
         <Toolbar
-          left={<Tabs items={wsTabs} value={wsFilter} onChange={setWsFilter} />}
+          left={<SegmentedControl items={wsTabs} value={wsFilter} onChange={setWsFilter} label="Workspace" />}
         />
       )}
 
@@ -546,10 +548,10 @@ export function JobsBoard(_props: JobsBoardProps) {
 
       {/* ── Scheduled routines — the global DataTable. ── */}
       <section className="mb-6 space-y-2">
-        <h3 className="flex items-center gap-2 text-[12px] uppercase tracking-[0.12em] text-fg-3 font-semibold tracking-[0.06em]">
-          <Clock className="h-3.5 w-3.5" strokeWidth={1.75} /> Scheduled routines
+        <h3 className="flex items-center gap-2 text-xs uppercase tracking-eyebrow text-fg-3 font-semibold">
+          <Clock className="h-3.5 w-3.5" /> Scheduled routines
         </h3>
-        <p className="max-w-3xl text-[12.5px] leading-snug text-fg-2">
+        <p className="max-w-3xl text-sm leading-snug text-fg-2">
           Recurring work the app schedules itself. An agent job opens a card for each run; a workflow run is a row in the lanes below, with no card and no session. Click a routine or a run to open its executions: every recorded run and what happened in it.
         </p>
         <DataTable
@@ -568,7 +570,7 @@ export function JobsBoard(_props: JobsBoardProps) {
                 variant="ghost"
                 size="sm"
                 onClick={() => openRoutineRuns(r)}
-                leftIcon={<History className="h-3.5 w-3.5" strokeWidth={1.75} />}
+                leftIcon={<History className="h-3.5 w-3.5" />}
               >
                 Runs
               </Button>
@@ -576,7 +578,7 @@ export function JobsBoard(_props: JobsBoardProps) {
             </div>
           )}
           empty={{
-            icon: <Clock className="h-5 w-5" strokeWidth={1.6} />,
+            icon: <Clock className="h-5 w-5" />,
             title: 'No scheduled routines',
             description: wsFilter !== ALL ? `Nothing scheduled for ${labelOf(wsFilter)}.` : 'Routines you schedule will appear here.',
           }}
@@ -589,6 +591,9 @@ export function JobsBoard(_props: JobsBoardProps) {
       {/* ── Queue auto-start (obj 900686; the last thing that was on Settings → Platform). Admin API. ── */}
       {kindFilter !== 'flow' && isAdmin && <QueueAutostartPanel />}
 
+      {/* ── Knowledge index for hybrid search (embedding backfill / re-embed jobs). Admin API. ── */}
+      {kindFilter !== 'flow' && isAdmin && <KnowledgeIndexPanel />}
+
       {/* ── Outcome lanes — Running / Needs Review / Complete. ── */}
       {LANE_ORDER.map(lane => {
         const meta = LANE_META[lane]
@@ -599,7 +604,7 @@ export function JobsBoard(_props: JobsBoardProps) {
           <section key={lane} className="mb-6 space-y-2">
             <h3
               className={cn(
-                'flex items-center gap-2 text-[12px] uppercase tracking-[0.12em] font-semibold tracking-[0.06em]',
+                'flex items-center gap-2 text-xs uppercase tracking-eyebrow font-semibold',
                 lane === 'needs_review' ? 'text-signal-amber' : 'text-fg-3',
               )}
             >
@@ -628,7 +633,7 @@ export function JobsBoard(_props: JobsBoardProps) {
                 </div>
               )}
               empty={{
-                icon: <Inbox className="h-5 w-5" strokeWidth={1.6} />,
+                icon: <Inbox className="h-5 w-5" />,
                 title: meta.label === 'Running' ? 'Nothing running' : `Nothing in ${meta.label}`,
                 description: meta.hint,
               }}
@@ -653,7 +658,7 @@ export function JobsBoard(_props: JobsBoardProps) {
                   </div>
                 )}
                 empty={{
-                  icon: <Workflow className="h-5 w-5" strokeWidth={1.6} />,
+                  icon: <Workflow className="h-5 w-5" />,
                   title: `No workflow runs in ${meta.label}`,
                   description: meta.hint,
                 }}
@@ -770,10 +775,10 @@ function NewStrategyJobModal({
   return (
     <Modal open onClose={onClose} labelledBy="new-strategy-job-title" panelClassName="w-full max-w-lg">
       <div className="p-5">
-        <h2 id="new-strategy-job-title" className="flex items-center gap-2 text-[15px] font-semibold text-fg-0">
-          <Target className="h-4 w-4 text-accent" strokeWidth={1.75} /> New strategy job
+        <h2 id="new-strategy-job-title" className="flex items-center gap-2 text-lg font-semibold text-fg-0">
+          <Target className="h-4 w-4 text-accent" /> New strategy job
         </h2>
-        <p className="mt-1 text-[12px] text-fg-2">
+        <p className="mt-1 text-xs text-fg-2">
           A strategy owns a recurring research routine; each run becomes a child of the strategy and its
           summary feeds back into the strategy&apos;s context.
         </p>
@@ -781,12 +786,12 @@ function NewStrategyJobModal({
         <div className="mt-4 space-y-3">
           <div>
             <label className={labelCls}>Owning strategy</label>
-            <select className={selectCls} value={strategyChoice} onChange={e => setStrategyChoice(e.target.value)}>
+            <Select className="w-full" aria-label="Owning strategy" value={strategyChoice} onChange={v => setStrategyChoice(v)}>
               {strategies.map(s => (
                 <option key={s.id} value={String(s.id)}>{s.title} (#{s.id})</option>
               ))}
               <option value={NEW}>➕ New strategy…</option>
-            </select>
+            </Select>
           </div>
 
           {creatingNew && (
@@ -803,16 +808,16 @@ function NewStrategyJobModal({
 
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className={labelCls}>Organization</label>
-              <select className={selectCls} value={workspace} onChange={e => setWorkspace(e.target.value)}>
+              <label className={labelCls}>Workspace</label>
+              <Select className="w-full" aria-label="Workspace" value={workspace} onChange={v => setWorkspace(v)}>
                 {workspaces.map(w => <option key={w.slug} value={w.slug}>{w.name}</option>)}
-              </select>
+              </Select>
             </div>
             <div>
               <label className={labelCls}>Cadence</label>
-              <select className={selectCls} value={cadence} onChange={e => setCadence(e.target.value as StrategyJobInput['cadence'])}>
+              <Select className="w-full" aria-label="Cadence" value={cadence} onChange={v => setCadence(v as StrategyJobInput['cadence'])}>
                 {CADENCES.map(c => <option key={c.value} value={c.value}>{c.label}</option>)}
-              </select>
+              </Select>
             </div>
           </div>
 
@@ -820,25 +825,25 @@ function NewStrategyJobModal({
             {cadence === 'weekly' && (
               <div>
                 <label className={labelCls}>Day of week</label>
-                <select className={selectCls} value={dow} onChange={e => setDow(Number(e.target.value))}>
+                <Select className="w-full" aria-label="Day of week" value={String(dow)} onChange={v => setDow(Number(v))}>
                   {DOW.map((d, i) => <option key={i} value={i}>{d}</option>)}
-                </select>
+                </Select>
               </div>
             )}
             {cadence === 'monthly' && (
               <div>
                 <label className={labelCls}>Day of month</label>
-                <select className={selectCls} value={dom} onChange={e => setDom(Number(e.target.value))}>
+                <Select className="w-full" aria-label="Day of month" value={String(dom)} onChange={v => setDom(Number(v))}>
                   {Array.from({ length: 28 }, (_, i) => i + 1).map(d => <option key={d} value={d}>{d}</option>)}
-                </select>
+                </Select>
               </div>
             )}
             {cadence !== 'hourly' && (
               <div>
                 <label className={labelCls}>Hour (24h, server time)</label>
-                <select className={selectCls} value={hour} onChange={e => setHour(Number(e.target.value))}>
+                <Select className="w-full" aria-label="Hour" value={String(hour)} onChange={v => setHour(Number(v))}>
                   {Array.from({ length: 24 }, (_, i) => i).map(h => <option key={h} value={h}>{String(h).padStart(2, '0')}:07</option>)}
-                </select>
+                </Select>
               </div>
             )}
           </div>
@@ -863,7 +868,7 @@ function NewStrategyJobModal({
             />
           </div>
 
-          <label className="flex items-center gap-2 text-[13px] text-fg-1">
+          <label className="flex items-center gap-2 text-sm text-fg-1">
             <input type="checkbox" checked={enabled} onChange={e => setEnabled(e.target.checked)} />
             Enable on the schedule immediately
           </label>
@@ -911,8 +916,10 @@ function RoutineHealthBadges({ routine: r }: { routine: RoutineSummary }) {
   )
 }
 
-/** "Run now" affordance for a routine row — preserves the runNow handler,
- *  busy state, and the started/blocked toast inline. */
+/** "Run now" affordance for a routine row — the runNow handler and busy
+ *  state; started / blocked feedback is a ui/Toaster toast (UI SDK, announced
+ *  in a live region; obj 900819) naming the routine, since it no longer sits
+ *  beside the row. */
 function RunNowButton({
   routine,
   onRunNow,
@@ -921,32 +928,29 @@ function RunNowButton({
   onRunNow: (id: number) => Promise<{ ok: boolean; reason?: string }>
 }) {
   const [busy, setBusy] = useState(false)
-  const [toast, setToast] = useState<string | null>(null)
 
   const handleRun = useCallback(async () => {
     setBusy(true)
-    setToast(null)
+    const name = routine.title || routine.name
     try {
       const res = await onRunNow(routine.id)
-      setToast(res.ok ? 'Started' : (res.reason ? `Blocked: ${res.reason}` : 'Blocked'))
+      if (res.ok) toast.success(`Started: ${name}`)
+      else toast.error(`Blocked: ${name}`, res.reason ? { description: res.reason } : undefined)
     } catch (e) {
-      setToast(e instanceof Error ? e.message : 'Run failed')
+      toast.error(`Run failed: ${name}`, { description: e instanceof Error ? e.message : undefined })
     } finally {
       setBusy(false)
     }
-  }, [routine.id, onRunNow])
+  }, [routine.id, routine.title, routine.name, onRunNow])
 
   return (
     <div className="flex items-center gap-2">
-      {toast && (
-        <span className="max-w-[140px] truncate font-mono text-[12px] text-fg-2" title={toast}>{toast}</span>
-      )}
       <Button
         variant="secondary"
         size="sm"
         onClick={handleRun}
         disabled={busy}
-        leftIcon={<Play className={cn('h-3.5 w-3.5', busy && 'animate-pulse')} strokeWidth={1.75} />}
+        leftIcon={<Play className={cn('h-3.5 w-3.5', busy && 'animate-pulse')} />}
       >
         {busy ? 'Running…' : 'Run now'}
       </Button>

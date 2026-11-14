@@ -14,6 +14,7 @@ import path from 'path'
 import { getDb } from '../db/index.js'
 import { rebuildContactsIndex, parseFrontmatter } from '../services/contacts.js'
 import { isLocalhost } from '../lib/is-localhost.js'
+import { noteKbFileWritten } from '../services/kb-wiki/graph-sync.js'
 
 const VAULT_BASE = process.env.VAULT_PATH || '/home/operator/second-brain'
 
@@ -93,7 +94,10 @@ export function resolveVaultPath(rel: string, opts: { mustExist?: boolean } = {}
 function slugify(s: string): string {
   return s.toLowerCase().trim()
     .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-+|-+$/g, '')
+    // Runs are already collapsed to ONE dash, so trim a single dash at each end
+    // (the old end-anchored dash-run regex backtracked polynomially, obj 900838).
+    .replace(/^-/, '')
+    .replace(/-$/, '')
     .slice(0, 80)
 }
 
@@ -145,11 +149,16 @@ function patchFrontmatterScalar(fm: string, key: string, value: string | number 
   return out.join('\n')
 }
 
-function formatYamlScalar(v: string | number): string {
+export function formatYamlScalar(v: string | number): string {
   if (typeof v === 'number') return String(v)
   // Quote if it contains special YAML chars or looks like a number/bool
-  if (/[:#\[\]{},&*!|>'"%@`]/.test(v) || /^(true|false|yes|no|null|~|\d)/i.test(v)) {
-    return `"${v.replace(/"/g, '\\"')}"`
+  // obj 900838 (CodeQL js/incomplete-sanitization): escaping only `"` let a
+  // value ending in a backslash swallow the closing quote, and a newline broke
+  // out of the scalar into a new frontmatter key. A JSON string literal is a
+  // valid YAML double-quoted scalar with backslash, quote and control
+  // characters escaped; backslashes and newlines now force quoting too.
+  if (/[:#\[\]{},&*!|>'"%@`\\\r\n]/.test(v) || /^(true|false|yes|no|null|~|\d)/i.test(v)) {
+    return JSON.stringify(v)
   }
   return v
 }
@@ -240,6 +249,7 @@ router.post('/vault/append-note', (req, res) => {
   const block = `\n## ${useHeading}\n- ${stamp} — ${text.trim()}\n`
   try {
     fs.appendFileSync(resolved.absolute!, block, 'utf-8')
+    setImmediate(() => { noteKbFileWritten(resolved.absolute!) }) // obj 900815: keep the KB graph current
     res.json({ ok: true, path: resolved.relative, appended_bytes: block.length })
   } catch (err) {
     res.status(500).json({ error: err instanceof Error ? err.message : 'append failed' })
@@ -296,6 +306,7 @@ router.post('/vault/append-touchpoint', (req, res) => {
     }
 
     fs.writeFileSync(resolved.absolute!, reassembleMarkdown(newFm, newBody), 'utf-8')
+    setImmediate(() => { noteKbFileWritten(resolved.absolute!) }) // obj 900815: keep the KB graph current
 
     // Refresh just this row in contacts_index by rebuilding the whole table.
     // The vault is small enough that this is sub-second; doing a targeted update
@@ -340,6 +351,7 @@ router.post('/vault/update-field', (req, res) => {
       if (nt) finalFm = patchFrontmatterScalar(finalFm, 'next_touchpoint', nt)
     }
     fs.writeFileSync(resolved.absolute!, reassembleMarkdown(finalFm, body), 'utf-8')
+    setImmediate(() => { noteKbFileWritten(resolved.absolute!) }) // obj 900815: keep the KB graph current
     try { rebuildContactsIndex(getDb(), VAULT_BASE) } catch { /* best-effort */ }
     res.json({ ok: true, path: resolved.relative, field, value })
   } catch (err) {
@@ -401,6 +413,7 @@ router.post('/vault/create-contact', (req, res) => {
   const content = `---\n${fmLines.join('\n')}\n---\n${body}`
   try {
     fs.writeFileSync(resolved.absolute!, content, 'utf-8')
+    setImmediate(() => { noteKbFileWritten(resolved.absolute!) }) // obj 900815: keep the KB graph current
     try { rebuildContactsIndex(getDb(), VAULT_BASE) } catch { /* best-effort */ }
     res.json({ ok: true, path: resolved.relative })
   } catch (err) {

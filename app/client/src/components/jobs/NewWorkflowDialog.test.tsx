@@ -32,10 +32,10 @@ afterEach(() => {
 const q = <T extends Element>(sel: string) => document.body.querySelector(sel) as T | null
 
 /** React tracks the value through its own setter; set it the way a keystroke would. */
-function type(el: HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement, value: string) {
-  const proto = el instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : el instanceof HTMLSelectElement ? HTMLSelectElement.prototype : HTMLInputElement.prototype
+function type(el: HTMLInputElement | HTMLTextAreaElement, value: string) {
+  const proto = el instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype
   Object.getOwnPropertyDescriptor(proto, 'value')!.set!.call(el, value)
-  el.dispatchEvent(new Event(el instanceof HTMLSelectElement ? 'change' : 'input', { bubbles: true }))
+  el.dispatchEvent(new Event('input', { bubbles: true }))
 }
 
 function render(props: Partial<Parameters<typeof NewWorkflowDialog>[0]> = {}) {
@@ -64,7 +64,7 @@ describe('NewWorkflowDialog', () => {
     render({ onCreated })
     const submit = q<HTMLButtonElement>('button[type="submit"]')!
     expect(submit.disabled).toBe(true) // no goal yet
-    expect(q<HTMLSelectElement>('select')!.value).toBe('beta')
+    expect(q<HTMLElement>('button[role="combobox"]')!.textContent).toContain('beta')
 
     act(() => {
       type(q<HTMLTextAreaElement>('textarea')!, 'Triage yesterday\'s bookings into the CRM')

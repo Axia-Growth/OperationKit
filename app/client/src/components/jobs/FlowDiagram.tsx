@@ -1,5 +1,7 @@
 import { useEffect, useRef } from 'react'
 import { renderMermaidIn } from '../../lib/mermaid'
+import { EFFECT_STYLE, STATUS_STYLE } from './flow-colors'
+import './flow-diagram.css'
 
 /**
  * Read-only workflow diagram, viewer V1 (docs/design/WORKFLOWS.md §6.1): the
@@ -20,7 +22,7 @@ export function FlowDiagram({ source, className }: { source: string; className?:
     void renderMermaidIn(el)
   }, [source])
   return (
-    <div ref={ref} className={className} data-testid="flow-diagram">
+    <div ref={ref} className={['ok-flow-diagram', className].filter(Boolean).join(' ')} data-testid="flow-diagram">
       <div
         className="mermaid-block flex justify-center overflow-x-auto rounded-lg border border-line bg-surface-1 p-4"
         data-mermaid-source={source}
@@ -34,20 +36,19 @@ export function FlowDiagramLegend() {
   const item = 'inline-flex items-center gap-1.5'
   const sw = 'inline-block h-3 w-3 rounded-sm border-2'
   return (
-    <div className="flex flex-wrap gap-x-4 gap-y-1.5 text-[12px] text-fg-2" data-testid="flow-diagram-legend">
+    <div className="flex flex-wrap gap-x-4 gap-y-1.5 text-xs text-fg-2" data-testid="flow-diagram-legend">
       <span className={item}>⏰ trigger</span>
       <span className={item}>🔧 tool</span>
       <span className={item}>🔌 MCP connector</span>
-      <span className={item}><span className={sw} style={{ background: '#efe3ff', borderColor: '#7a4cc2' }} />🧠 LLM</span>
-      <span className={item}><span className={sw} style={{ background: '#fff8db', borderColor: '#a68500' }} />write</span>
-      <span className={item}><span className={sw} style={{ background: '#ffe9e0', borderColor: '#c2562b' }} />SEND</span>
-      <span className={item}><span className={sw} style={{ background: '#ffe3ea', borderColor: '#c22b55' }} />SPEND</span>
+      <span className={item}><span className={sw} style={{ background: 'color-mix(in srgb, var(--st-ai) 16%, var(--surface-1))', borderColor: 'var(--st-ai)' }} />🧠 LLM</span>
+      {Object.entries(EFFECT_STYLE).map(([k, v]) => (
+        <span key={k} className={item}><span className={sw} style={{ background: v.bg, borderColor: v.border }} />{v.text}</span>
+      ))}
       <span className="text-fg-3">·</span>
-      <span className={item}><span className={sw} style={{ borderColor: '#2f8f4e' }} />succeeded</span>
-      <span className={item}><span className={sw} style={{ borderColor: '#c22b2b', borderStyle: 'dashed' }} />failed</span>
-      <span className={item}><span className={sw} style={{ borderColor: '#2b6fc2' }} />running</span>
-      <span className={item}><span className={sw} style={{ borderColor: '#c2952b', borderStyle: 'dotted' }} />waiting</span>
-      <span className={item}><span className={sw} style={{ background: '#f2f2f2', borderColor: '#bbbbbb' }} />skipped</span>
+      {(['succeeded', 'failed', 'running', 'waiting'] as const).map(k => (
+        <span key={k} className={item}><span className={sw} style={{ borderColor: STATUS_STYLE[k].color, borderStyle: STATUS_STYLE[k].style }} />{STATUS_STYLE[k].label}</span>
+      ))}
+      <span className={item}><span className={sw} style={{ background: 'var(--surface-3)', borderColor: 'var(--line-strong)' }} />skipped</span>
     </div>
   )
 }

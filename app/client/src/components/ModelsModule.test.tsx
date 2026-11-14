@@ -7,6 +7,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { ModelsModule } from './ModelsModule'
+import { chooseOption } from '../test/render'
 
 const { apiMock } = vi.hoisted(() => ({
   apiMock: { get: vi.fn(), post: vi.fn(), put: vi.fn(), patch: vi.fn(), del: vi.fn() },
@@ -58,17 +59,31 @@ afterEach(() => {
 })
 
 describe('ModelsModule', () => {
+  it('each model is turned on or off with a named switch; the in-use one says why it is locked (obj 900819)', async () => {
+    apiMock.patch.mockResolvedValue({ models: MODELS.map(m => (m.id === 'claude-sonnet-5' ? { ...m, enabled: false } : m)) })
+    await render()
+    const sw = (label: string) => container.querySelector<HTMLButtonElement>(`button[role="switch"][aria-label="Enable ${label}"]`)
+    expect(sw('Sonnet 5')!.getAttribute('aria-checked')).toBe('true')
+    // The default/planner model cannot be turned off, and the reason is announced.
+    const locked = sw('Opus 5.5')!
+    expect(locked.disabled).toBe(true)
+    expect(document.getElementById(locked.getAttribute('aria-describedby')!)?.textContent).toMatch(/Reassign default and planner/)
+    await act(async () => { sw('Sonnet 5')!.click() })
+    expect(apiMock.patch).toHaveBeenCalledWith('/models/claude-sonnet-5', { enabled: false })
+    // The default/planner radios keep a 32px label as their hit area.
+    const radio = container.querySelector<HTMLInputElement>('input[type="radio"][aria-label="Make Sonnet 5 the default"]')!
+    expect(radio.closest('label')!.className).toContain('h-8 w-8')
+  })
+
   it('lets the admin change the default model from a dropdown', async () => {
     apiMock.patch.mockResolvedValue({ models: MODELS.map(m => ({ ...m, is_default: m.id === 'claude-sonnet-5' })) })
     await render()
-    const select = container.querySelector<HTMLSelectElement>('#models-default-select')!
-    expect(select.value).toBe('claude-opus-5-5')
-    await act(async () => {
-      select.value = 'claude-sonnet-5'
-      select.dispatchEvent(new Event('change', { bubbles: true }))
-    })
+    const select = container.querySelector<HTMLElement>('#models-default-select')!
+    expect(select.getAttribute('role')).toBe('combobox')
+    expect(select.textContent).toContain('(claude-opus-5-5)')
+    await chooseOption(select, /^Sonnet 5 \(claude-sonnet-5\)/)
     expect(apiMock.patch).toHaveBeenCalledWith('/models/claude-sonnet-5', { is_default: true })
-    expect(container.querySelector<HTMLSelectElement>('#models-default-select')!.value).toBe('claude-sonnet-5')
+    expect(container.querySelector<HTMLElement>('#models-default-select')!.textContent).toContain('(claude-sonnet-5)')
     expect(container.textContent).toContain('refreshes automatically every 24h')
   })
 

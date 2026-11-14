@@ -1,12 +1,21 @@
 import { useCallback, useRef, useState, type ReactNode } from 'react'
-import { Modal } from './Modal'
+import { createPortal } from 'react-dom'
+import {
+  AlertDialog,
+  AlertDialogBackdrop,
+  AlertDialogClose,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogTitle,
+} from '@ui-sdk/react/alert-dialog'
 import { Button } from './Button'
 
 /* ─────────────────────────────────────────────────────────
    ConfirmDialog + useConfirm — the in-app, themed replacement for
    native window.confirm() (audit OK-28). The native OS dialog blocks
    the thread and looks nothing like Mission Control; this renders the
-   same question on a token-bound Modal with proper focus/Esc handling.
+   same question on the UI SDK alert dialog (role=alertdialog, focus trap,
+   Escape = Cancel, focus returns to the trigger).
 
    Drop-in usage (turns the imperative `if (confirm(...))` into await):
 
@@ -68,22 +77,31 @@ export function ConfirmDialog({
   onConfirm,
   onCancel,
 }: State & { onConfirm: () => void; onCancel: () => void }) {
-  return (
-    <Modal open={open} onClose={onCancel} variant="center" labelledBy="confirm-title" describedBy={message ? 'confirm-desc' : undefined} panelClassName="max-w-sm">
-      <div className="p-5">
-        <h2 id="confirm-title" className="font-display text-[15px] font-semibold tracking-[-0.01em] text-fg-0">
-          {title}
-        </h2>
-        {message && <p id="confirm-desc" className="mt-2 text-[13px] leading-relaxed text-fg-2">{message}</p>}
+  // Alert dialog (obj 900819): role=alertdialog, always modal, focus starts on
+  // Cancel, an outside press never answers it; Escape counts as Cancel.
+  return createPortal(
+    <AlertDialog
+      open={open}
+      onOpenChange={(next, details) => {
+        if (next) return
+        if (details.returnValue === 'confirm') onConfirm()
+        else onCancel()
+      }}
+    >
+      <AlertDialogBackdrop className="cc-backdrop-in fixed inset-0 z-50 bg-[var(--scrim)]" />
+      <AlertDialogContent className="cc-pop-in fixed inset-0 z-50 m-auto h-fit w-[calc(100%-2rem)] max-w-sm rounded-xl border border-line bg-surface-1 p-5 text-fg-0 shadow-float outline-none">
+        <AlertDialogTitle className="font-display text-lg font-semibold tracking-tight text-fg-0">{title}</AlertDialogTitle>
+        {message && <AlertDialogDescription className="mt-2 text-sm leading-relaxed text-fg-2">{message}</AlertDialogDescription>}
         <div className="mt-5 flex justify-end gap-2">
-          <Button variant="ghost" size="sm" onClick={onCancel}>
+          <AlertDialogClose value="cancel" render={<Button variant="ghost" size="sm" />}>
             {cancelLabel}
-          </Button>
-          <Button variant={danger ? 'danger' : 'primary'} size="sm" onClick={onConfirm} data-autofocus>
+          </AlertDialogClose>
+          <AlertDialogClose value="confirm" render={<Button variant={danger ? 'danger' : 'primary'} size="sm" />}>
             {confirmLabel}
-          </Button>
+          </AlertDialogClose>
         </div>
-      </div>
-    </Modal>
+      </AlertDialogContent>
+    </AlertDialog>,
+    document.body,
   )
 }

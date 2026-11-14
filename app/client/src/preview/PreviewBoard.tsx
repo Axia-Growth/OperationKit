@@ -37,7 +37,7 @@ import { api } from '../lib/api'
 import { STATUS_META } from '../components/design/primitives'
 import { SessionViewer } from '../components/SessionViewer'
 import { ObjectiveModal } from '../components/ObjectiveModal'
-import { ObjectiveSearchPanel } from '../components/ObjectiveSearchPanel'
+import { ObjectiveSearchPanel } from '../components/lazy-overlays'
 import { NewWorkflowDialog } from '../components/jobs/NewWorkflowDialog'
 import { PreviewCard } from './PreviewCard'
 
@@ -269,7 +269,7 @@ export function PreviewBoard({ workspaces }: PreviewBoardProps) {
   }, [])
 
   if (loading) {
-    return <div className="flex flex-1 items-center justify-center text-sm text-fg-2">Loading board…</div>
+    return <div className="flex flex-1 items-center justify-center text-base text-fg-2">Loading board…</div>
   }
 
   return (
@@ -311,14 +311,14 @@ export function PreviewBoard({ workspaces }: PreviewBoardProps) {
           {grouped.review.length > 0 && (
             <span
               data-testid="board-needs-you-count"
-              className="inline-flex items-center gap-1 whitespace-nowrap text-[12px] text-fg-1"
+              className="inline-flex items-center gap-1 whitespace-nowrap text-xs text-fg-1"
             >
               <span className="font-mono font-semibold text-accent">{grouped.review.length}</span>
               need you
             </span>
           )}
           <span
-            className="hidden items-center gap-1.5 whitespace-nowrap text-[12px] text-fg-3 lg:inline-flex"
+            className="hidden items-center gap-1.5 whitespace-nowrap text-xs text-fg-3 lg:inline-flex"
             title={connectionState === 'connected' ? 'Live updates on' : 'Live updates paused'}
           >
             <span
@@ -341,17 +341,17 @@ export function PreviewBoard({ workspaces }: PreviewBoardProps) {
             onClick={() => setSearchOpen(true)}
             aria-label="Search cards"
             title="Search cards — every stage, including done. Press /. (To go to a page, use Jump to ⌘K in the top bar.)"
-            className="inline-flex items-center gap-1.5 rounded-md border border-line bg-surface-2 px-2.5 py-1.5 text-sm text-fg-2 hover:border-line-strong hover:text-fg-1"
+            className="inline-flex items-center gap-1.5 rounded-md border border-line bg-surface-2 px-2.5 py-1.5 text-base text-fg-2 hover:border-line-strong hover:text-fg-1"
           >
             <Search className="h-4 w-4" />
             <span className="hidden md:inline">Search cards</span>
-            <span className="hidden font-mono text-[12px] text-fg-3 md:inline">/</span>
+            <span className="hidden font-mono text-xs text-fg-3 md:inline">/</span>
           </button>
           <button
             type="button"
             onClick={() => navigate('/archive')}
             title="Full done / retired library"
-            className="inline-flex items-center gap-1.5 rounded-md border border-line bg-surface-2 px-2.5 py-1.5 text-sm text-fg-2 hover:border-line-strong hover:text-fg-1"
+            className="inline-flex items-center gap-1.5 rounded-md border border-line bg-surface-2 px-2.5 py-1.5 text-base text-fg-2 hover:border-line-strong hover:text-fg-1"
           >
             <Archive className="h-4 w-4" />
             <span className="hidden md:inline">Archive</span>
@@ -363,7 +363,7 @@ export function PreviewBoard({ workspaces }: PreviewBoardProps) {
               title="New workflow: describe a goal and a builder agent drafts and self-tests it"
               aria-label="New workflow"
               data-testid="board-new-workflow"
-              className="inline-flex items-center gap-1.5 rounded-md border border-line bg-surface-2 px-2.5 py-1.5 text-sm text-fg-2 hover:border-line-strong hover:text-fg-1"
+              className="inline-flex items-center gap-1.5 rounded-md border border-line bg-surface-2 px-2.5 py-1.5 text-base text-fg-2 hover:border-line-strong hover:text-fg-1"
             >
               <Workflow className="h-4 w-4" />
               <span className="hidden md:inline">Workflow</span>
@@ -372,7 +372,7 @@ export function PreviewBoard({ workspaces }: PreviewBoardProps) {
           <button
             type="button"
             onClick={handleNewObjective}
-            className="inline-flex items-center gap-1 rounded-md bg-accent px-3 py-1.5 text-sm font-medium text-accent-fg hover:bg-accent-hover"
+            className="inline-flex items-center gap-1 rounded-md bg-accent px-3 py-1.5 text-base font-medium text-accent-fg hover:bg-accent-hover"
           >
             <Plus className="h-4 w-4" />
             New
@@ -380,16 +380,16 @@ export function PreviewBoard({ workspaces }: PreviewBoardProps) {
         </div>
       </div>
       {error && (
-        <div className="border-b border-line px-4 py-1.5 text-[12px] text-[color:var(--ok-alarm)]">{error}</div>
+        <div className="border-b border-line px-4 py-1.5 text-xs text-[color:var(--ok-alarm)]">{error}</div>
       )}
       <div className="flex min-h-0 flex-1 gap-3 overflow-x-auto p-3 sm:p-4">
         {columns.map(status => (
           <section key={status} data-status={status} className="cc-ws-col max-h-full w-[300px] shrink-0 overflow-hidden">
             <div className="flex items-center px-3 py-2">
-              <span className="text-[12px] font-medium uppercase tracking-[0.1em] text-fg-2">
+              <span className="text-xs font-medium uppercase tracking-eyebrow text-fg-2">
                 {STATUS_META[status].label}
               </span>
-              <span data-testid={`column-count-${status}`} className="ml-auto font-mono text-[12px] text-fg-3">{grouped[status].length}</span>
+              <span data-testid={`column-count-${status}`} className="ml-auto font-mono text-xs text-fg-3">{grouped[status].length}</span>
             </div>
             <div className="min-h-0 flex-1 space-y-2 overflow-y-auto px-2 pb-3">
               {grouped[status].map(obj => (
@@ -406,13 +406,13 @@ export function PreviewBoard({ workspaces }: PreviewBoardProps) {
               {status === 'done' && (
                 <>
                   {doneLoading && (
-                    <div className="px-2 py-3 text-center text-[12px] text-fg-3">Loading done…</div>
+                    <div className="px-2 py-3 text-center text-xs text-fg-3">Loading done…</div>
                   )}
                   {!doneLoading && (doneHasMore || !doneLoaded) && (
                     <button
                       type="button"
                       onClick={() => loadMoreDone()}
-                      className="w-full rounded-md border border-dashed border-line px-3 py-2 text-[12px] text-fg-2 hover:border-line-strong hover:text-fg-0"
+                      className="w-full rounded-md border border-dashed border-line px-3 py-2 text-xs text-fg-2 hover:border-line-strong hover:text-fg-0"
                     >
                       {doneLoaded ? 'Load more done' : 'Load done'}
                     </button>
@@ -420,7 +420,7 @@ export function PreviewBoard({ workspaces }: PreviewBoardProps) {
                   <button
                     type="button"
                     onClick={() => navigate('/archive')}
-                    className="w-full rounded-md px-3 py-2 text-[12px] text-fg-2 hover:text-fg-0"
+                    className="w-full rounded-md px-3 py-2 text-xs text-fg-2 hover:text-fg-0"
                   >
                     View full archive
                   </button>

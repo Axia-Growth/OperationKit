@@ -20,6 +20,7 @@ vi.mock('./ui', () => ({
 }))
 
 import { ProjectFilterBar } from './ProjectFilterBar'
+import { chooseOption } from '../test/render'
 import { ALL_PROJECTS, UNASSIGNED_PROJECT, type ProjectSelection } from '../lib/projectFilter'
 
 const project = (id: number, name: string, count = 0): Project => ({
@@ -223,17 +224,16 @@ describe('ProjectFilterBar — cross-organization view (obj 900197)', () => {
     expect(onSelect).toHaveBeenCalledWith(8)
   })
 
-  it('creating a project asks which organization and passes it through', async () => {
+  it('creating a project asks which workspace and passes it through', async () => {
     const bar = await mountCross()
     flushSync(() => [...bar.querySelectorAll('button')]
       .find(b => b.textContent?.includes('New project'))
       ?.dispatchEvent(new MouseEvent('click', { bubbles: true })))
     await flush()
-    const select = bar.querySelector('select[aria-label="Organization for the new project"]') as HTMLSelectElement
+    const select = bar.querySelector('button[role="combobox"][aria-label="Workspace for the new project"]') as HTMLElement
     expect(select).toBeTruthy()
-    const selProto = Object.getPrototypeOf(select)
-    Object.getOwnPropertyDescriptor(selProto, 'value')!.set!.call(select, 'northwind')
-    flushSync(() => select.dispatchEvent(new Event('change', { bubbles: true })))
+    await chooseOption(select, 'Northwind')
+    expect(select.textContent).toContain('Northwind')
     const input = bar.querySelector('input[aria-label="New project name"]') as HTMLInputElement
     const proto = Object.getPrototypeOf(input)
     Object.getOwnPropertyDescriptor(proto, 'value')!.set!.call(input, 'Outbound')

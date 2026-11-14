@@ -19,6 +19,7 @@ import { Badge } from '../../components/ui/Badge'
 import { Button } from '../../components/ui/Button'
 import { Skeleton } from '../../components/ui/Skeleton'
 import { cn } from '../../components/ui/cn'
+import { SegmentedControl } from '../../components/ui/SegmentedControl'
 import { useWorkspaces } from '../../hooks/useWorkspaces'
 import { fmtDate } from './helpers'
 import {
@@ -32,6 +33,35 @@ import {
   type AgentScope,
 } from '@operationkit/shared'
 import { parseConnectorList, type ConnectorOption } from '../../lib/connectors'
+
+/** All workspaces vs only some: one of two. The workspace chips that follow
+    "Only some" are independent toggles and stay aria-pressed buttons. */
+const WORKSPACE_REACH = [
+  { key: 'all', label: 'All my workspaces' },
+  { key: 'some', label: 'Only some' },
+]
+
+const CONNECTOR_MODES: { key: ConnectorMode; label: string }[] = [
+  { key: 'inherit', label: 'Whatever I can use' },
+  { key: 'pick', label: 'Pick specific accounts' },
+  { key: 'none', label: 'No connected accounts' },
+]
+
+/** The three reach choices: one of three, so a radio-style segmented control
+    (UI SDK, obj 900819). Module-level on purpose: declared inside the section
+    it remounted on every render and dropped keyboard focus after each arrow.
+    The account chips under "pick" stay independent aria-pressed toggles. */
+function ModeButtons({ mode, setMode }: { mode: ConnectorMode; setMode: (m: ConnectorMode) => void }) {
+  return (
+    <SegmentedControl
+      label="Connected accounts this key may use"
+      items={CONNECTOR_MODES}
+      value={mode}
+      onChange={k => setMode(k as ConnectorMode)}
+      className="mt-1"
+    />
+  )
+}
 
 const HUMAN_SIGNATURE: AgentScope[] = ['board:done', 'board:delete']
 
@@ -193,36 +223,6 @@ export function AgentKeysSection() {
     )
   }
 
-  /** The three reach choices, as buttons. */
-  function ModeButtons({
-    mode,
-    setMode,
-    idPrefix,
-  }: { mode: ConnectorMode; setMode: (m: ConnectorMode) => void; idPrefix: string }) {
-    const opts: { value: ConnectorMode; label: string }[] = [
-      { value: 'inherit', label: 'Whatever I can use' },
-      { value: 'pick', label: 'Pick specific accounts' },
-      { value: 'none', label: 'No connected accounts' },
-    ]
-    return (
-      <div className="mt-1 flex flex-wrap gap-2">
-        {opts.map(o => (
-          <Button
-            key={`${idPrefix}-${o.value}`}
-            type="button"
-            size="sm"
-            variant={mode === o.value ? 'primary' : 'secondary'}
-            className="min-h-[44px] sm:min-h-0"
-            aria-pressed={mode === o.value}
-            onClick={() => setMode(o.value)}
-          >
-            {o.label}
-          </Button>
-        ))}
-      </div>
-    )
-  }
-
   function resetForm() {
     setLabel('')
     setScopes([...DEFAULT_AGENT_SCOPES])
@@ -321,8 +321,8 @@ export function AgentKeysSection() {
     <section className="mt-6 rounded-lg border border-border bg-surface-raised p-5" aria-labelledby="agent-keys-heading">
       <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
         <div>
-          <h2 id="agent-keys-heading" className="text-base font-semibold text-fg-0">Agent keys</h2>
-          <p className="mt-1 text-[12px] font-medium uppercase tracking-[0.04em] text-fg-3">
+          <h2 id="agent-keys-heading" className="text-lg font-semibold text-fg-0">Agent keys</h2>
+          <p className="mt-1 text-xs font-medium uppercase tracking-eyebrow text-fg-3">
             MCP &middot; scoped tool connection for one bot
           </p>
           <p className="mt-1 max-w-prose text-xs text-fg-2">
@@ -346,7 +346,7 @@ export function AgentKeysSection() {
       </div>
 
       {error && (
-        <div role="alert" className="mb-3 rounded bg-signal-alarm/10 px-3 py-2 text-sm text-signal-alarm">{error}</div>
+        <div role="alert" className="mb-3 rounded bg-signal-alarm/10 px-3 py-2 text-base text-signal-alarm">{error}</div>
       )}
 
       {issued && (
@@ -360,7 +360,7 @@ export function AgentKeysSection() {
               aria-label={`API key for ${issued.label}`}
               value={issued.token}
               onFocus={e => e.currentTarget.select()}
-              className="min-h-[44px] w-full rounded border border-line bg-surface-1 px-2.5 py-2 font-mono text-sm text-fg-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/50 sm:min-h-[36px]"
+              className="min-h-[44px] w-full rounded border border-line bg-surface-1 px-2.5 py-2 font-mono text-base text-fg-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/50 sm:min-h-[36px]"
             />
             <Button variant="primary" className="shrink-0" onClick={() => void copy()}>
               {copied ? 'Copied' : 'Copy'}
@@ -386,7 +386,7 @@ export function AgentKeysSection() {
               value={label}
               onChange={e => setLabel(e.target.value)}
               placeholder="Grok: General"
-              className="mt-1 min-h-[44px] w-full rounded border border-line bg-surface px-2.5 py-2 text-sm text-fg-0 placeholder:text-fg-3 transition-colors duration-base hover:border-line-strong focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/50 sm:min-h-[36px]"
+              className="mt-1 min-h-[44px] w-full rounded border border-line bg-surface px-2.5 py-2 text-base text-fg-0 placeholder:text-fg-3 transition-colors duration-base hover:border-line-strong focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/50 sm:min-h-[36px]"
             />
           </div>
 
@@ -414,7 +414,7 @@ export function AgentKeysSection() {
                         {s}
                         {HUMAN_SIGNATURE.includes(s) && <Badge tone="amber">human</Badge>}
                       </span>
-                      <span className="block text-[12px] text-fg-2">{AGENT_SCOPE_DESCRIPTIONS[s]}</span>
+                      <span className="block text-xs text-fg-2">{AGENT_SCOPE_DESCRIPTIONS[s]}</span>
                     </span>
                   </label>
                 )
@@ -424,14 +424,13 @@ export function AgentKeysSection() {
 
           <fieldset>
             <legend className="text-xs font-medium text-fg-1">Workspaces</legend>
-            <div className="mt-1 flex flex-wrap gap-2">
-              <Button type="button" size="sm" variant={!restrict ? 'primary' : 'secondary'} className="min-h-[44px] sm:min-h-0" aria-pressed={!restrict} onClick={() => setRestrict(false)}>
-                All my workspaces
-              </Button>
-              <Button type="button" size="sm" variant={restrict ? 'primary' : 'secondary'} className="min-h-[44px] sm:min-h-0" aria-pressed={restrict} onClick={() => setRestrict(true)}>
-                Only some
-              </Button>
-            </div>
+            <SegmentedControl
+              label="Workspaces this key may reach"
+              items={WORKSPACE_REACH}
+              value={restrict ? 'some' : 'all'}
+              onChange={k => setRestrict(k === 'some')}
+              className="mt-1"
+            />
             {restrict && (
               <div className="mt-2 flex flex-wrap gap-2">
                 {workspaces.length === 0 && <span className="text-xs text-fg-2">No workspaces visible.</span>}
@@ -458,21 +457,21 @@ export function AgentKeysSection() {
 
           <fieldset>
             <legend className="text-xs font-medium text-fg-1">Your connected accounts it may use</legend>
-            <p className="mt-1 max-w-prose text-[12px] text-fg-2">
+            <p className="mt-1 max-w-prose text-xs text-fg-2">
               A new key follows YOUR access: it can use the connected accounts you are allowed to use,
               and nothing else. Never anyone else&rsquo;s account, never more than you have right now —
               each use is re-checked against your access at that moment, so disconnecting an account or
               narrowing it in Settings &rarr; Integrations takes effect immediately, with no key to edit.
             </p>
-            <p className="mt-1 max-w-prose text-[12px] text-fg-2">
+            <p className="mt-1 max-w-prose text-xs text-fg-2">
               This is about connected accounts only. It does not change what the key can DO on the board
               (that is the tick list above — done and delete still stay with you). Settings &rarr; Secrets is
               separate: the key never reads a secret value and only uses named secrets through the secrets
               broker. Tokens are never shown here or handed to the key.
             </p>
-            <ModeButtons mode={connectorMode} setMode={setConnectorMode} idPrefix="new" />
+            <ModeButtons mode={connectorMode} setMode={setConnectorMode} />
             {connectorMode === 'none' && (
-              <p className="mt-2 text-[12px] text-fg-2">This key will not be able to use any connected account.</p>
+              <p className="mt-2 text-xs text-fg-2">This key will not be able to use any connected account.</p>
             )}
             {connectorMode === 'pick' && (
               <div className="mt-2">
@@ -499,7 +498,7 @@ export function AgentKeysSection() {
         </div>
       ) : active.length === 0 && revoked.length === 0 ? (
         <div className="rounded-md border border-dashed border-line px-4 py-6 text-center">
-          <p className="text-sm text-fg-1">No agent keys yet.</p>
+          <p className="text-base text-fg-1">No agent keys yet.</p>
           <p className="mt-1 text-xs text-fg-2">Make one per outside agent — e.g. “Reporting bot” scoped to one workspace.</p>
         </div>
       ) : (
@@ -508,7 +507,7 @@ export function AgentKeysSection() {
             <li key={k.id} className={cn('flex flex-col gap-3 p-3 sm:flex-row sm:items-center sm:justify-between', k.revoked_at && 'opacity-60')}>
               <div className="min-w-0 space-y-1.5">
                 <div className="flex flex-wrap items-center gap-2">
-                  <span className="text-sm font-semibold text-fg-0">{k.label}</span>
+                  <span className="text-base font-semibold text-fg-0">{k.label}</span>
                   <span className="font-mono text-xs text-fg-2">cc_live_••••{k.last4}</span>
                   {k.revoked_at && <Badge tone="alarm">revoked</Badge>}
                 </div>
@@ -529,19 +528,19 @@ export function AgentKeysSection() {
                 </div>
                 {!k.revoked_at && editing === k.id && (
                   <div className="space-y-2 rounded-md border border-line bg-surface-1 p-2.5">
-                    <p className="text-[12px] text-fg-2">
+                    <p className="text-xs text-fg-2">
                       Which of your connected accounts this key may use. Your own, never anyone else&rsquo;s,
                       and never more than you are allowed right now.
                     </p>
                     {isLegacyAll(k.connectors) && draftMode === 'inherit' && (
-                      <p className="text-[12px] text-fg-2">
+                      <p className="text-xs text-fg-2">
                         This key predates the per-key list and currently reaches everything. Saving moves it
                         to following your access, which is re-checked on every use.
                       </p>
                     )}
-                    <ModeButtons mode={draftMode} setMode={setDraftMode} idPrefix={`k${k.id}`} />
+                    <ModeButtons mode={draftMode} setMode={setDraftMode} />
                     {draftMode === 'none' && (
-                      <p className="text-[12px] text-fg-2">This key will not be able to use any connected account.</p>
+                      <p className="text-xs text-fg-2">This key will not be able to use any connected account.</p>
                     )}
                     {draftMode === 'pick' && (
                       <CataloguePicker
@@ -556,7 +555,7 @@ export function AgentKeysSection() {
                     </div>
                   </div>
                 )}
-                <p className="text-[12px] text-fg-2">
+                <p className="text-xs text-fg-2">
                   Created {fmtDate(k.created_at)} · Last used {k.last_used_at ? fmtDate(k.last_used_at) : 'never'}
                   {k.revoked_at && <> · Revoked {fmtDate(k.revoked_at)}</>}
                 </p>

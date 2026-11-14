@@ -19,10 +19,17 @@ import { api, ApiError } from '../../lib/api'
 import { Alert, Badge, Button, CopyButton, Modal, cn } from '../ui'
 import { errorHint, errorTitle, nameFromUrl } from './mcpServerCopy'
 import { McpToolList } from './McpToolList'
+import { Select } from '../ui/Select'
+import { Tabs } from '../ui/Tabs'
+
+const SOURCE_TABS: { key: Source; label: string }[] = [
+  { key: 'url', label: 'Paste a URL' },
+  { key: 'catalog', label: 'From the catalog' },
+]
 
 const INPUT =
-  'min-h-[44px] w-full rounded-md border border-line bg-surface-1 px-3 text-[13px] text-fg-0 outline-none transition-colors duration-fast ease-out placeholder:text-fg-3 hover:border-line-strong focus:border-accent focus-visible:ring-2 focus-visible:ring-accent/40 sm:min-h-[36px]'
-const LABEL = 'mb-1 block text-[12px] font-medium text-fg-1'
+  'min-h-[44px] w-full rounded-md border border-line bg-surface-1 px-3 text-sm text-fg-0 outline-none transition-colors duration-fast ease-out placeholder:text-fg-3 hover:border-line-strong focus:border-accent focus-visible:ring-2 focus-visible:ring-accent/40 sm:min-h-[36px]'
+const LABEL = 'mb-1 block text-xs font-medium text-fg-1'
 
 function errText(err: unknown, fallback: string): string {
   if (err instanceof ApiError) return (err.body as { error?: string } | null)?.error || err.message || fallback
@@ -141,10 +148,10 @@ export function ConnectMcpServerDialog({
   return (
     <Modal open={open} onClose={close} labelledBy={titleId} panelClassName="max-w-xl">
       <div className="max-h-[85vh] overflow-y-auto p-5 sm:p-6">
-        <h2 id={titleId} className="font-display text-[17px] font-semibold tracking-[-0.01em] text-fg-0">
+        <h2 id={titleId} className="font-display text-lg font-semibold tracking-tight text-fg-0">
           Connect an MCP server
         </h2>
-        <p className="mt-1 text-[13px] leading-relaxed text-fg-2">
+        <p className="mt-1 text-sm leading-relaxed text-fg-2">
           Add a remote MCP server so agents and chat bots in one workspace can use its tools. Keys and sign-ins are
           stored encrypted and never shown again.
         </p>
@@ -172,28 +179,17 @@ export function ConnectMcpServerDialog({
             className="mt-5 space-y-4"
             onSubmit={e => { e.preventDefault(); if (canConnect) void connect() }}
           >
-            <div role="tablist" aria-label="Where the server comes from" className="inline-flex rounded-md border border-line bg-surface-1 p-0.5">
-              {(['url', 'catalog'] as Source[]).map(s => (
-                <button
-                  key={s}
-                  type="button"
-                  role="tab"
-                  aria-selected={source === s}
-                  onClick={() => setSource(s)}
-                  className={cn(
-                    'min-h-[36px] rounded px-3 text-[12.5px] font-medium transition-colors duration-fast ease-out focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/50',
-                    source === s ? 'bg-surface-3 text-fg-0' : 'text-fg-2 hover:text-fg-1',
-                  )}
-                >
-                  {s === 'url' ? 'Paste a URL' : 'From the catalog'}
-                </button>
-              ))}
-            </div>
+            <Tabs
+              items={SOURCE_TABS}
+              value={source}
+              onChange={k => setSource(k as Source)}
+              label="Where the server comes from"
+            />
 
             {source === 'catalog' && (
               <div className="grid gap-2 sm:grid-cols-2" aria-label="Catalog MCP servers">
-                {catalog === null && <p className="text-[12.5px] text-fg-3">Loading catalog…</p>}
-                {catalog?.length === 0 && <p className="text-[12.5px] text-fg-3">No catalog entries publish a remote MCP URL.</p>}
+                {catalog === null && <p className="text-sm text-fg-3">Loading catalog…</p>}
+                {catalog?.length === 0 && <p className="text-sm text-fg-3">No catalog entries publish a remote MCP URL.</p>}
                 {catalog?.map(c => (
                   <button
                     key={c.id}
@@ -204,7 +200,7 @@ export function ConnectMcpServerDialog({
                       catalogId === c.id ? 'border-accent bg-surface-3' : 'border-line bg-surface-1',
                     )}
                   >
-                    <span className="block text-[13px] font-medium text-fg-0">{c.name}</span>
+                    <span className="block text-sm font-medium text-fg-0">{c.name}</span>
                     <span className="block truncate font-mono text-xs text-fg-3">{c.mcp_url}</span>
                   </button>
                 ))}
@@ -229,7 +225,7 @@ export function ConnectMcpServerDialog({
                   Detect
                 </Button>
               </div>
-              <p className="mt-1 text-[12px] leading-relaxed text-fg-3">
+              <p className="mt-1 text-xs leading-relaxed text-fg-3">
                 Streamable HTTP or SSE. Must be a public https address.
               </p>
             </div>
@@ -248,12 +244,12 @@ export function ConnectMcpServerDialog({
               </div>
               <div>
                 <label htmlFor={`${titleId}-ws`} className={LABEL}>Workspace</label>
-                <select id={`${titleId}-ws`} value={workspace} onChange={e => setWorkspace(e.target.value)} className={INPUT}>
+                <Select className="w-full" id={`${titleId}-ws`} value={workspace} onChange={v => setWorkspace(v)}>
                   {workspaces.map(w => <option key={w.value} value={w.value}>{w.label}</option>)}
-                </select>
+                </Select>
               </div>
             </div>
-            <p className="-mt-2 text-[12px] leading-relaxed text-fg-3">
+            <p className="-mt-2 text-xs leading-relaxed text-fg-3">
               Only cards and chat bots in this workspace will see the server and its credentials.
             </p>
 
@@ -263,7 +259,7 @@ export function ConnectMcpServerDialog({
               </Alert>
             )}
             {detect?.ok && (
-              <div className="rounded-md border border-line bg-surface-1 px-3 py-2.5 text-[12.5px] leading-relaxed text-fg-1" data-testid="mcp-detect-result">
+              <div className="rounded-md border border-line bg-surface-1 px-3 py-2.5 text-sm leading-relaxed text-fg-1" data-testid="mcp-detect-result">
                 <div className="mb-1 flex flex-wrap items-center gap-1.5">
                   <span className="font-medium text-fg-0">Detected:</span>
                   {detect.auth === 'none' && <Badge tone="verify">No sign-in needed</Badge>}
@@ -289,17 +285,16 @@ export function ConnectMcpServerDialog({
             {(detect || error) && (
               <div>
                 <label htmlFor={`${titleId}-auth`} className={LABEL}>Authentication</label>
-                <select
+                <Select className="w-full"
                   id={`${titleId}-auth`}
                   value={auth ?? ''}
-                  onChange={e => setAuth((e.target.value || null) as McpServerAuthType | null)}
-                  className={INPUT}
+                  onChange={v => setAuth((v || null) as McpServerAuthType | null)}
                 >
                   <option value="" disabled>Choose…</option>
                   <option value="none">No auth</option>
                   <option value="api_key">API key / bearer token</option>
                   <option value="oauth" disabled={!(detect?.ok && detect.auth === 'oauth')}>OAuth (sign in)</option>
-                </select>
+                </Select>
               </div>
             )}
 
@@ -322,7 +317,7 @@ export function ConnectMcpServerDialog({
                     className={cn(INPUT, 'font-mono')}
                   />
                 </div>
-                <p className="text-[12px] leading-relaxed text-fg-3 sm:col-span-2">
+                <p className="text-xs leading-relaxed text-fg-3 sm:col-span-2">
                   With the Authorization header a bare key is sent as <code className="font-mono">Bearer &lt;key&gt;</code>.
                 </p>
               </div>
@@ -330,19 +325,19 @@ export function ConnectMcpServerDialog({
 
             {auth === 'oauth' && manualOAuth && detect?.ok && detect.auth === 'oauth' && (
               <div className="space-y-3 rounded-md border border-line bg-surface-1 p-3">
-                <p className="text-[12.5px] leading-relaxed text-fg-1">
+                <p className="text-sm leading-relaxed text-fg-1">
                   This server uses OAuth but does not let apps register themselves. Create an OAuth app at the provider,
                   add this redirect URI, then paste the app’s client ID{detect.scopes_supported.length ? ' and grant the scopes below' : ''}.
                 </p>
                 <div>
                   <div className="mb-1 flex items-center justify-between gap-2">
-                    <span className="text-[12px] font-medium uppercase tracking-wider text-fg-3">Redirect URI</span>
+                    <span className="text-xs font-medium uppercase tracking-eyebrow text-fg-3">Redirect URI</span>
                     <CopyButton value={detect.redirect_uri} />
                   </div>
-                  <code className="block break-all rounded-md border border-line bg-surface-2 px-3 py-2 text-[12px] text-fg-0">{detect.redirect_uri}</code>
+                  <code className="block break-all rounded-md border border-line bg-surface-2 px-3 py-2 text-xs text-fg-0">{detect.redirect_uri}</code>
                 </div>
                 {detect.scopes_supported.length > 0 && (
-                  <p className="font-mono text-[12px] text-fg-2">{detect.scopes_supported.join(' ')}</p>
+                  <p className="font-mono text-xs text-fg-2">{detect.scopes_supported.join(' ')}</p>
                 )}
                 <div className="grid gap-3 sm:grid-cols-2">
                   <div>

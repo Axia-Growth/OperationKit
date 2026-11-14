@@ -13,6 +13,26 @@ export const MAX_VIDEO_BYTES = 5 * 1024 * 1024 * 1024 // 5 GB
 
 let cached: { url: string; key: string } | null = null
 
+/**
+ * Object paths are joined into service-role-signed Storage URLs, so they must
+ * name an object INSIDE the bucket and nothing else (obj 900838, CodeQL #77/#78).
+ * `encodeURI` kept `..`, `?` and `#`: `ws/../../../rest/v1/<table>?id=…`
+ * passed the caller's `startsWith(ws + "/")` prefix check and the URL parser
+ * then collapsed the dot segments into a request outside the bucket. Now every
+ * segment must be non-empty, not `.`/`..`, and free of control characters and
+ * backslashes, and each is percent-encoded on its own.
+ */
+export function isSafeObjectPath(objectPath: unknown): objectPath is string {
+  if (typeof objectPath !== 'string' || !objectPath || objectPath.length > 1024) return false
+  return objectPath.split('/').every(seg =>
+    seg !== '' && seg !== '.' && seg !== '..' && !/[\\\u0000-\u001f\u007f]/.test(seg))
+}
+
+function objectPathUrlPart(objectPath: string): string {
+  if (!isSafeObjectPath(objectPath)) throw new Error('invalid storage object path')
+  return objectPath.split('/').map(encodeURIComponent).join('/')
+}
+
 function fromStore(key: string): string {
   try {
     return getSecretValue({ scopeType: 'global' }, key) || ''
@@ -66,7 +86,7 @@ export interface SignedUpload {
 export async function signUpload(objectPath: string): Promise<SignedUpload> {
   const { url, key } = getStorageConfig()
   const res = await fetch(
-    `${url}/storage/v1/object/upload/sign/${HOOK_VIDEO_BUCKET}/${encodeURI(objectPath)}`,
+    `${url}/storage/v1/object/upload/sign/${HOOK_VIDEO_BUCKET}/${objectPathUrlPart(objectPath)}`,
     { method: 'POST', headers: { ...headers(key), 'Content-Type': 'application/json' }, body: '{}' },
   )
   if (!res.ok) {
@@ -83,14 +103,14 @@ export async function signUpload(objectPath: string): Promise<SignedUpload> {
 
 export function publicUrl(objectPath: string): string {
   const { url } = getStorageConfig()
-  return `${url}/storage/v1/object/public/${HOOK_VIDEO_BUCKET}/${encodeURI(objectPath)}`
+  return `${url}/storage/v1/object/public/${HOOK_VIDEO_BUCKET}/${objectPathUrlPart(objectPath)}`
 }
 
 // Delete a stored object (used when removing a recorded video). Idempotent-ish: a missing object
 // returns non-2xx, which we surface but the caller still strips the frontmatter entry.
 export async function deleteObject(objectPath: string): Promise<boolean> {
   const { url, key } = getStorageConfig()
-  const res = await fetch(`${url}/storage/v1/object/${HOOK_VIDEO_BUCKET}/${encodeURI(objectPath)}`, {
+  const res = await fetch(`${url}/storage/v1/object/${HOOK_VIDEO_BUCKET}/${objectPathUrlPart(objectPath)}`, {
     method: 'DELETE',
     headers: headers(key),
   })

@@ -7,7 +7,7 @@ import express from 'express'
 import cookieParser from 'cookie-parser'
 import jwt from 'jsonwebtoken'
 import { DESIGN_FRAME_CSP } from '../middleware/security-headers.js'
-import { securityHeaders } from '../middleware/security-headers.js'
+import { securityHeaders, CONTENT_SECURITY_POLICY } from '../middleware/security-headers.js'
 
 const TMP_DB = path.join(os.tmpdir(), `cc-design-frame-${process.pid}-${Date.now()}.db`)
 process.env.DB_PATH = TMP_DB
@@ -15,6 +15,7 @@ process.env.JWT_SECRET = 'test-secret-design-frame'
 
 const { initDb, getDb } = await import('../db/index.js')
 const { default: objectivesRouter } = await import('./objectives.js')
+const { setDesignFramePreviewFetchForTests, createDesignFramePreviewFetch } = await import('./objectives-design.js')
 
 const ADMIN_ID = 1
 const WS = 'example'
@@ -35,12 +36,12 @@ const token = () => jwt.sign(
 )
 
 function mockUpstream(hrefPrefix: string, html = UPSTREAM_HTML, status = 200, contentType = 'text/html') {
-  globalThis.fetch = (async (url: any, init?: any) => {
+  setDesignFramePreviewFetchForTests(async (url: string) => {
     if (String(url).startsWith(hrefPrefix)) {
       return new Response(html, { status, headers: { 'content-type': contentType } })
     }
-    return realFetch(url, init)
-  }) as typeof fetch
+    throw new Error('unexpected upstream ' + url)
+  })
 }
 
 async function getFrame(id: number, previewUrl: string, cookie = true) {
@@ -76,6 +77,7 @@ beforeAll(async () => {
 
 afterEach(() => {
   globalThis.fetch = realFetch
+  setDesignFramePreviewFetchForTests(null)
 })
 
 afterAll(async () => {
@@ -106,11 +108,57 @@ describe('GET /api/objectives/:id/design-frame', () => {
     expect(res.status).toBe(200)
     expect(res.headers.get('x-frame-options')).toBeNull()
     expect(res.headers.get('content-security-policy')).toBe(DESIGN_FRAME_CSP)
+    expect(DESIGN_FRAME_CSP).toContain('sandbox allow-scripts') // opaque origin for third-party HTML (obj 900838)
+    expect(CONTENT_SECURITY_POLICY).not.toContain('sandbox') // never on the app shell itself
     const html = await res.text()
     expect(html).toContain('<base href="https://landing-preview-demo.vercel.app/')
     expect(html).toContain('/_next/static/css/app.css')
     expect(html).not.toContain('/_next/static/chunks/main.js')
     expect(html).toContain('data-cc-design-bridge')
     expect(html).toContain('https://cc.example.com')
+  })
+
+  // obj 900838 / CodeQL #74: the host-name check alone was bypassable. A public
+  // name that redirects to (or resolves to) a private address must not be read.
+  it('refuses a public preview that REDIRECTS to loopback (SSRF via redirect)', async () => {
+    // A real local "internal" service the attacker wants to read.
+    const secretSrv = http.createServer((_q, r) => { r.setHeader('content-type', 'text/plain'); r.end('INTERNAL-SECRET') })
+    await new Promise<void>(r => secretSrv.listen(0, '127.0.0.1', () => r()))
+    const port = (secretSrv.address() as { port: number }).port
+    // Upstream "public" hop answers with a 302 to loopback; the next hop goes
+    // through the REAL guarded fetch, exactly as in production.
+    const guarded = createDesignFramePreviewFetch()
+    setDesignFramePreviewFetchForTests(async (url: string, init?: RequestInit) => {
+      if (url.startsWith('https://evil-preview.example.com/')) {
+        const loc = `http://127.0.0.1:${port}/`
+        // Re-enter the guarded fetch with the redirect target, as its hop loop does.
+        return guarded(loc, init)
+      }
+      return guarded(url, init)
+    })
+    try {
+      const res = await getFrame(objId, 'https://evil-preview.example.com/')
+      expect(res.status).toBe(400)
+      const body = await res.text()
+      expect(body).not.toContain('INTERNAL-SECRET')
+      expect(body).toContain('resolves to a private or local address')
+    } finally {
+      await new Promise<void>(r => secretSrv.close(() => r()))
+    }
+  })
+
+  it('uses the SSRF-guarded fetch by default (metadata IP literal refused before connect)', async () => {
+    // 169.254.169.254 is already refused by the host check; a hex/IPv6-mapped
+    // form is not, and must be stopped by the guarded fetch.
+    const res = await getFrame(objId, 'http://[::ffff:a9fe:a9fe]/metadata/v1/')
+    expect(res.status).toBe(400)
+    // Past the old host-name check; stopped by the guarded fetch.
+    expect(await res.text()).toContain('resolves to a private or local address')
+  })
+
+  it('maps an over-size body to 413', async () => {
+    setDesignFramePreviewFetchForTests(async () => { throw new Error('response larger than 1500000 bytes') })
+    const res = await getFrame(objId, 'https://landing-preview-demo.vercel.app/')
+    expect(res.status).toBe(413)
   })
 })

@@ -1,14 +1,8 @@
 // @vitest-environment jsdom
 import { describe, it, expect, afterEach, vi } from 'vitest'
-import { flushSync } from 'react-dom'
-import { createRoot, type Root } from 'react-dom/client'
+import { cleanup, press, render } from '../../test/render'
 import { Modal } from './Modal'
 
-// We render outside @testing-library and drive React ourselves; flushSync
-// commits the render AND flushes passive effects (useEffect) before returning,
-// so the focus/scroll-lock effect has run by the time we assert. Tell React we
-// are deliberately not in an act() environment to silence the act warning.
-;(globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = false
 
 /* obj 700071 regression — Modal focus stability.
 
@@ -28,72 +22,83 @@ import { Modal } from './Modal'
    [open, onClose] deps and PASSES with [open]. */
 
 describe('Modal — focus is stable across onClose identity changes', () => {
-  let container: HTMLDivElement | null = null
-  let root: Root | null = null
-  let trigger: HTMLButtonElement | null = null
-
-  afterEach(() => {
-    if (root) flushSync(() => root!.unmount())
-    container?.remove()
-    trigger?.remove()
-    root = null
-    container = null
-    trigger = null
-    vi.useRealTimers()
+  afterEach(async () => {
+    await cleanup()
   })
 
-  it('does not re-run the focus effect when only onClose identity changes', () => {
-    vi.useFakeTimers()
-
+  it('does not move focus when only onClose identity changes', async () => {
     // A trigger button standing in for the "New" button behind the modal — this
-    // is what the old cleanup would restore focus to.
-    trigger = document.createElement('button')
+    // is what a torn-down focus effect would restore focus to.
+    const trigger = document.createElement('button')
     trigger.textContent = 'New'
     document.body.appendChild(trigger)
     trigger.focus()
-    expect(document.activeElement).toBe(trigger)
-
-    container = document.createElement('div')
-    document.body.appendChild(container)
-    root = createRoot(container)
 
     const onClose1 = () => {}
-    flushSync(() => {
-      root!.render(
-        <Modal open onClose={onClose1}>
-          <input data-autofocus placeholder="field" />
-          <button>Save</button>
-        </Modal>,
-      )
-    })
-    // Flush the initial-focus setTimeout(…, 0) so focus lands inside the panel.
-    vi.runAllTimers()
-
-    const panel = document.querySelector<HTMLElement>('[role="dialog"] [tabindex="-1"]')
+    const view = await render(
+      <Modal open onClose={onClose1}>
+        <input data-autofocus placeholder="field" />
+        <button>Save</button>
+      </Modal>,
+    )
+    // The dialog element itself is the panel since the UI SDK migration (obj 900819).
+    const panel = document.querySelector<HTMLElement>('[role="dialog"]')
     expect(panel).toBeTruthy()
-    expect(panel!.contains(document.activeElement)).toBe(true)
+    expect(document.activeElement).toBe(panel!.querySelector('input'))
 
-    // Now spy on the trigger's focus: the old cleanup would call it on teardown.
     const restoreSpy = vi.spyOn(trigger, 'focus')
-
-    // Re-render with a DIFFERENT onClose reference, same open=true. Do NOT flush
-    // timers afterward: with the old deps the cleanup fires synchronously during
-    // teardown (focus → trigger), so the difference is observable immediately,
-    // before any re-scheduled initial-focus timer could mask it.
     const onClose2 = () => {}
-    flushSync(() => {
-      root!.render(
-        <Modal open onClose={onClose2}>
-          <input data-autofocus placeholder="field" />
-          <button>Save</button>
-        </Modal>,
-      )
-    })
-
-    // With [open] deps: effect untouched → focus-restore never ran, focus stays
-    // inside the panel. With the old [open, onClose] deps: teardown restored
-    // focus to the trigger (both assertions fail).
+    await view.rerender(
+      <Modal open onClose={onClose2}>
+        <input data-autofocus placeholder="field" />
+        <button>Save</button>
+      </Modal>,
+    )
     expect(restoreSpy).not.toHaveBeenCalled()
-    expect(panel!.contains(document.activeElement)).toBe(true)
+    expect(document.activeElement).toBe(panel!.querySelector('input'))
+    trigger.remove()
+  })
+
+  it('is a modal dialog: named, Escape closes via onClose, focus returns to the trigger', async () => {
+    const trigger = document.createElement('button')
+    document.body.appendChild(trigger)
+    trigger.focus()
+    const onClose = vi.fn()
+    const view = await render(
+      <Modal open onClose={onClose} labelledBy="m-title">
+        <h2 id="m-title">Edit card</h2>
+        <button>Save</button>
+      </Modal>,
+    )
+    const dialog = document.querySelector<HTMLElement>('[role="dialog"]')!
+    expect(dialog.getAttribute('aria-modal')).toBe('true')
+    expect(dialog.getAttribute('aria-labelledby')).toBe('m-title')
+    await press('Escape')
+    expect(onClose).toHaveBeenCalledTimes(1)
+    await view.rerender(
+      <Modal open={false} onClose={onClose} labelledBy="m-title">
+        <h2 id="m-title">Edit card</h2>
+      </Modal>,
+    )
+    await new Promise((r) => setTimeout(r, 0))
+    expect(document.querySelector('[role="dialog"]')).toBeNull()
+    expect(document.activeElement).toBe(trigger)
+    trigger.remove()
+  })
+
+  it('returns focus when the parent unmounts it while open', async () => {
+    const trigger = document.createElement('button')
+    document.body.appendChild(trigger)
+    trigger.focus()
+    const view = await render(
+      <Modal open onClose={() => {}}>
+        <button>Save</button>
+      </Modal>,
+    )
+    expect(document.activeElement?.textContent).toBe('Save')
+    await view.unmount()
+    await new Promise((r) => setTimeout(r, 0))
+    expect(document.activeElement).toBe(trigger)
+    trigger.remove()
   })
 })

@@ -62,6 +62,7 @@ import {
   ensureWorktree,
   ensureWorktreeHookAssets,
 } from './session-worktree.js'
+import { resolveCommonDir } from './worktree-gitdir.js'
 import {
   startSession,
   ensureUser,
@@ -428,6 +429,7 @@ export function sendFollowUp(
     model: objective.model || undefined,
     settingsPath: hookSettingsPath,
     worktreeRoot,
+    gitCommonDir: worktreeRoot && followUpIsolation ? resolveCommonDir(followUpIsolation.projectDir) : undefined,
     env: buildSpawnEnv({ objective, homeDir, sessionKind: 'followup' }),
     seatEnv: signIn.env,
     seatMount: signIn.mount,

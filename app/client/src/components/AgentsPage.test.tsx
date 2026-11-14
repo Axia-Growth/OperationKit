@@ -4,6 +4,7 @@ import { createRoot, type Root } from 'react-dom/client'
 import { MemoryRouter, Routes, Route } from 'react-router-dom'
 import { AGENTS_FIXTURE, AGENTS_FIXTURE_ALL, fixtureLoadFile } from './AgentsPage.fixture'
 import { AgentsPage } from './AgentsPage'
+import { chooseOption } from '../test/render'
 
 /**
  * Agents tab (obj 712126). Mounted with the createRoot + act idiom used by
@@ -107,12 +108,11 @@ describe('AgentsPage — project scoping', () => {
     await mount('/agents')
     expect(boardLayerCalls).toEqual([{ workspace: 'example', projectId: null }])
 
-    const select = container.querySelector('select[aria-label="Project scope"]') as HTMLSelectElement
+    const select = container.querySelector('button[role="combobox"][aria-label="Project scope"]') as HTMLElement
     expect(select).toBeTruthy()
-    expect(select.value).toBe('all')
+    expect(select.textContent).toContain('All of example')
 
-    select.value = '16'
-    select.dispatchEvent(new Event('change', { bubbles: true }))
+    await chooseOption(select, '16 · Acquisition Sites')
     await settle()
 
     // Refetched for the new scope…
@@ -121,7 +121,7 @@ describe('AgentsPage — project scoping', () => {
       { workspace: 'example', projectId: 16 },
     ])
     // …and the scope is in the URL, so a reload lands back here.
-    expect(select.value).toBe('16')
+    expect(select.textContent).toContain('16 · Acquisition Sites')
     expect(container.textContent).not.toContain('CMO')
   })
 

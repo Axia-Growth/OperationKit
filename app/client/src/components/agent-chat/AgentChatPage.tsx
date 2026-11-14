@@ -6,10 +6,13 @@ import { useFileDrop, filesFromClipboard } from '../../hooks/useFileDrop'
 import { useMediaQuery } from '../../hooks/useMediaQuery'
 import { Alert, Button, EmptyState, IconButton, Skeleton, SkeletonText, cn, useConfirm } from '../ui'
 import { ThinkingIndicator } from '../design/primitives'
+import { Tabs } from '../ui/Tabs'
 import { AgentAvatar, AssistantBubble, CardChip, DraftCard, ErrorLine, ToolLine, UserBubble } from './ChatItems'
 import { AgentInfoPanel } from './AgentInfoPanel'
 import { collectImages, humanSize, toWireImages, type PendingImage } from './attachments'
 import { BotSettingsPanel } from './BotSettingsPanel'
+import { BotSidebar } from './BotSidebar'
+import { useBotSidebar } from './useBotSidebar'
 import {
   ACCEPTED_IMAGE_TYPES,
   COLOUR_CLASSES,
@@ -72,69 +75,11 @@ export function suggestionsFor(a: ChatAgentInfo): string[] {
   ].slice(0, 3)
 }
 
-// ── bot list ──
-
-function AgentList({
-  data,
-  active,
-  onPick,
-  isAdmin,
-  onDemo,
-  demoBusy,
-}: {
-  data: AgentsResponse
-  active: string | null
-  onPick: (slug: string) => void
-  isAdmin: boolean
-  onDemo: (on: boolean) => void
-  demoBusy: boolean
-}) {
-  return (
-    <nav aria-label="Bots" className="flex h-full flex-col">
-      <div className="px-4 pb-2 pt-4">
-        <h1 className="text-[18px] font-semibold tracking-[-0.02em] text-fg-0">Bots</h1>
-        <p className="mt-0.5 text-[12.5px] text-fg-2">One ongoing conversation with each bot.</p>
-      </div>
-      <ul className="flex-1 space-y-1 overflow-y-auto px-2 pb-3">
-        {data.agents.map(a => {
-          const on = a.slug === active
-          return (
-            <li key={a.slug}>
-              <button
-                onClick={() => onPick(a.slug)}
-                aria-current={on ? 'page' : undefined}
-                className={cn(
-                  'flex min-h-[56px] w-full items-center gap-3 rounded-lg border px-3 py-2.5 text-left transition-all duration-fast',
-                  'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/50',
-                  on ? 'border-line-strong bg-surface-3' : 'border-transparent hover:border-line hover:bg-surface-3',
-                )}
-              >
-                <AgentAvatar agent={a} />
-                <span className="min-w-0 flex-1">
-                  <span className="block truncate text-[14px] font-medium text-fg-0">{a.name}</span>
-                  <span className="block truncate text-[12px] text-fg-2">{a.description || 'No description'}</span>
-                </span>
-              </button>
-            </li>
-          )
-        })}
-      </ul>
-      {isAdmin && (
-        <div className="border-t border-line-soft px-4 py-3">
-          <button
-            onClick={() => onDemo(!data.demo)}
-            disabled={demoBusy}
-            className="min-h-[44px] w-full rounded-md px-2 text-left text-[12.5px] text-fg-2 transition-colors duration-fast hover:bg-surface-3 hover:text-fg-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/50 disabled:opacity-45"
-          >
-            {data.demo ? 'Demo bot is on — turn it off' : 'Turn on the demo bot (sample inbox + calendar)'}
-          </button>
-        </div>
-      )}
-    </nav>
-  )
-}
+// ── bot list: see BotSidebar.tsx (obj 900798) ──
 
 // ── the lane strip: main conversation + side threads (obj 900370) ──
+
+const MAIN_LANE = 'main'
 
 function LaneStrip({
   threads,
@@ -151,36 +96,36 @@ function LaneStrip({
   onPick: (id: number | null) => void
   onOpen: () => void
 }) {
-  // No side threads yet: one button, no strip. The main conversation keeps
-  // looking exactly like it did before this feature existed.
   const atCap = maxOpen > 0 && threads.length >= maxOpen
-  const pill = (on: boolean) =>
-    cn(
-      'min-h-[36px] shrink-0 whitespace-nowrap rounded-full border px-3 text-[12.5px] transition-all duration-fast',
-      'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/50',
-      on ? 'border-line-strong bg-surface-3 text-fg-0' : 'border-line bg-surface-1 text-fg-2 hover:border-line-strong hover:text-fg-0',
-    )
+  // One tab per lane on the UI SDK tabs (obj 900819): one tab stop, arrow keys
+  // move between lanes. "+ Side thread" is an action, so it sits beside the
+  // tablist rather than inside it.
+  const items = [
+    { key: MAIN_LANE, label: 'Main' },
+    ...threads.map(t => ({
+      key: String(t.id),
+      label: `${t.pinned ? '★ ' : ''}${t.title}`,
+      ...(t.message_count > 0 ? { count: t.message_count } : {}),
+    })),
+  ]
   return (
-    <div
-      role="tablist"
-      aria-label="Conversations with this bot"
-      className="flex items-center gap-2 overflow-x-auto border-b border-line-soft bg-surface-1 px-2 py-1.5 sm:px-4"
-    >
-      <button role="tab" aria-selected={lane === null} onClick={() => onPick(null)} className={pill(lane === null)}>
-        Main
-      </button>
-      {threads.map(t => (
-        <button key={t.id} role="tab" aria-selected={lane === t.id} onClick={() => onPick(t.id)} className={pill(lane === t.id)}>
-          {t.pinned && <span aria-hidden="true">★ </span>}
-          {t.title}
-          {t.message_count > 0 && <span className="ml-1 text-fg-3">{t.message_count}</span>}
-        </button>
-      ))}
+    <div className="flex items-center gap-2 border-b border-line-soft bg-surface-1 px-2 py-1.5 sm:px-4">
+      <Tabs
+        items={items}
+        value={lane === null ? MAIN_LANE : String(lane)}
+        onChange={k => onPick(k === MAIN_LANE ? null : Number(k))}
+        label="Conversations with this bot"
+        className="min-w-0"
+      />
       <button
+        type="button"
         onClick={onOpen}
         disabled={busy || atCap}
         title={atCap ? `${maxOpen} open side threads is the limit for one bot — close one first` : 'Open a side thread that runs beside this conversation'}
-        className={cn(pill(false), 'disabled:opacity-45')}
+        className={cn(
+          'min-h-[32px] shrink-0 whitespace-nowrap rounded-md border border-line bg-surface-1 px-3 text-sm text-fg-2 transition-colors duration-fast',
+          'hover:border-line-strong hover:text-fg-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/50 disabled:opacity-45',
+        )}
       >
         + Side thread
       </button>
@@ -197,6 +142,7 @@ function Conversation({
   meta,
   isAdmin = false,
   onAgentChanged,
+  onActivity,
 }: {
   agent: ChatAgentInfo
   onBack: () => void
@@ -205,6 +151,8 @@ function Conversation({
   meta?: AgentsResponse
   isAdmin?: boolean
   onAgentChanged?: (a: ChatAgentInfo) => void
+  /** A message landed or loaded in the lane on screen — the sidebar marks the bot read (obj 900798). */
+  onActivity?: () => void
 }) {
   const [thread, setThread] = useState<ThreadResponse | null>(null)
   // obj 900671: the bot's settings panel (model, provider, tools) on its own page.
@@ -365,6 +313,16 @@ function Conversation({
     scroller.current?.scrollTo({ top: scroller.current.scrollHeight, behavior: 'smooth' })
   }, [thread?.messages.length, pending])
 
+  // obj 900798: what is on screen has been read. Fires when the newest message
+  // in view changes (a lane loaded, a reply landed), not on every 15s refresh,
+  // so a bot the person just marked unread stays unread until something new.
+  const newestId = thread?.messages.length ? thread.messages[thread.messages.length - 1].id : 0
+  const activity = useRef(onActivity)
+  activity.current = onActivity
+  useEffect(() => {
+    if (newestId) activity.current?.()
+  }, [newestId])
+
   const send = async (raw: string, attached: PendingImage[] = images) => {
     const msg = raw.trim()
     // A screenshot on its own is a message: send when there is text OR an image.
@@ -444,8 +402,8 @@ function Conversation({
         </IconButton>
         <AgentAvatar agent={agent} />
         <div className="min-w-[9rem] flex-1">
-          <h2 className="truncate font-display text-[15px] font-semibold tracking-[-0.01em] text-fg-0">{agent.name}</h2>
-          <p className="truncate text-[12px] text-fg-2">
+          <h2 className="truncate font-display text-lg font-semibold tracking-tight text-fg-0">{agent.name}</h2>
+          <p className="truncate text-xs text-fg-2">
             Answers with <span className="text-fg-1">{answeredBy}</span>
             {agent.version && <span> · v{agent.version}</span>}
             {/* Named only in a side thread: the main conversation is the unlabelled default. */}
@@ -467,7 +425,7 @@ function Conversation({
               value={renameTo}
               onChange={e => setRenameTo(e.target.value)}
               onKeyDown={e => { if (e.key === 'Escape') setRenameTo(null) }}
-              className="min-h-[36px] w-40 rounded-md border border-line bg-surface-0 px-2 text-[13px] text-fg-0 focus:border-accent focus:outline-none focus:ring-2 focus:ring-accent/30"
+              className="min-h-[36px] w-40 rounded-md border border-line bg-surface-0 px-2 text-sm text-fg-0 focus:border-accent focus:outline-none focus:ring-2 focus:ring-accent/30"
             />
             <Button type="submit" variant="ghost" size="sm">Save</Button>
             <Button type="button" variant="ghost" size="sm" onClick={() => setRenameTo(null)}>Cancel</Button>
@@ -570,10 +528,10 @@ function Conversation({
             <div className="flex flex-col items-center gap-4 py-10 text-center">
               <AgentAvatar agent={agent} size="lg" />
               <div className="space-y-1">
-                <p className="font-display text-[16px] font-semibold text-fg-0">
+                <p className="font-display text-lg font-semibold text-fg-0">
                   {activeThread ? `"${activeThread.title}" is empty` : `Start a conversation with ${agent.name}`}
                 </p>
-                <p className="mx-auto max-w-[46ch] text-[13px] leading-relaxed text-fg-2">
+                <p className="mx-auto max-w-[46ch] text-sm leading-relaxed text-fg-2">
                   {activeThread
                     ? `A side thread has its own history and its own context — ${agent.name} sees only what you say here, and it keeps working while you use the main conversation.`
                     : agent.about?.description || agent.description}
@@ -584,7 +542,7 @@ function Conversation({
                   <button
                     key={s}
                     onClick={() => void send(s)}
-                    className="min-h-[44px] rounded-full border border-line bg-surface-1 px-4 text-[13px] text-fg-1 transition-all duration-fast hover:-translate-y-px hover:border-line-strong hover:text-fg-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/50"
+                    className="min-h-[44px] rounded-full border border-line bg-surface-1 px-4 text-sm text-fg-1 transition-all duration-fast hover:-translate-y-px hover:border-line-strong hover:text-fg-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/50"
                   >
                     {s}
                   </button>
@@ -594,12 +552,12 @@ function Conversation({
                 <button
                   type="button"
                   onClick={() => setInfoOpen(true)}
-                  className="text-[12.5px] text-accent-hover underline-offset-2 hover:text-accent hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/50"
+                  className="text-sm text-accent-hover underline-offset-2 hover:text-accent hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/50"
                 >
                   How to use {agent.name}
                 </button>
               )}
-              {agent.source === 'demo' && <p className="text-[12px] text-fg-2">Demo bot: the inbox, calendar and notes are made-up sample data.</p>}
+              {agent.source === 'demo' && <p className="text-xs text-fg-2">Demo bot: the inbox, calendar and notes are made-up sample data.</p>}
             </div>
           )}
           {thread?.messages.map(m => (
@@ -617,7 +575,7 @@ function Conversation({
           {pending && (
             <>
               <div className="flex justify-end">
-                <div className="max-w-[85%] rounded-lg rounded-br-sm border border-line bg-surface-3 px-3.5 py-2.5 text-[14px] text-fg-0 sm:max-w-[70%]">
+                <div className="max-w-[85%] rounded-lg rounded-br-sm border border-line bg-surface-3 px-3.5 py-2.5 text-base text-fg-0 sm:max-w-[70%]">
                   {pending.images.length > 0 && (
                     <div className="mb-2 flex flex-wrap gap-1.5">
                       {pending.images.map(i => (
@@ -646,8 +604,8 @@ function Conversation({
         {...dropProps}
       >
         <div className="mx-auto max-w-[760px]">
-          {sendError && <p role="alert" className="mb-2 text-[12.5px] text-signal-alarm">{sendError}</p>}
-          {isDragging && <p className="mb-2 text-[12.5px] text-accent">Drop the image to attach it</p>}
+          {sendError && <p role="alert" className="mb-2 text-sm text-signal-alarm">{sendError}</p>}
+          {isDragging && <p className="mb-2 text-sm text-accent">Drop the image to attach it</p>}
           {images.length > 0 && (
             <ul aria-label="Attached images" className="mb-2 flex flex-wrap gap-2">
               {images.map(i => (
@@ -657,7 +615,7 @@ function Conversation({
                     type="button"
                     aria-label={`Remove ${i.name}`}
                     onClick={() => setImages(cur => cur.filter(x => x.key !== i.key))}
-                    className="absolute -right-1.5 -top-1.5 grid h-5 w-5 place-items-center rounded-full border border-line bg-surface-0 text-[12px] leading-none text-fg-1 transition-colors duration-fast hover:border-line-strong hover:text-fg-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/50"
+                    className="absolute -right-1.5 -top-1.5 grid h-5 w-5 place-items-center rounded-full border border-line bg-surface-0 text-xs leading-none text-fg-1 transition-colors duration-fast hover:border-line-strong hover:text-fg-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/50"
                   >
                     ×
                   </button>
@@ -695,13 +653,13 @@ function Conversation({
               onPaste={onPaste}
               placeholder={narrow ? 'Write a message…' : activeThread ? `Write a message in "${activeThread.title}"` : 'Write a message, or paste a screenshot'}
               disabled={!!pending}
-              className="max-h-60 min-h-[44px] flex-1 resize-none rounded-lg border border-line bg-surface-0 px-3.5 py-2.5 text-[16px] text-fg-0 placeholder:text-fg-3 transition-colors duration-fast hover:border-line-strong focus:border-accent focus:outline-none focus:ring-2 focus:ring-accent/30 disabled:opacity-60 sm:text-[14px]"
+              className="max-h-60 min-h-[44px] flex-1 resize-none rounded-lg border border-line bg-surface-0 px-3.5 py-2.5 text-lg text-fg-0 placeholder:text-fg-3 transition-colors duration-fast hover:border-line-strong focus:border-accent focus:outline-none focus:ring-2 focus:ring-accent/30 disabled:opacity-60 sm:text-base"
             />
             <Button type="submit" variant="primary" loading={!!pending} disabled={!text.trim() && images.length === 0} className="min-h-[44px] sm:min-h-[44px]">
               Send
             </Button>
           </div>
-          <p className="mt-1.5 hidden text-[12px] text-fg-2 sm:block">Enter to send · Shift+Enter for a new line · paste, drop or attach a screenshot · Email and calendar are always drafts until you press Send.</p>
+          <p className="mt-1.5 hidden text-xs text-fg-2 sm:block">Enter to send · Shift+Enter for a new line · paste, drop or attach a screenshot · Email and calendar are always drafts until you press Send.</p>
         </div>
       </form>
       {confirmDialog}
@@ -772,6 +730,8 @@ export function AgentChatPage() {
   const [data, setData] = useState<AgentsResponse | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [demoBusy, setDemoBusy] = useState(false)
+  // obj 900798: the person's pins, sections, hidden bots and unread state.
+  const sidebar = useBotSidebar()
 
   const load = useCallback(async () => {
     try {
@@ -803,6 +763,14 @@ export function AgentChatPage() {
     if (active && pendingPrompt.current?.slug === active.slug) pendingPrompt.current = null
   }, [active])
   const pick = (s: string) => navigate(`/chat/${s}`)
+  // Opening a bot reads it (and clears a "Mark as unread").
+  const markRead = sidebar.markRead
+  const activeSlug = active?.slug ?? null
+  useEffect(() => {
+    if (activeSlug) void markRead(activeSlug)
+  }, [activeSlug, markRead])
+  const mergeAgent = (a: ChatAgentInfo) =>
+    setData(d => (d ? { ...d, agents: d.agents.map(x => (x.slug === a.slug ? { ...x, ...a } : x)) } : d))
 
   if (error && !data) {
     return <div className="p-6"><Alert tone="alarm">{error}</Alert></div>
@@ -821,7 +789,7 @@ export function AgentChatPage() {
     return (
       <div className="flex h-full items-center justify-center px-4">
         <EmptyState
-          icon={<span className={cn('grid h-full w-full place-items-center rounded-lg border font-display text-[13px] font-semibold', COLOUR_CLASSES.green.tile)}>AI</span>}
+          icon={<span className={cn('grid h-full w-full place-items-center rounded-lg border font-display text-sm font-semibold', COLOUR_CLASSES.green.tile)}>AI</span>}
           title="No bots yet"
           description={
             isAdmin
@@ -837,7 +805,20 @@ export function AgentChatPage() {
   return (
     <div className="flex h-full min-h-0 bg-surface-0">
       <aside className={cn('h-full w-full shrink-0 border-line bg-surface-1 md:block md:w-[300px] md:border-r', active ? 'hidden' : 'block')}>
-        <AgentList data={data} active={active?.slug ?? null} onPick={pick} isAdmin={isAdmin} onDemo={on => void setDemo(on)} demoBusy={demoBusy} />
+        <BotSidebar
+          data={data}
+          active={active?.slug ?? null}
+          onPick={pick}
+          isAdmin={isAdmin}
+          onDemo={on => void setDemo(on)}
+          demoBusy={demoBusy}
+          sidebar={sidebar}
+          onAgentChanged={mergeAgent}
+          onAgentDeleted={gone => {
+            if (gone === active?.slug) navigate('/chat')
+            void load()
+          }}
+        />
       </aside>
       <main className={cn('h-full min-w-0 flex-1', active ? 'block' : 'hidden md:block')}>
         {active ? (
@@ -848,9 +829,8 @@ export function AgentChatPage() {
             initialText={pendingPrompt.current?.slug === active.slug ? pendingPrompt.current.text : ''}
             meta={data}
             isAdmin={isAdmin}
-            onAgentChanged={a =>
-              setData(d => (d ? { ...d, agents: d.agents.map(x => (x.slug === a.slug ? { ...x, ...a } : x)) } : d))
-            }
+            onAgentChanged={mergeAgent}
+            onActivity={() => void markRead(active.slug)}
           />
         ) : (
           <div className="flex h-full items-center justify-center px-6">

@@ -24,7 +24,7 @@ export function SettingsAgents({ showSetupPrompt = true }: { showSetupPrompt?: b
   return (
     <div>
       <div className="mb-4 space-y-2">
-        <p className="max-w-prose text-[12.5px] leading-relaxed text-fg-2">
+        <p className="max-w-prose text-sm leading-relaxed text-fg-2">
           <span className="font-medium text-fg-1">Agents</span> are who does the work.{' '}
           <span className="font-medium text-fg-1">Skills</span> are how-to instructions an agent follows.{' '}
           <span className="font-medium text-fg-1">Tools</span> are the integrations and MCP connections an agent
@@ -36,27 +36,26 @@ export function SettingsAgents({ showSetupPrompt = true }: { showSetupPrompt?: b
             Settings → Integrations
           </a>
           . <span className="font-medium text-fg-1">Assignments</span> (below) narrow an agent or skill to one
-          organization, project, or user instead of it applying everywhere.
+          workspace, project, or user instead of it applying everywhere.
         </p>
         {showSetupPrompt && (
           <div className="flex items-start justify-between gap-3 rounded-md border border-line bg-surface-1 p-3">
-            <p className="max-w-prose text-[12px] leading-relaxed text-fg-3">
+            <p className="max-w-prose text-xs leading-relaxed text-fg-3">
               Prefer to set this up by talking to an assistant instead of clicking through forms? Copy this prompt.
             </p>
             <CopyButton value={SETUP_PROMPT} label="Copy setup prompt" />
           </div>
         )}
       </div>
-      <div className="mb-4">
-        <Tabs items={TABS} value={tab} onChange={setTab} />
-      </div>
-      {tab === 'roster' && <AgentsSkillsTab />}
-      {tab === 'assignments' && <AssignmentsTab />}
-      {tab === 'graph' && (
-        <Card inset className="h-[70vh] overflow-hidden">
-          <SkillGraphTab />
-        </Card>
-      )}
+      <Tabs items={TABS} value={tab} onChange={setTab} label="Agent registry views" panelClassName="mt-4">
+        {tab === 'roster' && <AgentsSkillsTab />}
+        {tab === 'assignments' && <AssignmentsTab />}
+        {tab === 'graph' && (
+          <Card inset className="h-[70vh] overflow-hidden">
+            <SkillGraphTab />
+          </Card>
+        )}
+      </Tabs>
     </div>
   )
 }

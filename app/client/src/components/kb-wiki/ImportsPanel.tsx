@@ -141,7 +141,7 @@ export function ImportsPanel({
         )}
       >
         <Upload className="h-5 w-5 text-fg-2" aria-hidden="true" />
-        <div className="max-w-[56ch] text-[13px] text-fg-1">
+        <div className="max-w-[56ch] text-sm text-fg-1">
           Drop a Claude or ChatGPT export (.zip) or call transcripts here, or
         </div>
         <input
@@ -161,7 +161,7 @@ export function ImportsPanel({
             Try with sample data
           </Button>
         </div>
-        <div className="max-w-[60ch] text-[12px] leading-relaxed text-fg-3">
+        <div className="max-w-[60ch] text-xs leading-relaxed text-fg-3">
           Chat exports (.zip from Claude or ChatGPT “Export data”) · call transcripts (.vtt, .srt, .txt, .docx, .json, .md) ·
           you choose which chats get read · your original files are kept untouched on this server
         </div>
@@ -199,8 +199,8 @@ export function ImportsPanel({
                 <div className="flex items-start gap-2.5">
                   <MessagesSquare className="mt-0.5 h-4 w-4 shrink-0 text-fg-2" aria-hidden="true" />
                   <div className="min-w-0 flex-1">
-                    <div className="truncate text-[13.5px] font-medium text-fg-0" title={job.label}>{job.label}</div>
-                    <div className="text-[12px] text-fg-3">
+                    <div className="truncate text-base font-medium text-fg-0" title={job.label}>{job.label}</div>
+                    <div className="text-xs text-fg-3">
                       {JOB_KIND_LABEL[job.kind]} · {job.counts.total} {job.kind === 'transcripts' ? 'call' : 'chat'}{job.counts.total === 1 ? '' : 's'} · added {shortDate(job.created_at)}
                     </div>
                   </div>
@@ -222,7 +222,7 @@ export function ImportsPanel({
                         style={{ width: `${p.pct}%` }}
                       />
                     </div>
-                    <div className="text-[12px] text-fg-2">
+                    <div className="text-xs text-fg-2">
                       {p.finished} of {p.of} processed
                       {job.counts.done > 0 && ` · ${job.counts.done} imported`}
                       {job.counts.skipped > 0 && ` · ${job.counts.skipped} skipped as small talk`}
@@ -231,7 +231,7 @@ export function ImportsPanel({
                   </div>
                 )}
 
-                {job.status === 'failed' && job.error && <p className="pl-6 text-[12.5px] text-signal-alarm">{job.error}</p>}
+                {job.status === 'failed' && job.error && <p className="pl-6 text-sm text-signal-alarm">{job.error}</p>}
 
                 <div className="flex flex-wrap gap-1.5 pl-6">
                   {job.status === 'running' && (

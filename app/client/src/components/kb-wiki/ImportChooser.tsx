@@ -6,6 +6,7 @@ import {
 } from '../../lib/kbWiki'
 import { Alert, Badge, Button, SearchInput, Skeleton, cn } from '../ui'
 import { wikiApi, wsQuery } from './wikiApi'
+import { Select } from '../ui/Select'
 
 const PAGE_SIZE = 50
 
@@ -18,7 +19,7 @@ export const ITEM_STATUS: Record<ImportItemStatus, { label: string; tone: 'neutr
   failed: { label: 'Failed', tone: 'alarm' },
 }
 
-const FIELD = 'min-h-[44px] rounded-md border border-line bg-surface-1 px-2 text-[13px] text-fg-0 transition-colors duration-fast hover:border-line-strong focus:outline-none focus-visible:ring-2 focus-visible:ring-accent sm:min-h-[36px]'
+const FIELD = 'min-h-[44px] rounded-md border border-line bg-surface-1 px-2 text-sm text-fg-0 transition-colors duration-fast hover:border-line-strong focus:outline-none focus-visible:ring-2 focus-visible:ring-accent sm:min-h-[36px]'
 
 /* ImportChooser (obj 720117) — pick which chats/calls of an import get read.
    Search + date range + status + "at least N messages", tick per row or every
@@ -107,36 +108,36 @@ export function ImportChooser({
           wrapClassName="w-full lg:w-64"
         />
         <div className="flex flex-wrap items-end gap-2">
-          <label className="flex flex-col gap-1 text-[12px] text-fg-3">
+          <label className="flex flex-col gap-1 text-xs text-fg-3">
             From
             <input type="date" value={filter.from ?? ''} onChange={e => setField({ from: e.target.value || undefined })} className={FIELD} />
           </label>
-          <label className="flex flex-col gap-1 text-[12px] text-fg-3">
+          <label className="flex flex-col gap-1 text-xs text-fg-3">
             To
             <input type="date" value={filter.to ?? ''} onChange={e => setField({ to: e.target.value || undefined })} className={FIELD} />
           </label>
-          <label className="flex flex-col gap-1 text-[12px] text-fg-3">
+          <label className="flex flex-col gap-1 text-xs text-fg-3">
             Status
-            <select value={filter.status ?? ''} onChange={e => setField({ status: (e.target.value || undefined) as ImportItemStatus | undefined })} className={FIELD}>
+            <Select aria-label="Status" value={filter.status ?? ''} onChange={v => setField({ status: (v || undefined) as ImportItemStatus | undefined })}>
               <option value="">Any</option>
               {(Object.keys(ITEM_STATUS) as ImportItemStatus[]).map(s => <option key={s} value={s}>{ITEM_STATUS[s].label}</option>)}
-            </select>
+            </Select>
           </label>
-          <label className="flex flex-col gap-1 text-[12px] text-fg-3">
+          <label className="flex flex-col gap-1 text-xs text-fg-3">
             Length
-            <select value={filter.min_messages ?? 0} onChange={e => setField({ min_messages: Number(e.target.value) || undefined })} className={FIELD}>
+            <Select aria-label="Length" value={String(filter.min_messages ?? 0)} onChange={v => setField({ min_messages: Number(v) || undefined })}>
               <option value={0}>Any length</option>
               <option value={2}>2+ messages</option>
               <option value={5}>5+ messages</option>
               <option value={10}>10+ messages</option>
               <option value={25}>25+ messages</option>
-            </select>
+            </Select>
           </label>
         </div>
       </div>
 
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <span className="text-[12.5px] text-fg-2">
+        <span className="text-sm text-fg-2">
           {filtered ? `${total} match${total === 1 ? '' : 'es'}` : `${total} in this import`} · <span className="text-fg-0">{job.counts.selected} ticked</span>
         </span>
         <div className="flex flex-wrap gap-1.5">
@@ -162,7 +163,7 @@ export function ImportChooser({
       )}
 
       {items && items.length === 0 && (
-        <p className="py-6 text-center text-[13px] text-fg-2">Nothing matches. Try a wider date range or clear the search.</p>
+        <p className="py-6 text-center text-sm text-fg-2">Nothing matches. Try a wider date range or clear the search.</p>
       )}
 
       {items && items.length > 0 && (
@@ -184,10 +185,10 @@ export function ImportChooser({
                 </label>
                 <div className="min-w-0 flex-1 py-1">
                   <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-                    <span className="min-w-0 truncate text-[13.5px] font-medium text-fg-0" title={it.title}>{it.title}</span>
+                    <span className="min-w-0 truncate text-base font-medium text-fg-0" title={it.title}>{it.title}</span>
                     {it.status !== 'pending' && <Badge tone={st.tone}>{st.label}</Badge>}
                   </div>
-                  <div className="mt-0.5 flex flex-wrap gap-x-3 text-[12px] text-fg-3">
+                  <div className="mt-0.5 flex flex-wrap gap-x-3 text-xs text-fg-3">
                     {it.started_at && <span>{shortDate(it.started_at)}</span>}
                     <span>{it.message_count} message{it.message_count === 1 ? '' : 's'}</span>
                     {it.participants.length > 0 && (
@@ -196,9 +197,9 @@ export function ImportChooser({
                       </span>
                     )}
                   </div>
-                  {it.preview && <p className="mt-1 line-clamp-2 text-[12.5px] leading-snug text-fg-2">{it.preview}</p>}
-                  {it.status === 'skipped' && it.skip_reason && <p className="mt-1 text-[12px] text-signal-amber">Skipped: {it.skip_reason}</p>}
-                  {it.status === 'failed' && it.error && <p className="mt-1 text-[12px] text-signal-alarm">{it.error}</p>}
+                  {it.preview && <p className="mt-1 line-clamp-2 text-sm leading-snug text-fg-2">{it.preview}</p>}
+                  {it.status === 'skipped' && it.skip_reason && <p className="mt-1 text-xs text-signal-amber">Skipped: {it.skip_reason}</p>}
+                  {it.status === 'failed' && it.error && <p className="mt-1 text-xs text-signal-alarm">{it.error}</p>}
                   {it.source_note && (
                     <Button size="sm" variant="ghost" className="mt-1 min-h-[44px] px-2 sm:min-h-[28px]" onClick={() => onOpenNote(it.source_note!)}>
                       Open readable copy
@@ -216,7 +217,7 @@ export function ImportChooser({
           <Button size="sm" variant="ghost" className="min-h-[44px] sm:min-h-[32px]" disabled={offset === 0} onClick={() => setOffset(o => Math.max(0, o - PAGE_SIZE))}>
             Previous
           </Button>
-          <span className="font-mono text-[12px] text-fg-3">
+          <span className="font-mono text-xs text-fg-3">
             {offset + 1}–{Math.min(offset + PAGE_SIZE, total)} of {total}
           </span>
           <Button size="sm" variant="ghost" className="min-h-[44px] sm:min-h-[32px]" disabled={offset + PAGE_SIZE >= total} onClick={() => setOffset(o => o + PAGE_SIZE)}>
@@ -227,7 +228,7 @@ export function ImportChooser({
 
       {!running && job.status !== 'cancelled' && (
         <div className="flex flex-col gap-2 border-t border-line-soft pt-3 sm:flex-row sm:items-center sm:justify-between">
-          <span className="text-[12px] text-fg-3">Small talk and chats with no business facts are skipped automatically.</span>
+          <span className="text-xs text-fg-3">Small talk and chats with no business facts are skipped automatically.</span>
           <Button variant="primary" loading={busy === 'start'} disabled={toProcess <= 0 || !!busy} onClick={() => { void start() }}
             leftIcon={<Play className="h-4 w-4" aria-hidden="true" />}>
             {toProcess > 0 ? `Process ${toProcess} selected` : 'Tick chats to process'}

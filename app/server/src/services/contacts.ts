@@ -45,7 +45,11 @@ export interface SeedResult {
 
 // ── Frontmatter parser ──────────────────────────────────────────────────────
 
-const FRONTMATTER_RE = /^---\s*\n([\s\S]*?)\n---/
+// obj 900838 (CodeQL js/polynomial-redos): the opening fence used `\s*\n`, and
+// `\s` also matches `\n`, so an unterminated block of blank lines backtracked
+// quadratically. Horizontal whitespace only; blank lines fall into the body,
+// where the line parser below already skips them.
+const FRONTMATTER_RE = /^---[ \t]*\r?\n([\s\S]*?)\n---/
 
 export function parseFrontmatter(source: string): Frontmatter | null {
   const m = source.match(FRONTMATTER_RE)
@@ -61,7 +65,10 @@ export function parseFrontmatter(source: string): Frontmatter | null {
     if (/^\s*-\s/.test(line)) { i++; continue }
     if (!line.trim() || line.trim().startsWith('#')) { i++; continue }
 
-    const kvMatch = line.match(/^([A-Za-z_][\w-]*)\s*:\s*(.*)$/)
+    // No `\s*` between the colon and the value capture: the two overlapped and
+    // backtracked quadratically on a long run of spaces (obj 900838). The value
+    // is trimmed below either way.
+    const kvMatch = line.match(/^([A-Za-z_][\w-]*)\s*:([^\n]*)$/)
     if (!kvMatch) { i++; continue }
     const key = kvMatch[1]
     const rawValue = kvMatch[2].trim()
@@ -71,7 +78,7 @@ export function parseFrontmatter(source: string): Frontmatter | null {
       const items: string[] = []
       let j = i + 1
       while (j < lines.length) {
-        const sub = lines[j].match(/^\s+-\s*(.+)\s*$/)
+        const sub = lines[j].match(/^\s+-([^\n]+)$/) // item text trimmed below (obj 900838: no overlapping \s* captures)
         if (!sub) break
         items.push(stripQuotes(sub[1].trim()))
         j++
@@ -93,7 +100,18 @@ export function parseFrontmatter(source: string): Frontmatter | null {
 }
 
 function stripQuotes(s: string): string {
-  if ((s.startsWith('"') && s.endsWith('"')) || (s.startsWith("'") && s.endsWith("'"))) {
+  if (s.length >= 2 && s.startsWith('"') && s.endsWith('"')) {
+    // obj 900838: internal-vault now writes double-quoted scalars as JSON string
+    // literals (backslash and control characters escaped), which is valid YAML.
+    // Decode them; a hand-written value that is not valid JSON keeps the old
+    // quote-only unescape.
+    try {
+      const v: unknown = JSON.parse(s)
+      if (typeof v === 'string') return v
+    } catch { /* not a JSON literal */ }
+    return s.slice(1, -1).replace(/\\"/g, '"')
+  }
+  if (s.length >= 2 && s.startsWith("'") && s.endsWith("'")) {
     return s.slice(1, -1).replace(/\\"/g, '"')
   }
   return s
@@ -483,7 +501,15 @@ export function readContactFile(vaultRoot: string, vaultPath: string): { content
 // quoted; integers stay bare; arrays render inline (`[a, b]`) because that's
 // what the existing 21 contact files use.
 function needsQuoting(s: string): boolean {
-  return /[:#&*?!|>'"%@`,\[\]\{\}]/.test(s) || /^\s|\s$/.test(s) || /^-\s/.test(s) || s === ''
+  return /[:#&*?!|>'"%@`,\[\]\{\}\\\u0000-\u001f]/.test(s) || /^\s|\s$/.test(s) || /^-\s/.test(s) || s === ''
+}
+
+// obj 900838 (CodeQL incomplete-sanitization): quoting escaped `"` only, so a
+// value ending in a backslash or holding a newline broke out of its scalar and could
+// inject another frontmatter key. A JSON string literal is a valid YAML
+// double-quoted scalar, and stripQuotes() decodes it.
+function quoteScalar(s: string): string {
+  return JSON.stringify(s)
 }
 
 function serializeScalar(v: FrontmatterValue): string {
@@ -491,12 +517,12 @@ function serializeScalar(v: FrontmatterValue): string {
   if (Array.isArray(v)) {
     return '[' + v.map(item => {
       const s = String(item)
-      return needsQuoting(s) ? `"${s.replace(/"/g, '\\"')}"` : s
+      return needsQuoting(s) ? quoteScalar(s) : s
     }).join(', ') + ']'
   }
   if (typeof v === 'number') return String(v)
   const s = String(v)
-  return needsQuoting(s) ? `"${s.replace(/"/g, '\\"')}"` : s
+  return needsQuoting(s) ? quoteScalar(s) : s
 }
 
 export function serializeFrontmatter(fm: Frontmatter): string {
@@ -547,7 +573,10 @@ function slugify(name: string): string {
     .toLowerCase()
     .normalize('NFKD').replace(/[̀-ͯ]/g, '') // strip accents
     .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-+|-+$/g, '')
+    // Runs are already collapsed to ONE dash; trim a single dash at each end
+    // (the end-anchored dash-run regex backtracked polynomially, obj 900838).
+    .replace(/^-/, '')
+    .replace(/-$/, '')
 }
 
 // vaultPath template per PRD: workspaces/<ws>/contacts/<slug>.md  (or

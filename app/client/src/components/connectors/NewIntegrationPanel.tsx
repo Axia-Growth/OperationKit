@@ -52,8 +52,8 @@ function ChoiceCard({
         <Icon className="h-5 w-5" strokeWidth={1.75} />
       </span>
       <span className="min-w-0">
-        <span className="block font-display text-[15px] font-semibold text-fg-0">{title}</span>
-        <span className="mt-1 block text-[12.5px] leading-relaxed text-fg-2">{text}</span>
+        <span className="block font-display text-lg font-semibold text-fg-0">{title}</span>
+        <span className="mt-1 block text-sm leading-relaxed text-fg-2">{text}</span>
       </span>
     </button>
   )
@@ -83,14 +83,14 @@ function BrowseRow({
       <div className="flex flex-wrap items-start justify-between gap-3 p-4">
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">
-            <h4 className="text-[14.5px] font-semibold text-fg-0">{e.name}</h4>
+            <h4 className="text-base font-semibold text-fg-0">{e.name}</h4>
             {e.setup_guide && <Badge tone="info">Setup guide</Badge>}
             {e.mcp && <Badge tone="neutral">MCP server</Badge>}
             {e.connector && !e.available && <Badge tone="neutral">Not set up</Badge>}
           </div>
-          <p className="mt-1 max-w-prose text-[12.5px] leading-relaxed text-fg-2">{e.description}</p>
+          <p className="mt-1 max-w-prose text-sm leading-relaxed text-fg-2">{e.description}</p>
           {e.setup_guide && (
-            <p className="mt-1 text-[12px] text-fg-3">
+            <p className="mt-1 text-xs text-fg-3">
               Guide: <code className="font-mono text-fg-2">{e.setup_guide}</code>
             </p>
           )}
@@ -172,7 +172,7 @@ export function NewIntegrationPanel({
           >
             {step === 'choose' ? 'Connected integrations' : 'Back'}
           </Button>
-          <h3 id="new-integration-title" className="font-display text-[15px] font-semibold text-fg-0">
+          <h3 id="new-integration-title" className="font-display text-lg font-semibold text-fg-0">
             {step === 'browse' ? 'Browse integrations' : step === 'make' ? 'Make my own' : 'New integration'}
           </h3>
         </div>
@@ -218,7 +218,7 @@ export function NewIntegrationPanel({
             aria-label="Search integrations"
           />
           {connectors === null || catalog === null ? (
-            <p className="text-[12.5px] text-fg-3">Loading integrations…</p>
+            <p className="text-sm text-fg-3">Loading integrations…</p>
           ) : entries.length === 0 ? (
             <EmptyState
               compact
@@ -245,10 +245,10 @@ export function NewIntegrationPanel({
           )}
           <Card inset className={cn('flex flex-wrap items-center justify-between gap-3 p-4')}>
             <div className="flex min-w-0 items-start gap-2">
-              <Link2 className="mt-0.5 h-4 w-4 shrink-0 text-fg-2" strokeWidth={1.75} />
+              <Link2 className="mt-0.5 h-4 w-4 shrink-0 text-fg-2" />
               <div className="min-w-0">
-                <div className="text-[13.5px] font-semibold text-fg-0">Any remote MCP server</div>
-                <p className="text-[12.5px] text-fg-2">Paste its URL; we detect how it signs in.</p>
+                <div className="text-base font-semibold text-fg-0">Any remote MCP server</div>
+                <p className="text-sm text-fg-2">Paste its URL; we detect how it signs in.</p>
               </div>
             </div>
             <div className="flex flex-wrap gap-2">

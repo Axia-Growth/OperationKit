@@ -23,11 +23,12 @@ import {
   type SetResourceAssignmentRequest,
 } from '@operationkit/shared'
 import { api, ApiError } from '../../lib/api'
-import { inputCls, selectCls } from './config-form'
+import { inputCls } from './config-form'
+import { Select } from '../ui/Select'
 
 const RESOURCE_SCOPE_LABELS: Record<ResourceScopeType, string> = {
   global: 'Global',
-  workspace: 'Organization',
+  workspace: 'Workspace',
   project: 'Project',
   user: 'User',
 }
@@ -38,7 +39,7 @@ function scopeLabel(a: ResourceAssignment): string {
     case 'global':
       return 'global'
     case 'workspace':
-      return `organization: ${a.workspace ?? '—'}`
+      return `workspace: ${a.workspace ?? '—'}`
     case 'project':
       return `project: ${a.workspace ?? '—'} / ${a.project ?? '—'}`
     case 'user':
@@ -108,7 +109,7 @@ export function AssignmentsTab() {
       setError(resourceType === 'agent' ? 'Pick an agent.' : 'Enter a skill name.')
       return
     }
-    if (needsWorkspace && !workspace) { setError('Select an organization.'); return }
+    if (needsWorkspace && !workspace) { setError('Select a workspace.'); return }
     if (needsProject && !project.trim()) { setError('Enter a project / repo.'); return }
     if (needsUser && !userId.trim()) { setError('Enter a user ID.'); return }
 
@@ -163,7 +164,7 @@ export function AssignmentsTab() {
         <div className="mt-3 flex flex-wrap items-end gap-3">
           {/* Resource type toggle */}
           <div>
-            <label className="mb-1 block text-[12px] uppercase tracking-wider text-fg-3">Resource</label>
+            <label className="mb-1 block text-xs uppercase tracking-eyebrow text-fg-3">Resource</label>
             <div className="inline-flex rounded-md border border-line bg-surface-1 p-0.5">
               {(['agent', 'skill'] as ResourceType[]).map(rt => (
                 <button
@@ -171,7 +172,7 @@ export function AssignmentsTab() {
                   type="button"
                   onClick={() => setResourceType(rt)}
                   className={cn(
-                    'rounded px-3 py-1.5 text-[13px] capitalize transition-colors',
+                    'rounded px-3 py-1.5 text-sm capitalize transition-colors',
                     resourceType === rt ? 'bg-surface-2 text-fg-0 shadow-pop ring-1 ring-line' : 'text-fg-2 hover:text-fg-0',
                   )}
                 >
@@ -183,22 +184,22 @@ export function AssignmentsTab() {
 
           {/* Resource picker */}
           <div>
-            <label className="mb-1 block text-[12px] uppercase tracking-wider text-fg-3">
+            <label className="mb-1 block text-xs uppercase tracking-eyebrow text-fg-3">
               {resourceType === 'agent' ? 'Agent' : 'Skill name'}
             </label>
             {resourceType === 'agent' ? (
               agentsLoading ? (
                 <Skeleton className="h-8 w-48" />
               ) : (
-                <select
+                <Select
+                  aria-label="Agent"
                   value={agentId}
-                  onChange={e => setAgentId(e.target.value)}
-                  className={selectCls}
+                  onChange={v => setAgentId(v)}
                 >
                   {agentSlugs.map(a => (
                     <option key={a} value={a}>{agentLabelOf(a)}</option>
                   ))}
-                </select>
+                </Select>
               )
             ) : (
               <input
@@ -213,37 +214,37 @@ export function AssignmentsTab() {
 
           {/* Scope type */}
           <div>
-            <label className="mb-1 block text-[12px] uppercase tracking-wider text-fg-3">Scope</label>
-            <select
+            <label className="mb-1 block text-xs uppercase tracking-eyebrow text-fg-3">Scope</label>
+            <Select
+              aria-label="Scope"
               value={scopeType}
-              onChange={e => setScopeType(e.target.value as ResourceScopeType)}
-              className={selectCls}
+              onChange={v => setScopeType(v as ResourceScopeType)}
             >
               {(Object.keys(RESOURCE_SCOPE_LABELS) as ResourceScopeType[]).map(s => (
                 <option key={s} value={s}>{RESOURCE_SCOPE_LABELS[s]}</option>
               ))}
-            </select>
+            </Select>
           </div>
 
           {needsWorkspace && (
             <div>
-              <label className="mb-1 block text-[12px] uppercase tracking-wider text-fg-3">Organization</label>
-              <select
+              <label className="mb-1 block text-xs uppercase tracking-eyebrow text-fg-3">Workspace</label>
+              <Select
+                aria-label="Workspace"
                 value={workspace}
-                onChange={e => setWorkspace(e.target.value)}
-                className={selectCls}
+                onChange={v => setWorkspace(v)}
               >
                 <option value="">— select —</option>
                 {workspaceSlugs.map(ws => (
                   <option key={ws} value={ws}>{ws}</option>
                 ))}
-              </select>
+              </Select>
             </div>
           )}
 
           {needsProject && (
             <div>
-              <label className="mb-1 block text-[12px] uppercase tracking-wider text-fg-3">Project / repo</label>
+              <label className="mb-1 block text-xs uppercase tracking-eyebrow text-fg-3">Project / repo</label>
               <input
                 type="text"
                 value={project}
@@ -256,7 +257,7 @@ export function AssignmentsTab() {
 
           {needsUser && (
             <div>
-              <label className="mb-1 block text-[12px] uppercase tracking-wider text-fg-3">User ID</label>
+              <label className="mb-1 block text-xs uppercase tracking-eyebrow text-fg-3">User ID</label>
               <input
                 type="number"
                 value={userId}
@@ -271,7 +272,7 @@ export function AssignmentsTab() {
             Assign
           </Button>
         </div>
-        <p className="mt-3 text-[12px] text-fg-3">
+        <p className="mt-3 text-xs text-fg-3">
           When a resource has any assignment, sessions matching the scope are restricted to the
           assigned resources; resources with no assignments stay available everywhere.
         </p>
@@ -282,7 +283,7 @@ export function AssignmentsTab() {
       {/* Existing assignments */}
       <Card inset>
         <div className="border-b border-line px-4 py-3">
-          <h3 className="font-display text-[14px] font-semibold text-fg-0 capitalize">{resourceType} assignments</h3>
+          <h3 className="font-display text-base font-semibold text-fg-0 capitalize">{resourceType} assignments</h3>
         </div>
         {loading ? (
           <div className="space-y-2 p-4">
@@ -297,9 +298,9 @@ export function AssignmentsTab() {
             description={`No ${resourceType}s are scoped yet — all ${resourceType}s are available everywhere.`}
           />
         ) : (
-          <table className="w-full text-[13px]">
+          <table className="w-full text-sm">
             <thead className="border-b border-line">
-              <tr className="text-left text-[12px] text-fg-3">
+              <tr className="text-left text-xs text-fg-3">
                 <th className="px-4 py-2 font-medium">Resource</th>
                 <th className="px-4 py-2 font-medium">Scope</th>
                 <th className="px-4 py-2 font-medium">Created</th>
@@ -310,8 +311,8 @@ export function AssignmentsTab() {
               {assignments.map(a => (
                 <tr key={a.id} className="border-b border-line last:border-b-0 hover:bg-surface-3">
                   <td className="px-4 py-2 font-mono text-fg-1">{a.resourceId}</td>
-                  <td className="px-4 py-2 font-mono text-[12px] text-fg-2">{scopeLabel(a)}</td>
-                  <td className="px-4 py-2 text-[12px] text-fg-3">{a.createdAt?.slice(0, 16).replace('T', ' ')}</td>
+                  <td className="px-4 py-2 font-mono text-xs text-fg-2">{scopeLabel(a)}</td>
+                  <td className="px-4 py-2 text-xs text-fg-3">{a.createdAt?.slice(0, 16).replace('T', ' ')}</td>
                   <td className="px-4 py-2 text-right">
                     <Button variant="danger" size="sm" onClick={() => handleDelete(a)} leftIcon={<Trash2 className="h-3.5 w-3.5" />}>
                       Remove

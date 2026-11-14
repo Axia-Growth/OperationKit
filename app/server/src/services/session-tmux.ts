@@ -30,7 +30,8 @@ import {
 } from './session-jail.js'
 import { sandboxClaudeAuthEnv } from './sandbox-claude-auth.js'
 import { JAIL_HOME_ROOT as JAIL_HOME_ROOT_CANONICAL, createJailHome, dropEnvFile } from './jail-home.js'
-import { resolveJailWorkspace, ensureJailScratchDir, applyJailOwnership } from './jail-workspace.js'
+import { resolveJailWorkspace, ensureJailScratchDir, applyJailOwnership, JAIL_UID, JAIL_GID } from './jail-workspace.js'
+import { resolveJailGitMount, jailGitSafeDirEnv, ensureJailGitWritable, type JailGitMount } from './worktree-gitdir.js'
 import { buildWorkdirGuard } from './session-startup-failure.js'
 import { stageUploadsIntoJail, rewriteUploadPaths } from './jail-uploads.js'
 import type { SeatMount } from './seat-credentials.js'
@@ -339,11 +340,12 @@ export function spawnInTmux(opts: {
   mcpConfigPath?: string              // extra --mcp-config file (e.g. Playwright for the reviewer gate)
   settingsPath?: string               // extra --settings file (obj 1059 PreToolUse worktree guard)
   worktreeRoot?: string               // isolated session's worktree root → exported as CC_WORKTREE_ROOT for the guard
+  gitCommonDir?: string               // obj 900829: trusted <project>/.git of worktreeRoot — jail mode mounts it so the worktree's .git pointer resolves
   objectiveId?: number | string       // required when SESSION_ISOLATION=docker — names the jail `ok-jail-<id>`
   seatEnv?: Record<string, string>    // seat pool v2: the assigned seat's sign-in env (a pasted token)
   seatMount?: SeatMount | null        // seat pool v2: sandboxed Codex/Grok seat login dir to bind into the jail
 }): string {
-  const { sessionId, homeDir, workdir, prompt, jsonlPath, logPath, env, effort, model, resumeSessionId, mcpConfigPath, settingsPath, worktreeRoot, objectiveId, seatEnv, seatMount } = opts
+  const { sessionId, homeDir, workdir, prompt, jsonlPath, logPath, env, effort, model, resumeSessionId, mcpConfigPath, settingsPath, worktreeRoot, gitCommonDir, objectiveId, seatEnv, seatMount } = opts
   // SESSION_ISOLATION=docker → sibling-container jail. Unset/`tmux` (Operator's live
   // droplet default) keeps every line below byte-identical to the pre-flag path.
   const useJail = jailEnabled()
@@ -378,6 +380,26 @@ export function spawnInTmux(opts: {
   const jailWorkspace = useJail
     ? resolveJailWorkspace({ objectiveId: String(objectiveId!), worktreeRoot, workdir })
     : null
+
+  // obj 900829: a worktree's `.git` is a POINTER into <project>/.git/worktrees/,
+  // which the frozen two-bind mount set never exposed — so git was dead in every
+  // jailed card ("fatal: not a git repository") and a PR card could not commit.
+  // Mount the repo's git dir at its own path (hardened: see buildJailGitMountArgs).
+  // gitCommonDir comes from the trusted project checkout, never from the pointer.
+  let jailGitMount: JailGitMount | undefined
+  if (useJail && jailWorkspace?.reason === 'worktree' && worktreeRoot) {
+    if (!gitCommonDir) {
+      console.warn(`[session-jail] obj ${objectiveId}: worktree ${worktreeRoot} spawned without gitCommonDir — git will NOT work inside the jail.`)
+    } else {
+      const r = resolveJailGitMount(worktreeRoot, gitCommonDir)
+      if (r.mount) {
+        jailGitMount = r.mount
+        if (!ensureJailGitWritable(r.mount, JAIL_UID, JAIL_GID)) {
+          console.warn(`[session-jail] obj ${objectiveId}: could not hand ${r.mount.commonDir}/{objects,refs,logs} + its admin dir to ${JAIL_UID}:${JAIL_GID} (control plane not root?) — commits inside the jail may fail with EACCES.`)
+        }
+      } else console.error(`[session-jail] obj ${objectiveId}: worktree ${worktreeRoot} has an invalid .git pointer (${r.reason}) — git will NOT work inside the jail.`)
+    }
+  }
 
   // `~`-home fix: ensure ~/second-brain, ~/projects, ~/ai-workspace in this
   // account home resolve to the real /home/operator roots before the session starts.
@@ -420,7 +442,7 @@ export function spawnInTmux(opts: {
   // back to metered billing.
   const signIn = seatEnv ?? (useJail ? sandboxClaudeAuthEnv() : {})
   const fullEnv: Record<string, string> = useJail
-    ? { ...env, HOME: JAIL_HOME_PATH, CC_WORKTREE_ROOT: JAIL_WORKSPACE_PATH, ...signIn }
+    ? { ...env, HOME: JAIL_HOME_PATH, CC_WORKTREE_ROOT: JAIL_WORKSPACE_PATH, ...signIn, ...jailGitSafeDirEnv(env, jailGitMount) }
     : { ...canonicalRootEnv(), ...env, ...(worktreeRoot ? { CC_WORKTREE_ROOT: worktreeRoot } : {}), ...signIn }
   if (seatEnv?.CLAUDE_CODE_OAUTH_TOKEN) {
     delete fullEnv.ANTHROPIC_API_KEY
@@ -614,6 +636,7 @@ exit $EXIT_CODE
       seatMount: seatMount || undefined,
       network: jailNetwork || undefined,
       claudeTmpdir: jailClaudeTmpdir || undefined,
+      gitMount: jailGitMount,
       command: [
         'bash', '-lc',
         buildJailClaudeTmpdirPrefix(jailClaudeTmpdir) +

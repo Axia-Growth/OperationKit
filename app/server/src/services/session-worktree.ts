@@ -2,7 +2,7 @@
  * Git worktree isolation — extracted from session-manager.ts (behavior frozen).
  * HARD RULE: project-scoped sessions edit /tmp/cc-worktree-{id}/, never the live checkout.
  */
-import { execSync } from 'child_process'
+import { execSync, execFileSync } from 'child_process'
 import fs from 'fs'
 import path from 'path'
 import type { Objective } from '@operationkit/shared'
@@ -13,6 +13,7 @@ import { TMUX_SCRIPT_DIR } from './session-tmux.js'
 import { bestEffortFetch, resolveGitFetchToken } from './repo-git-auth.js'
 import { resolveIsolationMode } from './session-jail.js'
 import { JAIL_UID, JAIL_GID } from './jail-workspace.js'
+import { repairWorktreePointer, resolveCommonDir, staleWorktreePath } from './worktree-gitdir.js'
 
 export type WorktreeIsolation = { projectDir: string; worktreePath: string; sessionId: string }
 
@@ -148,6 +149,53 @@ export function isGitRepo(dir: string): boolean {
   }
 }
 
+export type ExistingWorktreeVerdict =
+  | { action: 'ok'; adminDir: string }
+  | { action: 'repaired'; adminDir: string; was: string }
+  | { action: 'cleared' }
+  | { action: 'moved-aside'; movedTo: string; reason: string; detail: string }
+
+/**
+ * obj 900829 — the session-start guard. Decide what to do with a directory
+ * already sitting at `worktreePath` BEFORE it is handed to a card:
+ *   - valid pointer             → 'ok' (reuse)
+ *   - stale pointer, repo still has this worktree registered → rewrite it, 'repaired'
+ *   - dir with no `.git` at all → removed, 'cleared' (historical behaviour)
+ *   - anything else (admin dir pruned, `.git` is a directory, wrong repo)
+ *     → renamed to `<path>.stale-<ts>` so uncommitted edits survive, 'moved-aside'
+ * The caller recreates the worktree for the last two. Never runs git inside the
+ * worktree (session-controlled); only fs reads + the trusted project checkout.
+ */
+export function validateExistingWorktree(
+  worktreePath: string,
+  projectDir: string,
+  now: Date = new Date(),
+): ExistingWorktreeVerdict {
+  const commonDir = resolveCommonDir(projectDir)
+  const r = repairWorktreePointer(worktreePath, commonDir)
+  if (r.action === 'ok') return { action: 'ok', adminDir: r.adminDir }
+  if (r.action === 'repaired') return { action: 'repaired', adminDir: r.adminDir, was: r.was }
+  if (r.reason === 'missing') {
+    fs.rmSync(worktreePath, { recursive: true, force: true })
+    return { action: 'cleared' }
+  }
+  const movedTo = staleWorktreePath(worktreePath, now)
+  fs.renameSync(worktreePath, movedTo)
+  return { action: 'moved-aside', movedTo, reason: r.reason, detail: r.detail }
+}
+
+/** Set branch.<name>.remote/merge in the project config (best-effort, idempotent). */
+export function presetBranchUpstream(projectDir: string, branchName: string): void {
+  try {
+    const remotes = execFileSync('git', ['-C', projectDir, 'remote'], { timeout: 5000, stdio: ['ignore', 'pipe', 'ignore'] }).toString().split('\n')
+    if (!remotes.map(r => r.trim()).includes('origin')) return
+    execFileSync('git', ['-C', projectDir, 'config', `branch.${branchName}.remote`, 'origin'], { timeout: 5000, stdio: 'ignore' })
+    execFileSync('git', ['-C', projectDir, 'config', `branch.${branchName}.merge`, `refs/heads/${branchName}`], { timeout: 5000, stdio: 'ignore' })
+  } catch (e) {
+    console.warn(`[session-manager] could not preset upstream for ${branchName}: ${e instanceof Error ? e.message : e}`)
+  }
+}
+
 export function ensureWorktree(objective: Objective, branchName: string): string | null {
   // Guarantees git safe.directory is configured (root operating on operator-owned
   // repos) before any `git -C` below — independent of spawn-path call ordering.
@@ -156,10 +204,6 @@ export function ensureWorktree(objective: Objective, branchName: string): string
   const projectDir = resolveWorkdir(objective).replace(/\/+$/, '')
   const worktreePath = `/tmp/cc-worktree-${objective.id}`
   try {
-    // Already a live worktree (resume / re-spawn) — reuse as-is.
-    if (fs.existsSync(path.join(worktreePath, '.git'))) {
-      return worktreePath
-    }
     // obj 1451 — refuse to operate on a non-repo. resolveWorkdir already fails
     // closed for a project-linked objective that maps to nothing, but if it ever
     // resolves to a directory that is not a git repository, running `git worktree`
@@ -171,9 +215,21 @@ export function ensureWorktree(objective: Objective, branchName: string): string
       )
       return null
     }
-    // Stale directory with no .git — clear it so `worktree add` can recreate.
+    // Already a worktree (resume / re-spawn) — reuse it, but ONLY if its `.git`
+    // pointer actually resolves (obj 900829). This used to be a bare existsSync,
+    // so a pointer whose admin dir had been pruned (or rewritten) was handed to
+    // the card on every restart and git stayed dead inside it forever.
     if (fs.existsSync(worktreePath)) {
-      execSync(`rm -rf ${JSON.stringify(worktreePath)}`, { timeout: 5000 })
+      const verdict = validateExistingWorktree(worktreePath, projectDir)
+      if (verdict.action === 'ok') return worktreePath
+      if (verdict.action === 'repaired') {
+        console.warn(`[session-manager] ensureWorktree: repaired stale .git pointer for objective ${objective.id} (${verdict.was}) -> ${verdict.adminDir}`)
+        return worktreePath
+      }
+      if (verdict.action === 'moved-aside') {
+        console.warn(`[session-manager] ensureWorktree: worktree for objective ${objective.id} had an unrecoverable .git pointer (${verdict.reason}: ${verdict.detail}); moved to ${verdict.movedTo} (uncommitted edits preserved there) and recreating on branch ${branchName}.`)
+      }
+      // 'cleared' / 'moved-aside' → fall through and create a fresh worktree.
     }
     // Best-effort refresh only. The base ref (origin/main, or the parent branch)
     // already exists locally — deploys pull main into the checkout — and the
@@ -199,6 +255,12 @@ export function ensureWorktree(objective: Objective, branchName: string): string
     } else {
       execSync(`git -C ${JSON.stringify(projectDir)} worktree add -b ${JSON.stringify(branchName)} ${JSON.stringify(worktreePath)} ${JSON.stringify(base)}`, { timeout: 20000, stdio: 'pipe' })
     }
+    // obj 900829: record the branch's upstream NOW, from the trusted control
+    // plane. A jailed session sees the repo's `config` READ-ONLY (it is where a
+    // hook path or core.fsmonitor would be planted), so `git push -u` inside the
+    // jail cannot write branch.<name>.* itself. With it pre-set, plain
+    // `git push` / `git status` work and `-u` has nothing new to record.
+    presetBranchUpstream(projectDir, branchName)
     // Hand the new worktree to ccuser so the session (which runs as ccuser via
     // `runuser -u ccuser`) can actually commit. `git worktree add` runs HERE as
     // root and creates root-owned files in THREE places the session must write,

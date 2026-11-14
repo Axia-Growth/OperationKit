@@ -105,7 +105,7 @@ export function DataTable<T>({
     return (
       <div className={cn('rounded-lg border border-line bg-surface-2', className)}>
         <EmptyState
-          icon={empty?.icon ?? <TableIcon className="h-5 w-5" strokeWidth={1.6} />}
+          icon={empty?.icon ?? <TableIcon className="h-5 w-5" />}
           title={empty?.title ?? 'No rows yet'}
           description={empty?.description}
           action={empty?.action}
@@ -118,7 +118,7 @@ export function DataTable<T>({
     <div className={cn('min-w-0', className)}>
       {/* ── DESKTOP: real table ── */}
       <div className="hidden overflow-hidden rounded-lg border border-line bg-surface-2 sm:block">
-        <table className="w-full border-collapse text-[13px]">
+        <table className="w-full border-collapse text-sm">
           <thead className="sticky top-0 z-[1] bg-surface-0">
             <tr className="border-b border-line">
               {columns.map((col) => {
@@ -128,7 +128,7 @@ export function DataTable<T>({
                     key={col.key}
                     aria-sort={active ? (sort!.dir === 'asc' ? 'ascending' : 'descending') : 'none'}
                     className={cn(
-                      'px-3 py-2 align-middle text-[12px] uppercase tracking-[0.06em] text-fg-2 font-semibold',
+                      'px-3 py-2 align-middle text-xs uppercase tracking-eyebrow text-fg-2 font-semibold',
                       alignCls(col.align),
                       col.headerClassName,
                       col.className,
@@ -147,12 +147,12 @@ export function DataTable<T>({
                         {col.header}
                         {active ? (
                           sort!.dir === 'asc' ? (
-                            <ChevronUp className="h-3.5 w-3.5 text-accent-hover" strokeWidth={2} />
+                            <ChevronUp className="h-3.5 w-3.5 text-accent-hover" />
                           ) : (
-                            <ChevronDown className="h-3.5 w-3.5 text-accent-hover" strokeWidth={2} />
+                            <ChevronDown className="h-3.5 w-3.5 text-accent-hover" />
                           )
                         ) : (
-                          <ChevronsUpDown className="h-3.5 w-3.5 opacity-50" strokeWidth={1.75} />
+                          <ChevronsUpDown className="h-3.5 w-3.5 opacity-50" />
                         )}
                       </button>
                     ) : (
@@ -202,7 +202,7 @@ export function DataTable<T>({
                         key={col.key}
                         className={cn(
                           'px-3 py-2.5 align-middle text-fg-1',
-                          col.mono && 'font-mono text-[12px] text-fg-2',
+                          col.mono && 'font-mono text-xs text-fg-2',
                           alignCls(col.align),
                           col.className,
                         )}
@@ -258,15 +258,15 @@ export function DataTable<T>({
                   )}
                 >
                   <div className="mb-2 flex items-start justify-between gap-2">
-                    <div className="min-w-0 text-[13.5px] font-medium text-fg-0">{title}</div>
+                    <div className="min-w-0 text-base font-medium text-fg-0">{title}</div>
                   </div>
                   <dl className="flex flex-col gap-1.5">
                     {rest.map((col) => (
                       <div key={col.key} className="flex items-baseline justify-between gap-3">
-                        <dt className="shrink-0 text-[12px] uppercase tracking-[0.08em] text-fg-3 font-semibold tracking-[0.06em]">
+                        <dt className="shrink-0 text-xs uppercase tracking-eyebrow text-fg-3 font-semibold">
                           {col.header}
                         </dt>
-                        <dd className={cn('min-w-0 truncate text-right text-[12.5px] text-fg-1', col.mono && 'font-mono text-fg-2')}>
+                        <dd className={cn('min-w-0 truncate text-right text-sm text-fg-1', col.mono && 'font-mono text-fg-2')}>
                           {col.cell(row)}
                         </dd>
                       </div>

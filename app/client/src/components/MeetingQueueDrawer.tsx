@@ -62,7 +62,7 @@ export function MeetingBell() {
       >
         <BellIcon className="h-5 w-5" />
         {count > 0 && (
-          <span className="absolute -top-0.5 -right-0.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-signal-alarm px-1 text-[12px] font-medium text-fg-0 leading-none">
+          <span className="absolute -top-0.5 -right-0.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-signal-alarm px-1 text-xs font-medium text-[color:var(--on-danger)] leading-none">
             {count > 99 ? '99+' : count}
           </span>
         )}
@@ -124,7 +124,7 @@ function MeetingQueueDrawer({ onClose, onItemResolved }: DrawerProps) {
     >
       {/* Header */}
       <div className="flex items-center justify-between border-b border-border px-4 py-3 flex-shrink-0">
-        <span id="meeting-queue-title" className="text-sm font-semibold text-fg-0">Meeting Actions</span>
+        <span id="meeting-queue-title" className="text-base font-semibold text-fg-0">Meeting Actions</span>
         <button
           onClick={onClose}
           className="flex items-center justify-center rounded-md p-1 text-fg-2 hover:bg-surface-overlay hover:text-fg-0 transition-colors duration-fast ease-out"
@@ -158,7 +158,7 @@ function MeetingQueueDrawer({ onClose, onItemResolved }: DrawerProps) {
         ) : items.length === 0 ? (
             <div className="flex flex-col items-center justify-center py-12 gap-2 text-fg-3">
               <CheckCircleIcon className="h-8 w-8 text-fg-3" />
-              <span className="text-sm">No pending meeting actions</span>
+              <span className="text-base">No pending meeting actions</span>
             </div>
           ) : (
             <ul className="divide-y divide-border">
@@ -179,7 +179,7 @@ function MeetingQueueDrawer({ onClose, onItemResolved }: DrawerProps) {
                     )}
 
                     {/* Suggested objective title */}
-                    <div className="text-sm font-semibold text-fg-0 mb-1.5 leading-snug">
+                    <div className="text-base font-semibold text-fg-0 mb-1.5 leading-snug">
                       {item.title}
                     </div>
 
@@ -192,10 +192,10 @@ function MeetingQueueDrawer({ onClose, onItemResolved }: DrawerProps) {
 
                     {/* Workspace + priority badges */}
                     <div className="flex items-center gap-1.5 mb-2">
-                      <span className={`inline-block rounded px-1.5 py-0.5 text-[12px] font-medium ${wsBadge}`}>
+                      <span className={`inline-block rounded px-1.5 py-0.5 text-xs font-medium ${wsBadge}`}>
                         {wsLabel}
                       </span>
-                      <span className={`inline-block rounded px-1.5 py-0.5 text-[12px] font-medium ${priority.className}`}>
+                      <span className={`inline-block rounded px-1.5 py-0.5 text-xs font-medium ${priority.className}`}>
                         {priority.label}
                       </span>
                     </div>
@@ -209,7 +209,7 @@ function MeetingQueueDrawer({ onClose, onItemResolved }: DrawerProps) {
 
                     {/* Owner / deadline */}
                     {(item.owner || item.deadline) && (
-                      <div className="flex items-center gap-3 text-[12px] text-fg-3 mb-2">
+                      <div className="flex items-center gap-3 text-xs text-fg-3 mb-2">
                         {item.owner && <span>Owner: <span className="text-fg-2">{item.owner}</span></span>}
                         {item.deadline && <span>Due: <span className="text-fg-2">{item.deadline}</span></span>}
                       </div>

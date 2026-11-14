@@ -2,6 +2,7 @@ import { useEffect, useId, useState } from 'react'
 import { useNavigate } from '../../context/nav'
 import { Workflow } from 'lucide-react'
 import { Alert, Button, Modal } from '../ui'
+import { Select } from '../ui/Select'
 
 /**
  * "New workflow" (obj 900642, card B6 of docs/design/WORKFLOWS.md §5.1).
@@ -49,8 +50,8 @@ export function parseAsserts(text: string): { assert: { expr: string }[] } | und
 }
 
 const FIELD =
-  'w-full rounded-md border border-line bg-surface-1 px-3 py-2 text-[13px] text-fg-0 placeholder:text-fg-3 focus:border-accent focus:outline-none focus:ring-2 focus:ring-accent/30'
-const LABEL = 'mb-1 block text-[12px] font-medium text-fg-1'
+  'w-full rounded-md border border-line bg-surface-1 px-3 py-2 text-sm text-fg-0 placeholder:text-fg-3 focus:border-accent focus:outline-none focus:ring-2 focus:ring-accent/30'
+const LABEL = 'mb-1 block text-xs font-medium text-fg-1'
 
 export function NewWorkflowDialog({
   open,
@@ -127,11 +128,11 @@ export function NewWorkflowDialog({
   return (
     <Modal open={open} onClose={onClose} labelledBy={titleId} panelClassName="max-w-lg">
       <div className="p-5" data-testid="new-workflow-dialog">
-        <h2 id={titleId} className="flex items-center gap-2 font-display text-[15px] font-semibold tracking-[-0.01em] text-fg-0">
-          <Workflow className="h-4 w-4" strokeWidth={1.75} /> New workflow
+        <h2 id={titleId} className="flex items-center gap-2 font-display text-lg font-semibold tracking-tight text-fg-0">
+          <Workflow className="h-4 w-4" /> New workflow
         </h2>
         {created ? (
-          <div className="mt-3 space-y-3 text-[13px] leading-relaxed text-fg-1" data-testid="new-workflow-created">
+          <div className="mt-3 space-y-3 text-sm leading-relaxed text-fg-1" data-testid="new-workflow-created">
             <p>
               Workflow <span className="font-mono">{created.slug}</span> is filed with a builder card. The builder drafts
               and self-tests it (up to {created.builder.max_iterations} drafts); you publish it from Jobs → Workflows.
@@ -159,7 +160,7 @@ export function NewWorkflowDialog({
               void submit()
             }}
           >
-            <p className="text-[12.5px] leading-snug text-fg-2">
+            <p className="text-sm leading-snug text-fg-2">
               Describe the goal. A builder agent turns it into typed steps, validates them and self-tests them against
               the end condition. Nothing runs or sends until you publish it.
             </p>
@@ -182,12 +183,12 @@ export function NewWorkflowDialog({
                 <input id={`${titleId}-name`} className={FIELD} value={name} onChange={(e) => setName(e.target.value)} maxLength={120} placeholder="From the goal" />
               </div>
               <div>
-                <label className={LABEL} htmlFor={`${titleId}-ws`}>Organization</label>
-                <select id={`${titleId}-ws`} className={FIELD} value={workspace} onChange={(e) => setWorkspace(e.target.value)} required>
+                <label className={LABEL} htmlFor={`${titleId}-ws`}>Workspace</label>
+                <Select className="w-full" id={`${titleId}-ws`} value={workspace} onChange={v => setWorkspace(v)} required>
                   {workspaces.map((ws) => (
                     <option key={ws} value={ws}>{labelOf ? labelOf(ws) : ws}</option>
                   ))}
-                </select>
+                </Select>
               </div>
             </div>
             <div>
@@ -196,14 +197,14 @@ export function NewWorkflowDialog({
               </label>
               <textarea
                 id={`${titleId}-asserts`}
-                className={`${FIELD} min-h-[56px] font-mono text-[12px]`}
+                className={`${FIELD} min-h-[56px] font-mono text-xs`}
                 value={asserts}
                 onChange={(e) => setAsserts(e.target.value)}
                 placeholder="len(steps.fetch.output.bookings) == steps.upsert.output.count"
               />
             </div>
             <div className="flex items-center gap-2">
-              <label className="whitespace-nowrap text-[12px] text-fg-1" htmlFor={`${titleId}-iter`}>Builder attempts</label>
+              <label className="whitespace-nowrap text-xs text-fg-1" htmlFor={`${titleId}-iter`}>Builder attempts</label>
               <input
                 id={`${titleId}-iter`}
                 type="number"
@@ -213,7 +214,7 @@ export function NewWorkflowDialog({
                 value={maxIterations}
                 onChange={(e) => setMaxIterations(Math.min(20, Math.max(1, Number(e.target.value) || 1)))}
               />
-              <span className="text-[12px] text-fg-3">drafts before it hands back to you</span>
+              <span className="text-xs text-fg-3">drafts before it hands back to you</span>
             </div>
             {error && <Alert tone="alarm" title="Could not create the workflow">{error}</Alert>}
             <div className="flex justify-end gap-2 pt-1">

@@ -10,13 +10,20 @@
  */
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import { BellOff } from 'lucide-react'
+import { Popover, PopoverContent, PopoverTrigger } from '@ui-sdk/react/popover'
 import type { Alert } from '@operationkit/shared'
 import { api } from '../lib/api'
-import { cn } from './ui'
+import { cn } from './ui/cn'
+import { Tabs } from './ui/Tabs'
 
 const POLL_INTERVAL_MS = 30_000
 
 type Filter = 'unread' | 'all'
+
+const FILTER_TABS: { key: Filter; label: string }[] = [
+  { key: 'unread', label: 'Unread' },
+  { key: 'all', label: 'All' },
+]
 
 /** Only severities that change what you do get a label; "normal" stays quiet. */
 const SEVERITY: Record<Alert['severity'], { label: string | null; text: string; dot: string }> = {
@@ -70,7 +77,7 @@ export function AlertBell() {
   const [alerts, setAlerts] = useState<Alert[]>([])
   const [unreadCount, setUnreadCount] = useState(0)
   const [loaded, setLoaded] = useState(false)
-  const ref = useRef<HTMLDivElement>(null)
+  const panelRef = useRef<HTMLDivElement>(null)
 
   const refresh = useCallback(async (which: Filter = filter) => {
     try {
@@ -95,25 +102,16 @@ export function AlertBell() {
     }
   }, [refresh])
 
-  // Close on outside click or Escape
-  useEffect(() => {
-    function handleClick(e: MouseEvent) {
-      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false)
-    }
-    function handleKey(e: KeyboardEvent) {
-      if (e.key === 'Escape') setOpen(false)
-    }
-    document.addEventListener('mousedown', handleClick)
-    document.addEventListener('keydown', handleKey)
-    return () => {
-      document.removeEventListener('mousedown', handleClick)
-      document.removeEventListener('keydown', handleKey)
-    }
-  }, [])
+  // A Mark read button that is about to disappear holds focus: park it on the
+  // panel so focus stays in the popover instead of falling to the page.
+  const parkFocus = () => {
+    if (panelRef.current?.contains(document.activeElement)) panelRef.current.focus()
+  }
 
   const markRead = async (id: number) => {
     try {
       await api.post(`/alerts/${id}/ack`)
+      parkFocus()
       const at = new Date().toISOString()
       setAlerts(prev => filter === 'unread'
         ? prev.filter(a => a.id !== id)
@@ -125,16 +123,16 @@ export function AlertBell() {
   const markAllRead = async () => {
     try {
       await api.post('/alerts/ack-all')
+      parkFocus()
       const at = new Date().toISOString()
       setAlerts(prev => (filter === 'unread' ? [] : prev.map(a => (a.acked_at ? a : { ...a, acked_at: at }))))
       setUnreadCount(0)
     } catch {}
   }
 
-  const toggle = () => {
-    const next = !open
+  const onOpenChange = (next: boolean) => {
     setOpen(next)
-    if (next) refresh()
+    if (next) void refresh()
   }
 
   const changeFilter = (f: Filter) => {
@@ -145,91 +143,86 @@ export function AlertBell() {
   const groups = useMemo(() => groupByDay(alerts), [alerts])
 
   return (
-    <div ref={ref} className="relative">
-      <button
-        onClick={toggle}
-        aria-haspopup="dialog"
-        aria-expanded={open}
+    <Popover open={open} onOpenChange={onOpenChange}>
+      <PopoverTrigger
+        type="button"
         className="relative flex items-center justify-center rounded-md p-1.5 text-fg-2 outline-none transition-colors duration-fast ease-out hover:bg-surface-3 hover:text-fg-0 focus-visible:ring-2 focus-visible:ring-accent/60"
         aria-label={unreadCount > 0 ? `Notifications, ${unreadCount} unread` : 'Notifications'}
       >
         <BellIcon className="h-5 w-5" />
         {unreadCount > 0 && (
-          <span className="absolute -right-0.5 -top-0.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-[var(--t-alarm)] px-1 font-mono text-[12px] font-medium leading-none text-surface-0">
+          <span className="absolute -right-0.5 -top-0.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-[var(--t-alarm)] px-1 font-mono text-xs font-medium leading-none text-surface-0">
             {unreadCount > 99 ? '99+' : unreadCount}
           </span>
         )}
-      </button>
+      </PopoverTrigger>
 
-      {open && (
-        <div
-          role="dialog"
-          aria-label="Notifications"
-          // 390px: pinned to the viewport edges (the bell is not at the screen edge, so a
-          // w-80 panel anchored to it used to run off the left side). Desktop: anchored.
-          className="fixed inset-x-2 top-14 z-50 flex max-h-[75vh] flex-col overflow-hidden rounded-lg border border-line bg-surface-1 shadow-float sm:absolute sm:inset-x-auto sm:right-0 sm:top-full sm:mt-1.5 sm:w-96"
-        >
-          <div className="flex items-center justify-between gap-2 border-b border-line px-3 py-2">
-            <div className="flex items-baseline gap-2">
-              <span className="text-sm font-semibold text-fg-0">Notifications</span>
-              {unreadCount > 0 && <span className="font-mono text-[12px] text-fg-3">{unreadCount} unread</span>}
-            </div>
-            {unreadCount > 0 && (
-              <button
-                onClick={markAllRead}
-                className="rounded px-1.5 py-1 text-xs font-medium text-accent-hover outline-none transition-colors duration-fast ease-out hover:text-accent focus-visible:ring-2 focus-visible:ring-accent/60"
-              >
-                Mark all read
-              </button>
-            )}
+      {/* UI SDK popover (obj 900819): the trigger toggles it, Escape and an
+          outside press close it, focus moves in and returns to the bell. On a
+          390px phone the panel is viewport-wide minus 8px a side (the bell is
+          not at the screen edge, so a fixed-width panel used to run off it). */}
+      <PopoverContent
+        ref={panelRef}
+        aria-label="Notifications"
+        side="bottom"
+        align="end"
+        sideOffset={6}
+        collisionPadding={8}
+        data-testid="notifications-panel"
+        className="z-50 m-0 flex max-h-[75vh] w-[calc(100vw-1rem)] flex-col overflow-hidden rounded-lg border border-line bg-surface-1 p-0 text-fg-1 shadow-float outline-none cc-pop-in sm:w-96"
+      >
+        <div className="flex items-center justify-between gap-2 border-b border-line px-3 py-2">
+          <div className="flex items-baseline gap-2">
+            <span className="text-base font-semibold text-fg-0">Notifications</span>
+            {unreadCount > 0 && <span className="font-mono text-xs text-fg-3">{unreadCount} unread</span>}
           </div>
-
-          <div role="tablist" aria-label="Filter notifications" className="flex gap-1 border-b border-line-soft px-3 py-1.5">
-            {(['unread', 'all'] as Filter[]).map(f => (
-              <button
-                key={f}
-                role="tab"
-                aria-selected={filter === f}
-                onClick={() => changeFilter(f)}
-                className={cn(
-                  'rounded-md px-2.5 py-1 text-xs font-medium outline-none transition-colors duration-fast ease-out focus-visible:ring-2 focus-visible:ring-accent/60',
-                  filter === f ? 'bg-surface-selected text-fg-0 shadow-[inset_0_-2px_0_var(--accent-text)]' :'text-fg-2 hover:bg-surface-3 hover:text-fg-0',
-                )}
-              >
-                {f === 'unread' ? 'Unread' : 'All'}
-              </button>
-            ))}
-          </div>
-
-          <div className="min-h-0 flex-1 overflow-y-auto">
-            {loaded && alerts.length === 0 ? (
-              <div data-testid="notifications-empty" className="flex flex-col items-center gap-2 px-6 py-10 text-center">
-                <BellOff className="h-5 w-5 text-fg-3" strokeWidth={1.6} aria-hidden />
-                <div className="text-sm font-medium text-fg-1">
-                  {filter === 'unread' ? 'You’re all caught up' : 'No notifications yet'}
-                </div>
-                <p className="max-w-[16rem] text-xs leading-snug text-fg-3">
-                  Problems the platform spots on its own — failed jobs, deploy drift, low disk — show up here.
-                </p>
-              </div>
-            ) : (
-              groups.map(group => (
-                <section key={group.label} aria-label={group.label}>
-                  <h4 className="sticky top-0 z-[1] bg-surface-1 px-3 pb-1 pt-2.5 text-[12px] uppercase tracking-[0.12em] text-fg-3 font-semibold tracking-[0.06em]">
-                    {group.label}
-                  </h4>
-                  <ul>
-                    {group.items.map(alert => (
-                      <NotificationRow key={alert.id} alert={alert} onMarkRead={markRead} />
-                    ))}
-                  </ul>
-                </section>
-              ))
-            )}
-          </div>
+          {unreadCount > 0 && (
+            <button
+              type="button"
+              onClick={markAllRead}
+              className="rounded px-1.5 py-1 text-xs font-medium text-accent-hover outline-none transition-colors duration-fast ease-out hover:text-accent focus-visible:ring-2 focus-visible:ring-accent/60"
+            >
+              Mark all read
+            </button>
+          )}
         </div>
-      )}
-    </div>
+
+        <Tabs
+          items={FILTER_TABS}
+          value={filter}
+          onChange={k => changeFilter(k as Filter)}
+          label="Filter notifications"
+          rootClassName="flex min-h-0 flex-1 flex-col"
+          className="mx-3 my-1.5 self-start"
+          panelClassName="min-h-0 flex-1 overflow-y-auto border-t border-line-soft"
+        >
+          {loaded && alerts.length === 0 ? (
+            <div data-testid="notifications-empty" className="flex flex-col items-center gap-2 px-6 py-10 text-center">
+              <BellOff className="h-5 w-5 text-fg-3" aria-hidden />
+              <div className="text-base font-medium text-fg-1">
+                {filter === 'unread' ? 'You’re all caught up' : 'No notifications yet'}
+              </div>
+              <p className="max-w-[16rem] text-xs leading-snug text-fg-3">
+                Problems the platform spots on its own — failed jobs, deploy drift, low disk — show up here.
+              </p>
+            </div>
+          ) : (
+            groups.map(group => (
+              <section key={group.label} aria-label={group.label}>
+                <h4 className="sticky top-0 z-[1] bg-surface-1 px-3 pb-1 pt-2.5 text-xs uppercase tracking-eyebrow text-fg-3 font-semibold">
+                  {group.label}
+                </h4>
+                <ul>
+                  {group.items.map(alert => (
+                    <NotificationRow key={alert.id} alert={alert} onMarkRead={markRead} />
+                  ))}
+                </ul>
+              </section>
+            ))
+          )}
+        </Tabs>
+      </PopoverContent>
+    </Popover>
   )
 }
 
@@ -249,20 +242,20 @@ function NotificationRow({ alert, onMarkRead }: { alert: Alert; onMarkRead: (id:
         />
         <div className="min-w-0 flex-1">
           <div className="flex items-start justify-between gap-2">
-            <div className={cn('min-w-0 text-sm leading-snug', unread ? 'font-semibold' : 'font-normal', unread ? sev.text : 'text-fg-1')}>
+            <div className={cn('min-w-0 text-base leading-snug', unread ? 'font-semibold' : 'font-normal', unread ? sev.text : 'text-fg-1')}>
               {sev.label && (
-                <span className="mr-1.5 text-[12px] uppercase tracking-[0.08em] font-semibold tracking-[0.06em]">{sev.label}</span>
+                <span className="mr-1.5 text-xs uppercase tracking-eyebrow font-semibold">{sev.label}</span>
               )}
               <span className="break-words">{alert.title}</span>
             </div>
-            <span className="shrink-0 font-mono text-[12px] text-fg-3" title={alert.created_at}>
+            <span className="shrink-0 font-mono text-xs text-fg-3" title={alert.created_at}>
               {formatRelative(alert.created_at)}
             </span>
           </div>
           {alert.message && (
             <p className="mt-0.5 line-clamp-2 whitespace-pre-wrap break-words text-xs leading-snug text-fg-2">{alert.message}</p>
           )}
-          <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-[12px]">
+          <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
             <span className="font-mono text-fg-3">{alert.source}</span>
             {alert.email_sent_at && <span className="text-fg-3" title={`Emailed at ${alert.email_sent_at}`}>emailed</span>}
             <span className="ml-auto flex items-center gap-3">

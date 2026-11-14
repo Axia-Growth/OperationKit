@@ -233,7 +233,6 @@
   font: 12px/1.3 ui-monospace, monospace;
 }
 .cc-design-url button,
-.cc-design-tools button,
 .cc-design-pins-head button {
   border: 1px solid var(--line);
   background: var(--surface-2);
@@ -246,7 +245,6 @@
   opacity: 0.45;
   cursor: not-allowed;
 }
-.cc-design-tools button[aria-pressed='true'],
 .cc-design-pins-head button:not(:disabled) {
   border-color: var(--accent);
   color: var(--fg-0);
@@ -255,7 +253,6 @@
   background: var(--accent);
   color: var(--accent-fg);
 }
-.cc-design-tools { display: flex; flex-wrap: wrap; gap: 4px; }
 .cc-design-toolbar select {
   max-width: 180px;
   border: 1px solid var(--line);

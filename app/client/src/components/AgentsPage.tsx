@@ -31,6 +31,7 @@ import {
   type LayerFile,
   type LayerFileKind,
 } from '../lib/board-layer'
+import { Select } from './ui/Select'
 
 /**
  * Agents tab (obj 712126) — BOARD-SCOPED visibility into the OperationKit layer.
@@ -175,7 +176,7 @@ export function AgentsPage({ workspace, fixture, loadFile, embedded = false }: A
   return (
     <Shell>
       {embedded ? (
-        <p className="mb-4 max-w-3xl text-[13px] leading-relaxed text-fg-2">
+        <p className="mb-4 max-w-3xl text-sm leading-relaxed text-fg-2">
           The agent, skill and tool markdown a project's sessions actually run on. Read-only — edit the roster in the Registry tab.
         </p>
       ) : (
@@ -195,13 +196,12 @@ export function AgentsPage({ workspace, fixture, loadFile, embedded = false }: A
         className="mb-4"
         left={
           <>
-            <label className="flex items-center gap-2 text-[12px] font-medium uppercase tracking-[0.08em] text-fg-3">
+            <label className="flex items-center gap-2 text-xs font-medium uppercase tracking-eyebrow text-fg-3">
               Project
-              <select
+              <Select
                 aria-label="Project scope"
                 value={projectParam}
-                onChange={e => setScope(e.target.value)}
-                className="rounded-md border border-line bg-surface-1 px-2.5 py-1.5 text-[13px] normal-case tracking-normal text-fg-0 focus:border-accent focus:outline-none"
+                onChange={v => setScope(v)}
               >
                 <option value={ALL}>All of {workspace}</option>
                 {projects.map(p => (
@@ -210,14 +210,14 @@ export function AgentsPage({ workspace, fixture, loadFile, embedded = false }: A
                 {projectParam !== ALL && !projects.some(p => String(p.id) === projectParam) && (
                   <option value={projectParam}>{scopeLabel}</option>
                 )}
-              </select>
+              </Select>
             </label>
-            <Tabs items={VIEW_TABS} value={view} onChange={setView} />
+            <Tabs items={VIEW_TABS} value={view} onChange={setView} label="Layer views" />
           </>
         }
         right={
           data ? (
-            <span className="font-mono text-[12px] text-fg-2">
+            <span className="font-mono text-xs text-fg-2">
               {data.agents.length} agents · {data.skills.length} skills · {data.tools.length} tools
             </span>
           ) : undefined
@@ -228,7 +228,7 @@ export function AgentsPage({ workspace, fixture, loadFile, embedded = false }: A
         <EmptyState
           icon={<Users className="h-5 w-5" />}
           title="Pick a single workspace"
-          description="The agent → skill → tool layer is defined per workspace, so this tab cannot show 'all'. Choose one organization in the Org switcher in the top bar and the layer for its projects appears here."
+          description="The agent → skill → tool layer is defined per workspace, so this tab cannot show 'all'. Choose one workspace in the Workspace switcher in the top bar and the layer for its projects appears here."
         />
       )}
 
@@ -350,7 +350,7 @@ function MissingChip({ what = 'file missing' }: { what?: string }) {
 
 function PathLine({ path, exists }: { path: string; exists: boolean }) {
   return (
-    <div className="mt-1 flex items-center gap-1.5 break-all font-mono text-[12px] text-fg-3">
+    <div className="mt-1 flex items-center gap-1.5 break-all font-mono text-xs text-fg-3">
       {exists ? null : <FileWarning className="h-3 w-3 shrink-0 text-signal-alarm" aria-hidden="true" />}
       {path || <span className="italic">no path declared</span>}
     </div>
@@ -383,9 +383,9 @@ function NodeButton({
     >
       <div className="flex flex-wrap items-center gap-1.5">
         <Badge tone={KIND_TONE[kind]}>{kind}</Badge>
-        <span className="font-mono text-[12px] font-medium text-fg-0">{label}</span>
+        <span className="font-mono text-xs font-medium text-fg-0">{label}</span>
         {!exists && <MissingChip />}
-        {meta && <span className="text-[12px] text-fg-3">{meta}</span>}
+        {meta && <span className="text-xs text-fg-3">{meta}</span>}
       </div>
       <PathLine path={path} exists={exists} />
     </button>
@@ -415,7 +415,7 @@ function LayerList({
               <div className="flex flex-wrap items-start justify-between gap-2">
                 <div className="min-w-0">
                   <div className="flex flex-wrap items-center gap-1.5">
-                    <span className="font-display text-[14px] font-semibold text-fg-0">{agent.label}</span>
+                    <span className="font-display text-base font-semibold text-fg-0">{agent.label}</span>
                     <Badge mono>{agent.slug}</Badge>
                     <Badge tone={agent.objective_count > 0 ? 'accent' : 'neutral'}>
                       {agent.objective_count} objective{agent.objective_count === 1 ? '' : 's'}
@@ -450,12 +450,12 @@ function LayerList({
               </div>
 
               <div>
-                <div className="mb-1.5 text-[12px] font-medium uppercase tracking-[0.08em] text-fg-3">
+                <div className="mb-1.5 text-xs font-medium uppercase tracking-eyebrow text-fg-3">
                   Skills ({declared.length})
                 </div>
                 <div className="space-y-1.5">
                   {declared.length === 0 && (
-                    <p className="text-[12px] text-fg-3">This agent declares no skills.</p>
+                    <p className="text-xs text-fg-3">This agent declares no skills.</p>
                   )}
                   {declared.map(({ slug, always }) => {
                     const skill = skillBySlug.get(slug)
@@ -567,13 +567,13 @@ function FileViewer({
       <div key={`hdr:${selection.kind}:${selection.slug}`} className="cc-land border-b border-line p-4">
         <div className="flex flex-wrap items-center gap-1.5">
           <Badge tone={KIND_TONE[selection.kind]}>{selection.kind}</Badge>
-          <span className="font-mono text-[12.5px] font-medium text-fg-0">{selection.slug}</span>
+          <span className="font-mono text-sm font-medium text-fg-0">{selection.slug}</span>
           {missing && <MissingChip />}
         </div>
         <div className="mt-2 flex items-start gap-2">
           <code
             data-testid="viewer-path"
-            className="min-w-0 flex-1 break-all rounded-md bg-surface-2 px-2 py-1.5 font-mono text-[12px] text-fg-2"
+            className="min-w-0 flex-1 break-all rounded-md bg-surface-2 px-2 py-1.5 font-mono text-xs text-fg-2"
           >
             {path || 'no path declared'}
           </code>
@@ -592,7 +592,7 @@ function FileViewer({
           </IconButton>
         </div>
         {file && (
-          <div className="mt-1.5 font-mono text-[12px] text-fg-3">{file.bytes} bytes</div>
+          <div className="mt-1.5 font-mono text-xs text-fg-3">{file.bytes} bytes</div>
         )}
       </div>
 

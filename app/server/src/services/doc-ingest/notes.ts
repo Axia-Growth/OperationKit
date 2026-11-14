@@ -1,6 +1,7 @@
 import fs from 'fs'
 import path from 'path'
 import crypto from 'crypto'
+import { noteKbWrite } from '../kb-semantic/service.js'
 
 /**
  * Knowledge-base note rendering + merging for document ingest (obj 719936).
@@ -141,7 +142,13 @@ export function parseNote(text: string): { fm: Frontmatter | null; body: string 
   const m = text.match(/^---\n([\s\S]*?)\n---\n?/)
   if (!m) return { fm: null, body: text }
   const get = (k: string) => m[1].match(new RegExp(`^${k}:\\s*(.*)$`, 'm'))?.[1] ?? ''
-  const unq = (s: string) => (s.startsWith('"') ? JSON.parse(s) as string : s)
+  // A hand-written title such as `"Re-Open" replaces "Re-queue"` starts with a quote but is not
+  // one JSON string; read it as written instead of throwing (obj 900815 — a vault page must never
+  // stop the whole knowledge-base scan).
+  const unq = (s: string) => {
+    if (!s.startsWith('"')) return s
+    try { const v = JSON.parse(s); return typeof v === 'string' ? v : s } catch { return s }
+  }
   return {
     fm: {
       title: unq(get('title')),
@@ -449,6 +456,7 @@ export function writeOrganized(
     const existing = fs.existsSync(abs) ? fs.readFileSync(abs, 'utf8') : null
     fs.mkdirSync(path.dirname(abs), { recursive: true })
     fs.writeFileSync(abs, upsertEntityNote(existing, e, ref, today))
+    noteKbWrite(abs) // obj 900816: semantic index
     notes.push({ rel, created: !existing })
   }
 
@@ -464,5 +472,6 @@ export function writeOrganized(
     summary: doc.summary,
     notes: [...new Set(notes.map(n => n.rel))],
   }))
+  noteKbWrite(path.join(kbRoot, sourceNoteRel)) // obj 900816: semantic index
   return { notes, sourceNoteRel }
 }

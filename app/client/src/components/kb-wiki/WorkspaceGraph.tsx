@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react'
+import { useCallback, useEffect, useId, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react'
 import { Crosshair, Maximize2, Minimize2, Minus, Network, Plus } from 'lucide-react'
 import { matchPages, shortTitle, visibleGraph, type WorkspaceGraphNode, type WorkspaceGraphResponse } from '../../lib/kbWiki'
 import {
@@ -6,6 +6,7 @@ import {
   type Simulation, type View,
 } from '../../lib/kbGraphLayout'
 import { Alert, EmptyState, IconButton, SearchInput, Skeleton, cn } from '../ui'
+import { Modal } from '../ui/Modal'
 import { kindName, toneOf } from './kinds'
 import { wikiApi, wsQuery } from './wikiApi'
 
@@ -56,8 +57,16 @@ export function WorkspaceGraph({
   // Bumped every animation frame while the layout moves (after a drag).
   const [, setFrame] = useState(0)
 
-  const box = useRef<HTMLDivElement>(null)
-  const svgRef = useRef<SVGSVGElement>(null)
+  // The box and the <svg> are also kept as state: going full screen re-mounts
+  // them inside the dialog, and the size observer / wheel listener must follow.
+  const box = useRef<HTMLDivElement | null>(null)
+  const svgRef = useRef<SVGSVGElement | null>(null)
+  const [boxEl, setBoxEl] = useState<HTMLDivElement | null>(null)
+  const [svgEl, setSvgEl] = useState<SVGSVGElement | null>(null)
+  const boxRef = useCallback((el: HTMLDivElement | null) => { box.current = el; setBoxEl(el) }, [])
+  const svgCallbackRef = useCallback((el: SVGSVGElement | null) => { svgRef.current = el; setSvgEl(el) }, [])
+  const fullBtn = useRef<HTMLButtonElement>(null)
+  const titleId = useId()
   const drag = useRef<Drag | null>(null)
   const raf = useRef<number | null>(null)
 
@@ -104,7 +113,7 @@ export function WorkspaceGraph({
 
   // ── Size ──
   useEffect(() => {
-    const el = box.current
+    const el = boxEl
     if (!el) return
     const fit = () => {
       const w = Math.max(280, Math.round(el.clientWidth || 800))
@@ -116,7 +125,7 @@ export function WorkspaceGraph({
     const ro = new ResizeObserver(fit)
     ro.observe(el)
     return () => ro.disconnect()
-  }, [expanded, fill, data])
+  }, [boxEl, expanded, fill, data])
 
   const fit = useCallback(() => {
     if (sim) setView(fitView(boundsOf(sim.nodes), size.w, size.h))
@@ -124,17 +133,19 @@ export function WorkspaceGraph({
   // Re-fit when the drawn set or the box changes.
   useEffect(() => { fit() }, [fit])
 
-  // Escape closes the full-screen view.
+  // Full screen is a ui/Modal dialog (Escape closes it, focus is trapped). The
+  // graph re-mounts inside it, so the "Full screen" button that opened it is
+  // gone by the time it closes: put focus back on the inline one.
+  const wasExpanded = useRef(false)
   useEffect(() => {
-    if (!expanded) return
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setExpanded(false) }
-    window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
+    if (wasExpanded.current && !expanded) fullBtn.current?.focus()
+    wasExpanded.current = expanded
   }, [expanded])
 
   // Wheel zoom needs a non-passive listener to keep the page from scrolling.
+  // Keyed on the element itself: going full screen mounts a new <svg>.
   useEffect(() => {
-    const el = svgRef.current
+    const el = svgEl
     if (!el) return
     const onWheel = (e: WheelEvent) => {
       e.preventDefault()
@@ -143,7 +154,7 @@ export function WorkspaceGraph({
     }
     el.addEventListener('wheel', onWheel, { passive: false })
     return () => el.removeEventListener('wheel', onWheel)
-  }, [sim])
+  }, [sim, svgEl])
 
   useEffect(() => () => { if (raf.current !== null) cancelAnimationFrame(raf.current) }, [])
 
@@ -287,16 +298,13 @@ export function WorkspaceGraph({
     }
   }
 
-  return (
+  const body = (
     <div
       className={cn(
         'flex flex-col gap-3',
         fill && 'min-h-0 flex-1',
-        expanded && 'fixed inset-0 z-50 bg-surface-0 p-3 sm:p-5',
+        expanded && 'min-h-0 flex-1',
       )}
-      role={expanded ? 'dialog' : undefined}
-      aria-modal={expanded || undefined}
-      aria-label={expanded ? 'Knowledge base graph, full screen' : undefined}
     >
       <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
         <SearchInput
@@ -309,7 +317,7 @@ export function WorkspaceGraph({
           aria-label="Find a page in the graph (Enter opens the best match)"
           wrapClassName="w-full sm:w-72"
         />
-        <span className="text-[12px] text-fg-3" aria-live="polite">
+        <span className="text-xs text-fg-3" aria-live="polite">
           {searching
             ? `${matches.length} match${matches.length === 1 ? '' : 'es'}${matches[0] ? ` — Enter opens “${shortTitle(matches[0].title, 28)}”` : ''}`
             : `${shown.nodes.length} page${shown.nodes.length === 1 ? '' : 's'} · ${shown.links.length} connection${shown.links.length === 1 ? '' : 's'}`}
@@ -326,28 +334,28 @@ export function WorkspaceGraph({
               aria-pressed={on}
               onClick={() => toggleKind(kind)}
               className={cn(
-                'inline-flex min-h-[44px] items-center gap-1.5 rounded-full border px-2.5 text-[12px] transition-colors duration-fast focus:outline-none focus-visible:ring-2 focus-visible:ring-accent sm:min-h-[28px]',
+                'inline-flex min-h-[44px] items-center gap-1.5 rounded-full border px-2.5 text-xs transition-colors duration-fast focus:outline-none focus-visible:ring-2 focus-visible:ring-accent sm:min-h-[28px]',
                 on ? 'border-line bg-surface-2 text-fg-1 hover:border-line-strong' : 'border-dashed border-line-soft text-fg-3 hover:text-fg-2',
               )}
             >
               <span className={cn('h-2 w-2 rounded-full', toneOf(kind).bg, !on && 'opacity-30')} aria-hidden="true" />
               {kindName(kind)}
-              <span className="font-mono text-[12px] text-fg-3">{count}</span>
+              <span className="font-mono text-xs text-fg-3">{count}</span>
             </button>
           )
         })}
-        <label className="ml-auto inline-flex min-h-[44px] cursor-pointer items-center gap-2 text-[12px] text-fg-2 sm:min-h-[28px]">
+        <label className="ml-auto inline-flex min-h-[44px] cursor-pointer items-center gap-2 text-xs text-fg-2 sm:min-h-[28px]">
           <input type="checkbox" className="h-4 w-4 accent-accent" checked={showIsolated} onChange={e => setShowIsolated(e.target.checked)} />
           Unconnected pages
         </label>
       </div>
 
       <div
-        ref={box}
+        ref={boxRef}
         className={cn('relative overflow-hidden rounded-md border border-line-soft bg-surface-1', (expanded || fill) && 'min-h-[360px] flex-1')}
       >
         <svg
-          ref={svgRef}
+          ref={svgCallbackRef}
           width={size.w}
           height={size.h}
           viewBox={`0 0 ${size.w} ${size.h}`}
@@ -434,12 +442,12 @@ export function WorkspaceGraph({
               top: Math.min(size.h - 80, Math.max(8, fp.y * v.k + v.y - 12)),
             }}
           >
-            <div className="flex items-center gap-1.5 text-[12px] uppercase tracking-[0.06em] text-fg-3">
+            <div className="flex items-center gap-1.5 text-xs uppercase tracking-eyebrow text-fg-3">
               <span className={cn('h-2 w-2 rounded-full', toneOf(focusNode.kind).bg)} aria-hidden="true" />
               {kindName(focusNode.kind)}
             </div>
-            <div className="mt-0.5 text-[13px] font-medium leading-snug text-fg-0">{focusNode.title}</div>
-            <div className="mt-0.5 text-[12px] text-fg-2">
+            <div className="mt-0.5 text-sm font-medium leading-snug text-fg-0">{focusNode.title}</div>
+            <div className="mt-0.5 text-xs text-fg-2">
               {focusNode.degree} connection{focusNode.degree === 1 ? '' : 's'} · click to open
             </div>
           </div>
@@ -449,17 +457,38 @@ export function WorkspaceGraph({
           <IconButton label="Zoom in" onClick={() => zoomBy(1.3)}><Plus className="h-4 w-4" aria-hidden="true" /></IconButton>
           <IconButton label="Zoom out" onClick={() => zoomBy(1 / 1.3)}><Minus className="h-4 w-4" aria-hidden="true" /></IconButton>
           <IconButton label="Fit the whole graph" onClick={fit}><Crosshair className="h-4 w-4" aria-hidden="true" /></IconButton>
-          <IconButton label={expanded ? 'Exit full screen' : 'Full screen'} onClick={() => setExpanded(x => !x)}>
+          <IconButton
+            ref={fullBtn}
+            label={expanded ? 'Exit full screen' : 'Full screen'}
+            onClick={() => setExpanded(x => !x)}
+            data-autofocus={expanded || undefined}
+          >
             {expanded ? <Minimize2 className="h-4 w-4" aria-hidden="true" /> : <Maximize2 className="h-4 w-4" aria-hidden="true" />}
           </IconButton>
         </div>
       </div>
 
-      <p className="text-[12px] leading-relaxed text-fg-3">
+      <p className="text-xs leading-relaxed text-fg-3">
         Bigger dots link to more pages. Hover a page to light up what it connects to, click to open it, drag it to pull its
         neighbours along. Dashed lines are “cited by a source” only.
         {data.truncated && ` The ${data.nodes.length} best-connected of ${data.counts.pages} pages are drawn.`}
+        {!!data.counts.unresolved && ` ${data.counts.unresolved} link${data.counts.unresolved === 1 ? ' points' : 's point'} at a page that is not in this knowledge base.`}
       </p>
     </div>
+  )
+
+  if (!expanded) return body
+  // Full screen: a ui/Modal dialog covering the viewport (page behind inert,
+  // focus trapped, Escape closes, focus returns to the inline button).
+  return (
+    <Modal
+      open
+      onClose={() => setExpanded(false)}
+      labelledBy={titleId}
+      panelClassName="inset-0 m-0 flex h-full max-h-none w-full max-w-none flex-col rounded-none border-0 overflow-x-hidden overflow-y-hidden bg-surface-0 p-3 shadow-none sm:p-5"
+    >
+      <span id={titleId} hidden>Knowledge base graph, full screen</span>
+      {body}
+    </Modal>
   )
 }

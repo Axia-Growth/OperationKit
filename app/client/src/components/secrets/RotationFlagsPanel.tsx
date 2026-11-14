@@ -28,7 +28,7 @@ export function RotationFlagsList({ flags, onResolve, resolving }: {
       aria-label="Secrets to rotate later"
       className="mb-4 rounded-lg border border-status-review/30 bg-status-review/5 p-4"
     >
-      <div className="text-[12px] font-medium uppercase tracking-wider text-status-review">
+      <div className="text-xs font-medium uppercase tracking-eyebrow text-status-review">
         Rotate later · {flags.length}
       </div>
       <p className="mt-1 text-xs text-fg-2">
@@ -38,8 +38,8 @@ export function RotationFlagsList({ flags, onResolve, resolving }: {
         {flags.map(f => (
           <li key={f.id} className="flex flex-wrap items-center justify-between gap-2 py-2">
             <div className="min-w-0">
-              <span className="font-mono text-[12.5px] font-medium text-fg-0">{f.key}</span>
-              <span className="ml-2 text-[12px] text-fg-2">
+              <span className="font-mono text-sm font-medium text-fg-0">{f.key}</span>
+              <span className="ml-2 text-xs text-fg-2">
                 {f.workspace}{f.objective_id ? ` · card #${f.objective_id}` : ''} · {f.created_at.slice(0, 10)}
               </span>
             </div>

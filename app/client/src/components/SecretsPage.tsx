@@ -54,6 +54,7 @@ import { Search } from 'lucide-react'
 import { SecretModal } from './secrets/SecretModal'
 import { VersionHistoryModal } from './secrets/VersionHistoryModal'
 import { AuditLogPanel } from './secrets/AuditLogPanel'
+import { Select } from './ui/Select'
 
 export function SecretsPage({ embedded = false }: { embedded?: boolean }) {
   const { user } = useAuth()
@@ -226,8 +227,8 @@ export function SecretsPage({ embedded = false }: { embedded?: boolean }) {
 
   if (principals && !principals.canUseGlobal && orgs.length === 0) {
     return (
-      <div className="flex h-full items-center justify-center text-fg-3 text-sm">
-        No organization membership — nothing to manage here. Manage your personal secrets under Settings → You.
+      <div className="flex h-full items-center justify-center text-fg-3 text-base">
+        No workspace membership — nothing to manage here. Manage your personal secrets under Settings → Secrets → Mine.
       </div>
     )
   }
@@ -238,13 +239,13 @@ export function SecretsPage({ embedded = false }: { embedded?: boolean }) {
         <div className={embedded ? 'mb-3 flex items-center justify-between gap-4' : 'mb-4 flex items-center justify-between gap-4'}>
           <div>
             {!embedded && <h1 className="text-xl font-semibold text-fg-0">Secrets</h1>}
-            <p className={embedded ? 'text-sm text-fg-2' : 'mt-1 text-sm text-fg-2'}>
+            <p className={embedded ? 'text-base text-fg-2' : 'mt-1 text-base text-fg-2'}>
               Keys and tokens your workers, bots and integrations use.
             </p>
           </div>
           <button
             onClick={openCreate}
-            className="shrink-0 whitespace-nowrap rounded-md bg-accent px-3 py-1.5 text-sm font-medium text-accent-fg transition-colors duration-fast ease-out hover:bg-accent-hover"
+            className="shrink-0 whitespace-nowrap rounded-md bg-accent px-3 py-1.5 text-base font-medium text-accent-fg transition-colors duration-fast ease-out hover:bg-accent-hover"
           >
             + New
           </button>
@@ -266,67 +267,65 @@ export function SecretsPage({ embedded = false }: { embedded?: boolean }) {
               onChange={e => setQuery(e.target.value)}
               placeholder="Search by name"
               data-testid="secret-search"
-              className="w-full rounded border border-border bg-surface py-1.5 pl-7 pr-2 text-sm text-fg-0 outline-none focus:border-accent"
+              className="w-full rounded border border-border bg-surface py-1.5 pl-7 pr-2 text-base text-fg-0 outline-none focus:border-accent"
             />
           </label>
-          <select
-            value={scopeFilter}
-            onChange={e => setScopeFilter(e.target.value as ScopeFilter)}
-            data-testid="scope-filter"
-            aria-label="Scope"
-            title={isAllScopes ? 'Every secret you may see. Each row acts on its own scope.' : SCOPE_HINTS[scopeFilter as SecretScopeType]}
-            className="rounded border border-border bg-surface px-2 py-1.5 text-sm text-fg-0 outline-none focus:border-accent"
-          >
-            <option value={ALL_SCOPES}>All scopes</option>
-            {scopeOptions.map(s => (
-              <option key={s} value={s}>{SCOPE_LABELS[s]}</option>
-            ))}
-          </select>
-          {!isAllScopes && needsWorkspace && (
-            <select
-              value={workspace}
-              onChange={e => setWorkspace(e.target.value)}
-              aria-label="Organization"
-              className="rounded border border-border bg-surface px-2 py-1.5 text-sm text-fg-0 outline-none focus:border-accent"
+          <span className="inline-flex" title={isAllScopes ? 'Every secret you may see. Each row acts on its own scope.' : SCOPE_HINTS[scopeFilter as SecretScopeType]}>
+            <Select
+              value={scopeFilter}
+              onChange={v => setScopeFilter(v as ScopeFilter)}
+              aria-label="Scope"
             >
-              <option value="">Organization…</option>
+              <option value={ALL_SCOPES}>All scopes</option>
+              {scopeOptions.map(s => (
+                <option key={s} value={s}>{SCOPE_LABELS[s]}</option>
+              ))}
+            </Select>
+          </span>
+          {!isAllScopes && needsWorkspace && (
+            <Select
+              value={workspace}
+              onChange={v => setWorkspace(v)}
+              aria-label="Workspace"
+            >
+              <option value="">Workspace…</option>
               {orgs.map(o => (
                 <option key={o.slug} value={o.slug}>{o.name}</option>
               ))}
-            </select>
+            </Select>
           )}
           {!isAllScopes && needsUser && (
-            <select
-              value={userId}
-              onChange={e => setUserId(e.target.value)}
-              aria-label="User"
-              title={SCOPE_HINTS.user}
-              className="rounded border border-border bg-surface px-2 py-1.5 text-sm text-fg-0 outline-none focus:border-accent"
-            >
-              <option value="">User…</option>
-              {users.map(u => (
-                <option key={u.id} value={String(u.id)}>{u.username}</option>
-              ))}
-            </select>
+            <span className="inline-flex" title={SCOPE_HINTS.user}>
+              <Select
+                value={userId}
+                onChange={v => setUserId(v)}
+                aria-label="User"
+              >
+                <option value="">User…</option>
+                {users.map(u => (
+                  <option key={u.id} value={String(u.id)}>{u.username}</option>
+                ))}
+              </Select>
+            </span>
           )}
           {!loading && (
             <p className="ml-auto text-xs text-fg-3" data-testid="secret-count">
               {query.trim() ? `${visibleRows.length} of ` : ''}
               {secrets.length} {secrets.length === 1 ? 'secret' : 'secrets'}
-              {isAllScopes && ` across ${orgCount} ${orgCount === 1 ? 'organization' : 'organizations'}`}
+              {isAllScopes && ` across ${orgCount} ${orgCount === 1 ? 'workspace' : 'workspaces'}`}
             </p>
           )}
         </div>
         {!isAllScopes && (
-          <p className="-mt-1 mb-3 text-[12px] text-fg-3">{SCOPE_HINTS[scopeFilter as SecretScopeType]}</p>
+          <p className="-mt-1 mb-3 text-xs text-fg-3">{SCOPE_HINTS[scopeFilter as SecretScopeType]}</p>
         )}
 
         {error && (
-          <div className="mb-4 rounded bg-signal-alarm/10 px-3 py-2 text-sm text-signal-alarm">{error}</div>
+          <div className="mb-4 rounded bg-signal-alarm/10 px-3 py-2 text-base text-signal-alarm">{error}</div>
         )}
 
         <div className="overflow-x-auto rounded-lg border border-border bg-surface-raised">
-          <table className="w-full text-sm">
+          <table className="w-full text-base">
             <thead className="bg-surface border-b border-border">
               <tr className="text-left text-xs text-fg-2">
                 <th className="px-3 py-2 font-medium">Scope</th>
@@ -353,7 +352,7 @@ export function SecretsPage({ embedded = false }: { embedded?: boolean }) {
                 ))
               ) : visibleRows.length === 0 ? (
                 <tr>
-                  <td colSpan={SECRET_TABLE_COLUMNS} className="px-3 py-8 text-center text-sm text-fg-3">
+                  <td colSpan={SECRET_TABLE_COLUMNS} className="px-3 py-8 text-center text-base text-fg-3">
                     {query.trim() && rows.length > 0
                       ? `No secret matches "${query.trim()}".`
                       : isAllScopes ? 'No secrets yet. Click "New" to add one.' : 'No secrets at this scope. Click "New" to add one.'}

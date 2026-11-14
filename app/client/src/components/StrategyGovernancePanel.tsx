@@ -89,7 +89,7 @@ function statusOf(o: Objective): ObjectiveStatus {
 export function DecisionAwaitingBadge({ className = '' }: { className?: string }) {
   return (
     <span
-      className={`inline-flex items-center gap-1.5 rounded-full border border-[color:var(--accent-line)] bg-accent px-2.5 py-1 text-[12px] font-semibold uppercase tracking-wide text-accent-fg shadow-pop ${className}`}
+      className={`inline-flex items-center gap-1.5 rounded-full border border-[color:var(--accent-line)] bg-accent px-2.5 py-1 text-xs font-semibold uppercase tracking-eyebrow text-accent-fg shadow-pop ${className}`}
       title="A strategy decision is parked and awaiting your approval"
     >
       <span className="ok-dot live h-1.5 w-1.5 rounded-full bg-accent-fg" aria-hidden="true" />
@@ -118,8 +118,8 @@ function UsageMeter({
   return (
     <div>
       <div className="mb-1 flex items-baseline justify-between gap-2">
-        <span className="text-[12.5px] font-medium text-fg-1">{label}</span>
-        <span className="font-mono text-[12px] text-fg-2">
+        <span className="text-sm font-medium text-fg-1">{label}</span>
+        <span className="font-mono text-xs text-fg-2">
           {format(value)} <span className="text-fg-3">/ {format(ceiling)}</span>
         </span>
       </div>
@@ -249,10 +249,10 @@ export function StrategyGovernancePanel({
           </div>
           <h2
             id="strategy-gov-title"
-            className="truncate text-[15px] font-semibold tracking-tight text-fg-0"
+            className="truncate text-lg font-semibold tracking-tight text-fg-0"
           >
             {strategy ? strategy.title : 'Strategy Governance'}{' '}
-            <span className="font-mono text-[12px] font-normal text-fg-3">#{objectiveId}</span>
+            <span className="font-mono text-xs font-normal text-fg-3">#{objectiveId}</span>
           </h2>
         </div>
         {onClose && (
@@ -268,9 +268,9 @@ export function StrategyGovernancePanel({
 
       {/* ── Body ── */}
       <div className="min-h-0 flex-1 space-y-5 overflow-y-auto px-5 py-4">
-        {loading && <div className="py-8 text-center text-sm text-fg-3">Loading governance…</div>}
+        {loading && <div className="py-8 text-center text-base text-fg-3">Loading governance…</div>}
         {error && !loading && (
-          <div className="rounded-md border border-signal-alarm/30 bg-signal-alarm/10 px-3 py-2 text-sm text-signal-alarm">
+          <div className="rounded-md border border-signal-alarm/30 bg-signal-alarm/10 px-3 py-2 text-base text-signal-alarm">
             {error}
           </div>
         )}
@@ -279,7 +279,7 @@ export function StrategyGovernancePanel({
           <>
             {/* ── Budget / usage ── */}
             <section>
-              <h3 className="mb-2 text-[12px] font-semibold uppercase tracking-wider text-fg-3">
+              <h3 className="mb-2 text-xs font-semibold uppercase tracking-eyebrow text-fg-3">
                 Budget &amp; Usage
               </h3>
               <div className="space-y-3 rounded-md border border-line bg-surface-2 p-3">
@@ -295,7 +295,7 @@ export function StrategyGovernancePanel({
                   ceiling={budget.projectCeiling}
                   format={n => `${n}`}
                 />
-                <div className="flex items-center justify-between border-t border-line-soft pt-2 text-[12px]">
+                <div className="flex items-center justify-between border-t border-line-soft pt-2 text-xs">
                   <span className="text-fg-2">Total tokens</span>
                   <span className="font-mono text-fg-1">
                     {budget.totalTokens.toLocaleString()}
@@ -307,14 +307,14 @@ export function StrategyGovernancePanel({
             {/* ── Pending decision ── */}
             {pending && (
               <section>
-                <h3 className="mb-2 text-[12px] font-semibold uppercase tracking-wider text-accent-hover">
+                <h3 className="mb-2 text-xs font-semibold uppercase tracking-eyebrow text-accent-hover">
                   Pending Decision
                 </h3>
                 {/* card surface + accent rule, not a tinted box (QA r2 #4) */}
                 <div className="rounded-md border border-line border-l-[3px] border-l-accent bg-surface-2 p-3">
                   <div className="mb-2 flex flex-wrap items-center gap-2">
                     <Badge tone="accent">{KIND_LABEL[pending.request.kind]}</Badge>
-                    <span className="font-mono text-[12px] text-fg-3">
+                    <span className="font-mono text-xs text-fg-3">
                       iteration {pending.iteration}
                     </span>
                     {pending.request.reversible != null && (
@@ -324,7 +324,7 @@ export function StrategyGovernancePanel({
                     )}
                   </div>
 
-                  <p className="text-[13px] font-medium leading-snug text-fg-0">
+                  <p className="text-sm font-medium leading-snug text-fg-0">
                     {pending.request.decision}
                   </p>
 
@@ -335,7 +335,7 @@ export function StrategyGovernancePanel({
                         type="button"
                         onClick={() => setEvidenceOpen(o => !o)}
                         aria-expanded={evidenceOpen}
-                        className="flex items-center gap-1 text-[12px] font-medium text-fg-2 transition-colors duration-fast ease-out hover:text-fg-1"
+                        className="flex items-center gap-1 text-xs font-medium text-fg-2 transition-colors duration-fast ease-out hover:text-fg-1"
                       >
                         <ChevronRight
                           className={`h-3.5 w-3.5 transition-transform ${evidenceOpen ? 'rotate-90' : ''}`}
@@ -343,7 +343,7 @@ export function StrategyGovernancePanel({
                         Evidence ({pending.request.evidence.length})
                       </button>
                       {evidenceOpen && (
-                        <ul className="mt-1.5 list-disc space-y-1 pl-7 text-[12px] text-fg-2">
+                        <ul className="mt-1.5 list-disc space-y-1 pl-7 text-xs text-fg-2">
                           {pending.request.evidence.map((e, i) => (
                             <li key={i}>{e}</li>
                           ))}
@@ -369,18 +369,18 @@ export function StrategyGovernancePanel({
                             <div className="flex items-start justify-between gap-3">
                               <div className="min-w-0">
                                 <div className="flex items-center gap-2">
-                                  <span className="text-[12.5px] font-medium text-fg-0">
+                                  <span className="text-sm font-medium text-fg-0">
                                     {opt.label}
                                   </span>
                                   {recommended && <Badge tone="accent">Recommended</Badge>}
                                 </div>
                                 {opt.rationale && (
-                                  <p className="mt-0.5 text-[12px] leading-relaxed text-fg-2">
+                                  <p className="mt-0.5 text-xs leading-relaxed text-fg-2">
                                     {opt.rationale}
                                   </p>
                                 )}
                                 {opt.est_cost && (
-                                  <p className="mt-0.5 font-mono text-[12px] text-fg-3">
+                                  <p className="mt-0.5 font-mono text-xs text-fg-3">
                                     est. {opt.est_cost}
                                   </p>
                                 )}
@@ -403,14 +403,14 @@ export function StrategyGovernancePanel({
                   )}
 
                   {pending.request.recommendation_why && (
-                    <p className="mt-2 text-[12px] italic leading-relaxed text-fg-2">
+                    <p className="mt-2 text-xs italic leading-relaxed text-fg-2">
                       Why: {pending.request.recommendation_why}
                     </p>
                   )}
 
                   {/* Deny */}
                   <div className="mt-3 border-t border-line-soft pt-3">
-                    <label className="mb-1 block text-[12px] font-medium text-fg-2">
+                    <label className="mb-1 block text-xs font-medium text-fg-2">
                       Deny note (optional)
                     </label>
                     <textarea
@@ -419,11 +419,11 @@ export function StrategyGovernancePanel({
                       rows={2}
                       disabled={resolving}
                       placeholder="Why are you denying / what should change?"
-                      className="w-full resize-none rounded-md border border-line-strong bg-surface-3 px-3 py-2 text-[13px] text-fg-0 placeholder-fg-3 outline-none transition-colors duration-fast ease-out focus:border-accent disabled:opacity-50"
+                      className="w-full resize-none rounded-md border border-line-strong bg-surface-3 px-3 py-2 text-sm text-fg-0 placeholder-fg-3 outline-none transition-colors duration-fast ease-out focus:border-accent disabled:opacity-50"
                     />
                     <div className="mt-2 flex items-center justify-between gap-2">
                       {resolveError ? (
-                        <span className="text-[12px] text-signal-alarm">{resolveError}</span>
+                        <span className="text-xs text-signal-alarm">{resolveError}</span>
                       ) : (
                         <span />
                       )}
@@ -444,11 +444,11 @@ export function StrategyGovernancePanel({
 
             {/* ── Spawned children ── */}
             <section>
-              <h3 className="mb-2 text-[12px] font-semibold uppercase tracking-wider text-fg-3">
+              <h3 className="mb-2 text-xs font-semibold uppercase tracking-eyebrow text-fg-3">
                 Spawned Projects ({data.children.length})
               </h3>
               {data.children.length === 0 ? (
-                <div className="rounded-md border border-dashed border-line bg-surface-2 px-3 py-4 text-center text-[12px] text-fg-3">
+                <div className="rounded-md border border-dashed border-line bg-surface-2 px-3 py-4 text-center text-xs text-fg-3">
                   No projects spawned yet.
                 </div>
               ) : (
@@ -459,12 +459,12 @@ export function StrategyGovernancePanel({
                       className="flex items-center gap-2 rounded-md border border-line bg-surface-2 px-3 py-2"
                     >
                       <StatusDot status={statusOf(child)} size={8} />
-                      <span className="font-mono text-[12px] text-fg-3">#{child.id}</span>
-                      <span className="min-w-0 flex-1 truncate text-[12.5px] text-fg-1">
+                      <span className="font-mono text-xs text-fg-3">#{child.id}</span>
+                      <span className="min-w-0 flex-1 truncate text-sm text-fg-1">
                         {child.title}
                       </span>
                       {Number(child.total_cost_usd) > 0 && (
-                        <span className="shrink-0 font-mono text-[12px] text-fg-2">
+                        <span className="shrink-0 font-mono text-xs text-fg-2">
                           ${Number(child.total_cost_usd).toFixed(2)}
                         </span>
                       )}
@@ -481,7 +481,7 @@ export function StrategyGovernancePanel({
                   type="button"
                   onClick={() => setHistoryOpen(o => !o)}
                   aria-expanded={historyOpen}
-                  className="flex items-center gap-1 text-[12px] font-semibold uppercase tracking-wider text-fg-3 transition-colors duration-fast ease-out hover:text-fg-2"
+                  className="flex items-center gap-1 text-xs font-semibold uppercase tracking-eyebrow text-fg-3 transition-colors duration-fast ease-out hover:text-fg-2"
                 >
                   <ChevronRight
                     className={`h-3.5 w-3.5 transition-transform ${historyOpen ? 'rotate-90' : ''}`}
@@ -503,7 +503,7 @@ export function StrategyGovernancePanel({
                           <Badge tone="amber">Pending</Badge>
                         )}
                         <Badge tone="neutral">{KIND_LABEL[d.request.kind]}</Badge>
-                        <span className="min-w-0 flex-1 text-[12px] leading-snug text-fg-2">
+                        <span className="min-w-0 flex-1 text-xs leading-snug text-fg-2">
                           {d.request.decision}
                         </span>
                       </li>

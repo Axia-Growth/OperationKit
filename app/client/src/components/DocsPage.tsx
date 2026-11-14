@@ -1,19 +1,24 @@
 // Context — the knowledge base (served at /knowledge; /docs redirects here; labelled Context since obj 900675). Reads and edits the
 // markdown folders the server exposes through /api/docs.
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { ChevronDown, ChevronRight, FileText, Folder, FolderOpen, Menu, Network, Save, Upload } from 'lucide-react'
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
+import { ChevronRight, FileText, Folder, FolderOpen, Menu, Network, Save, Upload } from 'lucide-react'
+import { Tree, TreeGroup, TreeItem, TreeItemIndicator, TreeItemLabel } from '@ui-sdk/react/tree'
 import { api } from '../lib/api'
 import { Button, EmptyState, SkeletonText } from './ui'
+import { Modal } from './ui/Modal'
 import { KnowledgeImportPanel, useKnowledgeImportEnabled } from './KnowledgeImport'
 import { KbSetupStep } from './kb-setup/KbSetupStep'
 import { KnowledgeGraphPane } from './kb-wiki/KnowledgeGraphPane'
 import { useNavigate } from '../context/nav'
+import { useBoardTheme } from '../preview/BoardShell'
 import { useCreateBlockNote } from '@blocknote/react'
 import { BlockNoteView } from '@blocknote/mantine'
 import { BlockNoteSchema, defaultBlockSpecs, type PartialBlock } from '@blocknote/core'
 import '@blocknote/mantine/style.css'
 import './docs-page.css'
 import { mermaidBlockSpec } from './docs/MermaidBlock'
+import { KbSearchPanel } from './kb-search/KbSearchPanel'
+import { RelatedDocs } from './kb-search/RelatedDocs'
 
 // Custom schema: defaults + a mermaid block. Code fences with `language: mermaid`
 // are swapped into mermaid blocks on load (see EditorPane), and converted back
@@ -115,66 +120,58 @@ export function pageLocation(filePath: string, root: string, folders: KnowledgeF
   return filePath
 }
 
-// ── Tree node ──
+// ── Page tree ──
+// On the UI SDK tree behavior (obj 900819): role=tree/treeitem with
+// aria-level and aria-expanded, one Tab stop, ↑/↓ move, → opens a folder or
+// enters it, ← closes it or goes to its parent, Home/End, typeahead, and
+// Enter/click opens a page. The open page is the tree's selected item.
 
-interface TreeItemProps {
-  node: TreeNode
-  depth: number
-  selectedPath: string | null
-  expanded: Set<string>
-  onToggle: (path: string) => void
-  onSelectFile: (path: string) => void
-}
+const TREE_ROW =
+  'flex w-full cursor-pointer select-none items-center gap-1.5 py-1 pr-2 text-left text-xs outline-none transition-colors duration-fast'
 
-function TreeItem({ node, depth, selectedPath, expanded, onToggle, onSelectFile }: TreeItemProps) {
-  const isOpen = expanded.has(node.path)
-  const isSelected = selectedPath === node.path
-  const padLeft = 8 + depth * 12
-
-  if (node.type === 'dir') {
-    return (
-      <>
-        <button
-          onClick={() => onToggle(node.path)}
-          className="flex w-full items-center gap-1.5 py-1 pr-2 text-left text-xs text-fg-1 transition hover:bg-surface-3"
-          style={{ paddingLeft: padLeft }}
-        >
-          {isOpen
-            ? <ChevronDown className="h-3 w-3 shrink-0 text-fg-3" />
-            : <ChevronRight className="h-3 w-3 shrink-0 text-fg-3" />}
-          {isOpen
-            ? <FolderOpen className="h-3.5 w-3.5 shrink-0 text-fg-2" />
-            : <Folder className="h-3.5 w-3.5 shrink-0 text-fg-2" />}
-          <span className="truncate font-medium">{node.name}</span>
-        </button>
-        {isOpen && node.children?.map(child => (
-          <TreeItem
-            key={child.path}
-            node={child}
-            depth={depth + 1}
-            selectedPath={selectedPath}
-            expanded={expanded}
-            onToggle={onToggle}
-            onSelectFile={onSelectFile}
-          />
-        ))}
-      </>
-    )
-  }
-
+function TreeNodes({ nodes, selectedPath }: { nodes: TreeNode[]; selectedPath: string | null }) {
   return (
-    <button
-      onClick={() => onSelectFile(node.path)}
-      className={`flex w-full items-center gap-1.5 py-1 pr-2 text-left text-xs transition ${
-        isSelected
-          ? 'bg-surface-selected font-semibold text-fg-0 shadow-[inset_3px_0_0_var(--accent-text)]'
-          : 'text-fg-2 hover:bg-surface-3 hover:text-fg-0'
-      }`}
-      style={{ paddingLeft: padLeft + 16 }}
-    >
-      <FileText className={`h-3.5 w-3.5 shrink-0 ${isSelected ? 'text-accent' : 'text-fg-3'}`} />
-      <span className="truncate">{node.name.replace(/\.md$/i, '')}</span>
-    </button>
+    <>
+      {nodes.map(node => {
+        const isDir = node.type === 'dir'
+        const isSelected = !isDir && selectedPath === node.path
+        return (
+          <TreeItem key={node.path} value={node.path} className="group/ti outline-none">
+            <TreeItemLabel
+              className={`${TREE_ROW} group-focus-visible/ti:ring-2 group-focus-visible/ti:ring-inset group-focus-visible/ti:ring-accent/60 ${
+                isSelected
+                  ? 'bg-surface-selected font-semibold text-fg-0 shadow-[inset_3px_0_0_var(--accent-text)]'
+                  : isDir
+                    ? 'text-fg-1 hover:bg-surface-3'
+                    : 'text-fg-2 hover:bg-surface-3 hover:text-fg-0'
+              }`}
+              style={{ paddingLeft: `calc(8px + (var(--tree-level, 1) - 1) * 12px + ${isDir ? 0 : 16}px)` }}
+            >
+              {isDir ? (
+                <>
+                  <TreeItemIndicator className="grid shrink-0 place-items-center text-fg-3 transition-transform duration-fast data-[expanded]:rotate-90">
+                    <ChevronRight className="h-3 w-3" aria-hidden="true" />
+                  </TreeItemIndicator>
+                  <Folder className="h-3.5 w-3.5 shrink-0 text-fg-2 group-data-[expanded]/ti:hidden" aria-hidden="true" />
+                  <FolderOpen className="hidden h-3.5 w-3.5 shrink-0 text-fg-2 group-data-[expanded]/ti:block" aria-hidden="true" />
+                  <span className="truncate font-medium">{node.name}</span>
+                </>
+              ) : (
+                <>
+                  <FileText className={`h-3.5 w-3.5 shrink-0 ${isSelected ? 'text-accent' : 'text-fg-3'}`} aria-hidden="true" />
+                  <span className="truncate">{node.name.replace(/\.md$/i, '')}</span>
+                </>
+              )}
+            </TreeItemLabel>
+            {isDir && node.children && node.children.length > 0 && (
+              <TreeGroup>
+                <TreeNodes nodes={node.children} selectedPath={selectedPath} />
+              </TreeGroup>
+            )}
+          </TreeItem>
+        )
+      })}
+    </>
   )
 }
 
@@ -183,10 +180,13 @@ function TreeItem({ node, depth, selectedPath, expanded, onToggle, onSelectFile 
 interface EditorPaneProps {
   file: FileResponse
   onContentChange: (markdown: string) => void
+  onOpenPath: (path: string) => void
 }
 
-function EditorPane({ file, onContentChange }: EditorPaneProps) {
+function EditorPane({ file, onContentChange, onOpenPath }: EditorPaneProps) {
   const editor = useCreateBlockNote({ schema: docsSchema })
+  // The editor follows the app theme (polish F3 #900804); docs-page.css maps both schemes to tokens.
+  const { theme } = useBoardTheme()
   const loadingRef = useRef(true)
 
   // Load file content into the editor whenever the file path changes.
@@ -227,8 +227,11 @@ function EditorPane({ file, onContentChange }: EditorPaneProps) {
   }, [editor, onContentChange])
 
   return (
-    <div className="docs-editor flex-1 overflow-y-auto bg-surface-0">
-      <BlockNoteView editor={editor} theme="dark" />
+    <div className="flex min-h-0 flex-1 flex-col">
+      <div className="docs-editor flex-1 overflow-y-auto bg-surface-0">
+        <BlockNoteView editor={editor} theme={theme} />
+      </div>
+      <RelatedDocs path={file.path} onOpen={onOpenPath} />
     </div>
   )
 }
@@ -256,6 +259,19 @@ export function DocsPage({ workspace = 'all' }: { workspace?: string }) {
   // view: shown until a page is opened, and again from the toolbar's Graph toggle.
   const [graphOn, setGraphOn] = useState(true)
   const showGraph = importOn && graphOn && !importing
+  const drawerTitleId = useId()
+
+  // The page-list drawer is a phone-only modal. If the window grows past the
+  // md breakpoint while it is open, close it: the desktop sidebar takes over,
+  // and a hidden modal would leave the page inert.
+  useEffect(() => {
+    if (!drawerOpen || typeof window === 'undefined' || !window.matchMedia) return
+    const mq = window.matchMedia('(min-width: 768px)')
+    if (mq.matches) { setDrawerOpen(false); return }
+    const onChange = () => { if (mq.matches) setDrawerOpen(false) }
+    mq.addEventListener?.('change', onChange)
+    return () => mq.removeEventListener?.('change', onChange)
+  }, [drawerOpen])
 
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const navigate = useNavigate()
@@ -273,14 +289,13 @@ export function DocsPage({ workspace = 'all' }: { workspace?: string }) {
       .finally(() => setTreeLoading(false))
   }, [treeVersion])
 
-  const toggleDir = useCallback((p: string) => {
-    setExpanded(prev => {
-      const next = new Set(prev)
-      if (next.has(p)) next.delete(p)
-      else next.add(p)
-      return next
-    })
-  }, [])
+  // Which tree values are pages (the rest are folders).
+  const filePaths = useMemo(() => {
+    const out = new Set<string>()
+    const walk = (ns: TreeNode[]) => ns.forEach(n => (n.type === 'file' ? out.add(n.path) : walk(n.children ?? [])))
+    walk(treeData)
+    return out
+  }, [treeData])
 
   const selectFile = useCallback(async (p: string) => {
     setFileLoading(true)
@@ -348,19 +363,19 @@ export function DocsPage({ workspace = 'all' }: { workspace?: string }) {
     <div className="flex h-full w-64 flex-col border-r border-line bg-surface-1">
       {/* One knowledge base — no source picker (obj 720348) */}
       <div className="flex items-center justify-between gap-2 border-b border-line-soft p-3">
-        <h1 className="px-0.5 text-[15px] font-semibold tracking-[-0.01em] text-fg-0">Context</h1>
+        <h1 className="px-0.5 text-lg font-semibold tracking-tight text-fg-0">Context</h1>
         {/* Knowledge Base Setup (obj 900556) */}
         <a
           href="/knowledge/setup"
           onClick={e => { if (!e.metaKey && !e.ctrlKey && !e.shiftKey && e.button === 0) { e.preventDefault(); navigate('/knowledge/setup') } }}
-          className="rounded-sm border border-line px-2 py-0.5 text-[12px] font-medium text-fg-1 transition-colors hover:border-line-strong hover:text-fg-0"
+          className="inline-flex h-7 items-center rounded-md border border-line px-2 text-xs font-medium text-fg-1 transition-colors hover:border-line-strong hover:text-fg-0"
         >
           Set up
         </a>
       </div>
 
-      {/* Tree */}
-      <div className="flex-1 overflow-y-auto py-2">
+      {/* Search (hybrid keyword + semantic); results replace the tree while a query is active */}
+      <KbSearchPanel workspace={workspace} root={kbRoot} selectedPath={file?.path ?? null} onOpen={p => { void selectFile(p) }}>
         {treeLoading ? (
           <div className="p-3" aria-label="Loading pages"><SkeletonText lines={6} /></div>
         ) : treeData.length === 0 ? (
@@ -369,19 +384,19 @@ export function DocsPage({ workspace = 'all' }: { workspace?: string }) {
             <KbSetupStep index={1} workspace={workspace} className="p-3" />
           </div>
         ) : (
-          treeData.map(node => (
-            <TreeItem
-              key={node.path}
-              node={node}
-              depth={0}
-              selectedPath={file?.path ?? null}
-              expanded={expanded}
-              onToggle={toggleDir}
-              onSelectFile={selectFile}
-            />
-          ))
+          <Tree
+            aria-label="Pages"
+            value={file?.path ?? null}
+            expanded={[...expanded]}
+            onExpandedChange={next => setExpanded(new Set(next))}
+            onAction={value => {
+              if (filePaths.has(value)) void selectFile(value)
+            }}
+          >
+            <TreeNodes nodes={treeData} selectedPath={file?.path ?? null} />
+          </Tree>
         )}
-      </div>
+      </KbSearchPanel>
     </div>
   )
 
@@ -391,16 +406,20 @@ export function DocsPage({ workspace = 'all' }: { workspace?: string }) {
       <div className="hidden md:flex">{sidebar}</div>
 
       {/* Mobile drawer */}
+      {/* A left sheet on ui/Modal (UI SDK Dialog): page behind inert, focus
+          trapped, Escape or a press on the scrim closes, focus returns to the
+          menu button. */}
       {drawerOpen && (
-        <>
-          <div
-            className="fixed inset-0 z-40 bg-[var(--scrim)] md:hidden"
-            onClick={() => setDrawerOpen(false)}
-          />
-          <div className="cc-sheet-in fixed inset-y-0 left-0 z-50 md:hidden">
-            {sidebar}
-          </div>
-        </>
+        <Modal
+          open
+          onClose={() => setDrawerOpen(false)}
+          labelledBy={drawerTitleId}
+          panelClassName="inset-y-0 left-0 right-auto m-0 h-full max-h-none w-64 max-w-none rounded-none border-0 overflow-x-hidden overflow-y-hidden bg-transparent shadow-none md:hidden"
+          className="md:hidden"
+        >
+          <span id={drawerTitleId} hidden>Pages</span>
+          {sidebar}
+        </Modal>
       )}
 
       {/* Editor area */}
@@ -448,23 +467,23 @@ export function DocsPage({ workspace = 'all' }: { workspace?: string }) {
               </Button>
             )}
             {file && !file.writable && (
-              <span className="rounded-xs bg-status-review/15 px-2 py-0.5 text-[12px] font-medium uppercase tracking-wider text-status-review">
+              <span className="rounded-xs bg-status-review/15 px-2 py-0.5 text-xs font-medium uppercase tracking-eyebrow text-status-review">
                 Read-only
               </span>
             )}
             {saveState === 'saving' && (
-              <span className="text-[12px] text-fg-3">Saving…</span>
+              <span className="text-xs text-fg-3">Saving…</span>
             )}
             {saveState === 'saved' && (
-              <span className="text-[12px] text-status-done">Saved</span>
+              <span className="text-xs text-status-done">Saved</span>
             )}
             {saveState === 'error' && (
-              <span className="text-[12px] text-flag-blocked" title={saveError ?? ''}>
+              <span className="text-xs text-flag-blocked" title={saveError ?? ''}>
                 Save failed
               </span>
             )}
             {pendingMarkdown !== null && saveState === 'idle' && file?.writable && (
-              <span className="text-[12px] text-fg-3">Unsaved</span>
+              <span className="text-xs text-fg-3">Unsaved</span>
             )}
             {!importing && !showGraph && <button
               onClick={handleManualSave}
@@ -484,13 +503,13 @@ export function DocsPage({ workspace = 'all' }: { workspace?: string }) {
             onClose={() => { setImporting(false); setTreeVersion(v => v + 1) }}
           />
         ) : fileLoading ? (
-          <div className="flex flex-1 items-center justify-center text-sm text-fg-3">
+          <div className="flex flex-1 items-center justify-center text-base text-fg-3">
             Loading file…
           </div>
         ) : showGraph ? (
           <KnowledgeGraphPane workspace={workspace} onOpenPath={p => { void selectFile(p) }} refreshKey={treeVersion} />
         ) : file ? (
-          <EditorPane key={file.path} file={file} onContentChange={handleContentChange} />
+          <EditorPane key={file.path} file={file} onContentChange={handleContentChange} onOpenPath={p => { void selectFile(p) }} />
         ) : (
           <div className="flex flex-1 items-center justify-center px-4">
             <EmptyState

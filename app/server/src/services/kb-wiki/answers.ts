@@ -1,8 +1,9 @@
 import fs from 'fs'
 import path from 'path'
 import { slugify } from '../doc-ingest/notes.js'
-import { ANSWERS_DIR, GENERATED_BY } from './paths.js'
+import { ANSWERS_DIR, GENERATED_BY, kbPagePath } from './paths.js'
 import { appendLog, compileWiki, fmField, isWikiPageRel, wikilink, yamlArray, yamlValue } from './wiki.js'
+import { noteKbWrite } from '../kb-semantic/service.js'
 
 /**
  * Filing an Ask answer back into the wiki (obj 720117) — the step that makes
@@ -20,8 +21,10 @@ export interface FileAnswerInput {
 }
 
 function titleAt(kbRoot: string, rel: string): string {
+  const abs = kbPagePath(kbRoot, rel)
+  if (!abs) return path.posix.basename(rel, '.md')
   try {
-    const text = fs.readFileSync(path.join(kbRoot, rel), 'utf8')
+    const text = fs.readFileSync(abs, 'utf8')
     return fmField(text, 'title') || text.match(/^# (.+)$/m)?.[1]?.trim() || path.posix.basename(rel, '.md')
   } catch { return path.posix.basename(rel, '.md') }
 }
@@ -57,6 +60,13 @@ export function renderAnswerPage(o: { question: string; answer: string; sources:
   return parts.join('\n')
 }
 
+/** A wiki page that exists inside `kbRoot` (request-supplied rels go through this). */
+function isExistingPage(kbRoot: string, rel: string): boolean {
+  if (!isWikiPageRel(rel)) return false
+  const abs = kbPagePath(kbRoot, rel)
+  return abs !== null && fs.existsSync(abs)
+}
+
 /** Save an answer as `answers/<date>-<slug>.md`, recompile so its sources link back to it, and log it. */
 export function fileAnswer(kbRoot: string, input: FileAnswerInput): { rel: string; title: string } {
   const question = input.question.replace(/\s+/g, ' ').trim()
@@ -68,12 +78,12 @@ export function fileAnswer(kbRoot: string, input: FileAnswerInput): { rel: strin
   const sources: Array<{ rel: string; title: string }> = []
   for (const raw of input.sources ?? []) {
     const rel = cleanRel(raw)
-    if (!isWikiPageRel(rel) || !fs.existsSync(path.join(kbRoot, rel)) || sources.some(s => s.rel === rel)) continue
+    if (!isExistingPage(kbRoot, rel) || sources.some(s => s.rel === rel)) continue
     sources.push({ rel, title: titleAt(kbRoot, rel) })
   }
   const titles = new Map<string, string>()
   const known = (rel: string) => {
-    if (!titles.has(rel)) titles.set(rel, isWikiPageRel(rel) && fs.existsSync(path.join(kbRoot, rel)) ? titleAt(kbRoot, rel) : '\0')
+    if (!titles.has(rel)) titles.set(rel, isExistingPage(kbRoot, rel) ? titleAt(kbRoot, rel) : '\0')
     const t = titles.get(rel)!
     return t === '\0' ? undefined : t
   }
@@ -90,6 +100,7 @@ export function fileAnswer(kbRoot: string, input: FileAnswerInput): { rel: strin
     filedBy: input.filedBy,
     updated: date,
   }), { flag: 'wx' })
+  noteKbWrite(path.join(kbRoot, rel)) // obj 900816: semantic index
   compileWiki(kbRoot, { now })
   appendLog(kbRoot, { kind: 'answer', title: `Saved an answer: ${question}`, pages: [rel, ...sources.map(s => s.rel)], when: now })
   return { rel, title: question }

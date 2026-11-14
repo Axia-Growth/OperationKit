@@ -35,6 +35,19 @@ export const NEVER_TOUCH = [RAW_DIR, RAW_DOC_FILES_DIR, STATE_DIR, 'sources/inbo
 /** Marker in the frontmatter of pages this module generates (index, log, report, stubs, answers). */
 export const GENERATED_BY = 'kb-wiki'
 
+/**
+ * Absolute path of a KB-relative page, or null when it would land outside
+ * `kbRoot` (obj 900838). Callers already reject `..` lexically
+ * (`isWikiPageRel`); this is the filesystem-level backstop for any rel that
+ * reached us from a request (Ask answer sources, citations in an answer body).
+ */
+export function kbPagePath(kbRoot: string, rel: string): string | null {
+  const root = path.resolve(kbRoot)
+  const abs = path.resolve(root, rel)
+  if (!abs.startsWith(root + path.sep)) return null
+  return abs
+}
+
 /** True when a KB-relative path is a raw source or machine state (lint/rebuild must not touch it). */
 export function isProtectedPath(rel: string): boolean {
   const r = rel.replace(/\\/g, '/').replace(/^\.\//, '')

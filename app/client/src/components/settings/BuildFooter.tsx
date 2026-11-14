@@ -17,7 +17,7 @@ export function BuildFooter() {
   }, [])
 
   return (
-    <footer className="mt-10 border-t border-line-soft pt-4 text-[12px] text-fg-2" data-testid="build-footer">
+    <footer className="mt-10 border-t border-line-soft pt-4 text-xs text-fg-2" data-testid="build-footer">
       Build{' '}
       {commit === undefined ? (
         <span className="inline-block h-3 w-20 animate-pulse rounded bg-surface-3 align-middle" aria-label="Loading build" />

@@ -25,7 +25,7 @@ import {
 } from '@operationkit/shared'
 
 const INPUT =
-  'mt-1 min-h-[44px] w-full rounded border border-line bg-surface px-2.5 py-2 text-sm text-fg-0 placeholder:text-fg-3 transition-colors duration-base hover:border-line-strong focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/50 sm:min-h-[36px]'
+  'mt-1 min-h-[44px] w-full rounded border border-line bg-surface px-2.5 py-2 text-base text-fg-0 placeholder:text-fg-3 transition-colors duration-base hover:border-line-strong focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/50 sm:min-h-[36px]'
 
 function errorText(err: unknown, fallback: string): string {
   if (err instanceof ApiError) return (err.body as { error?: string })?.error || err.message
@@ -72,7 +72,7 @@ export function AgentWebhooksSection() {
   return (
     <section className="mt-6 rounded-lg border border-border bg-surface-raised p-5" aria-labelledby="agent-webhooks-heading">
       <div className="mb-4">
-        <h2 id="agent-webhooks-heading" className="text-base font-semibold text-fg-0">Agent webhooks</h2>
+        <h2 id="agent-webhooks-heading" className="text-lg font-semibold text-fg-0">Agent webhooks</h2>
         <p className="mt-1 max-w-prose text-xs text-fg-2">
           Wake a bot when a card it created or started changes status, instead of it polling. Each POST carries the
           card id, title, status, PR and link — never a secret or transcript — and is signed with the sender key.
@@ -80,7 +80,7 @@ export function AgentWebhooksSection() {
       </div>
 
       {error && (
-        <div role="alert" className="mb-3 rounded bg-signal-alarm/10 px-3 py-2 text-sm text-signal-alarm">{error}</div>
+        <div role="alert" className="mb-3 rounded bg-signal-alarm/10 px-3 py-2 text-base text-signal-alarm">{error}</div>
       )}
 
       {keys === null ? (
@@ -90,7 +90,7 @@ export function AgentWebhooksSection() {
         </div>
       ) : keys.length === 0 ? (
         <div className="rounded-md border border-dashed border-line px-4 py-6 text-center">
-          <p className="text-sm text-fg-1">No active agent keys.</p>
+          <p className="text-base text-fg-1">No active agent keys.</p>
           <p className="mt-1 text-xs text-fg-2">Create an agent key above, then give it a webhook here.</p>
         </div>
       ) : (
@@ -103,7 +103,7 @@ export function AgentWebhooksSection() {
                 <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
                   <div className="min-w-0 space-y-1">
                     <div className="flex flex-wrap items-center gap-2">
-                      <span className="text-sm font-semibold text-fg-0">{k.label}</span>
+                      <span className="text-base font-semibold text-fg-0">{k.label}</span>
                       {hook === undefined ? (
                         <Skeleton className="h-4 w-14" />
                       ) : hook === null ? (
@@ -114,7 +114,7 @@ export function AgentWebhooksSection() {
                         <Badge tone="amber">paused</Badge>
                       )}
                     </div>
-                    {hook && <p className="truncate font-mono text-[12px] text-fg-2">{hook.url}</p>}
+                    {hook && <p className="truncate font-mono text-xs text-fg-2">{hook.url}</p>}
                   </div>
                   <Button
                     className="min-h-[44px] shrink-0 self-start sm:min-h-0 sm:self-center"
@@ -290,8 +290,8 @@ function WebhookEditor({
       className="mt-3 space-y-4 rounded-md border border-line bg-surface-1 p-4"
       onSubmit={e => { e.preventDefault(); void save() }}
     >
-      {error && <div role="alert" className="rounded bg-signal-alarm/10 px-3 py-2 text-sm text-signal-alarm">{error}</div>}
-      {notice && <div role="status" className="rounded-md border border-line bg-surface-3 px-3 py-2 text-sm text-fg-0">{notice}</div>}
+      {error && <div role="alert" className="rounded bg-signal-alarm/10 px-3 py-2 text-base text-signal-alarm">{error}</div>}
+      {notice && <div role="status" className="rounded-md border border-line bg-surface-3 px-3 py-2 text-base text-fg-0">{notice}</div>}
 
       <div>
         <label htmlFor={id('url')} className="block text-xs font-medium text-fg-1">Webhook URL</label>
@@ -328,14 +328,14 @@ function WebhookEditor({
             {hook?.has_secret ? 'Generate new key' : 'Generate key'}
           </Button>
         </div>
-        <p className="mt-1 text-[12px] text-fg-2">
+        <p className="mt-1 text-xs text-fg-2">
           Sent as the auth header below and used to sign each body (<span className="font-mono">X-CC-Signature: sha256=…</span>).
           {hook?.has_secret && <> Stored in Secrets as <span className="font-mono">{hook.secret_name}</span>.</>}
           {' '}Generate has the server pick a random key instead of you typing one — shown once, right after you save.
         </p>
         {revealedSecret && (
           <div role="status" className="mt-2 rounded-md border border-line-strong bg-surface-2 p-3">
-            <p className="text-[12px] font-medium text-fg-1">Your new sender key (shown once — copy it now)</p>
+            <p className="text-xs font-medium text-fg-1">Your new sender key (shown once — copy it now)</p>
             <div className="mt-1 flex items-center gap-2">
               <code className="min-w-0 flex-1 truncate rounded bg-surface px-2 py-1 font-mono text-xs text-fg-0">{revealedSecret}</code>
               <Button type="button" className="shrink-0" onClick={() => void copyRevealedSecret()}>Copy</Button>
@@ -354,7 +354,7 @@ function WebhookEditor({
           <input id={id('hprefix')} value={headerPrefix} maxLength={32} onChange={e => setHeaderPrefix(e.target.value)} placeholder="(none)" className={cn(INPUT, 'font-mono')} />
         </div>
       </div>
-      <p className="-mt-2 text-[12px] text-fg-2">
+      <p className="-mt-2 text-xs text-fg-2">
         Sends <span className="font-mono text-fg-1">{headerName || '…'}: {headerPrefix}&lt;sender key&gt;</span>
       </p>
 
@@ -379,7 +379,7 @@ function WebhookEditor({
                 />
                 <span className="min-w-0">
                   <span className="block font-mono text-xs text-fg-0">{e}</span>
-                  <span className="block text-[12px] text-fg-2">{AGENT_WEBHOOK_EVENT_DESCRIPTIONS[e]}</span>
+                  <span className="block text-xs text-fg-2">{AGENT_WEBHOOK_EVENT_DESCRIPTIONS[e]}</span>
                 </span>
               </label>
             )
@@ -394,7 +394,7 @@ function WebhookEditor({
           onChange={e => setEnabled(e.target.checked)}
           className="h-4 w-4 accent-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/50"
         />
-        <span className="text-sm text-fg-1">Enabled</span>
+        <span className="text-base text-fg-1">Enabled</span>
       </label>
 
       <div className="flex flex-wrap gap-2 pt-1">
@@ -414,7 +414,7 @@ function WebhookEditor({
       </div>
 
       {test && (
-        <p role="status" className={cn('text-sm', test.delivered ? 'text-signal-verify' : 'text-signal-alarm')}>
+        <p role="status" className={cn('text-base', test.delivered ? 'text-signal-verify' : 'text-signal-alarm')}>
           {test.delivered ? `Delivered — receiver answered ${test.status_code}.` : `Not delivered — ${test.error ?? 'no response'}.`}
         </p>
       )}

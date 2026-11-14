@@ -31,8 +31,8 @@ export function Badge({
   return (
     <span
       className={cn(
-        'inline-flex items-center gap-1 rounded-sm border px-1.5 py-0.5 text-[12px] font-medium leading-none',
-        mono && 'font-mono tracking-[0.01em]',
+        'inline-flex items-center gap-1 rounded-sm border px-1.5 py-0.5 text-xs font-medium leading-none',
+        mono && 'font-mono tracking-eyebrow',
         TONE[tone],
         className,
       )}
@@ -64,7 +64,7 @@ export function StatusPill({ status, className }: { status: PipelineStatus; clas
   return (
     <span
       className={cn(
-        'inline-flex items-center gap-1.5 rounded-full border bg-surface-2 px-2 py-0.5 text-[12px] font-medium leading-none',
+        'inline-flex items-center gap-1.5 rounded-full border bg-surface-2 px-2 py-0.5 text-xs font-medium leading-none',
         s.ring,
         s.text,
         className,

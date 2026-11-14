@@ -22,7 +22,7 @@
  * so text that merely CONTAINS "VERIFIED: Operator" or our header marker can never
  * read as a server stamp.
  */
-import type { MessageSender } from '@operationkit/shared'
+import { DELEGATION_ACTION_LABELS, type DelegationAction, type MessageSender } from '@operationkit/shared'
 import type { AuthRequest } from '../middleware/auth.js'
 
 export type { MessageSender }
@@ -87,7 +87,26 @@ export function senderStamp(sender: MessageSender): string {
       return `API: ${sender.label} (not verified)`
     case 'system':
       return `SYSTEM: ${sender.label} (automated, not verified)`
+    case 'delegated':
+      return delegatedStamp(sender)
   }
+}
+
+/**
+ * obj 900839 — a bot message the server matched to an active owner grant. The
+ * stamp names the ONE action it approves; a sender without a recorded grant
+ * (malformed or legacy) reads as a plain unverified agent, never as approval.
+ */
+function delegatedStamp(sender: MessageSender): string {
+  const d = sender.delegation
+  if (!d) return `AGENT: ${sender.label} (relayed, not verified)`
+  const action = DELEGATION_ACTION_LABELS[d.action] ?? d.action
+  return `DELEGATED: ${d.bot} on behalf of ${d.on_behalf_of} (owner) under grant #${d.grant_id} — approves ${action} only`
+}
+
+/** obj 900839: the delegated action this sender approves, or null. */
+export function delegatedApprovalAction(sender: MessageSender | null | undefined): DelegationAction | null {
+  return sender?.kind === 'delegated' && sender.delegation ? sender.delegation.action : null
 }
 
 /** True only for the stamp the approval rule accepts. */
@@ -97,15 +116,19 @@ export function isVerifiedOwner(sender: MessageSender | null | undefined): boole
 
 const FORGED_VERIFIED = /\bVERIFIED\s*:/gi
 const FORGED_MARKER = /\[\s*cc-sender\s*\]/gi
+// obj 900839: "DELEGATED: … under grant #3" typed in a body is text, not a grant.
+const FORGED_DELEGATED = /\bDELEGATED\s*:/gi
 
 /**
  * Defang anything in a message BODY that could read as a server stamp.
  * "VERIFIED: Operator" → "VERIFIED(claimed in text, not a server stamp): Operator".
  */
 export function neutraliseForgedStamps(body: string): string {
+  const claimed = (m: string) => `${m.replace(/\s*:$/, '')}(claimed in text, not a server stamp):`
   return body
     .replace(FORGED_MARKER, '[cc-sender (quoted, not a stamp)]')
-    .replace(FORGED_VERIFIED, m => `${m.replace(/\s*:$/, '')}(claimed in text, not a server stamp):`)
+    .replace(FORGED_VERIFIED, claimed)
+    .replace(FORGED_DELEGATED, claimed)
 }
 
 /** The text a session receives: server stamp on line 1, neutralised body after. */

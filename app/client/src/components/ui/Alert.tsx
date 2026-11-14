@@ -29,7 +29,7 @@ export function Alert({
   return (
     <div role="status" className={cn('flex gap-2.5 rounded-md border p-3', t.wrap, className)}>
       <span className={cn('mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full', t.dot)} aria-hidden="true" />
-      <div className="min-w-0 text-[13px] leading-relaxed">
+      <div className="min-w-0 text-sm leading-relaxed">
         {title && <p className={cn('font-medium', t.title)}>{title}</p>}
         {children && <div className="text-fg-2">{children}</div>}
       </div>
@@ -62,7 +62,7 @@ export function Toast({
       )}
     >
       <span className={cn('mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full', t.dot)} aria-hidden="true" />
-      <div className="min-w-0 flex-1 text-[13px] leading-relaxed">
+      <div className="min-w-0 flex-1 text-sm leading-relaxed">
         {title && <p className={cn('font-medium', t.title)}>{title}</p>}
         {children && <div className="text-fg-2">{children}</div>}
       </div>

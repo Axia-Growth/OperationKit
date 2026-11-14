@@ -16,18 +16,22 @@ export interface MermaidOptions {
 
 export const mermaidNodeId = (id: string): string => `n_${id}`
 
+// Shape only (stroke width and dash). Colours come from the viewer's theme
+// tokens (client flow-diagram.css), so a diagram reads in light and dark and
+// follows a white-label accent; fixed pastel fills gave near-white text on
+// pastel in dark (polish F3 #900804). Other renderers get Mermaid's defaults.
 const CLASS_DEFS: [string, string][] = [
-  ['llm', 'fill:#efe3ff,stroke:#7a4cc2,stroke-width:2px'],
-  ['agent', 'fill:#e3eeff,stroke:#2b5fc2,stroke-width:2px'],
-  ['write', 'fill:#fff8db,stroke:#a68500'],
-  ['send', 'fill:#ffe9e0,stroke:#c2562b,stroke-width:2px'],
-  ['spend', 'fill:#ffe3ea,stroke:#c22b55,stroke-width:2px'],
-  ['succeeded', 'stroke:#2f8f4e,stroke-width:3px'],
-  ['failed', 'stroke:#c22b2b,stroke-width:3px,stroke-dasharray:4 2'],
-  ['running', 'stroke:#2b6fc2,stroke-width:3px'],
-  ['waiting', 'stroke:#c2952b,stroke-width:3px,stroke-dasharray:2 2'],
-  ['skipped', 'fill:#f2f2f2,color:#888888,stroke:#bbbbbb'],
-  ['mocked', 'stroke:#888888,stroke-width:2px,stroke-dasharray:1 3'],
+  ['llm', 'stroke-width:2px'],
+  ['agent', 'stroke-width:2px'],
+  ['write', 'stroke-width:1px'],
+  ['send', 'stroke-width:2px'],
+  ['spend', 'stroke-width:2px'],
+  ['succeeded', 'stroke-width:3px'],
+  ['failed', 'stroke-width:3px,stroke-dasharray:4 2'],
+  ['running', 'stroke-width:3px'],
+  ['waiting', 'stroke-width:3px,stroke-dasharray:2 2'],
+  ['skipped', 'stroke-width:1px'],
+  ['mocked', 'stroke-width:2px,stroke-dasharray:1 3'],
 ]
 
 /** Escape label text with Mermaid entity codes; `<br/>` is added after escaping. */

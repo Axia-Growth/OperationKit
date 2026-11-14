@@ -33,11 +33,11 @@ function replyLost(err: unknown): boolean {
 
 const LINK_BUTTON =
   'inline-flex min-h-[44px] select-none items-center justify-center gap-2 rounded-md border border-transparent bg-accent px-4 ' +
-  'text-[13px] font-medium tracking-[-0.01em] text-accent-fg transition-colors duration-fast ease-out hover:bg-accent-hover ' +
+  'text-sm font-medium tracking-tight text-accent-fg transition-colors duration-fast ease-out hover:bg-accent-hover ' +
   'active:bg-accent-press focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/50 sm:min-h-[36px]'
 
 const INPUT =
-  'min-h-[44px] w-full rounded-md border border-line bg-surface-1 px-3 font-mono text-[13px] text-fg-0 outline-none ' +
+  'min-h-[44px] w-full rounded-md border border-line bg-surface-1 px-3 font-mono text-sm text-fg-0 outline-none ' +
   'transition-colors duration-fast ease-out placeholder:text-fg-3 hover:border-line-strong focus:border-accent ' +
   'focus-visible:ring-2 focus-visible:ring-accent/40 disabled:cursor-not-allowed disabled:opacity-45 sm:min-h-[36px]'
 
@@ -185,7 +185,7 @@ export function SeatClaudeSignIn<S>({
   const codeId = `claude-code-${seatId || 'new'}`
   return (
     <form onSubmit={finish} className="space-y-4" aria-label={seatId ? 'Reconnect with Claude' : 'Sign in with Claude'}>
-      <ol className="space-y-4 text-[13px] text-fg-2">
+      <ol className="space-y-4 text-sm text-fg-2">
         <li className="space-y-2">
           <p className="text-fg-1">
             <span className="font-mono text-fg-3">1.</span> Open Claude and sign in with the subscription account (Pro, Max or Team).
@@ -194,7 +194,7 @@ export function SeatClaudeSignIn<S>({
             <a href={link?.url} target="_blank" rel="noopener noreferrer" className={LINK_BUTTON} onClick={() => setOpened(true)}>
               Sign in with Claude <ExternalIcon />
             </a>
-            {link && <span className="text-[12px] text-fg-3">Link works until {fmtTime(link.expiresAt)}</span>}
+            {link && <span className="text-xs text-fg-3">Link works until {fmtTime(link.expiresAt)}</span>}
           </div>
         </li>
         <li className="space-y-2">
@@ -214,14 +214,14 @@ export function SeatClaudeSignIn<S>({
             disabled={finishing}
             aria-describedby={`${codeId}-hint`}
           />
-          <p id={`${codeId}-hint`} className="text-[12px] leading-relaxed text-fg-3">
+          <p id={`${codeId}-hint`} className="text-xs leading-relaxed text-fg-3">
             The code works once. We swap it for a one-year subscription token, store it encrypted and never show it again.
           </p>
         </li>
       </ol>
 
       {finishing && (
-        <p className="text-[12px] text-fg-3" aria-live="polite">Signing in and running a small test turn. This can take up to a minute.</p>
+        <p className="text-xs text-fg-3" aria-live="polite">Signing in and running a small test turn. This can take up to a minute.</p>
       )}
       {error && (
         <Alert tone="alarm">

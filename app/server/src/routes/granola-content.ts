@@ -42,6 +42,7 @@ import {
   ensureBucket,
   signUpload,
   deleteObject,
+  isSafeObjectPath,
   ALLOWED_VIDEO_MIME,
   MAX_VIDEO_BYTES,
 } from '../services/supabase-storage.js'
@@ -254,6 +255,12 @@ router.post('/hooks/:file/video/delete', async (req: OwnerRequest, res) => {
   const { path: objectPath } = (req.body || {}) as { path?: string }
   if (!objectPath) {
     res.status(400).json({ error: 'path required' })
+    return
+  }
+  // Dot segments / empty segments would let a prefix-matching path climb out
+  // of the owner's tree (obj 900838, CodeQL #77/#78).
+  if (!isSafeObjectPath(objectPath)) {
+    res.status(400).json({ error: 'invalid object path' })
     return
   }
   // An owner may only delete objects inside their OWN prefix in the shared bucket.

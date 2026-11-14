@@ -3,6 +3,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { useState } from 'react'
 import { flushSync } from 'react-dom'
 import { createRoot, type Root } from 'react-dom/client'
+import { chooseOption, click, optionsOf, press } from '../test/render'
 
 // Flush microtasks + a macrotask so api.get(...).then(setState) settles, then
 // force any scheduled renders to commit. (The container ships a PRODUCTION React
@@ -75,10 +76,9 @@ function setNativeValue(el: HTMLTextAreaElement, value: string) {
   const proto = Object.getPrototypeOf(el)
   Object.getOwnPropertyDescriptor(proto, 'value')!.set!.call(el, value)
 }
-function setNativeSelectValue(el: HTMLSelectElement, value: string) {
-  const proto = Object.getPrototypeOf(el)
-  Object.getOwnPropertyDescriptor(proto, 'value')!.set!.call(el, value)
-}
+// ui/Select triggers (button[role="combobox"]) carry an aria-label.
+const selectNamed = (root: ParentNode, name: string) =>
+  root.querySelector<HTMLElement>(`button[role="combobox"][aria-label="${name}"]`)
 
 // Module-level stable prop identities — these must NEVER change between renders,
 // mirroring KanbanBoard's useCallback-stabilized handlers. If they changed,
@@ -178,10 +178,11 @@ describe('ObjectiveModal — create form fields (obj 708877)', () => {
     expect(dialog.querySelectorAll('textarea')).toHaveLength(2)
   })
 
-  it('renders organization and project selects', async () => {
+  it('renders workspace and project selects (labelled Workspace, not Organization — obj 900758)', async () => {
     const dialog = await mount(null)
     const labels = [...dialog.querySelectorAll('label')].map(l => l.textContent?.trim())
-    expect(labels).toContain('Organization')
+    expect(labels).toContain('Workspace')
+    expect(labels).not.toContain('Organization')
     expect(labels).toContain('Project')
   })
 
@@ -235,17 +236,14 @@ describe('ObjectiveModal — create form fields (obj 708877)', () => {
     )
     try {
       const dialog = await mount(null)
-      const selects = [...dialog.querySelectorAll('select')]
-      const projectSelect = selects.find(s =>
-        s.querySelector('option[value=""]')?.textContent === 'No project'
-      ) as HTMLSelectElement
+      const projectSelect = selectNamed(dialog, 'Project')!
       expect(projectSelect).toBeTruthy()
+      expect(projectSelect.textContent).toContain('No project')
 
       const title = dialog.querySelector('textarea') as HTMLTextAreaElement
       setNativeValue(title, 'Pull the MLS feed')
       flushSync(() => title.dispatchEvent(new Event('input', { bubbles: true })))
-      setNativeSelectValue(projectSelect, '7')
-      flushSync(() => projectSelect.dispatchEvent(new Event('change', { bubbles: true })))
+      await chooseOption(projectSelect, 'Designer')
 
       const form = dialog.querySelector('form') as HTMLFormElement
       flushSync(() => form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true })))
@@ -266,18 +264,20 @@ describe('ObjectiveModal — create form fields (obj 708877)', () => {
     expect(dialog.querySelectorAll('textarea')).toHaveLength(2)
   })
 
-  it('does not default Organization to Example on the All-orgs board', async () => {
+  it('does not default Workspace to Example on the All-workspaces board', async () => {
     const dialog = await mount(null, 'all')
-    const orgSelect = [...dialog.querySelectorAll('select')].find(s =>
-      [...s.options].some(o => o.value === 'example-project'),
-    ) as HTMLSelectElement
+    const orgSelect = selectNamed(dialog, 'Workspace')!
     expect(orgSelect).toBeTruthy()
-    expect(orgSelect.value).toBe('')
-    expect([...orgSelect.options].map(o => o.textContent)).toContain('Select organization…')
-    expect([...orgSelect.options].map(o => o.textContent)).toContain('Example Project')
+    // Nothing picked: the trigger shows the disabled "Select workspace…" row.
+    expect(orgSelect.textContent).toContain('Select workspace…')
+    await click(orgSelect)
+    const optionTexts = optionsOf(orgSelect).map(o => o.textContent?.trim())
+    expect(optionTexts).toContain('Select workspace…')
+    expect(optionTexts).toContain('Example Project')
+    await press('Escape')
   })
 
-  it('refuses to create from All orgs until an organization is picked', async () => {
+  it('refuses to create from All workspaces until a workspace is picked', async () => {
     const dialog = await mount(null, 'all')
     const title = dialog.querySelector('textarea') as HTMLTextAreaElement
     setNativeValue(title, 'MFG delete messages')
@@ -288,7 +288,7 @@ describe('ObjectiveModal — create form fields (obj 708877)', () => {
     await flush()
 
     expect(onCreate).not.toHaveBeenCalled()
-    expect(dialog.textContent).toContain('Pick an organization')
+    expect(dialog.textContent).toContain('Pick a workspace')
   })
 
   it('creates into Example Project when that org is picked from All', async () => {
@@ -297,11 +297,8 @@ describe('ObjectiveModal — create form fields (obj 708877)', () => {
     setNativeValue(title, 'MFG delete messages')
     flushSync(() => title.dispatchEvent(new Event('input', { bubbles: true })))
 
-    const orgSelect = [...dialog.querySelectorAll('select')].find(s =>
-      [...s.options].some(o => o.value === 'example-project'),
-    ) as HTMLSelectElement
-    setNativeSelectValue(orgSelect, 'example-project')
-    flushSync(() => orgSelect.dispatchEvent(new Event('change', { bubbles: true })))
+    await chooseOption(selectNamed(dialog, 'Workspace'), 'Example Project')
+
 
     const form = dialog.querySelector('form') as HTMLFormElement
     flushSync(() => form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true })))
@@ -349,22 +346,19 @@ describe('ObjectiveModal — multi-owner picker (obj 711023)', () => {
     const dialog = await mount(null)
 
     // Pick alice then bob from the add-owner select
-    const ownerSelect = [...dialog.querySelectorAll('select')].find(s =>
-      [...s.options].some(o => o.value === '10'),
-    ) as HTMLSelectElement
+    const ownerSelect = selectNamed(dialog, 'Add owner')
     expect(ownerSelect).toBeTruthy()
 
-    setNativeSelectValue(ownerSelect, '10')
-    flushSync(() => ownerSelect.dispatchEvent(new Event('change', { bubbles: true })))
+    await chooseOption(ownerSelect, 'alice')
     await flush()
 
     // After selecting alice, the dropdown now lists bob (alice is in chips, hidden from options)
-    const ownerSelect2 = [...dialog.querySelectorAll('select')].find(s =>
-      [...s.options].some(o => o.value === '20'),
-    ) as HTMLSelectElement
+    const ownerSelect2 = selectNamed(dialog, 'Add owner')
     expect(ownerSelect2).toBeTruthy()
-    setNativeSelectValue(ownerSelect2, '20')
-    flushSync(() => ownerSelect2.dispatchEvent(new Event('change', { bubbles: true })))
+    await click(ownerSelect2)
+    expect(optionsOf(ownerSelect2!).map(o => o.textContent?.trim())).not.toContain('alice')
+    await press('Escape')
+    await chooseOption(ownerSelect2, 'bob')
     await flush()
 
     // Fill in title so submit passes validation

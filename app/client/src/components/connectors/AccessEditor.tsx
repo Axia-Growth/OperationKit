@@ -17,7 +17,7 @@ function sameList(a: string[] | null, b: string[] | null): boolean {
 }
 
 const chip =
-  'inline-flex min-h-[44px] items-center rounded-md border px-3 text-[12.5px] font-medium transition-colors duration-fast ease-out ' +
+  'inline-flex min-h-[44px] items-center rounded-md border px-3 text-sm font-medium transition-colors duration-fast ease-out ' +
   'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/50 sm:min-h-[32px] disabled:cursor-not-allowed disabled:opacity-45'
 // selected = accent outline on the card surface, no lavender fill (QA r3 #1)
 const chipOn = 'border-accent bg-surface-2 text-accent-hover hover:bg-surface-3'
@@ -45,7 +45,7 @@ function ListPicker({
   }
   return (
     <fieldset className="min-w-0" disabled={disabled}>
-      <legend className="mb-2 text-[12px] font-medium text-fg-1">{legend}</legend>
+      <legend className="mb-2 text-xs font-medium text-fg-1">{legend}</legend>
       <div className="flex flex-wrap gap-1.5">
         <button
           type="button"
@@ -71,7 +71,7 @@ function ListPicker({
         })}
       </div>
       {value !== null && value.length === 0 && (
-        <p className="mt-2 text-[12px] text-signal-amber">None selected — no session will get this connection.</p>
+        <p className="mt-2 text-xs text-signal-amber">None selected — no session will get this connection.</p>
       )}
     </fieldset>
   )
@@ -129,8 +129,8 @@ export function AccessEditor({
       {/* Work somebody else routes to you runs as you, but does not borrow your
           outside accounts unless you say so. Off by default. */}
       <fieldset>
-        <legend className="text-[12.5px] font-medium text-fg-1">Work assigned by others</legend>
-        <label className="mt-1.5 flex cursor-pointer items-start gap-2.5 text-[12.5px] text-fg-1">
+        <legend className="text-sm font-medium text-fg-1">Work assigned by others</legend>
+        <label className="mt-1.5 flex cursor-pointer items-start gap-2.5 text-sm text-fg-1">
           <input
             type="checkbox"
             checked={!!draft.allow_delegated}
@@ -143,7 +143,7 @@ export function AccessEditor({
           />
           <span>
             Let cards someone else assigned to me use this connection.
-            <span className="block text-[12px] text-fg-3">
+            <span className="block text-xs text-fg-3">
               Off means those cards still run as me, but with this connection marked absent.
             </span>
           </span>

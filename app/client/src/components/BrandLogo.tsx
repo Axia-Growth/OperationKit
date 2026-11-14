@@ -30,9 +30,9 @@ function currentTheme(): 'light' | 'dark' {
 }
 
 const SIZES = {
-  sm: { box: 'h-7 w-7 text-[13px]', word: 'h-6 max-w-[150px]', name: 'max-w-[200px] text-[14px]' },
-  md: { box: 'h-8 w-8 text-[15px]', word: 'h-7 max-w-[200px]', name: 'text-[16px]' },
-  lg: { box: 'h-11 w-11 text-[20px]', word: 'h-10 max-w-[260px]', name: 'text-[22px]' },
+  sm: { box: 'h-7 w-7 text-sm', word: 'h-6 max-w-[150px]', name: 'max-w-[200px] text-base' },
+  md: { box: 'h-8 w-8 text-base', word: 'h-7 max-w-[200px]', name: 'text-lg' },
+  lg: { box: 'h-11 w-11 text-xl', word: 'h-10 max-w-[260px]', name: 'text-2xl' },
 } as const
 
 /** The install's logo lockup. `showName` adds the brand name beside an icon
@@ -81,7 +81,7 @@ export function BrandLogo({
         </span>
       )}
       {mark.kind !== 'wordmark' && showName && (
-        <span className={cn('truncate font-brand font-semibold leading-none tracking-[-0.01em] text-fg-0', sz.name)}>{name}</span>
+        <span className={cn('truncate font-brand font-semibold leading-none tracking-tight text-fg-0', sz.name)}>{name}</span>
       )}
     </span>
   )

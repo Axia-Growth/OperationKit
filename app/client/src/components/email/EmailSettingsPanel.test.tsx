@@ -170,3 +170,28 @@ describe('SetupChecklist', () => {
     expect(host.textContent).toContain('Keep default')
   })
 })
+
+/* obj 900819 — the provider picker is ui/RadioGroup on the UI SDK radio:
+   one tab stop, arrow keys move AND pick, and picking reveals step 2. */
+describe('EmailSettingsPanel provider radio group', () => {
+  it('is a named radio group; arrows pick a provider and reveal its credentials step', async () => {
+    mockFetch({ 'GET /api/admin/email': () => ({ json: setup({ has_credential: { smtp: false, resend: true, postmark: false } }) }) })
+    render(<EmailSettingsPanel />)
+    await flush()
+    const group = host.querySelector('[role="radiogroup"][aria-label="Email provider"]') as HTMLElement
+    expect(group).not.toBeNull()
+    const radios = [...group.querySelectorAll<HTMLElement>('[role="radio"]')]
+    expect(radios).toHaveLength(3)
+    expect(radios.every(r => r.getAttribute('aria-checked') === 'false')).toBe(true)
+    expect(radios[0].tabIndex).toBe(0) // nothing picked: Tab enters on the first
+    expect(radios.map(r => document.getElementById(r.getAttribute('aria-labelledby')!)?.textContent)).toEqual(['Resend', 'Postmark', 'SMTP'])
+    expect(radios[0].textContent).toContain('key saved')
+    expect(host.textContent).not.toContain('Sender and credentials')
+    radios[0].focus()
+    radios[0].dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true, cancelable: true }))
+    await flush()
+    expect(radios[1].getAttribute('aria-checked')).toBe('true')
+    expect(document.activeElement).toBe(radios[1])
+    expect(host.textContent).toContain('Sender and credentials')
+  })
+})

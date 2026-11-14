@@ -37,11 +37,11 @@ export function fmtTime(t: string | null | undefined): string {
 function BotAccessCell({ status, onClick }: { status: BotAccessStatus | null; onClick?: () => void }) {
   if (!status) return <span className="text-fg-3">—</span>
   if (status.kind === 'never') {
-    return <span data-bot-access="never" className="text-[12px] text-fg-3" title="Seat and server-only secrets can never be used by bots">Never</span>
+    return <span data-bot-access="never" className="text-xs text-fg-3" title="Seat and server-only secrets can never be used by bots">Never</span>
   }
   const chip = status.kind === 'on'
     ? <span data-bot-access="on" title={status.title} className={`${BADGE_BASE} max-w-[14rem] truncate border-status-working/40 bg-surface-2 font-mono text-status-working`}>{status.label}</span>
-    : <span data-bot-access="off" title="No bot can use this secret (default)" className="text-[12px] text-fg-3">Off</span>
+    : <span data-bot-access="off" title="No bot can use this secret (default)" className="text-xs text-fg-3">Off</span>
   if (!onClick) return chip
   return (
     <button type="button" onClick={onClick} data-testid="secret-bot-access" className="rounded hover:underline focus:outline-none focus-visible:ring-1 focus-visible:ring-accent">
@@ -55,7 +55,7 @@ export function SecretRow({ secret: s, groupHeader, orgName, userName, botAccess
     <>
       {groupHeader && (
         <tr className="border-b border-border bg-surface-overlay/60">
-          <td colSpan={SECRET_TABLE_COLUMNS} className="px-3 py-1.5 text-[12px] uppercase tracking-wider text-fg-3">
+          <td colSpan={SECRET_TABLE_COLUMNS} className="px-3 py-1.5 text-xs uppercase tracking-eyebrow text-fg-3">
             {groupHeader}
           </td>
         </tr>
@@ -74,7 +74,7 @@ export function SecretRow({ secret: s, groupHeader, orgName, userName, botAccess
         <td className="px-3 py-2">
           <div className="font-mono text-xs text-fg-1">{s.key}</div>
           {s.description && (
-            <div data-testid="secret-description" className="mt-0.5 max-w-xs truncate text-[12px] text-fg-3" title={s.description}>
+            <div data-testid="secret-description" className="mt-0.5 max-w-xs truncate text-xs text-fg-3" title={s.description}>
               {s.description}
             </div>
           )}

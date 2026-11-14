@@ -40,7 +40,7 @@ export function ObjectiveProposalCard({ raw }: { raw: string }) {
 
   if (parseError || !proposal) {
     return (
-      <div className="my-2 rounded-lg border border-signal-alarm/30 bg-signal-alarm/10 px-4 py-3 text-sm">
+      <div className="my-2 rounded-lg border border-signal-alarm/30 bg-signal-alarm/10 px-4 py-3 text-base">
         <div className="font-medium text-signal-alarm mb-1">Invalid objective proposal</div>
         <div className="text-xs text-fg-2">{parseError}</div>
         <pre className="mt-2 font-mono text-xs text-fg-3 overflow-x-auto whitespace-pre-wrap break-words">{raw}</pre>
@@ -89,20 +89,20 @@ export function ObjectiveProposalCard({ raw }: { raw: string }) {
       style={{ maxWidth: 'min(85%, 700px)' }}
     >
       <div className="flex items-start justify-between gap-2 mb-2">
-        <div className="font-display text-sm font-semibold text-fg-0 leading-tight">{title}</div>
+        <div className="font-display text-base font-semibold text-fg-0 leading-tight">{title}</div>
         <span
-          className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[12px] shrink-0 ${priorityCls}`}
+          className={`inline-flex items-center rounded-full border px-2 py-0.5 text-xs shrink-0 ${priorityCls}`}
         >
           {priority}
         </span>
       </div>
 
       <div className="flex flex-wrap gap-1.5 mb-3">
-        <span className="inline-flex items-center rounded-full border border-[color:var(--accent-line)] bg-[var(--accent-tint)] px-2 py-0.5 text-[12px] font-medium text-accent-hover">
+        <span className="inline-flex items-center rounded-full border border-[color:var(--accent-line)] bg-[var(--accent-tint)] px-2 py-0.5 text-xs font-medium text-accent-hover">
           {workspace}
         </span>
         {project && (
-          <span className="inline-flex items-center rounded-full border border-line bg-surface-3 px-2 py-0.5 font-mono text-[12px] text-fg-2">
+          <span className="inline-flex items-center rounded-full border border-line bg-surface-3 px-2 py-0.5 font-mono text-xs text-fg-2">
             {project}
           </span>
         )}

@@ -1,4 +1,5 @@
 import { StrictMode } from 'react'
+import { LucideProvider } from 'lucide-react'
 import { createRoot } from 'react-dom/client'
 import App from './App'
 import './index.css'
@@ -18,6 +19,9 @@ void loadBranding()
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
-    <App />
+    {/* One icon stroke app-wide (polish F1); icons no longer set their own. */}
+    <LucideProvider strokeWidth={1.75}>
+      <App />
+    </LucideProvider>
   </StrictMode>
 )

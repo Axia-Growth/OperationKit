@@ -22,6 +22,7 @@ import { buildSpawnEnv } from './session-spawn-env.js'
 import { writeReviewerPlaywrightMcpConfig } from './session-reviewer-prompt.js'
 import { type ActiveSession, registerActiveSession } from './session-registry.js'
 import { computeIsolation, ensureWorktree, ensureWorktreeHookAssets } from './session-worktree.js'
+import { resolveCommonDir } from './worktree-gitdir.js'
 import { claimObjectiveSession } from './objective-session-claim.js'
 import { logSessionStart } from './session-start-reasons.js'
 import { isSessionActive } from './session-control.js'
@@ -304,6 +305,7 @@ export async function startSession(objective: Objective): Promise<string> {
     model: spawnModel,
     settingsPath: hookSettingsPath,
     worktreeRoot,
+    gitCommonDir: worktreeRoot && isolation ? resolveCommonDir(isolation.projectDir) : undefined,
     env: buildSpawnEnv({ objective, homeDir, sessionKind: 'worker' }),
     seatEnv: assignment.env,
     seatMount: assignment.mount,

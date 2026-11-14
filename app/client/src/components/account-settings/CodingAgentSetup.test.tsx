@@ -48,8 +48,8 @@ describe('<CodingAgentSetup />', () => {
     flushSync(() => root.render(<CodingAgentSetup />))
     const prompt = () => container.querySelector('[data-testid="coding-agent-prompt"]')?.textContent ?? ''
     expect(prompt()).toContain('claude mcp add')
-    const cursorTab = Array.from(container.querySelectorAll('[role="tab"]')).find(t => t.textContent === 'Cursor') as HTMLElement
-    flushSync(() => cursorTab.click())
+    const cursorOption = Array.from(container.querySelectorAll('[role="radio"]')).find(t => t.textContent === 'Cursor') as HTMLElement
+    flushSync(() => cursorOption.click())
     expect(prompt()).toContain('~/.cursor/mcp.json')
     expect(prompt()).not.toContain('claude mcp add')
   })
