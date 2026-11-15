@@ -8,13 +8,18 @@ import { ChangePasswordPage } from './components/ChangePasswordPage'
 import { NoAccountPage } from './components/NoAccountPage'
 import { PageTransition } from './components/PageTransition'
 import { RouteFallback } from './components/RouteFallback'
+import { AppShellSkeleton } from './components/AppShellSkeleton'
+import { EmptyState } from './components/ui/EmptyState'
+import { Button } from './components/ui/Button'
+import { Compass } from 'lucide-react'
+import { ContextSkeleton } from './components/ContextSkeleton'
 import { NavContext, useNavigate } from './context/nav'
 import { BoardShell, BoardThemeProvider } from './preview/BoardShell'
 import { PreviewBoard } from './preview/PreviewBoard'
 import { PreviewArchive } from './preview/PreviewArchive'
 import { PreviewWorkspace } from './preview/PreviewWorkspace'
 import { HAS_CHAT_PAGE } from './lib/optional-pages'
-import { SYSTEM_ROUTE, AGENTS_ROUTE, LEGACY_REDIRECTS, REMOVED_ROUTES, usesPageScroll } from './lib/routes'
+import { SYSTEM_ROUTE, AGENTS_ROUTE, LEGACY_REDIRECTS, REMOVED_ROUTES, pageTransitionKey, usesPageScroll } from './lib/routes'
 import type { Workspace } from '@operationkit/shared'
 
 const Toaster = lazy(() => import('./components/ui/Toaster').then(m => ({ default: m.Toaster })))
@@ -59,16 +64,13 @@ function workspaceFromPath(pathname: string): Workspace | null {
 function NotFound() {
   const navigate = useNavigate()
   return (
-    <div className="flex h-full flex-col items-center justify-center gap-2 p-6 text-center">
-      <h1 className="text-lg font-semibold text-fg-0">Page not found</h1>
-      <p className="text-base text-fg-3">No route matches this URL.</p>
-      <a
-        href="/"
-        onClick={e => { e.preventDefault(); navigate('/') }}
-        className="mt-2 text-base text-accent hover:underline"
-      >
-        Back to the board
-      </a>
+    <div className="flex h-full flex-1 items-center justify-center p-6">
+      <EmptyState
+        icon={<Compass className="h-5 w-5" aria-hidden="true" />}
+        title="Page not found"
+        description="Nothing lives at this address. It may have moved, or the link is mistyped."
+        action={<Button variant="primary" onClick={() => navigate('/')}>Back to the board</Button>}
+      />
     </div>
   )
 }
@@ -159,12 +161,11 @@ function AppContent() {
   // Non-board surfaces still take a single workspace (or 'all').
   const workspace: Workspace = selectedWorkspaces.length === 1 ? selectedWorkspaces[0] : 'all'
 
+  // Auth still resolving: keep the neutral shell skeleton index.html painted
+  // (polish F8) — never a bare loading string, and never a fake board, since
+  // the next frame may be the login card or a deep link like /settings.
   if (loading) {
-    return (
-      <div className="flex h-full items-center justify-center">
-        <div className="text-fg-2">Loading...</div>
-      </div>
-    )
+    return <AppShellSkeleton />
   }
 
   if (!user) {
@@ -180,22 +181,20 @@ function AppContent() {
     || /^\/o\/\d+\/?$/.test(pathname)
     || pathname === '/archive'
 
-  // Route key for the page transition. All board paths (/, /w/<ws>) share one
-  // key so switching workspace re-renders the board in place (prop change, not
-  // remount) — preserving its WebSocket — while distinct routes animate.
-  const routeKey = pathname === '/archive'
-    ? 'archive'
-    : isBoardPath
-    ? 'board'
-    : pathname.startsWith('/settings')
-      ? 'settings'
-      : pathname
+  // Route key for the page transition: one key per PAGE, not per URL, so a
+  // URL change inside a page (workspace on the board, bot on the Bots page)
+  // is a prop change, not a remount. See pageTransitionKey (obj 900865).
+  const routeKey = pageTransitionKey(pathname, isBoardPath)
 
   return (
     <NavContext.Provider value={navigate}>
     <BoardThemeProvider>
     <Layout selectedWorkspaces={selectedWorkspaces} onWorkspacesChange={handleWorkspacesChange} pageScroll={usesPageScroll(pathname)}>
       <PageTransition routeKey={routeKey}>
+      {/* Per-route boundary (polish F8): a crash inside one page renders the
+          error card in the page area only — the top bar and nav stay usable,
+          and navigating anywhere else (pathname = resetKey) clears it. */}
+      <ErrorBoundary scope="route" resetKey={pathname}>
       <Suspense fallback={<RouteFallback />}>
         <Routes>
           <Route path="/" element={<BoardShell><PreviewBoard workspaces={selectedWorkspaces} /></BoardShell>} />
@@ -220,7 +219,8 @@ function AppContent() {
           <Route path="/assistant" element={<Navigate to={HAS_CHAT_PAGE ? '/chat' : '/'} replace />} />
           <Route path="/chat" element={<AgentChatPage />} />
           <Route path="/chat/:slug" element={<AgentChatPage />} />
-          <Route path="/knowledge" element={<DocsPage workspace={workspace} />} />
+          {/* obj 900867: a Context-shaped skeleton while the page's code loads, not the generic card grid. */}
+          <Route path="/knowledge" element={<Suspense fallback={<ContextSkeleton />}><DocsPage workspace={workspace} /></Suspense>} />
           <Route path="/knowledge/setup" element={<KbSetupPage workspace={workspace} />} />
           <Route path="/docs" element={<Navigate to="/knowledge" replace />} />
           <Route path="/granola" element={<Navigate to="/" replace />} />
@@ -255,6 +255,7 @@ function AppContent() {
           <Route path="*" element={<NotFound />} />
         </Routes>
       </Suspense>
+      </ErrorBoundary>
       </PageTransition>
     </Layout>
     {/* The one visible stack for ui/Toaster's app-wide toast queue (obj 900819),

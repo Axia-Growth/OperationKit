@@ -284,6 +284,13 @@ describe('path reads, list and search honour the key', () => {
     expect(r.json.writeRoots).not.toContain(VAULT)
   })
 
+  it('GET /api/docs/tree is revalidated by the browser, never shared-cached (obj 900867)', async () => {
+    const res = await fetch(`${baseUrl}/api/docs/tree`, { headers: { Authorization: `Bearer ${scopedKey}` } })
+    expect(res.status).toBe(200)
+    expect(res.headers.get('cache-control')).toBe('private, no-cache')
+    expect(res.headers.get('etag')).toBeTruthy()
+  })
+
   it('GET /api/docs/tree?root=<forbidden workspace> → 403', async () => {
     const r = await call('GET', `/api/docs/tree?root=${encodeURIComponent(ws('your-org'))}`, { bearer: scopedKey })
     expect(r.status).toBe(403)

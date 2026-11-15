@@ -6,19 +6,21 @@
  * particular company.
  *
  * Every interpolated value is HTML-escaped. Email clients ignore CSS variables,
- * so the HTML uses a small inline palette; the accent follows OK_BRAND_ACCENT
- * when the branding config sets one.
+ * so the HTML uses a small inline palette. The button is the install's resolved
+ * brand accent + its text-on-accent colour (resolveBrandTokens: env > config
+ * file > shipped default, obj 900803) — the same pair the web UI paints.
  */
 import { brandName, findLogo } from '../../routes/branding.js'
+import { resolveBrandTokens } from '../branding-config.js'
 import type { MailMessage } from './types.js'
 
 export interface Brand {
   name: string
   logoUrl: string | null
   accent: string
+  /** Text colour on the accent (button label). */
+  accentFg: string
 }
-
-const DEFAULT_ACCENT = '#111827'
 
 export function esc(v: string): string {
   return v.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;')
@@ -40,8 +42,8 @@ export function currentBrand(appUrl: string, env: NodeJS.ProcessEnv = process.en
   const base = normaliseAppUrl(appUrl)
   let logo: string | null = null
   try { logo = base && findLogo() ? `${base}/api/branding/logo` : null } catch { logo = null }
-  const accent = /^#[0-9a-fA-F]{6}$/.test(env.OK_BRAND_ACCENT || '') ? env.OK_BRAND_ACCENT! : DEFAULT_ACCENT
-  return { name: brandName(env), logoUrl: logo, accent }
+  const tokens = resolveBrandTokens(env)
+  return { name: brandName(env), logoUrl: logo, accent: tokens.accent, accentFg: tokens.accentFg }
 }
 
 interface Block { heading: string; paragraphs: string[]; button?: { label: string; url: string }; code?: Array<[string, string]>; footer: string }
@@ -57,7 +59,7 @@ function render(brand: Brand, b: Block): string {
         .join('')}</table>`
     : ''
   const button = b.button
-    ? `<p style="margin:6px 0 20px"><a href="${esc(b.button.url)}" style="display:inline-block;background:${esc(brand.accent)};color:#ffffff;text-decoration:none;font-weight:600;font-size:15px;padding:11px 20px;border-radius:8px">${esc(b.button.label)}</a></p>
+    ? `<p style="margin:6px 0 20px"><a href="${esc(b.button.url)}" style="display:inline-block;background:${esc(brand.accent)};color:${esc(brand.accentFg)};text-decoration:none;font-weight:600;font-size:15px;padding:11px 20px;border-radius:8px">${esc(b.button.label)}</a></p>
 <p style="margin:0 0 14px;font-size:12px;line-height:18px;color:#6b7280">Or paste this link into your browser:<br><span style="word-break:break-all">${esc(b.button.url)}</span></p>`
     : ''
   return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${esc(b.heading)}</title></head>

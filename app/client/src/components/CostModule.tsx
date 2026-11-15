@@ -1,13 +1,18 @@
 /**
  * Dashboard module: total cost over a selectable time window. Backed by
- * GET /api/costs/range, which buckets days against an IANA timezone (Eastern
- * here) so EST/EDT day boundaries are real local days, not UTC.
+ * GET /api/costs/range, which buckets days against an IANA timezone (the
+ * viewer's own browser zone) so day boundaries are real local days, not UTC.
  */
 import { useState, useEffect, useCallback } from 'react'
+import { ArrowRight } from 'lucide-react'
 import { api } from '../lib/api'
-import { Card, CardHeader, CardBody, SegmentedControl, Alert, Skeleton, cn, type TabItem } from './ui'
+import { Card, CardHeader, CardBody, SegmentedControl, Alert, EmptyState, Skeleton, cn, type TabItem } from './ui'
+import { CircleDollarSign } from 'lucide-react'
+import { formatCost, formatDate, friendlyError } from '../lib/format'
 
-const TZ = 'America/New_York'
+const TZ = (() => {
+  try { return Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC' } catch { return 'UTC' }
+})()
 
 interface RangeResp {
   start: string
@@ -32,12 +37,17 @@ const PERIODS: Array<{ id: Period; label: string }> = [
 const PERIOD_TABS: TabItem[] = PERIODS.map(p => ({ key: p.id, label: p.label }))
 
 const ACCT_LABELS: Record<string, string> = {
-  a: 'A', b: 'B', c: 'C', d: 'D', codex: 'Codex', unknown: 'Untracked',
+  a: 'Account 1', b: 'Account 2', c: 'Account 3', d: 'Account 4', codex: 'Codex', unknown: 'Untracked',
 }
 
-// Eastern "YYYY-MM-DD" for an instant (default now), regardless of the viewer's browser TZ.
+// Local "YYYY-MM-DD" for an instant, in the viewer's own time zone.
 function eKey(d: Date): string {
-  return new Intl.DateTimeFormat('en-CA', { timeZone: TZ, year: 'numeric', month: '2-digit', day: '2-digit' }).format(d)
+  return new Intl.DateTimeFormat('en-CA', { year: 'numeric', month: '2-digit', day: '2-digit' }).format(d)
+}
+
+// "Nov 12, 2026" for a YYYY-MM-DD day key (local noon avoids DST edges).
+function dayLabel(key: string): string {
+  return formatDate(`${key}T12:00:00`) || key
 }
 // Shift a YYYY-MM-DD key by N days (noon-UTC anchor dodges DST edges).
 function shiftKey(key: string, days: number): string {
@@ -86,7 +96,7 @@ export function CostModule() {
       const d = await api.get<RangeResp>(`/costs/range?tz=${encodeURIComponent(TZ)}&start=${start}&end=${end}`)
       setData(d)
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to load costs')
+      setError(friendlyError(err).message)
     } finally {
       setLoading(false)
     }
@@ -99,14 +109,14 @@ export function CostModule() {
   }, [load, period, customStart, customEnd])
 
   const dateInputCls =
-    'min-h-[36px] rounded-md border border-line bg-surface-2 px-2.5 font-mono text-sm text-fg-1 ' +
+    'min-h-[36px] rounded-md border border-line bg-surface-2 px-2.5 text-sm text-fg-1 ' +
     'transition-colors duration-fast hover:border-line-strong focus:border-[color:var(--accent-line)] focus:outline-none focus:ring-2 focus:ring-accent/40'
 
   return (
     <Card inset>
       <CardHeader
-        title="Estimated spend"
-        eyebrow="Usage spend"
+        title="Estimated cost"
+        eyebrow="Usage cost"
         actions={
           <SegmentedControl
             items={PERIOD_TABS}
@@ -126,7 +136,7 @@ export function CostModule() {
               onChange={e => setCustomStart(e.target.value)}
               className={dateInputCls}
             />
-            <span className="font-mono text-xs text-fg-3">→</span>
+            <ArrowRight aria-label="to" className="h-3.5 w-3.5 shrink-0 text-fg-3" />
             <input
               type="date"
               value={customEnd}
@@ -145,12 +155,12 @@ export function CostModule() {
           <>
             <div className="flex flex-wrap items-end gap-x-6 gap-y-1">
               <div>
-                <div className="font-mono text-2xl font-semibold tabular-nums text-fg-0">${data.totals.cost_usd.toFixed(2)}</div>
-                <div className="mt-1 font-mono text-xs text-fg-3">
-                  {data.start === data.end ? data.start : `${data.start} → ${data.end}`} · Eastern
+                <div className="text-2xl font-semibold tabular-nums text-fg-0">{formatCost(data.totals.cost_usd)}</div>
+                <div className="mt-1 text-xs text-fg-3">
+                  {data.start === data.end ? dayLabel(data.start) : `${dayLabel(data.start)} → ${dayLabel(data.end)}`}
                 </div>
               </div>
-              <div className="pb-1 font-mono text-sm text-fg-2">
+              <div className="pb-1 text-sm text-fg-2">
                 {fmtTokens(data.totals.tokens)} tokens · {data.totals.sessions} sessions
               </div>
             </div>
@@ -158,11 +168,11 @@ export function CostModule() {
             {data.by_account.length > 0 && (
               <div className="mt-4 border-t border-line-soft pt-3">
                 <div className="mb-2 text-xs uppercase tracking-eyebrow text-fg-3 font-semibold">By account</div>
-                <div className="flex flex-wrap gap-x-6 gap-y-1 font-mono text-sm">
+                <div className="flex flex-wrap gap-x-6 gap-y-1 text-sm">
                   {data.by_account.map(a => (
                     <div key={a.account_id} className="text-fg-2">
                       <span className="text-fg-1">{ACCT_LABELS[a.account_id] || a.account_id}</span>
-                      {': '}<span className="tabular-nums">${a.cost_usd.toFixed(2)}</span>
+                      {': '}<span className="tabular-nums">{formatCost(a.cost_usd)}</span>
                       <span className="text-fg-3"> · {fmtTokens(a.tokens)}</span>
                     </div>
                   ))}
@@ -181,7 +191,12 @@ export function CostModule() {
             <Skeleton className="mb-1 h-3.5 w-36" />
           </div>
         ) : (
-          <div className="text-sm text-fg-3">No data</div>
+          <EmptyState
+            compact
+            icon={<CircleDollarSign className="h-5 w-5" aria-hidden="true" />}
+            title="No spend recorded"
+            description="Nothing was spent in this window. Costs show up here as sessions run."
+          />
         )}
       </CardBody>
     </Card>

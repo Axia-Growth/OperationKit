@@ -21,7 +21,8 @@
  *   2. it names exactly one action from the closed list (merge, prod_migration,
  *      deploy);
  *   3. the bot it speaks as (`owner_bot` on the message, else the key label)
- *      resolves in the bot registry;
+ *      resolves in the bot registry — or names an installed chat bot, whose
+ *      automatic identity is the one its settings page grants to (obj 900862);
  *   4. there is a grant for THAT bot, in the CARD's workspace, with THAT
  *      action ticked, not revoked, not expired;
  *   5. the grant was issued by the person who owns the agent key, and that
@@ -303,6 +304,13 @@ export type DelegationDecision =
   | { kind: 'allowed'; sender: MessageSender; grantId: number; action: DelegationAction; bot: string; onBehalfOf: string }
   | { kind: 'denied'; status: number; code: string; error: string }
 
+/**
+ * Resolves a declared bot name the stored registry does not know to the
+ * automatic identity of an installed chat bot (obj 900862). The route passes
+ * one built on the live chat-bot list; omitted = registry only.
+ */
+export type DeclaredChatBotResolver = (declared: unknown) => { id: string } | null
+
 export interface DelegationRequestBody {
   approval?: unknown
   owner_bot?: unknown
@@ -320,6 +328,7 @@ export function decideDelegatedApproval(
   body: DelegationRequestBody,
   message: string,
   now = new Date(),
+  chatBotFor?: DeclaredChatBotResolver,
 ): DelegationDecision {
   const raw = body.approval
   if (raw === undefined || raw === null || raw === '') return { kind: 'none' }
@@ -359,10 +368,15 @@ export function decideDelegatedApproval(
 
   const declared = body.owner_bot ?? req.agentKey.label
   const bot = resolveBot(declared, db)
-  if (!bot.ok) {
-    return deny(403, 'unknown_bot', `No delegation: ${bot.error} Pass owner_bot = the bot that is approving.`)
+  let botName: string
+  if (bot.ok) {
+    botName = bot.bot.id
+  } else {
+    let auto: { id: string } | null = null
+    try { auto = chatBotFor?.(declared) ?? null } catch { auto = null }
+    if (!auto) return deny(403, 'unknown_bot', `No delegation: ${bot.error} Pass owner_bot = the bot that is approving.`)
+    botName = auto.id
   }
-  const botName = bot.bot.id
   const grant = findActiveGrant(db, { botName, workspace, action, grantorUserId: req.user.id, now })
   if (!grant) {
     return deny(

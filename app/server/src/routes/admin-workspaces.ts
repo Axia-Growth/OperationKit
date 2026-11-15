@@ -12,6 +12,8 @@ import {
   createWorkspace,
   getWorkspace,
   listWorkspaces,
+  softDeleteArchivedWorkspace,
+  undeleteWorkspace,
   updateWorkspace,
   workspaceExists,
 } from '../services/workspaces.js'
@@ -53,9 +55,12 @@ function isValidWorkspace(ws: unknown): ws is string {
   return typeof ws === 'string' && workspaceExists(ws)
 }
 
-// GET /api/admin/workspaces — full list including archived (admin view)
-router.get('/', (_req: AuthRequest, res) => {
-  res.json(listWorkspaces({ includeArchived: true }))
+// GET /api/admin/workspaces — full list including archived (admin view).
+// Deleted workspaces (obj 900870) are left out unless `?include_deleted=1`,
+// which is how an admin finds one to undelete.
+router.get('/', (req: AuthRequest, res) => {
+  const includeDeleted = req.query.include_deleted === '1' || req.query.include_deleted === 'true'
+  res.json(listWorkspaces({ includeArchived: true, includeDeleted }))
 })
 
 function parseStringArray(value: unknown, field: string, res: import('express').Response): string[] | null {
@@ -81,7 +86,12 @@ router.post('/', (req: AuthRequest, res) => {
     return
   }
   if (workspaceExists(slug)) {
-    res.status(409).json({ error: `Workspace '${slug}' already exists` })
+    const deleted = !!getWorkspace(slug)?.deleted_at
+    res.status(409).json({
+      error: deleted
+        ? `Workspace '${slug}' was deleted and is kept for recovery — undelete it instead of creating a new one`
+        : `Workspace '${slug}' already exists`,
+    })
     return
   }
   const readRoots = parseStringArray(body.doc_read_roots, 'doc_read_roots', res)
@@ -108,7 +118,10 @@ router.post('/', (req: AuthRequest, res) => {
 // PATCH /api/admin/workspaces/:slug — update fields
 router.patch('/:slug', (req: AuthRequest, res) => {
   const slug = String(req.params.slug)
-  if (!getWorkspace(slug)) {
+  const current = getWorkspace(slug)
+  if (!current || current.deleted_at) {
+    // A deleted workspace (obj 900870) must be undeleted before it is edited
+    // or restored, so a stale tab cannot silently resurrect it.
     res.status(404).json({ error: 'Workspace not found' })
     return
   }
@@ -148,6 +161,46 @@ router.delete('/:slug', (req: AuthRequest, res) => {
   }
   archiveWorkspace(slug)
   res.json({ ok: true, slug, archived: true })
+})
+
+// POST /api/admin/workspaces/:slug/delete — delete an ARCHIVED workspace (obj 900870)
+// body: { confirm: <slug> } — the slug typed back, so a stray call cannot delete.
+//
+// Soft-delete: the workspace leaves the archived list; nothing else changes.
+// Its cards, secrets (workspace and Shared), repos, integrations and members
+// all stay. An active workspace is refused with 409 — archive it first.
+// Recover with POST /:slug/undelete.
+router.post('/:slug/delete', (req: AuthRequest, res) => {
+  const slug = String(req.params.slug)
+  const body = (req.body ?? {}) as Record<string, unknown>
+  if (body.confirm !== slug) {
+    res.status(400).json({ error: `confirm must equal the workspace slug '${slug}'` })
+    return
+  }
+  const result = softDeleteArchivedWorkspace(slug, typeof req.user?.id === 'number' ? req.user.id : null)
+  if (!result.ok) {
+    if (result.reason === 'not_archived') {
+      res.status(409).json({ error: 'Only an archived workspace can be deleted. Archive it first.', code: 'not_archived' })
+    } else {
+      res.status(404).json({ error: 'Workspace not found', code: result.reason })
+    }
+    return
+  }
+  console.log(`[admin-workspaces] workspace '${slug}' soft-deleted by user ${req.user?.id ?? '?'}`)
+  res.json({ ok: true, slug, deleted: true, deleted_at: result.workspace.deleted_at })
+})
+
+// POST /api/admin/workspaces/:slug/undelete — recover a deleted workspace (obj 900870).
+// It goes back to the archived list (still archived); Restore there makes it active.
+router.post('/:slug/undelete', (req: AuthRequest, res) => {
+  const slug = String(req.params.slug)
+  const ws = undeleteWorkspace(slug)
+  if (!ws) {
+    res.status(404).json({ error: 'No deleted workspace with that slug' })
+    return
+  }
+  console.log(`[admin-workspaces] workspace '${slug}' undeleted by user ${req.user?.id ?? '?'}`)
+  res.json(ws)
 })
 
 // ── Workspace repos (DB-backed, admin-managed) ──

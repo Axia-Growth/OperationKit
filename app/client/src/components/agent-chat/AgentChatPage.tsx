@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ClipboardEvent, type KeyboardEvent } from 'react'
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
+import { ChevronLeft, Info, Paperclip, Pin, X } from 'lucide-react'
 import { api } from '../../lib/api'
 import { useAuth } from '../../context/AuthContext'
 import { useFileDrop, filesFromClipboard } from '../../hooks/useFileDrop'
@@ -7,12 +8,26 @@ import { useMediaQuery } from '../../hooks/useMediaQuery'
 import { Alert, Button, EmptyState, IconButton, Skeleton, SkeletonText, cn, useConfirm } from '../ui'
 import { ThinkingIndicator } from '../design/primitives'
 import { Tabs } from '../ui/Tabs'
-import { AgentAvatar, AssistantBubble, CardChip, DraftCard, ErrorLine, ToolLine, UserBubble } from './ChatItems'
+import { AgentAvatar, AssistantBubble, BotThreadLink, CardChip, DraftCard, ErrorLine, ToolLine, UserBubble } from './ChatItems'
+import { BotMessagesPanel } from './BotMessagesPanel'
 import { AgentInfoPanel } from './AgentInfoPanel'
 import { collectImages, humanSize, toWireImages, type PendingImage } from './attachments'
 import { BotSettingsPanel } from './BotSettingsPanel'
 import { BotSidebar } from './BotSidebar'
 import { useBotSidebar } from './useBotSidebar'
+import {
+  AGENTS_KEY,
+  fetchAgents,
+  fetchMessages,
+  fetchThreads,
+  messagesKey,
+  prefetchBot,
+  readCache,
+  setChatCacheScope,
+  threadsKey,
+  useCached,
+  writeCache,
+} from './chat-cache'
 import {
   ACCEPTED_IMAGE_TYPES,
   COLOUR_CLASSES,
@@ -81,6 +96,27 @@ export function suggestionsFor(a: ChatAgentInfo): string[] {
 
 const MAIN_LANE = 'main'
 
+const MODEL_WORDS: Record<string, string> = { gpt: 'GPT', ai: 'AI', llama: 'Llama', o1: 'o1', o3: 'o3', o4: 'o4' }
+
+/**
+ * A friendly model name for display: "claude-opus-5-5" → "Claude Opus 5.5",
+ * "claude-sonnet-4-20250514" → "Claude Sonnet 4". The raw id stays in a tooltip.
+ */
+export function friendlyModelName(id: string): string {
+  const parts = id.replace(/[-_]\d{8}$/, '').split(/[-_/\s]+/).filter(Boolean)
+  const out: string[] = []
+  for (const p of parts) {
+    const prev = out[out.length - 1]
+    if (/^\d+$/.test(p) && prev && /^\d+(\.\d+)*$/.test(prev)) {
+      out[out.length - 1] = `${prev}.${p}`
+    } else {
+      const lower = p.toLowerCase()
+      out.push(MODEL_WORDS[lower] ?? (/^[a-z]/.test(p) ? p.charAt(0).toUpperCase() + p.slice(1) : p))
+    }
+  }
+  return out.join(' ') || id
+}
+
 function LaneStrip({
   threads,
   lane,
@@ -104,7 +140,8 @@ function LaneStrip({
     { key: MAIN_LANE, label: 'Main' },
     ...threads.map(t => ({
       key: String(t.id),
-      label: `${t.pinned ? '★ ' : ''}${t.title}`,
+      label: t.title,
+      ...(t.pinned ? { icon: <Pin aria-label="Pinned" className="h-3 w-3 shrink-0" /> } : {}),
       ...(t.message_count > 0 ? { count: t.message_count } : {}),
     })),
   ]
@@ -143,10 +180,13 @@ function Conversation({
   isAdmin = false,
   onAgentChanged,
   onActivity,
+  initialBotThread = null,
 }: {
   agent: ChatAgentInfo
   onBack: () => void
   initialText?: string
+  /** ?bot_thread=<id> opens that bot-to-bot thread in the Bot messages panel (obj 900859). */
+  initialBotThread?: number | null
   /** The bot list's install-wide data: tool catalog, model suggestions, web status (obj 900671). */
   meta?: AgentsResponse
   isAdmin?: boolean
@@ -154,17 +194,23 @@ function Conversation({
   /** A message landed or loaded in the lane on screen — the sidebar marks the bot read (obj 900798). */
   onActivity?: () => void
 }) {
-  const [thread, setThread] = useState<ThreadResponse | null>(null)
   // obj 900671: the bot's settings panel (model, provider, tools) on its own page.
   const [settingsOpen, setSettingsOpen] = useState(false)
   // The "i" panel (obj 900672): how to use this bot + example prompts.
   const [infoOpen, setInfoOpen] = useState(false)
+  // obj 900859: the Bot messages panel — this bot's threads with other bots.
+  // null = closed; 'list' = its conversations; a number = one thread.
+  const [botPanel, setBotPanel] = useState<'list' | number | null>(initialBotThread ?? null)
+  const openBotThread = useCallback((id: number) => {
+    setBotPanel(id)
+    setInfoOpen(false)
+    setSettingsOpen(false)
+  }, [])
   // A deep link (/chat/<slug>?prompt=…) pre-fills the box once; it never sends.
   // Captured at mount and applied by a mount-only effect declared AFTER the
   // reset effect below, so it survives StrictMode's double effect run and a
   // later lane switch still starts with an empty box.
   const prefill = useRef(initialText)
-  const [loadError, setLoadError] = useState<string | null>(null)
   const [text, setText] = useState('')
   // The long placeholder wrapped and was clipped in the one-line box at phone width (QA obj 900621).
   const narrow = useMediaQuery('(max-width: 639px)')
@@ -173,8 +219,6 @@ function Conversation({
   const [sendError, setSendError] = useState<string | null>(null)
   // null = the main conversation; a number = that side thread (obj 900370).
   const [lane, setLane] = useState<number | null>(null)
-  const [threads, setThreads] = useState<ChatThread[]>([])
-  const [maxOpen, setMaxOpen] = useState(0)
   const [laneBusy, setLaneBusy] = useState(false)
   // null = not renaming; a string = the name being edited in the header.
   const [renameTo, setRenameTo] = useState<string | null>(null)
@@ -192,42 +236,41 @@ function Conversation({
   }, [text])
   const filePicker = useRef<HTMLInputElement>(null)
   const { confirm, confirmDialog } = useConfirm()
-  const base = `/agent-chat/agents/${encodeURIComponent(agent.slug)}`
+  const slug = agent.slug
+  const base = `/agent-chat/agents/${encodeURIComponent(slug)}`
   // Omitting thread_id is what asks for the main conversation, server-side.
   const laneQuery = lane === null ? '' : `?thread_id=${lane}`
-  const activeThread = threads.find(t => t.id === lane) ?? null
 
-  const load = useCallback(async () => {
-    try {
-      setThread(await api.get<ThreadResponse>(`${base}/messages${laneQuery}`))
-      setLoadError(null)
-    } catch (e) {
-      setLoadError(e instanceof Error ? e.message : 'Could not load this conversation')
-    }
-  }, [base, laneQuery])
+  // obj 900865: both reads go through the Bots page cache, so a bot (or lane)
+  // that was opened or prefetched before paints at once from memory and is
+  // refreshed behind it. Only a never-seen lane shows the skeleton below.
+  const msgKey = messagesKey(slug, lane)
+  const messages = useCached<ThreadResponse>(msgKey, () => fetchMessages(slug, lane), 'Could not load this conversation')
+  const thread = messages.data ?? null
+  const loadError = messages.error
+  const load = messages.reload
+  /** Update the cached copy of ONE lane (captured by the caller, so a reply that lands after a lane switch goes to its own lane). */
+  const updateThread = (key: string, fn: (t: ThreadResponse) => ThreadResponse) => {
+    const cur = readCache<ThreadResponse>(key)
+    if (cur) writeCache<ThreadResponse>(key, fn(cur))
+  }
 
   // The strip is ADDITIVE: a server that does not answer it (or answers it with
   // something unexpected) must leave the conversation working, not blank the
   // page. So both the failure and the shape are handled here.
-  const loadThreads = useCallback(async () => {
-    try {
-      const r = await api.get<ThreadsResponse>(`${base}/threads`)
-      setThreads(Array.isArray(r?.threads) ? r.threads : [])
-      setMaxOpen(typeof r?.max_open === 'number' ? r.max_open : 0)
-    } catch {
-      /* leave the strip as it is */
-    }
-  }, [base])
-
-  useEffect(() => { void loadThreads() }, [loadThreads])
+  const strip = useCached<ThreadsResponse>(threadsKey(slug), () => fetchThreads(slug))
+  const threads = useMemo(() => (Array.isArray(strip.data?.threads) ? strip.data.threads : []), [strip.data])
+  const maxOpen = typeof strip.data?.max_open === 'number' ? strip.data.max_open : 0
+  const loadThreads = strip.reload
+  const setThreads = (fn: (cur: ChatThread[]) => ChatThread[]) =>
+    writeCache<ThreadsResponse>(threadsKey(slug), d => ({ max_open: maxOpen, ...d, threads: fn(Array.isArray(d?.threads) ? d.threads : []) }))
+  const activeThread = threads.find(t => t.id === lane) ?? null
 
   useEffect(() => {
-    setThread(null)
     setText('')
     setImages([])
     setSendError(null)
-    void load()
-  }, [load])
+  }, [msgKey])
 
   useEffect(() => {
     if (prefill.current) setText(prefill.current)
@@ -309,9 +352,47 @@ function Conversation({
     return () => clearInterval(t)
   }, [openCards, load])
 
+  // obj 900859: a message to another bot whose reply has not landed in this lane
+  // yet — re-read the lane every few seconds until it does (bounded).
+  const awaitingBotReply = useMemo(() => {
+    const msgs = thread?.messages ?? []
+    const relayed = (x: ChatMessage, id: number) =>
+      x.role === 'assistant' && x.meta?.bot_conversation_id === id && (x.meta?.kind === 'bot_reply' || x.meta?.kind === 'bot_message_failed')
+    return msgs.some((m, i) => {
+      const id = m.meta?.bot_conversation_id
+      if (m.role !== 'tool' || m.tool_name !== 'message_bot' || m.meta?.ok === false || !id) return false
+      // Only a recent send: an old one whose reply went elsewhere must not poll forever.
+      if (Date.now() - sentAt(m.created_at) > BOT_REPLY_WINDOW_MS) return false
+      return !msgs.slice(i + 1).some(x => relayed(x, id))
+    })
+  }, [thread?.messages])
   useEffect(() => {
-    scroller.current?.scrollTo({ top: scroller.current.scrollHeight, behavior: 'smooth' })
-  }, [thread?.messages.length, pending])
+    if (!awaitingBotReply) return
+    let polls = 0
+    const t = setInterval(() => {
+      if (++polls > BOT_REPLY_MAX_POLLS) clearInterval(t)
+      else void load()
+    }, BOT_REPLY_POLL_MS)
+    return () => clearInterval(t)
+  }, [awaitingBotReply, load])
+
+  // A lane that just came on screen (a bot switch, a lane switch) opens AT the
+  // newest message before paint; only a message arriving while you watch
+  // scrolls smoothly. Smooth-scrolling a whole cached history on every switch
+  // read as a slow page.
+  const scrolledFor = useRef<string | null>(null)
+  const hasThread = !!thread
+  useLayoutEffect(() => {
+    const el = scroller.current
+    if (!el) return
+    if (scrolledFor.current !== msgKey) {
+      if (!hasThread) return
+      scrolledFor.current = msgKey
+      el.scrollTop = el.scrollHeight
+      return
+    }
+    el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' })
+  }, [msgKey, hasThread, thread?.messages.length, pending])
 
   // obj 900798: what is on screen has been read. Fires when the newest message
   // in view changes (a lane loaded, a reply landed), not on every 15s refresh,
@@ -327,6 +408,7 @@ function Conversation({
     const msg = raw.trim()
     // A screenshot on its own is a message: send when there is text OR an image.
     if ((!msg && attached.length === 0) || pending) return
+    const key = msgKey
     setPending({ text: msg, images: attached })
     setText('')
     setImages([])
@@ -337,7 +419,7 @@ function Conversation({
         { text: msg, ...(lane === null ? {} : { thread_id: lane }), ...(attached.length ? { images: toWireImages(attached) } : {}) },
         { timeoutMs: 240_000 },
       )
-      setThread(t => mergeThread(t, r))
+      writeCache<ThreadResponse>(key, t => mergeThread(t ?? null, r))
       // The strip shows per-lane message counts and ordering by last activity.
       void loadThreads()
     } catch (e) {
@@ -357,12 +439,13 @@ function Conversation({
     }
   }
 
-  const updateDraft = (d: ChatDraft) => setThread(t => (t ? { ...t, drafts: t.drafts.map(x => (x.id === d.id ? d : x)) } : t))
   const draftAction = async (path: string, body?: unknown, method: 'post' | 'put' = 'post') => {
+    const key = msgKey
     setSendError(null)
     try {
       const r = method === 'put' ? await api.put<{ draft: ChatDraft }>(path, body) : await api.post<{ draft: ChatDraft }>(path, body)
-      updateDraft(r.draft)
+      const d = r.draft
+      updateThread(key, t => ({ ...t, drafts: t.drafts.map(x => (x.id === d.id ? d : x)) }))
     } catch (e) {
       setSendError(e instanceof Error ? e.message : 'That did not work')
     }
@@ -383,28 +466,28 @@ function Conversation({
       }))
     )
       return
+    const key = msgKey
     await api.del(`${base}/messages${laneQuery}`)
+    updateThread(key, t => ({ ...t, messages: [] }))
     await load()
     void loadThreads()
   }
 
   const drafts = useMemo(() => new Map((thread?.drafts ?? []).map(d => [d.id, d])), [thread?.drafts])
   const cards = useMemo(() => new Map((thread?.cards ?? []).map(c => [c.id, c])), [thread?.cards])
-  const answeredBy = `${PROVIDER_LABELS[agent.answered_by.id]}${agent.answered_by.model ? ` · ${agent.answered_by.model}` : ''}`
+  const answeredBy = `${PROVIDER_LABELS[agent.answered_by.id]}${agent.answered_by.model ? ` · ${friendlyModelName(agent.answered_by.model)}` : ''}`
 
   return (
     <section aria-label={`Conversation with ${agent.name}`} className="flex h-full min-w-0 flex-col">
       <header className="flex flex-wrap items-center gap-x-2 gap-y-1 border-b border-line bg-surface-1 px-2 py-2 sm:flex-nowrap sm:px-4">
         <IconButton label="All bots" onClick={onBack} className="md:hidden">
-          <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" strokeWidth={1.8} stroke="currentColor" aria-hidden="true">
-            <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 19.5 8.25 12l7.5-7.5" />
-          </svg>
+          <ChevronLeft aria-hidden="true" className="h-5 w-5" />
         </IconButton>
         <AgentAvatar agent={agent} />
         <div className="min-w-[9rem] flex-1">
           <h2 className="truncate font-display text-lg font-semibold tracking-tight text-fg-0">{agent.name}</h2>
           <p className="truncate text-xs text-fg-2">
-            Answers with <span className="text-fg-1">{answeredBy}</span>
+            Answers with <span className="text-fg-1" title={agent.answered_by.model ?? undefined}>{answeredBy}</span>
             {agent.version && <span> · v{agent.version}</span>}
             {/* Named only in a side thread: the main conversation is the unlabelled default. */}
             {activeThread && <span> · side thread <span className="text-fg-1">{activeThread.title}</span></span>}
@@ -447,6 +530,17 @@ function Conversation({
             </Button>
           </>
         )}
+        <Button
+          variant="ghost"
+          size="sm"
+          aria-expanded={botPanel !== null}
+          aria-controls="bot-messages-panel"
+          aria-label={`${botPanel !== null ? 'Hide' : 'Show'} ${agent.name}'s messages with other bots`}
+          onClick={() => setBotPanel(p => (p === null ? 'list' : null))}
+          className={cn('min-h-[44px] sm:min-h-0', botPanel !== null && 'bg-surface-3 text-fg-0')}
+        >
+          Bot messages
+        </Button>
         {meta?.tool_catalog && (
           <Button
             variant="ghost"
@@ -466,9 +560,7 @@ function Conversation({
           onClick={() => setInfoOpen(o => !o)}
           className={cn(infoOpen && 'bg-surface-3 text-fg-0')}
         >
-          <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" strokeWidth={1.8} stroke="currentColor" aria-hidden="true">
-            <path strokeLinecap="round" strokeLinejoin="round" d="m11.25 11.25.041-.02a.75.75 0 0 1 1.063.852l-.708 2.836a.75.75 0 0 0 1.063.853l.041-.021M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Zm-9-3.75h.008v.008H12V8.25Z" />
-          </svg>
+          <Info aria-hidden="true" className="h-5 w-5" />
         </IconButton>
         <Button
           variant="ghost"
@@ -497,6 +589,17 @@ function Conversation({
         />
       )}
 
+      {botPanel !== null && (
+        <BotMessagesPanel
+          id="bot-messages-panel"
+          agent={agent}
+          agents={meta?.agents ?? [agent]}
+          conversationId={botPanel === 'list' ? null : botPanel}
+          onPick={id => setBotPanel(id === null ? 'list' : id)}
+          onClose={() => setBotPanel(null)}
+        />
+      )}
+
       {infoOpen && (
         <AgentInfoPanel
           id="agent-info-panel"
@@ -514,16 +617,18 @@ function Conversation({
 
       <LaneStrip threads={threads} lane={lane} maxOpen={maxOpen} busy={laneBusy} onPick={setLane} onOpen={() => void openLane()} />
 
-      <div ref={scroller} className="flex-1 overflow-y-auto overflow-x-clip px-3 py-4 sm:px-6" aria-live="polite">
+      {/* While Bot settings is open the panel takes the pane and scrolls itself
+          (obj 900864); the message list keeps its place but drops its padding so
+          no 32px sliver of half-cut chat shows between the lanes and the composer.
+          Closing settings brings it back at the same (bottom) scroll position. */}
+      <div
+        ref={scroller}
+        className={cn('flex-1 overflow-y-auto overflow-x-clip px-3 sm:px-6', settingsOpen && meta?.tool_catalog ? 'py-0' : 'py-4')}
+        aria-live="polite"
+      >
         <div className="mx-auto flex max-w-[760px] flex-col gap-3">
           {loadError && <Alert tone="alarm">{loadError}</Alert>}
-          {!thread && !loadError && (
-            <div className="space-y-4" aria-label="Loading conversation">
-              <div className="flex items-start gap-2.5"><Skeleton className="h-7 w-7 rounded-lg" /><SkeletonText lines={2} className="flex-1" /></div>
-              <div className="flex justify-end"><Skeleton className="h-10 w-1/2 rounded-lg" /></div>
-              <div className="flex items-start gap-2.5"><Skeleton className="h-7 w-7 rounded-lg" /><SkeletonText lines={3} className="flex-1" /></div>
-            </div>
-          )}
+          {!thread && !loadError && <MessagesSkeleton />}
           {thread && thread.messages.length === 0 && !pending && (
             <div className="flex flex-col items-center gap-4 py-10 text-center">
               <AgentAvatar agent={agent} size="lg" />
@@ -552,7 +657,7 @@ function Conversation({
                 <button
                   type="button"
                   onClick={() => setInfoOpen(true)}
-                  className="text-sm text-accent-hover underline-offset-2 hover:text-accent hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/50"
+                  className="text-sm text-accent underline-offset-2 hover:text-accent-hover hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/50"
                 >
                   How to use {agent.name}
                 </button>
@@ -570,6 +675,7 @@ function Conversation({
               onSend={d => draftAction(`/agent-chat/drafts/${d.id}/send`)}
               onDiscard={d => draftAction(`/agent-chat/drafts/${d.id}/discard`)}
               onSave={(d, patch) => draftAction(`/agent-chat/drafts/${d.id}`, patch, 'put')}
+              onOpenBotThread={openBotThread}
             />
           ))}
           {pending && (
@@ -604,7 +710,7 @@ function Conversation({
         {...dropProps}
       >
         <div className="mx-auto max-w-[760px]">
-          {sendError && <p role="alert" className="mb-2 text-sm text-signal-alarm">{sendError}</p>}
+          {sendError && <p role="alert" className="mb-2 text-sm text-danger">{sendError}</p>}
           {isDragging && <p className="mb-2 text-sm text-accent">Drop the image to attach it</p>}
           {images.length > 0 && (
             <ul aria-label="Attached images" className="mb-2 flex flex-wrap gap-2">
@@ -617,7 +723,7 @@ function Conversation({
                     onClick={() => setImages(cur => cur.filter(x => x.key !== i.key))}
                     className="absolute -right-1.5 -top-1.5 grid h-5 w-5 place-items-center rounded-full border border-line bg-surface-0 text-xs leading-none text-fg-1 transition-colors duration-fast hover:border-line-strong hover:text-fg-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/50"
                   >
-                    ×
+                    <X aria-hidden="true" className="h-3 w-3" />
                   </button>
                 </li>
               ))}
@@ -638,9 +744,7 @@ function Conversation({
               }}
             />
             <IconButton type="button" label="Attach an image" onClick={() => filePicker.current?.click()} disabled={!!pending}>
-              <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" strokeWidth={1.8} stroke="currentColor" aria-hidden="true">
-                <path strokeLinecap="round" strokeLinejoin="round" d="m18.375 12.739-7.693 7.693a4.5 4.5 0 0 1-6.364-6.364l10.94-10.94A3 3 0 1 1 19.5 7.372L8.552 18.32m.009-.01-.01.01m5.699-9.941-7.81 7.81a1.5 1.5 0 0 0 2.112 2.13" />
-              </svg>
+              <Paperclip aria-hidden="true" className="h-5 w-5" />
             </IconButton>
             <label htmlFor="agent-chat-input" className="sr-only">Message {agent.name}</label>
             <textarea
@@ -667,8 +771,50 @@ function Conversation({
   )
 }
 
+/** How many bots the page warms at idle once the list is on screen (obj 900865). */
+const IDLE_PREFETCH_BOTS = 6
+
+/** The message-list placeholder, on the shared Skeleton primitives. */
+function MessagesSkeleton() {
+  return (
+    <div className="space-y-4" aria-label="Loading conversation" data-testid="messages-skeleton">
+      <div className="flex items-start gap-2.5"><Skeleton className="h-7 w-7 rounded-lg" /><SkeletonText lines={2} className="flex-1" /></div>
+      <div className="flex justify-end"><Skeleton className="h-10 w-1/2 rounded-lg" /></div>
+      <div className="flex items-start gap-2.5"><Skeleton className="h-7 w-7 rounded-lg" /><SkeletonText lines={3} className="flex-1" /></div>
+    </div>
+  )
+}
+
+/** The whole conversation pane (header, messages, composer) before the bot list has arrived. */
+function ConversationSkeleton() {
+  return (
+    <div className="flex h-full min-w-0 flex-col" aria-label="Loading conversation" data-testid="conversation-skeleton">
+      <div className="flex items-center gap-2 border-b border-line bg-surface-1 px-2 py-2 sm:px-4">
+        <Skeleton className="h-9 w-9 rounded-lg" />
+        <div className="flex-1 space-y-1.5"><Skeleton className="h-4 w-40" /><Skeleton className="h-3 w-56" /></div>
+      </div>
+      <div className="flex-1 overflow-hidden px-3 py-4 sm:px-6">
+        <div className="mx-auto max-w-[760px]"><MessagesSkeleton /></div>
+      </div>
+      <div className="border-t border-line bg-surface-1 px-3 pb-3 pt-3 sm:px-6">
+        <Skeleton className="mx-auto h-11 max-w-[760px] rounded-lg" />
+      </div>
+    </div>
+  )
+}
+
 /** Tallest the chat composer grows before it scrolls inside (matches `max-h-60`). */
 const COMPOSER_MAX_PX = 240
+/** While a bot-to-bot reply is awaited: re-read the lane this often, at most this many times (~5 min). */
+const BOT_REPLY_POLL_MS = 5000
+const BOT_REPLY_MAX_POLLS = 60
+const BOT_REPLY_WINDOW_MS = 15 * 60_000
+
+/** A server timestamp (SQLite 'YYYY-MM-DD HH:MM:SS' UTC or ISO) as epoch ms; 0 if unreadable. */
+function sentAt(iso: string): number {
+  const t = new Date(iso.includes('T') ? iso : `${iso.replace(' ', 'T')}Z`).getTime()
+  return Number.isNaN(t) ? 0 : t
+}
 
 function mergeThread(t: ThreadResponse | null, r: ThreadResponse): ThreadResponse {
   const prev = t ?? { messages: [], drafts: [], cards: [] }
@@ -684,6 +830,7 @@ function MessageRow({
   onSend,
   onDiscard,
   onSave,
+  onOpenBotThread,
 }: {
   m: ChatMessage
   agent: ChatAgentInfo
@@ -692,13 +839,16 @@ function MessageRow({
   onSend: (d: ChatDraft) => Promise<void>
   onDiscard: (d: ChatDraft) => Promise<void>
   onSave: (d: ChatDraft, patch: Record<string, string>) => Promise<void>
+  onOpenBotThread?: (id: number) => void
 }) {
   if (m.role === 'user') return <UserBubble m={m} />
-  if (m.role === 'assistant') return <AssistantBubble m={m} agent={agent} />
+  if (m.role === 'assistant') return <AssistantBubble m={m} agent={agent} onOpenBotThread={onOpenBotThread} />
   if (m.role === 'error') return <ErrorLine m={m} />
+  const botThread = m.meta?.ok !== false ? m.meta?.bot_conversation_id : undefined
   return (
     <>
       <ToolLine m={m} />
+      {botThread && onOpenBotThread && <BotThreadLink id={botThread} onOpen={onOpenBotThread} className="ml-9 self-start" />}
       {draft && <DraftCard draft={draft} onSend={onSend} onDiscard={onDiscard} onSave={onSave} />}
       {card && <CardChip card={card} />}
     </>
@@ -716,6 +866,8 @@ export function AgentChatPage() {
   const [params, setParams] = useSearchParams()
   const pendingPrompt = useRef<{ slug: string; text: string } | null>(null)
   const promptParam = params.get('prompt')
+  // obj 900859: /chat/<slug>?bot_thread=<id> opens that bot-to-bot thread.
+  const botThreadParam = Math.trunc(Number(params.get('bot_thread'))) || null
   if (promptParam && slug) pendingPrompt.current = { slug, text: promptParam.slice(0, 2000) }
   useEffect(() => {
     if (!params.has('prompt')) return
@@ -727,21 +879,19 @@ export function AgentChatPage() {
   }, [params, setParams])
   const { user } = useAuth()
   const isAdmin = user?.role === 'admin'
-  const [data, setData] = useState<AgentsResponse | null>(null)
-  const [error, setError] = useState<string | null>(null)
+  // obj 900865: everything below is read through the Bots page cache, bound to
+  // the signed-in person. Switching bots no longer remounts this page (App.tsx
+  // gives every /chat URL one transition key), and coming back to /chat paints
+  // the last bot list at once while it refreshes.
+  setChatCacheScope(user ? String(user.id) : null)
+  const bots = useCached<AgentsResponse>(AGENTS_KEY, fetchAgents, 'Could not load bots')
+  const data = bots.data ?? null
+  const load = bots.reload
+  const [actionError, setError] = useState<string | null>(null)
+  const error = actionError ?? bots.error
   const [demoBusy, setDemoBusy] = useState(false)
   // obj 900798: the person's pins, sections, hidden bots and unread state.
   const sidebar = useBotSidebar()
-
-  const load = useCallback(async () => {
-    try {
-      setData(await api.get<AgentsResponse>('/agent-chat/agents'))
-      setError(null)
-    } catch (e) {
-      setError(e instanceof Error ? e.message : 'Could not load bots')
-    }
-  }, [])
-  useEffect(() => { void load() }, [load])
 
   const setDemo = async (on: boolean) => {
     setDemoBusy(true)
@@ -769,17 +919,52 @@ export function AgentChatPage() {
   useEffect(() => {
     if (activeSlug) void markRead(activeSlug)
   }, [activeSlug, markRead])
-  const mergeAgent = (a: ChatAgentInfo) =>
-    setData(d => (d ? { ...d, agents: d.agents.map(x => (x.slug === a.slug ? { ...x, ...a } : x)) } : d))
+  const mergeAgent = (a: ChatAgentInfo) => {
+    const d = readCache<AgentsResponse>(AGENTS_KEY)
+    if (d) writeCache<AgentsResponse>(AGENTS_KEY, { ...d, agents: d.agents.map(x => (x.slug === a.slug ? { ...x, ...a } : x)) })
+  }
+
+  // obj 900865: warm the first few bots once the list is on screen (pinned
+  // first, then list order), at idle, so even a first click usually paints
+  // from memory. Hover / focus / touch in the sidebar warms any other bot.
+  const sidebarBots = sidebar.state?.bots
+  const warmOrder = useMemo(() => {
+    const entries = sidebarBots ?? {}
+    const pinned = Object.entries(entries)
+      .filter(([, b]) => b.pinned && !b.hidden)
+      .sort(([sa, a], [sb, b]) => a.pin_position - b.pin_position || sa.localeCompare(sb))
+      .map(([s]) => s)
+    const listed = (data?.agents ?? []).map(a => a.slug)
+    const known = new Set(listed)
+    return [...new Set([...pinned, ...listed])]
+      .filter(s => known.has(s) && !entries[s]?.hidden)
+      .slice(0, IDLE_PREFETCH_BOTS)
+      .join('\n')
+  }, [sidebarBots, data?.agents])
+  useEffect(() => {
+    if (!warmOrder) return
+    const run = () => warmOrder.split('\n').forEach(prefetchBot)
+    const w = window as Window & { requestIdleCallback?: (cb: () => void, o?: { timeout: number }) => number; cancelIdleCallback?: (id: number) => void }
+    if (w.requestIdleCallback) {
+      const id = w.requestIdleCallback(run, { timeout: 2000 })
+      return () => w.cancelIdleCallback?.(id)
+    }
+    const t = setTimeout(run, 300)
+    return () => clearTimeout(t)
+  }, [warmOrder])
 
   if (error && !data) {
     return <div className="p-6"><Alert tone="alarm">{error}</Alert></div>
   }
   if (!data) {
     return (
-      <div className="flex h-full" aria-label="Loading bots">
-        <div className="w-full space-y-2 p-4 md:w-[300px] md:border-r md:border-line">
+      <div className="flex h-full min-h-0 bg-surface-0" aria-busy="true" aria-label="Loading bots">
+        <div className={cn('h-full w-full shrink-0 space-y-2 border-line bg-surface-1 p-4 md:block md:w-[300px] md:border-r', slug ? 'hidden' : 'block')}>
           {[0, 1, 2].map(i => <Skeleton key={i} className="h-14 w-full rounded-lg" />)}
+        </div>
+        {/* obj 900865: the conversation pane is never left empty while the list loads. */}
+        <div className={cn('h-full min-w-0 flex-1', slug ? 'block' : 'hidden md:block')}>
+          <ConversationSkeleton />
         </div>
       </div>
     )
@@ -809,6 +994,7 @@ export function AgentChatPage() {
           data={data}
           active={active?.slug ?? null}
           onPick={pick}
+          onPrefetch={prefetchBot}
           isAdmin={isAdmin}
           onDemo={on => void setDemo(on)}
           demoBusy={demoBusy}
@@ -831,6 +1017,7 @@ export function AgentChatPage() {
             isAdmin={isAdmin}
             onAgentChanged={mergeAgent}
             onActivity={() => void markRead(active.slug)}
+            initialBotThread={botThreadParam}
           />
         ) : (
           <div className="flex h-full items-center justify-center px-6">

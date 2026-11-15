@@ -3,6 +3,7 @@ import { CheckCircle2, FlaskConical, ShieldCheck, XCircle } from 'lucide-react'
 import type { FlowPublishState, FlowSelfTest } from '../../../../shared/flow/api'
 import { publishFlow, runFlowSelfTest } from '../../hooks/useFlows'
 import { relativeTime } from '../../lib/time'
+import { humanize } from '../../lib/format'
 import { Alert, Badge, Button } from '../ui'
 
 /**
@@ -52,7 +53,7 @@ export function FlowSelfTestPanel({
     setMessage(null)
     const r = await runFlowSelfTest(flowId, { version: publish.version, mode })
     setBusy(null)
-    if (!r.ok) setMessage({ tone: 'alarm', text: r.reason === 'flows_disabled' ? 'Workflows are switched off (settings.flows_enabled).' : `Self-test did not run: ${r.reason ?? 'error'}` })
+    if (!r.ok) setMessage({ tone: 'alarm', text: r.reason === 'flows_disabled' ? 'Workflows are switched off. An admin can turn them on in Settings.' : `Self-test did not run: ${humanize(r.reason ?? 'error')}` })
     onChanged()
   }
 
@@ -111,7 +112,7 @@ export function FlowSelfTestPanel({
               <div className="text-fg-3">End condition failed:</div>
               <ul className="ml-4 list-disc">
                 {st.result.failing_asserts.map((a, i) => (
-                  <li key={i} className="text-signal-alarm">
+                  <li key={i} className="text-danger">
                     <code className="font-mono">{a.expr}</code>{a.why ? ` — ${a.why}` : ''} <span className="text-fg-3">(fixture “{a.fixture}”{a.error ? `: ${a.error}` : ''})</span>
                   </li>
                 ))}
@@ -119,7 +120,7 @@ export function FlowSelfTestPanel({
             </div>
           )}
           {st.result && st.result.failures.filter(f => f.code !== 'goal_not_met').map((f, i) => (
-            <div key={i} className="text-signal-alarm">{f.message}</div>
+            <div key={i} className="text-danger">{f.message}</div>
           ))}
           {st.result && st.result.fixtures.map(fx => (
             <div key={fx.run_id} className="rounded border border-line px-2 py-1.5">
@@ -151,7 +152,7 @@ export function FlowSelfTestPanel({
       <div className="space-y-1.5 border-t border-line pt-2 text-xs">
         {isPublished && publish.approvals ? (
           <div className="inline-flex items-center gap-1.5 text-fg-2" data-testid="flow-approval-record">
-            <ShieldCheck className="h-3.5 w-3.5 text-signal-verify" />
+            <ShieldCheck className="h-3.5 w-3.5 text-success" />
             Published by {publish.approvals.by} {relativeTime(publish.approvals.at)} ago
             {publish.approvals.nodes.length ? <> · approved <span className="font-mono">{publish.approvals.nodes.join(', ')}</span></> : ' · no send/spend nodes'}
           </div>

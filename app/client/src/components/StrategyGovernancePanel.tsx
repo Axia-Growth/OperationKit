@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { ChevronRight, ShieldCheck } from 'lucide-react'
+import { ChevronRight, FolderTree, ShieldCheck, X } from 'lucide-react'
 import { api } from '../lib/api'
-import { Button, Badge } from './ui'
+import { Button, Badge, EmptyState, IconButton, Skeleton } from './ui'
+import { formatCost, friendlyError } from '../lib/format'
 import { StatusDot } from './design/primitives'
 import type { Objective, ObjectiveStatus } from '@operationkit/shared'
 
@@ -114,12 +115,12 @@ function UsageMeter({
   const clamped = Math.min(100, Math.max(0, pct))
   // >=100% alarm, >=80% amber, else accent.
   const barTw =
-    pct >= 100 ? 'bg-signal-alarm' : pct >= 80 ? 'bg-signal-amber' : 'bg-accent'
+    pct >= 100 ? 'bg-danger' : pct >= 80 ? 'bg-warning' : 'bg-accent'
   return (
     <div>
       <div className="mb-1 flex items-baseline justify-between gap-2">
         <span className="text-sm font-medium text-fg-1">{label}</span>
-        <span className="font-mono text-xs text-fg-2">
+        <span className="text-xs text-fg-2">
           {format(value)} <span className="text-fg-3">/ {format(ceiling)}</span>
         </span>
       </div>
@@ -214,7 +215,7 @@ export function StrategyGovernancePanel({
         setDenyNote('')
         load() // refetch — strategy resumed, decision history updated
       } catch (err) {
-        setResolveError(err instanceof Error ? err.message : 'Failed to resolve decision')
+        setResolveError(err instanceof Error ? err.message : 'Could not save the decision')
       } finally {
         setResolving(false)
       }
@@ -238,8 +239,8 @@ export function StrategyGovernancePanel({
             {budget &&
               (budget.killSwitchTripped ? (
                 <span title={budget.killSwitchReasons.join('; ')}>
-                  <Badge tone="alarm" mono>
-                    HALTED — {budget.killSwitchReasons.join('; ') || 'kill switch tripped'}
+                  <Badge tone="alarm">
+                    Stopped — {budget.killSwitchReasons.join('; ') || 'a budget limit was reached'}
                   </Badge>
                 </span>
               ) : (
@@ -251,27 +252,37 @@ export function StrategyGovernancePanel({
             id="strategy-gov-title"
             className="truncate text-lg font-semibold tracking-tight text-fg-0"
           >
-            {strategy ? strategy.title : 'Strategy Governance'}{' '}
-            <span className="font-mono text-xs font-normal text-fg-3">#{objectiveId}</span>
+            {strategy ? strategy.title : 'Strategy governance'}{' '}
+            <span className="text-xs font-normal text-fg-3">#{objectiveId}</span>
           </h2>
         </div>
         {onClose && (
-          <button
-            onClick={onClose}
-            aria-label="Close"
-            className="shrink-0 rounded-md p-1.5 text-fg-2 transition-colors duration-fast ease-out hover:bg-surface-3 hover:text-fg-0"
-          >
-            <ChevronRight className="h-4 w-4 rotate-90" />
-          </button>
+          <IconButton label="Close" onClick={onClose} className="shrink-0">
+            <X aria-hidden="true" className="h-4 w-4" />
+          </IconButton>
         )}
       </div>
 
       {/* ── Body ── */}
       <div className="min-h-0 flex-1 space-y-5 overflow-y-auto px-5 py-4">
-        {loading && <div className="py-8 text-center text-base text-fg-3">Loading governance…</div>}
+        {loading && (
+          <div className="space-y-5" role="status" aria-busy="true" aria-label="Loading governance" data-testid="governance-skeleton">
+            <div className="space-y-2">
+              <Skeleton className="h-3 w-28" />
+              <Skeleton className="h-2 w-full rounded-full" />
+              <Skeleton className="h-3 w-1/3" />
+            </div>
+            <div className="space-y-2">
+              <Skeleton className="h-3 w-32" />
+              <Skeleton className="h-10 w-full rounded-md" />
+              <Skeleton className="h-10 w-full rounded-md" />
+            </div>
+          </div>
+        )}
         {error && !loading && (
-          <div className="rounded-md border border-signal-alarm/30 bg-signal-alarm/10 px-3 py-2 text-base text-signal-alarm">
-            {error}
+          <div className="rounded-md border border-danger/30 bg-danger/10 px-3 py-2 text-base text-danger">
+            {friendlyError(error).message}
+            <details className="mt-1 text-xs text-fg-3"><summary>Details</summary>{error}</details>
           </div>
         )}
 
@@ -280,24 +291,24 @@ export function StrategyGovernancePanel({
             {/* ── Budget / usage ── */}
             <section>
               <h3 className="mb-2 text-xs font-semibold uppercase tracking-eyebrow text-fg-3">
-                Budget &amp; Usage
+                Budget &amp; usage
               </h3>
               <div className="space-y-3 rounded-md border border-line bg-surface-2 p-3">
                 <UsageMeter
-                  label="Spend"
+                  label="Cost"
                   value={budget.spendUsd}
                   ceiling={budget.spendCeilingUsd}
-                  format={n => `$${n.toFixed(2)}`}
+                  format={n => formatCost(n)}
                 />
                 <UsageMeter
-                  label="Projects spawned"
+                  label="Projects started"
                   value={budget.projectCount}
                   ceiling={budget.projectCeiling}
                   format={n => `${n}`}
                 />
                 <div className="flex items-center justify-between border-t border-line-soft pt-2 text-xs">
                   <span className="text-fg-2">Total tokens</span>
-                  <span className="font-mono text-fg-1">
+                  <span className="text-fg-1">
                     {budget.totalTokens.toLocaleString()}
                   </span>
                 </div>
@@ -308,14 +319,14 @@ export function StrategyGovernancePanel({
             {pending && (
               <section>
                 <h3 className="mb-2 text-xs font-semibold uppercase tracking-eyebrow text-accent-hover">
-                  Pending Decision
+                  Pending decision
                 </h3>
                 {/* card surface + accent rule, not a tinted box (QA r2 #4) */}
                 <div className="rounded-md border border-line border-l-[3px] border-l-accent bg-surface-2 p-3">
                   <div className="mb-2 flex flex-wrap items-center gap-2">
                     <Badge tone="accent">{KIND_LABEL[pending.request.kind]}</Badge>
-                    <span className="font-mono text-xs text-fg-3">
-                      iteration {pending.iteration}
+                    <span className="text-xs text-fg-3">
+                      Round {pending.iteration}
                     </span>
                     {pending.request.reversible != null && (
                       <Badge tone={pending.request.reversible ? 'verify' : 'amber'}>
@@ -380,8 +391,8 @@ export function StrategyGovernancePanel({
                                   </p>
                                 )}
                                 {opt.est_cost && (
-                                  <p className="mt-0.5 font-mono text-xs text-fg-3">
-                                    est. {opt.est_cost}
+                                  <p className="mt-0.5 text-xs text-fg-3">
+                                    Estimated cost: {opt.est_cost}
                                   </p>
                                 )}
                               </div>
@@ -423,7 +434,7 @@ export function StrategyGovernancePanel({
                     />
                     <div className="mt-2 flex items-center justify-between gap-2">
                       {resolveError ? (
-                        <span className="text-xs text-signal-alarm">{resolveError}</span>
+                        <span className="text-xs text-danger" title={resolveError}>{friendlyError(resolveError).message}</span>
                       ) : (
                         <span />
                       )}
@@ -445,12 +456,16 @@ export function StrategyGovernancePanel({
             {/* ── Spawned children ── */}
             <section>
               <h3 className="mb-2 text-xs font-semibold uppercase tracking-eyebrow text-fg-3">
-                Spawned Projects ({data.children.length})
+                Projects started ({data.children.length})
               </h3>
               {data.children.length === 0 ? (
-                <div className="rounded-md border border-dashed border-line bg-surface-2 px-3 py-4 text-center text-xs text-fg-3">
-                  No projects spawned yet.
-                </div>
+                <EmptyState
+                  compact
+                  icon={<FolderTree className="h-5 w-5" aria-hidden="true" />}
+                  title="No projects yet"
+                  description="Projects this strategy starts show up here, with their status and cost."
+                  className="rounded-md border border-dashed border-line"
+                />
               ) : (
                 <ul className="space-y-1.5">
                   {data.children.map(child => (
@@ -459,13 +474,13 @@ export function StrategyGovernancePanel({
                       className="flex items-center gap-2 rounded-md border border-line bg-surface-2 px-3 py-2"
                     >
                       <StatusDot status={statusOf(child)} size={8} />
-                      <span className="font-mono text-xs text-fg-3">#{child.id}</span>
+                      <span className="text-xs text-fg-3">#{child.id}</span>
                       <span className="min-w-0 flex-1 truncate text-sm text-fg-1">
                         {child.title}
                       </span>
                       {Number(child.total_cost_usd) > 0 && (
-                        <span className="shrink-0 font-mono text-xs text-fg-2">
-                          ${Number(child.total_cost_usd).toFixed(2)}
+                        <span className="shrink-0 text-xs text-fg-2">
+                          {formatCost(Number(child.total_cost_usd))}
                         </span>
                       )}
                     </li>
@@ -486,7 +501,7 @@ export function StrategyGovernancePanel({
                   <ChevronRight
                     className={`h-3.5 w-3.5 transition-transform ${historyOpen ? 'rotate-90' : ''}`}
                   />
-                  Decision History ({data.decisions.length})
+                  Decision history ({data.decisions.length})
                 </button>
                 {historyOpen && (
                   <ul className="mt-2 space-y-1.5">

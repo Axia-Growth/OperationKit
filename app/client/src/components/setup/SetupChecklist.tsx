@@ -18,6 +18,7 @@ import { AgentPromptBox } from '../email/AgentPromptBox'
 import { KB_SETUP_STEP } from '../kb-setup/KbSetupStep'
 import { createKbSetupApi } from '../../lib/kbSetup'
 import { useWorkspaces } from '../../hooks/useWorkspaces'
+import { useAuth } from '../../context/AuthContext'
 
 /** True once any visible workspace has a finished knowledge-base setup run. */
 function useKbSetupDone(): boolean {
@@ -33,6 +34,17 @@ function useKbSetupDone(): boolean {
   }, [key])
   return done
 }
+
+/* A step's action is a router Link, so it cannot be ui/Button; these mirror
+   Button's primary / secondary / ghost looks (sm size) for a link. */
+const LINK_BASE =
+  'inline-flex h-8 items-center gap-1 rounded-md border px-3 text-sm font-medium transition-colors duration-fast ease-out ' +
+  'outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-1 focus-visible:ring-offset-surface-0'
+const LINK_VARIANT = {
+  primary: 'border-transparent bg-accent text-accent-fg hover:bg-accent-hover active:bg-accent-press',
+  secondary: 'border-line bg-surface-2 text-fg-0 hover:border-line-strong hover:bg-surface-3',
+  ghost: 'border-transparent text-fg-2 hover:bg-surface-3 hover:text-fg-0',
+} as const
 
 export type SetupLinks = Partial<Record<SetupStepId, string>>
 
@@ -70,6 +82,9 @@ export function SetupChecklist({ links = DEFAULT_SETUP_LINKS, refreshKey = 0, cl
   const [error, setError] = useState<string | null>(null)
   const [acking, setAcking] = useState(false)
   const kbDone = useKbSetupDone()
+  // Branding, email and models are admin-only settings; a member sees the step
+  // and its state but is told to ask an admin rather than offered a dead link.
+  const isAdmin = useAuth().user?.role === 'admin'
 
   const load = useCallback(() => {
     emailApi.setupStatus().then(setStatus).catch(e => setError(e instanceof Error ? e.message : 'Could not load setup status'))
@@ -107,10 +122,15 @@ export function SetupChecklist({ links = DEFAULT_SETUP_LINKS, refreshKey = 0, cl
     ) : null,
   }
 
+  // One primary action on the page (polish F5): only the NEXT incomplete step
+  // gets the accent button; the others are secondary (to do) or ghost (done).
+  const nextId: string | null = status.steps.find(s => !s.done)?.id ?? (kbDone ? null : KB_SETUP_STEP.id)
+  const linkCls = (stepId: string, done: boolean) =>
+    cn(LINK_BASE, done ? LINK_VARIANT.ghost : stepId === nextId ? LINK_VARIANT.primary : LINK_VARIANT.secondary)
+
   return (
     <Card inset className={className} data-testid="setup-checklist">
       <CardHeader
-        eyebrow="Get started"
         title="Set up your workspace"
         actions={<Badge tone={allDone ? 'verify' : 'neutral'}>{doneCount} of {stepCount} done</Badge>}
       />
@@ -122,7 +142,7 @@ export function SetupChecklist({ links = DEFAULT_SETUP_LINKS, refreshKey = 0, cl
             <li key={step.id} className="flex gap-3 px-4 py-3" data-step={step.id} data-done={step.done ? '1' : '0'}>
               <span className="mt-0.5 shrink-0" aria-hidden="true">
                 {step.done
-                  ? <CheckCircle2 className="h-5 w-5 text-signal-verify" />
+                  ? <CheckCircle2 className="h-5 w-5 text-success" />
                   : <Circle className="h-5 w-5 text-fg-3" />}
               </span>
               <div className="min-w-0 flex-1 space-y-1.5">
@@ -133,22 +153,22 @@ export function SetupChecklist({ links = DEFAULT_SETUP_LINKS, refreshKey = 0, cl
                   {step.id === 'email' && !step.done && step.configured && <Badge tone="amber">send a test</Badge>}
                 </div>
                 <p className="text-sm text-fg-2">{copy.body}</p>
-                {extra[step.id]}
+                {isAdmin && extra[step.id]}
               </div>
               <div className="flex shrink-0 flex-col items-end gap-1.5 sm:flex-row sm:items-start">
-                {step.id === 'branding' && !step.done && (
-                  <Button size="sm" variant="ghost" loading={acking} onClick={() => keepDefaultBranding(true)}>Keep default</Button>
-                )}
-                {href && (
-                  <Link
-                    to={href}
-                    className={cn(
-                      'inline-flex min-h-[32px] items-center gap-1 rounded-md px-3 text-sm font-medium transition-colors',
-                      step.done ? 'text-fg-2 hover:text-fg-0' : 'bg-accent text-accent-fg hover:bg-accent-hover',
+                {!isAdmin ? (
+                  !step.done && <span className="py-1.5 text-sm text-fg-3" data-testid="ask-admin">Ask an admin</span>
+                ) : (
+                  <>
+                    {step.id === 'branding' && !step.done && (
+                      <Button size="sm" variant="ghost" loading={acking} onClick={() => keepDefaultBranding(true)}>Keep default</Button>
                     )}
-                  >
-                    {step.done ? 'Review' : 'Set up'} <ArrowRight className="h-3.5 w-3.5" aria-hidden="true" />
-                  </Link>
+                    {href && (
+                      <Link to={href} className={linkCls(step.id, step.done)}>
+                        {step.done ? 'Review' : 'Set up'} <ArrowRight className="h-3.5 w-3.5" aria-hidden="true" />
+                      </Link>
+                    )}
+                  </>
                 )}
               </div>
             </li>
@@ -157,7 +177,7 @@ export function SetupChecklist({ links = DEFAULT_SETUP_LINKS, refreshKey = 0, cl
         <li className="flex gap-3 px-4 py-3" data-step={KB_SETUP_STEP.id} data-done={kbDone ? '1' : '0'}>
           <span className="mt-0.5 shrink-0" aria-hidden="true">
             {kbDone
-              ? <CheckCircle2 className="h-5 w-5 text-signal-verify" />
+              ? <CheckCircle2 className="h-5 w-5 text-success" />
               : <Circle className="h-5 w-5 text-fg-3" />}
           </span>
           <div className="min-w-0 flex-1 space-y-1.5">
@@ -169,21 +189,17 @@ export function SetupChecklist({ links = DEFAULT_SETUP_LINKS, refreshKey = 0, cl
             <p className="text-sm text-fg-2">{KB_SETUP_STEP.body}</p>
           </div>
           <div className="flex shrink-0 flex-col items-end gap-1.5 sm:flex-row sm:items-start">
-            <Link
-              to={KB_SETUP_STEP.href}
-              className={cn(
-                'inline-flex min-h-[32px] items-center gap-1 rounded-md px-3 text-sm font-medium transition-colors',
-                kbDone ? 'text-fg-2 hover:text-fg-0' : 'bg-accent text-accent-fg hover:bg-accent-hover',
-              )}
-            >
+            <Link to={KB_SETUP_STEP.href} className={linkCls(KB_SETUP_STEP.id, kbDone)}>
               {kbDone ? 'Add more files' : 'Set up'} <ArrowRight className="h-3.5 w-3.5" aria-hidden="true" />
             </Link>
           </div>
         </li>
       </ol>
-      <div className="border-t border-line p-4">
-        <AgentPromptBox title="Have your coding agent set up email" prompt={emailAgentPrompt(site)} />
-      </div>
+      {isAdmin && (
+        <div className="border-t border-line p-4">
+          <AgentPromptBox title="Have your coding agent set up email" prompt={emailAgentPrompt(site)} />
+        </div>
+      )}
     </Card>
   )
 }

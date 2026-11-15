@@ -471,8 +471,8 @@ export function SessionViewer({
       panelClassName={cn(
         'flex min-h-0 flex-col overflow-x-hidden overflow-y-hidden bg-surface-1',
         isDialog && (showDesign
-          ? 'inset-x-3 top-[4vh] bottom-auto m-0 h-[min(920px,92vh)] max-h-none w-auto max-w-none rounded-2xl sm:inset-x-auto sm:left-1/2 sm:w-[min(1280px,calc(100vw-32px))] sm:-translate-x-1/2'
-          : 'inset-x-3 top-[8vh] bottom-auto m-0 h-[min(840px,84vh)] max-h-none w-auto max-w-none rounded-2xl sm:inset-x-auto sm:left-1/2 sm:w-[min(920px,calc(100vw-48px))] sm:-translate-x-1/2'),
+          ? 'inset-x-3 top-[4vh] bottom-auto m-0 h-[min(920px,92vh)] max-h-none w-auto max-w-none rounded-xl sm:inset-x-auto sm:left-1/2 sm:w-[min(1280px,calc(100vw-32px))] sm:-translate-x-1/2'
+          : 'inset-x-3 top-[8vh] bottom-auto m-0 h-[min(840px,84vh)] max-h-none w-auto max-w-none rounded-xl sm:inset-x-auto sm:left-1/2 sm:w-[min(920px,calc(100vw-48px))] sm:-translate-x-1/2'),
         !isDialog && 'shadow-none sm:rounded-none motion-safe:sm:transition-[width] motion-safe:sm:duration-300 motion-safe:sm:ease-out',
         !isDialog && (isFull
           ? 'top-0 bottom-0 h-full max-h-none rounded-none border-0 sm:w-screen'

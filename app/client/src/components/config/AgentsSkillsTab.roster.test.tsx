@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 /**
- * obj 900684 — the roster on Agents & Skills → Registry must show agents that
+ * obj 900684 — the roster on Bots & skills → Registry must show agents that
  * are not flat persona files. The built-in Knowledge Base Setup agent ships as a
  * chat-agent folder outside the agents dir, so the old file-only roster never
  * listed it.
@@ -56,15 +56,19 @@ afterEach(() => {
 const buttonWith = (text: string) =>
   Array.from(container.querySelectorAll('button')).find(b => b.textContent?.includes(text))!
 
+const radioWith = (text: string) =>
+  Array.from(container.querySelectorAll<HTMLElement>('[role="radio"]')).find(b => b.textContent?.startsWith(text))!
+
 describe('AgentsSkillsTab roster (obj 900684)', () => {
   it('lists the built-in Knowledge Base Setup agent and the starter-pack Librarian', async () => {
     flushSync(() => root.render(<AgentsSkillsTab />))
     await flush()
-    expect(container.textContent).toContain('agents (3)')
+    // Bots / Skills is a SegmentedControl filter since obj 900807 (label + count).
+    expect(radioWith('Bots').textContent).toBe('Bots3')
     expect(container.textContent).toContain('Knowledge Base Setup')
-    expect(container.textContent).toContain('built-in')
+    expect(container.textContent).toContain('Built-in')
     expect(container.textContent).toContain('Librarian')
-    expect(container.textContent).toContain('starter pack')
+    expect(container.textContent).toContain('Starter pack')
   })
 
   it('shows the inline definition, the reason note and a Bots link without a file read', async () => {
@@ -90,8 +94,8 @@ describe('AgentsSkillsTab roster (obj 900684)', () => {
   it('lists sub-skills under their parent', async () => {
     flushSync(() => root.render(<AgentsSkillsTab />))
     await flush()
-    flushSync(() => buttonWith('skills (').click())
-    expect(container.textContent).toContain('sub-skill')
+    flushSync(() => radioWith('Skills').click())
+    expect(container.textContent).toContain('Sub-skill')
   })
 
   it('a slug cross-link prefers the persona file', () => {

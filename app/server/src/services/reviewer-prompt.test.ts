@@ -1,5 +1,9 @@
 import { describe, it, expect } from 'vitest'
 import { buildReviewerPrompt } from './session-manager.js'
+
+// obj 900803: test-agent mode needs a configured preview host (no built-in domain).
+process.env.CC_PREVIEW_DOMAIN = process.env.CC_PREVIEW_DOMAIN || 'preview.example.test'
+process.env.HARNESS_REPO = process.env.HARNESS_REPO || 'your-org/operationkit'
 import type { Objective } from '@operationkit/shared'
 
 // Minimal objective fixture — buildReviewerPrompt only reads a handful of

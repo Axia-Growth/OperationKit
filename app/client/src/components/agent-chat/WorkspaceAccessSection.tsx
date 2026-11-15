@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { readCache, writeCache } from './chat-cache'
 import { api } from '../../lib/api'
 import { Alert, Button, cn } from '../ui'
 import type { BotWorkspaceAccessInfo, BotWorkspaceAccessResponse, ChatAgentInfo } from './types'
@@ -47,6 +48,7 @@ export function WorkspaceAccessSection({
 
   const adopt = (r: BotWorkspaceAccessResponse) => {
     if (!r?.access) throw new Error('This server does not support workspace access yet')
+    writeCache(url, r)
     setAccess(r.access)
     if (r.workspace_options) setOptions(r.workspace_options)
   }
@@ -54,6 +56,9 @@ export function WorkspaceAccessSection({
   useEffect(() => {
     let live = true
     setLoadError(null)
+    // obj 900865: a bot whose settings were opened before paints them at once.
+    const hit = readCache<BotWorkspaceAccessResponse>(url)
+    if (hit) adopt(hit)
     api.get<BotWorkspaceAccessResponse>(url)
       .then(r => { if (live) adopt(r) })
       .catch(e => { if (live) setLoadError(e instanceof Error ? e.message : 'Could not load workspace access') })
@@ -120,7 +125,7 @@ export function WorkspaceAccessSection({
         <span
           className={cn(
             'rounded-full px-2 py-0.5 text-xs',
-            unrestricted ? 'bg-signal-amber/10 text-signal-amber' : granted.length ? 'bg-[var(--accent-tint)] text-accent-hover' : 'bg-surface-2 text-fg-2',
+            unrestricted ? 'bg-warning/10 text-warning' : granted.length ? 'bg-[var(--accent-tint)] text-accent-hover' : 'bg-surface-2 text-fg-2',
           )}
         >
           {badge}

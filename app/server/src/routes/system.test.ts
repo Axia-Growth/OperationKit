@@ -10,6 +10,7 @@ import jwt from 'jsonwebtoken'
 const TMP_DB = path.join(os.tmpdir(), `cc-system-test-${process.pid}-${Date.now()}.db`)
 process.env.DB_PATH = TMP_DB
 process.env.JWT_SECRET = 'test-secret-system'
+process.env.CC_PREVIEW_DOMAIN = 'cc.example.com' // obj 900803: preview domain is configured, not built in
 
 const { initDb, getDb } = await import('../db/index.js')
 const { createSystemRouter, toSystemDiskResponse, toSystemPreviewHealthResponse } = await import('./system.js')

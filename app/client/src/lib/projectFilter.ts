@@ -11,7 +11,7 @@ import type { Objective } from '@operationkit/shared'
 
    Kept framework-free so matching + persistence are unit-testable
    without mounting the board; the React wiring lives in
-   KanbanBoard.tsx.
+   preview/PreviewBoard.tsx and ProjectFilterBar.tsx.
    ───────────────────────────────────────────────────────── */
 
 /** Sentinel for "All projects" — the default, shows everything. */

@@ -235,6 +235,10 @@ export function initFlowSchema(db: Database.Database): void {
   // its iteration budget (`builder.max_iterations`, NULL = the settings default).
   addColumn(db, 'flow_definitions', 'goal_statement', 'TEXT')
   addColumn(db, 'flow_definitions', 'builder_max_iterations', 'INTEGER')
+  // obj 900868 — Notes + Tools on a workflow. They describe it to people and agents;
+  // they are not part of the versioned definition (editing them needs no re-publish).
+  addColumn(db, 'flow_definitions', 'notes', 'TEXT')
+  addColumn(db, 'flow_definitions', 'tools_json', 'TEXT')
   // One row per draft an AGENT submitted (builder card session or agent key),
   // accepted or refused by the validator. This is what the builder iteration cap
   // counts (services/flow-builder.ts); a human's drafts are never capped.

@@ -1,7 +1,8 @@
 import { useEffect, useState, type FormEvent } from 'react'
 import { useAuth } from '../context/AuthContext'
 import { useBranding } from '../hooks/useBranding'
-import { BrandMark } from './BrandMark'
+import { Button, Field, Input } from './ui'
+import { AuthCard, AuthLink } from './login/AuthCard'
 import { EmailLinkRedeem, EmailLinkRequest, readLinkToken } from './login/EmailSignInLink'
 
 export function LoginPage() {
@@ -38,83 +39,51 @@ export function LoginPage() {
     }
   }
 
+  const poweredBy = branding.powered_by ? (
+    <p className="text-xs text-fg-3">Powered by {branding.default_name}</p>
+  ) : null
+
+  if (linkToken) return <EmailLinkRedeem token={linkToken} brandName={branding.name} footer={poweredBy} />
+  if (mode === 'email') return <EmailLinkRequest brandName={branding.name} onBack={() => setMode('password')} footer={poweredBy} />
+
   return (
-    <div className="flex h-full items-center justify-center bg-surface px-4">
-      <div className="w-full max-w-sm">
-        <div className="mb-8 text-center">
-          <BrandMark branding={branding} />
-          <p className="mt-3 text-base text-fg-1">Sign in to continue</p>
-        </div>
+    <AuthCard
+      title={`Sign in to ${branding.name}`}
+      error={error || undefined}
+      footer={
+        (emailLinkAvailable || poweredBy) && (
+          <>
+            {emailLinkAvailable && <AuthLink onClick={() => setMode('email')}>Email me a sign-in link instead</AuthLink>}
+            {poweredBy}
+          </>
+        )
+      }
+    >
+      <form onSubmit={handleSubmit} className="space-y-4">
+        <Field label="Username" id="username">
+          <Input
+            autoComplete="username"
+            value={username}
+            onChange={e => setUsername(e.target.value)}
+            autoFocus
+            required
+          />
+        </Field>
 
-        {linkToken ? (
-          <EmailLinkRedeem token={linkToken} brandName={branding.name} />
-        ) : mode === 'email' ? (
-          <EmailLinkRequest onBack={() => setMode('password')} />
-        ) : (
-        <>
-                <form onSubmit={handleSubmit} className="space-y-4 rounded-xl border border-line bg-surface-1 p-6">
-          {error && (
-            <div className="rounded-md border border-signal-alarm px-3 py-2 text-base text-signal-alarm">
-              {error}
-            </div>
-          )}
+        <Field label="Password" id="password">
+          <Input
+            autoComplete="current-password"
+            type="password"
+            value={password}
+            onChange={e => setPassword(e.target.value)}
+            required
+          />
+        </Field>
 
-          <div>
-            <label htmlFor="username" className="mb-1.5 block text-sm font-medium text-fg-1">
-              Username
-            </label>
-            <input
-              id="username"
-              autoComplete="username"
-              type="text"
-              value={username}
-              onChange={e => setUsername(e.target.value)}
-              className="w-full rounded-md border border-line bg-surface-1 min-h-[44px] px-3 py-2 text-base text-fg-0 placeholder:text-fg-3 outline-none transition focus:border-accent focus-visible:ring-2 focus-visible:ring-accent"
-              placeholder="username"
-              autoFocus
-              required
-            />
-          </div>
-
-          <div>
-            <label htmlFor="password" className="mb-1.5 block text-sm font-medium text-fg-1">
-              Password
-            </label>
-            <input
-              id="password"
-              autoComplete="current-password"
-              type="password"
-              value={password}
-              onChange={e => setPassword(e.target.value)}
-              className="w-full rounded-md border border-line bg-surface-1 min-h-[44px] px-3 py-2 text-base text-fg-0 placeholder:text-fg-3 outline-none transition focus:border-accent focus-visible:ring-2 focus-visible:ring-accent"
-              placeholder="password"
-              required
-            />
-          </div>
-
-          <button
-            type="submit"
-            disabled={loading}
-            className="min-h-[44px] w-full rounded-md bg-accent py-2 text-lg font-semibold text-accent-fg transition duration-150 hover:bg-accent-hover active:bg-accent-press focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-surface-1 disabled:cursor-not-allowed disabled:opacity-50"
-          >
-            {loading ? 'Signing in…' : 'Sign in'}
-          </button>
-        </form>
-        {emailLinkAvailable && (
-          <button
-            type="button"
-            onClick={() => setMode('email')}
-            className="mt-4 w-full text-center text-base text-fg-2 underline-offset-4 hover:text-fg-0 hover:underline"
-          >
-            Email me a sign-in link instead
-          </button>
-        )}
-        </>
-        )}
-        {branding.powered_by && (
-          <p className="mt-6 text-center text-xs text-fg-3">Powered by {branding.default_name}</p>
-        )}
-      </div>
-    </div>
+        <Button type="submit" variant="primary" loading={loading} className="w-full">
+          {loading ? 'Signing in…' : 'Sign in'}
+        </Button>
+      </form>
+    </AuthCard>
   )
 }

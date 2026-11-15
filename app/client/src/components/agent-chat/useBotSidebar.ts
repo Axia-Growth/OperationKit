@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { api } from '../../lib/api'
 import { isSidebarState } from './sidebar-model'
+import { SIDEBAR_KEY, readCache, writeCache } from './chat-cache'
 import type { SidebarSection, SidebarState } from './types'
 
 /** How often the sidebar re-reads unread + previews while the page is visible. */
@@ -19,7 +20,13 @@ const bot = (slug: string) => `${BASE}/bots/${encodeURIComponent(slug)}`
  * bot must never depend on it.
  */
 export function useBotSidebar() {
-  const [state, setState] = useState<SidebarState | null>(null)
+  // obj 900865: start from the last state this tab saw, so returning to the
+  // Bots page paints pins, sections and unread dots at once; refresh() below
+  // replaces it with the server's answer.
+  const [state, setState] = useState<SidebarState | null>(() => readCache<SidebarState>(SIDEBAR_KEY) ?? null)
+  useEffect(() => {
+    if (state) writeCache(SIDEBAR_KEY, state)
+  }, [state])
   const [error, setError] = useState<string | null>(null)
   const reading = useRef(new Set<string>())
 

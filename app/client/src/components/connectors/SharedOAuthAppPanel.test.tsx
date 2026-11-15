@@ -9,6 +9,7 @@ import { flushSync } from 'react-dom'
 import { createRoot, type Root } from 'react-dom/client'
 import type { ConnectorSharedApp, ConnectorSummary } from '@operationkit/shared'
 import { SharedOAuthAppPanel, sharedAppStateLabel } from './SharedOAuthAppPanel'
+import { cleanup, click, render } from '../../test/render'
 
 ;(globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = false
 
@@ -97,5 +98,55 @@ describe('SharedOAuthAppPanel', () => {
     expect(sharedAppStateLabel(OFF).text).toBe('Off')
     expect(sharedAppStateLabel({ ...OFF, enabled: true }).text).toBe('On')
     expect(sharedAppStateLabel({ ...OFF, enabled: true, own_app_configured: true }).text).toContain('your own app wins')
+  })
+})
+
+// Polish F5 (obj 900806): removing the shared app is destructive, so it asks
+// first (useConfirm, danger) and only calls onRemove after a confirm.
+describe('SharedOAuthAppPanel Remove asks first', () => {
+  const setAct = (on: boolean) => {
+    ;(globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = on
+  }
+  afterEach(async () => {
+    await cleanup()
+    setAct(false)
+  })
+  const CONFIGURED: ConnectorSharedApp = {
+    ...OFF,
+    enabled: true,
+    configured: true,
+    issuer: 'https://auth.example.com',
+    client_id: 'shared-client',
+    redirect_uri: 'https://auth.example.com/callback',
+  }
+  const dialog = () => document.querySelector<HTMLElement>('[role="alertdialog"]')
+  const buttonIn = (root: ParentNode, name: string) =>
+    Array.from(root.querySelectorAll('button')).find(b => b.textContent?.trim() === name) as HTMLButtonElement
+
+  async function openRemove() {
+    setAct(true)
+    const onRemove = vi.fn(async () => true)
+    const { container } = await render(
+      <SharedOAuthAppPanel connector={slack(CONFIGURED)} isAdmin onSave={vi.fn(async () => true)} onRemove={onRemove} defaultOpen />,
+    )
+    await click(buttonIn(container, 'Remove'))
+    return onRemove
+  }
+
+  it('Cancel keeps the shared app (onRemove not called)', async () => {
+    const onRemove = await openRemove()
+    expect(dialog()).toBeTruthy()
+    expect(dialog()!.textContent).toContain('Remove the shared app for Slack?')
+    expect(onRemove).not.toHaveBeenCalled()
+    await click(buttonIn(dialog()!, 'Cancel'))
+    await new Promise(r => setTimeout(r, 0))
+    expect(onRemove).not.toHaveBeenCalled()
+  })
+
+  it('confirming Remove calls onRemove once', async () => {
+    const onRemove = await openRemove()
+    await click(buttonIn(dialog()!, 'Remove'))
+    await new Promise(r => setTimeout(r, 0))
+    expect(onRemove).toHaveBeenCalledTimes(1)
   })
 })

@@ -15,7 +15,7 @@
 import { useMemo, useState } from 'react'
 // Direct module paths (not the '../ui' barrel) so suites that mock the barrel
 // with only Modal/useConfirm (e.g. AccountSettings.google.test.tsx) still render this card.
-import { Card, CardHeader, CardBody } from '../ui/Card'
+import { SectionHeader } from '../ui/SettingsSection'
 import { CopyButton } from '../ui/CopyButton'
 import { SegmentedControl } from '../ui/SegmentedControl'
 import { useBranding } from '../../hooks/useBranding'
@@ -78,7 +78,7 @@ function installStep(agent: CodingAgent, mcpUrl: string): string {
 export function buildSetupPrompt(agent: CodingAgent, origin: string, brandName: string): string {
   const mcpUrl = `${origin}/api/mcp`
   return [
-    `Connect yourself to my ${brandName} (${origin}) over MCP, so you can read and work my board and knowledge base.`,
+    `Connect yourself to my ${brandName} (${origin}) over MCP, so you can read and work my board and Context.`,
     ``,
     `1. Key. I have an agent key in the environment variable ${KEY_ENV}. Check it is set without printing it ` +
       `(e.g. test -n "$${KEY_ENV}" && echo set). If it is not set, stop and ask me to create one at ` +
@@ -105,9 +105,9 @@ export function CodingAgentSetup() {
   const agentLabel = CODING_AGENTS.find(a => a.key === agent)?.label ?? 'your agent'
 
   return (
-    <Card inset className="mt-6" aria-labelledby="coding-agent-setup-heading" data-testid="coding-agent-setup">
-      <CardHeader title="Connect a coding agent" eyebrow="Quick setup" />
-      <CardBody className="space-y-4">
+    <section className="mt-6 rounded-lg border border-line bg-surface-1 p-5" aria-labelledby="coding-agent-setup-heading" data-testid="coding-agent-setup">
+      <SectionHeader headingId="coding-agent-setup-heading" className="mb-4" title="Connect a coding agent" />
+      <div className="space-y-4">
         <ol className="max-w-prose list-decimal space-y-1 pl-5 text-sm leading-relaxed text-fg-2">
           <li>
             Create an agent key in <span className="text-fg-1">Agent keys</span> above and set it in your terminal as{' '}
@@ -124,12 +124,12 @@ export function CodingAgentSetup() {
         />
 
         <div className="space-y-2">
-          <div className="flex items-center justify-between gap-2">
-            <h3 id="coding-agent-setup-heading" className="text-sm font-semibold text-fg-0">
-              Setup prompt for {agentLabel}
-            </h3>
-            <CopyButton value={prompt} label="Copy prompt" />
-          </div>
+          <SectionHeader
+            level={3}
+            className="mb-0 sm:items-center"
+            title={`Setup prompt for ${agentLabel}`}
+            actions={<CopyButton value={prompt} label="Copy prompt" />}
+          />
           <pre
             data-testid="coding-agent-prompt"
             className="max-h-80 max-w-full overflow-auto whitespace-pre-wrap rounded-md border border-line bg-surface-1 p-3 font-mono text-xs leading-relaxed text-fg-1"
@@ -141,7 +141,7 @@ export function CodingAgentSetup() {
             environment.
           </p>
         </div>
-      </CardBody>
-    </Card>
+      </div>
+    </section>
   )
 }

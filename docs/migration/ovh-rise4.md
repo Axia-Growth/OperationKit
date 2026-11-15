@@ -307,6 +307,23 @@ Leave mail records (MX/SPF/DKIM) alone; nothing here touches mail. Inbound webho
 
 ## I. Backups (bare metal has no snapshots)
 
+> **Superseded for an Operation Kit install.** The OVH server we moved to ended up
+> running an Operation Kit install (`/opt/operationkit`, set up with `install.sh`),
+> and an Operation Kit install backs itself up with the built-in
+> **`install/backup.sh`**: one nightly cron job, local copy plus restic off-site,
+> `BACKUP_HOME="offsite"` for a large home, `backup.sh verify` as the restore test.
+> See INSTALL.md → [Backups and restore](../../INSTALL.md#backups-and-restore) and
+> [Switching from a hand-made backup](../../INSTALL.md#switching-from-a-hand-made-backup).
+> `cc-backup.sh` / `cc-backup.timer` below back up the *old* layout
+> (`/home/operator/data/command-center`, a LiteLLM Postgres, the vault in a home folder)
+> and must not run on an Operation Kit install: `install-backup-timer.sh` now
+> refuses to install them when it finds one. This section is kept as the record of
+> the provider choice (§I.1), which still applies.
+>
+> The step-by-step switch for this server (B2 folder, `BACKUP_HOME="offsite"`,
+> restore test, turning the old job off, rollback) is
+> [runbooks/2026-11-15-ovh-switch-to-install-backup.md](../runbooks/2026-11-15-ovh-switch-to-install-backup.md).
+
 ### I.1 Provider: **Backblaze B2** (recommended)
 
 Prices checked 2026-10-23 on each provider's pricing page:

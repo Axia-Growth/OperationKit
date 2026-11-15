@@ -49,7 +49,7 @@ describe('PlanningPanel — modal dialog', () => {
     expect(document.getElementById(dialog.getAttribute('aria-labelledby')!)?.textContent).toBe('Plan the launch')
     // Focus starts in the reply box, not on "Approve Plan".
     expect(document.activeElement?.tagName).toBe('TEXTAREA')
-    expect(dialog.querySelector('button[aria-label="Close planning"]')).toBeTruthy()
+    expect(dialog.querySelector('button[aria-label="Close"]')).toBeTruthy()
 
     await press('Escape')
     expect(onClose).toHaveBeenCalledTimes(1)
@@ -63,7 +63,7 @@ describe('PlanningPanel — modal dialog', () => {
     const nativeConfirm = vi.spyOn(window, 'confirm').mockReturnValue(true)
     const onClose = vi.fn()
     await render(<PlanningPanel objective={objective()} onClose={onClose} onApproved={() => {}} />)
-    const cancel = [...document.querySelectorAll('button')].find((b) => b.textContent === 'Cancel Planning')!
+    const cancel = [...document.querySelectorAll('button')].find((b) => b.textContent === 'Cancel planning')!
     await click(cancel)
     const alert = document.querySelector<HTMLElement>('[role="alertdialog"]')!
     expect(alert).toBeTruthy()

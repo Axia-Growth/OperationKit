@@ -107,7 +107,7 @@ Optional default models: `AGENT_CHAT_CLAUDE_MODEL`, `AGENT_CHAT_OPENAI_MODEL`, `
 
 Open a bot and press **Settings** in its header. Everyone can see what the bot runs on and which tools it has; only an admin signed in to the app can change them (an API key never can, so a bot cannot give itself tools).
 
-- **Default model** — any model id; the field suggests the models switched on in Settings → Models. Leave it empty to use the file's model or the provider default.
+- **Default model** — a dropdown with every model switched on in Settings → Models, in the same format as that page ("Opus 5.5 (claude-opus-5-5)", grouped Anthropic → OpenAI → xAI). Every bot sees the same full list. Picking a model the bot's provider cannot run (for example a Grok model on a Claude bot) switches the provider with it. **Default** uses the file's model or the provider default; **Other model id…** takes any id, for a custom endpoint.
 - **AI provider** — Claude, Anthropic API, OpenAI, Grok, a custom endpoint, or automatic.
 - **Tools** — tick exactly what this bot may use: web, knowledge, board, email and calendar drafts, workspace integrations.
 - **All tools** — every tool, including tools added in later releases. Email and calendar stay draft-only and board reads stay limited to what the person can see: "All tools" changes which tools a bot has, never what a tool may do.

@@ -68,7 +68,7 @@ export function WikiBrowser({
   if (loading && !pages) {
     return (
       <div className="flex flex-col gap-3" aria-busy="true">
-        <span className="sr-only">Loading the wiki…</span>
+        <span className="sr-only">Loading your Context…</span>
         <Skeleton className="h-9 w-full sm:w-72" />
         <SkeletonText lines={6} />
       </div>
@@ -80,7 +80,7 @@ export function WikiBrowser({
       <EmptyState
         compact
         icon={<BookOpen className="h-5 w-5" aria-hidden="true" />}
-        title="Your wiki is empty"
+        title="Your Context is empty"
         description="Upload files above or import your chats and calls. Each one is read and turned into linked pages — one per person, company and topic — that show up here."
       />
     )

@@ -1,7 +1,11 @@
 import { useCallback, useEffect, useId, useRef, useState } from 'react'
-import { Save, X } from 'lucide-react'
+import { FileWarning, Save, X } from 'lucide-react'
 import { api } from '../lib/api'
 import { Modal } from './ui/Modal'
+import { Button, IconButton } from './ui/Button'
+import { EmptyState } from './ui/EmptyState'
+import { SaveIndicator } from './ui/SaveIndicator'
+import { EditorSkeleton } from './EditorSkeleton'
 import { useCreateBlockNote } from '@blocknote/react'
 import { BlockNoteView } from '@blocknote/mantine'
 import { BlockNoteSchema, defaultBlockSpecs, type PartialBlock } from '@blocknote/core'
@@ -141,12 +145,7 @@ export function FileEditorOverlay({ filePath, onClose }: FileEditorOverlayProps)
                 Read-only
               </span>
             )}
-            {saveState === 'saving' && <span className="text-xs text-fg-3">Saving…</span>}
-            {saveState === 'saved' && <span className="text-xs text-status-done">Saved</span>}
-            {saveState === 'error' && <span className="text-xs text-flag-blocked" title={saveError ?? ''}>Save failed</span>}
-            {pendingMarkdown !== null && saveState === 'idle' && file?.writable && (
-              <span className="text-xs text-fg-3">Unsaved</span>
-            )}
+            <SaveIndicator state={saveState} dirty={pendingMarkdown !== null && !!file?.writable} error={saveError} />
             <button
               onClick={handleManualSave}
               disabled={!file?.writable || pendingMarkdown === null || saveState === 'saving'}
@@ -155,22 +154,23 @@ export function FileEditorOverlay({ filePath, onClose }: FileEditorOverlayProps)
               <Save className="h-3 w-3" />
               Save
             </button>
-            <button
-              onClick={onClose}
-              className="rounded-sm p-1.5 text-fg-2 transition hover:bg-surface-3 hover:text-fg-0"
-              aria-label="Close"
-            >
-              <X className="h-4 w-4" />
-            </button>
+            <IconButton label="Close" size="sm" onClick={onClose}>
+              <X aria-hidden="true" className="h-4 w-4" />
+            </IconButton>
           </div>
         </div>
 
         {/* Body */}
-        {loading && (
-          <div className="flex flex-1 items-center justify-center text-base text-fg-3">Loading…</div>
-        )}
+        {loading && <EditorSkeleton />}
         {error && (
-          <div className="flex flex-1 items-center justify-center text-base text-flag-blocked">{error}</div>
+          <div className="flex flex-1 items-center justify-center px-4">
+            <EmptyState
+              icon={<FileWarning className="h-5 w-5" aria-hidden="true" />}
+              title="Couldn't open this file"
+              description={error}
+              action={<Button onClick={onClose}>Close</Button>}
+            />
+          </div>
         )}
         {file && !loading && (
           <EditorPane key={file.path} file={file} onContentChange={handleContentChange} />

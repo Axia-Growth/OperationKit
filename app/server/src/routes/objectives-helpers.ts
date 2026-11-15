@@ -7,7 +7,8 @@ import { type AuthRequest } from '../middleware/auth.js'
 import { getUserWorkspaces } from '../middleware/workspace.js'
 import { getWorkspace } from '../services/workspaces.js'
 import { resolveAvailable } from '../services/resource-assignments.js'
-import type { NeedsSecretItem, Objective } from '@operationkit/shared'
+import { DEFAULT_AGENT_CONTEXT, cardOwner, type NeedsSecretItem, type Objective } from '@operationkit/shared'
+import { listBots, registryKey, type BotDefinition } from '../services/bots/bot-registry.js'
 
 /**
  * Lightweight card projection for the board LIST (obj 700512). This is EVERY
@@ -135,6 +136,61 @@ export function parseNeedsSecret(raw: unknown): NeedsSecretItem[] {
   }
 }
 
+// ── Board ownership (obj 900869) ─────────────────────────────────────────────
+// The bot list is settings-backed; mapObjective runs once per card on a board
+// read, so the registry is read at most once per BOT_CACHE_MS, not per row.
+const BOT_CACHE_MS = 30_000
+let botCache: { at: number; bots: BotDefinition[] } | null = null
+
+function cachedBots(): BotDefinition[] {
+  const now = Date.now()
+  if (!botCache || now - botCache.at > BOT_CACHE_MS) {
+    let bots: BotDefinition[]
+    try { bots = listBots(getDb()) } catch { bots = listBots() }
+    botCache = { at: now, bots }
+  }
+  return botCache.bots
+}
+
+/** Test seam: forget the cached registry (a test that edits settings.bot_registry). */
+export function clearBotOwnerCache(): void {
+  botCache = null
+}
+
+/**
+ * The registry bot behind a card: its explicit `owner_bot`, else the bot that
+ * owns the card's `agent_context` chat slug (a High Agency wake card is filed
+ * with agent_context = the bot's slug). Null when neither names a known bot. An
+ * `owner_bot` the registry does not know is still shown as itself — it was
+ * written by someone, and hiding it would hide who filed the card.
+ */
+export function resolveBotOwner(row: Pick<Objective, 'owner_bot' | 'agent_context'>): { id: string; name: string } | null {
+  const bots = cachedBots()
+  const match = (raw: string | null | undefined, slugs: boolean): BotDefinition | null => {
+    const key = raw ? registryKey(raw) : ''
+    if (!key) return null
+    for (const b of bots) {
+      if (registryKey(b.id) === key || registryKey(b.name) === key) return b
+      if (b.aliases.some(a => registryKey(a) === key)) return b
+      if (slugs && b.agent_slugs.some(sl => registryKey(sl) === key)) return b
+    }
+    return null
+  }
+  const explicit = (row.owner_bot ?? '').trim()
+  if (explicit) {
+    const b = match(explicit, true)
+    return b ? { id: b.id, name: b.name } : { id: explicit, name: explicit }
+  }
+  // 'general' is the column DEFAULT for agent_context (every card filed without
+  // a persona carries it), and the built-in "General" bot also lists it as its
+  // chat slug. Reading it as a bot would make every unowned card on the board
+  // look bot-owned, so the default slug never implies a bot — a General card
+  // must say so through owner_bot (a claim or a bot filer sets it).
+  if (registryKey(row.agent_context ?? '') === registryKey(DEFAULT_AGENT_CONTEXT)) return null
+  const viaSlug = match(row.agent_context, true)
+  return viaSlug ? { id: viaSlug.id, name: viaSlug.name } : null
+}
+
 export function mapObjective(row: Objective, userMap?: Map<number, string>): Objective {
   const r = row as unknown as Record<string, unknown>
   let acceptance: unknown = null
@@ -152,8 +208,23 @@ export function mapObjective(row: Objective, userMap?: Map<number, string>): Obj
   if (row.assigned_user_id != null && !assignedIds.includes(row.assigned_user_id)) {
     assignedIds.unshift(row.assigned_user_id)
   }
+  const assignedUsernames = resolveUsernames(assignedIds, userMap)
+  const createdBy = row.created_by != null ? (resolveUsernames([row.created_by], userMap)[0] ?? null) : null
+  const bot = resolveBotOwner(row)
+  const currentOwner = cardOwner({
+    status: row.status,
+    session_id: row.session_id,
+    bot_owner: bot?.id ?? null,
+    bot_owner_name: bot?.name ?? null,
+    assigned_usernames: assignedUsernames,
+    created_by_username: createdBy,
+  })
   return {
     ...row,
+    bot_owner: bot?.id ?? null,
+    bot_owner_name: bot?.name ?? null,
+    created_by_username: createdBy,
+    current_owner: currentOwner,
     needs_secret: parseNeedsSecret(r.needs_secret),
     has_blockers: !!r.has_blockers,
     create_pr: !!r.create_pr,
@@ -170,7 +241,7 @@ export function mapObjective(row: Objective, userMap?: Map<number, string>): Obj
     last_activity_at: (r.last_activity_at as string | null | undefined) ?? null,
     acceptance_criteria: acceptance as Objective['acceptance_criteria'],
     assigned_user_ids: assignedIds,
-    assigned_usernames: resolveUsernames(assignedIds, userMap),
+    assigned_usernames: assignedUsernames,
     // project_name / project_color come from the LEFT JOIN on projects when the
     // query uses LIST_SELECT + LIST_FROM. For queries that SELECT * (GET /:id),
     // these columns are absent from the raw row — keep null rather than undefined

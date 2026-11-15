@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { Check } from 'lucide-react'
 import { Button } from './Button'
 import { cn } from './cn'
 
@@ -80,7 +81,7 @@ export function CopyButton({
       onClick={() => void copy()}
       data-copy-state={state}
     >
-      {state === 'copied' && <span aria-hidden="true">✓</span>}
+      {state === 'copied' && <Check aria-hidden="true" className="h-3.5 w-3.5" />}
       <span aria-live="polite">{text}</span>
     </Button>
   )

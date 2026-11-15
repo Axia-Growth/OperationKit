@@ -3,6 +3,7 @@ import type { Edge, Node } from '@xyflow/react'
 import { analyzeFlow, declaredOrDefaultEffect, type RawNode } from '../../../shared/flow/analyze'
 import type { FlowEffect, FlowNodeKind, FlowNodeRunStatus } from '../../../shared/flow/types'
 import type { FlowNodeChange } from '../../../shared/flow/diff'
+import { describeCron } from './format'
 
 /**
  * okflow/1 definition → React Flow nodes + edges, laid out by dagre (viewer V2,
@@ -66,46 +67,41 @@ export interface FlowGraph {
   height: number
 }
 
-const KIND_ICON: Record<string, string> = {
-  trigger: '⏰', tool: '🔧', mcp: '🔌', llm: '🧠', agent: '🤖', branch: '🔀', loop: '🔁', wait: '⏳', check: '✔', end: '⏹',
-}
-
 const str = (v: unknown): string | undefined => (typeof v === 'string' ? v : undefined)
 const num = (v: unknown): number | undefined => (typeof v === 'number' && Number.isFinite(v) ? v : undefined)
 const join = (...parts: (string | undefined | false)[]) => parts.filter(Boolean).join(' · ')
 
 function describe(n: RawNode): { title: string; lines: string[] } {
-  const icon = KIND_ICON[String(n.kind)] ?? '?'
   const retry = n.retry as { max?: unknown } | undefined
   const attempts = retry && num(retry.max) !== undefined ? `${retry.max} attempt${retry.max === 1 ? '' : 's'} max` : undefined
   switch (n.kind) {
     case 'trigger': {
       const sched = n.schedule as { cron?: unknown } | undefined
-      return { title: `${icon} trigger · ${str(n.on) ?? '?'}`, lines: [str(sched?.cron) ?? str(n.event) ?? ''].filter(Boolean) }
+      return { title: `trigger · ${str(n.on) ?? '?'}`, lines: [str(sched?.cron) ? describeCron(str(sched?.cron), { utc: true }) : str(n.event) ?? ''].filter(Boolean) }
     }
     case 'tool':
-      return { title: `${icon} tool · ${str(n.tool) ?? '?'}`, lines: [join(attempts)].filter(Boolean) }
+      return { title: `tool · ${str(n.tool) ?? '?'}`, lines: [join(attempts)].filter(Boolean) }
     case 'mcp':
-      return { title: `${icon} MCP · ${str(n.connector) ?? '?'}.${str(n.tool) ?? '?'}`, lines: [join(attempts)].filter(Boolean) }
+      return { title: `MCP · ${str(n.connector) ?? '?'}.${str(n.tool) ?? '?'}`, lines: [join(attempts)].filter(Boolean) }
     case 'llm': {
       const it = num(n.max_iterations) ?? 1
       return {
-        title: `${icon} LLM · ${n.id}`,
+        title: `LLM · ${n.id}`,
         lines: [join(str(n.model) && `model ${n.model}`, `${it} iteration${it === 1 ? '' : 's'}`,
           num(n.budget_usd) !== undefined && `$${n.budget_usd} cap`)],
       }
     }
     case 'agent':
-      return { title: `${icon} agent session → card`, lines: [join(n.id, str(n.agent), num(n.budget_usd) !== undefined && `$${n.budget_usd} cap`)] }
+      return { title: `agent session → card`, lines: [join(n.id, str(n.agent), num(n.budget_usd) !== undefined && `$${n.budget_usd} cap`)] }
     case 'branch': {
       const cases = Array.isArray(n.cases) ? n.cases.length : 0
-      return { title: `${icon} branch · ${n.id}`, lines: [`${cases} case${cases === 1 ? '' : 's'}${n.default !== undefined ? ' + default' : ''}`] }
+      return { title: `branch · ${n.id}`, lines: [`${cases} case${cases === 1 ? '' : 's'}${n.default !== undefined ? ' + default' : ''}`] }
     }
     case 'check': {
       const asserts = Array.isArray(n.assert) ? (n.assert as { why?: unknown }[]) : []
       const why = asserts.map((a) => a && a.why).find((w): w is string => typeof w === 'string')
       return {
-        title: `${icon} check · ${n.id}`,
+        title: `check · ${n.id}`,
         lines: [join(why ?? `${asserts.length} assert${asserts.length === 1 ? '' : 's'}`, n.on_fail !== undefined && `on fail: ${String(n.on_fail)}`)],
       }
     }
@@ -115,17 +111,17 @@ function describe(n: RawNode): { title: string; lines: string[] } {
         : n.for !== undefined ? `for ${String(n.for)}`
           : n.until !== undefined ? `until ${String(n.until)}`
             : n.event !== undefined ? `event ${String(n.event)}` : '?'
-      return { title: `${icon} wait · ${n.id}`, lines: [mode] }
+      return { title: `wait · ${n.id}`, lines: [mode] }
     }
     case 'loop': {
       const conc = num(n.concurrency)
       return {
-        title: `${icon} loop · for each ${str(n.as) ?? '?'}`,
+        title: `loop · for each ${str(n.as) ?? '?'}`,
         lines: [join(num(n.max_items) !== undefined && `max ${n.max_items}`, conc !== undefined && conc > 1 && `${conc} parallel`)],
       }
     }
     case 'end':
-      return { title: `${icon} end`, lines: [] }
+      return { title: `end`, lines: [] }
     default:
       return { title: `? ${String(n.kind)} · ${n.id}`, lines: [] }
   }

@@ -83,6 +83,10 @@ export interface FlowSummary {
   created_by: string
   created_at: string
   updated_at: string
+  /** obj 900868 — free-text notes on the workflow (not versioned). null = none. */
+  notes: string | null
+  /** obj 900868 — tools / integrations this workflow should use, by name (not versioned). */
+  tools: string[]
   /** Trigger of the published version (else the latest). */
   trigger: { on: string; cron: string | null } | null
   node_count: number

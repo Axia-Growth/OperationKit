@@ -178,9 +178,9 @@ if ! command -v restic >/dev/null 2>&1; then
 fi
 
 # One scheduler: re-write the same nightly cron job (local copy + off-site send).
+# install-cron also names any other backup job (timer, cron file, root crontab)
+# still running here, so it can be switched off (other_backup_jobs, install/lib.sh).
 bash "$OK_LIB_DIR/backup.sh" install-cron --config "$CONFIG" | sed 's/^/  /'
-other=$(systemctl list-timers --all --no-legend 2>/dev/null | grep -iE 'b2|restic|backup' | grep -v operationkit || true)
-[ -z "$other" ] || warn "another backup timer is active on this server: $(awk '{print $(NF-1)}' <<<"$other" | tr '\n' ' ')— the built-in nightly job now sends the off-site copy, so disable the other one (systemctl disable --now <timer>) to avoid two backups a night."
 
 # ── 5. first snapshot + restore test ──────────────────────────────────────────
 result="first backup skipped (--skip-first-backup)"

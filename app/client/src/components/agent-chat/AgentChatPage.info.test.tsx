@@ -146,7 +146,7 @@ describe('bot info panel (obj 900672)', () => {
     const prompts = [...p.querySelectorAll('ul[aria-label="Example prompts"] button')].map(b => b.textContent)
     expect(prompts).toEqual(DEV.example_prompts)
     // It says what the bot can actually reach, in plain words.
-    expect(p.textContent).toContain('Reads your knowledge base folders: business, organizations')
+    expect(p.textContent).toContain('Reads your Context folders: business, organizations')
     expect(p.textContent).toContain('Files bigger jobs as board cards')
     expect(p.textContent).not.toMatch(/email drafts/)
   })
@@ -180,7 +180,7 @@ describe('bot info panel (obj 900672)', () => {
     const p = panel()!
     expect(p.textContent).toContain('Write to this bot the way you would message a colleague')
     expect(p.textContent).toContain('Settings → Secrets')
-    expect(p.textContent).toContain('Reads your knowledge base folders: team')
+    expect(p.textContent).toContain('Reads your Context folders: team')
     // Same "bot" terminology rule as obj 900327: no product-level "agent" wording in the chrome.
     expect(/\bagents?\b/i.test(p.textContent ?? '')).toBe(false)
   })

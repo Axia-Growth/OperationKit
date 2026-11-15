@@ -214,6 +214,23 @@ describe('knowledge-base link graph over MCP (sample data)', () => {
     expect(small.truncated).toBe(true)
   })
 
+  it('GET /api/kb-wiki/graph sends the server-side layout and revalidates by ETag (obj 900867)', async () => {
+    const res = await fetch(`${baseUrl}/api/kb-wiki/graph?workspace=${WS}`, { headers: { Authorization: `Bearer ${readerKey}` } })
+    expect(res.headers.get('cache-control')).toBe('private, no-cache')
+    const g = await res.json() as { nodes: Array<{ rel: string }>; layout?: { sig: string; pos: number[] } }
+    // One [x, y] per page, in node order, laid out by the worker thread.
+    expect(g.layout?.pos).toHaveLength(g.nodes.length * 2)
+    expect(g.layout!.pos.every(Number.isFinite)).toBe(true)
+    // Unchanged graph: the same layout (cached, not recomputed) and a 304 on revalidation.
+    const etag = res.headers.get('etag')!
+    // Raw http, not fetch: fetch adds "Cache-Control: no-cache" to a hand-made conditional request, which turns a 304 off.
+    // (A browser revalidating its own cached copy sends no such header.)
+    const status = await new Promise<number>((resolve, reject) => {
+      http.get(`${baseUrl}/api/kb-wiki/graph?workspace=${WS}`, { headers: { Authorization: `Bearer ${readerKey}`, 'If-None-Match': etag } }, r => { r.resume(); resolve(r.statusCode ?? 0) }).on('error', reject)
+    })
+    expect(status).toBe(304)
+  }, 30_000)
+
   it('GET /api/kb-wiki/graph needs vault:read', async () => {
     const res = await fetch(`${baseUrl}/api/kb-wiki/graph?workspace=${WS}`, { headers: { Authorization: `Bearer ${boardOnlyKey}` } })
     expect(res.status).toBe(403)

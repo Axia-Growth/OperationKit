@@ -9,6 +9,7 @@ import type {
 } from '@operationkit/shared'
 import { useWebSocket } from './useWebSocket'
 import { api } from '../lib/api'
+import { friendlyError } from '../lib/format'
 import { mergeObjectiveUpdate } from '../lib/mergeObjective'
 
 // Page size for the lazy Done column (obj 700512). The board never mounts the
@@ -147,7 +148,7 @@ export function useObjectives(scope: Workspace | Workspace[] = 'all') {
     // Default list — active pipeline only (server excludes status=done).
     api.get<Objective[]>(`/objectives${params}`)
       .then(data => setObjectives(data))
-      .catch(err => setError(err.message))
+      .catch(err => setError(`Could not load the board. ${friendlyError(err).message}`))
       .finally(() => setLoading(false))
   }, [wsKey])
 
@@ -170,7 +171,7 @@ export function useObjectives(scope: Workspace | Workspace[] = 'all') {
       setDoneHasMore(page.length === DONE_PAGE_SIZE)
       setDoneLoaded(true)
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to load done objectives')
+      setError(`Could not load done cards. ${friendlyError(err).message}`)
     } finally {
       setDoneLoading(false)
     }
@@ -194,7 +195,7 @@ export function useObjectives(scope: Workspace | Workspace[] = 'all') {
       setCancelledHasMore(page.length === CANCELLED_PAGE_SIZE)
       setCancelledLoaded(true)
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to load retired objectives')
+      setError(`Could not load retired cards. ${friendlyError(err).message}`)
     } finally {
       setCancelledLoading(false)
     }

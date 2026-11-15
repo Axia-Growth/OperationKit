@@ -6,7 +6,7 @@
  *
  * obj 900682: the main view lists ONLY what is connected (accounts, the
  * workspace's MCP servers from #900620, Tools an Integrations bot built).
- * "New Integration" opens Browse (the #900499 catalog with setup guides + MCP
+ * "New integration" opens Browse (the #900499 catalog with setup guides + MCP
  * catalog) or Make my own (the Integrations bot). Deep link: `?new=browse|make`.
  *
  * Every integration here is the signed-in person's own. The server keeps the
@@ -26,7 +26,7 @@ import { api, ApiError } from '../../lib/api'
 import { useAuth } from '../../context/AuthContext'
 import { useAgents } from '../../hooks/useAgents'
 import { useWorkspaces } from '../../hooks/useWorkspaces'
-import { Alert, Button, EmptyState, Skeleton, useConfirm } from '../ui'
+import { Alert, Button, EmptyState, SettingsSection, Skeleton, useConfirm } from '../ui'
 import { ConnectorCard, type ConnectorActions } from '../connectors/ConnectorCard'
 import { McpServersSection } from '../connectors/McpServersSection'
 import { defaultWorkspace } from '../connectors/mcpServerCopy'
@@ -222,15 +222,17 @@ export function SettingsConnectors() {
     (mcpServers === null ? workspaceOptions.length === 0 : mcpServers.length === 0)
 
   return (
-    <div className="max-w-3xl space-y-4">
+    // The Settings page owns the content width (1200px, polish F5) — no tab-level cap.
+    <div className="min-w-0 space-y-4">
       <div className="flex flex-wrap items-start justify-between gap-3">
-        <p className="min-w-0 flex-1 text-sm leading-relaxed text-fg-2">
+        <p className="min-w-0 max-w-prose flex-1 text-sm leading-relaxed text-fg-2">
           Accounts and services agents can work in for you. Keys and sign-ins are stored encrypted on this server and
           are never shown again — not here, and not to agents.
         </p>
-        {!newStep && (
+        {/* ONE primary "New integration": here, or (nothing connected yet) the empty state's CTA. */}
+        {!newStep && !nothingConnected && (
           <Button variant="primary" size="sm" onClick={() => setNewStep('choose')} leftIcon={<Plus className="h-3.5 w-3.5" />}>
-            New Integration
+            New integration
           </Button>
         )}
       </div>
@@ -262,9 +264,14 @@ export function SettingsConnectors() {
         <>
           {nothingConnected && (
             <EmptyState
+              className="rounded-lg border border-dashed border-line"
               title="No integrations connected yet"
               description="Connect an account from a setup guide, add an MCP server, or have the Integrations bot build one for you."
-              action={<Button variant="primary" size="sm" onClick={() => setNewStep('choose')}>New Integration</Button>}
+              action={
+                <Button variant="primary" size="sm" onClick={() => setNewStep('choose')} leftIcon={<Plus className="h-3.5 w-3.5" />}>
+                  New integration
+                </Button>
+              }
             />
           )}
 
@@ -273,8 +280,7 @@ export function SettingsConnectors() {
               <CardSkeleton />
             </div>
           ) : connected.length > 0 && (
-            <section aria-labelledby="accounts-title" className="space-y-3">
-              <h3 id="accounts-title" className="pt-2 font-display text-lg font-semibold text-fg-0">Accounts</h3>
+            <SettingsSection id="accounts" title="Accounts" className="pt-2" bodyClassName="space-y-3">
               {connected.map(c => (
                 <ConnectorCard
                   key={c.id}
@@ -285,7 +291,7 @@ export function SettingsConnectors() {
                   isAdmin={isAdmin}
                 />
               ))}
-            </section>
+            </SettingsSection>
           )}
 
           {workspaceOptions.length > 0 && (

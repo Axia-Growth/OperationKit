@@ -24,7 +24,7 @@ import {
   devRef,
   type DevRef,
 } from '../services/dev-items.js'
-import { isAutoDeployEnabled, shouldAutoDeploy, triggerAutoDeploy, SELF_REPO } from '../services/auto-deploy.js'
+import { isAutoDeployEnabled, shouldAutoDeploy, triggerAutoDeploy, selfRepo } from '../services/auto-deploy.js'
 import { getDb } from '../db/index.js'
 import { sendFollowUp } from '../services/session-manager.js'
 import { broadcast } from '../ws/index.js'
@@ -247,7 +247,7 @@ router.post('/', (req: Request, res: Response) => {
       // gap, not one this fix needs to close.
       if (
         (payload.action === 'opened' || payload.action === 'reopened') &&
-        repoFullName === SELF_REPO
+        repoFullName === selfRepo()
       ) {
         try {
           const prNumber = Number(payload.number || 0)

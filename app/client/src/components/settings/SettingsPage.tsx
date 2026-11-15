@@ -19,7 +19,6 @@ import { Navigate, Outlet, useLocation, useNavigate } from 'react-router-dom'
 import { useAuth } from '../../context/AuthContext'
 import { PageContainer, PageHeader, Tabs } from '../ui'
 import type { TabItem } from '../ui'
-import { BuildFooter } from './BuildFooter'
 import { canManageSharedSecrets } from '../../lib/secretsAccess'
 
 const MODELS = 'models'
@@ -92,7 +91,11 @@ export function SettingsPage() {
   }
 
   return (
-    <PageContainer width="wide" scroll="page">
+    // One content width for every tab (polish F5, obj 900806): the 1200px reading
+    // width, and no tab sets its own cap. Before, Models / API & MCP /
+    // Integrations stopped at ~790–920px while Secrets / Workspaces / Branding
+    // ran to 1600px, so the page jumped as you switched tabs.
+    <PageContainer width="default" scroll="page">
       <PageHeader
         title="Settings"
         description={
@@ -109,9 +112,10 @@ export function SettingsPage() {
         activation="manual"
         panelClassName="mt-5"
       >
-        <Outlet />
+        <div data-testid="settings-content" className="w-full min-w-0">
+          <Outlet />
+        </div>
       </Tabs>
-      <BuildFooter />
     </PageContainer>
   )
 }

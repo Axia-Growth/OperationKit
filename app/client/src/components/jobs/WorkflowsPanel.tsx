@@ -3,7 +3,7 @@ import { GitBranch, Play, Plus, Workflow, ExternalLink, AlertTriangle } from 'lu
 import type { FlowLiveEvent, FlowRunDetailResponse, FlowRunSummary, FlowSummary } from '../../../../shared/flow/api'
 import type { FlowNodeChange } from '../../../../shared/flow/diff'
 import { useFlowDetail, fetchFlowRun, useFlowLiveEvents } from '../../hooks/useFlows'
-import { relativeTime, relativeFuture } from '../../lib/time'
+import { describeCron, formatCost, formatDateTime, formatDuration, formatRelativeTime, friendlyError, humanize } from '../../lib/format'
 import { Alert, Badge, Button, DataTable, cn, type Column } from '../ui'
 import { FlowDiagram, FlowDiagramLegend } from './FlowDiagram'
 import { FlowCanvas, FlowCanvasLegend } from './FlowCanvas'
@@ -11,6 +11,7 @@ import { FlowNodeInspector } from './FlowNodeInspector'
 import { FlowSelfTestPanel } from './FlowSelfTestPanel'
 import { NewWorkflowDialog, type NewWorkflowResult } from './NewWorkflowDialog'
 import { FlowRunWaitsPanel } from './FlowRunWaitsPanel'
+import { FlowAboutSection } from './FlowAboutSection'
 import { Select } from '../ui/Select'
 import { SegmentedControl } from '../ui/SegmentedControl'
 import { toast } from '../ui/Toaster'
@@ -44,25 +45,33 @@ const RUN_TONE: Record<string, 'verify' | 'alarm' | 'info' | 'amber' | 'neutral'
 }
 
 export function RunStatusBadge({ run }: { run: Pick<FlowRunSummary, 'status' | 'goal_met'> | null }) {
-  if (!run) return <span className="text-fg-3">never run</span>
+  if (!run) return <span className="text-fg-3">Never run</span>
   const goalMissed = run.status === 'succeeded' && run.goal_met === 0
   return (
-    <Badge tone={goalMissed ? 'amber' : RUN_TONE[run.status] ?? 'neutral'} mono>
-      {goalMissed ? 'goal not met' : run.status}
+    <Badge tone={goalMissed ? 'amber' : RUN_TONE[run.status] ?? 'neutral'}>
+      {goalMissed ? 'Goal not met' : humanize(run.status)}
     </Badge>
   )
 }
 
 function kindsLine(kinds: Record<string, number>): string {
   const order = ['trigger', 'tool', 'mcp', 'llm', 'agent', 'branch', 'loop', 'wait', 'check', 'end']
-  return order.filter(k => kinds[k]).map(k => `${k === 'llm' ? 'LLM' : k === 'mcp' ? 'MCP' : k} ${kinds[k]}`).join(' · ')
+  const label: Record<string, string> = { llm: 'LLM', mcp: 'MCP', agent: 'bot' }
+  return order.filter(k => kinds[k]).map(k => `${label[k] ?? k} ${kinds[k]}`).join(' · ')
 }
 
 function duration(run: FlowRunSummary): string {
   if (!run.started_at) return '—'
   const end = run.ended_at ? Date.parse(run.ended_at) : Date.now()
-  const ms = Math.max(0, end - Date.parse(run.started_at))
-  return ms < 1000 ? `${ms}ms` : ms < 60_000 ? `${(ms / 1000).toFixed(1)}s` : `${Math.round(ms / 60_000)}m`
+  return formatDuration(Math.max(0, end - Date.parse(run.started_at)))
+}
+
+/** A routine/trigger cron runs on the server clock (UTC). */
+const scheduleWords = (cron: string | null | undefined) => describeCron(cron, { utc: true })
+
+function TimeAgo({ at, className }: { at: string | null | undefined; className?: string }) {
+  const t = formatDateTime(at)
+  return <span className={className} title={t.title}>{t.label}</span>
 }
 
 export function WorkflowsPanel({
@@ -78,6 +87,9 @@ export function WorkflowsPanel({
   defaultWorkspace = null,
   onCreated,
   onOpenRunLog,
+  onDetailsSaved,
+  newOpen: newOpenProp,
+  onNewOpenChange,
 }: {
   flows: FlowSummary[]
   flowsEnabled: boolean
@@ -94,16 +106,24 @@ export function WorkflowsPanel({
   onCreated?: (r: NewWorkflowResult) => void
   /** obj 900676: open the Executions view (per-run log) of this workflow, focused on a run. */
   onOpenRunLog?: (flow: FlowSummary, runId: number | null) => void
+  /** obj 900868: Notes/Tools were saved on a workflow — refresh the list. */
+  onDetailsSaved?: () => void
+  /** Controlled New workflow dialog (obj 900807): the Workflows page opens it
+      from its header primary, so the panel shows no button of its own. */
+  newOpen?: boolean
+  onNewOpenChange?: (open: boolean) => void
 }) {
-  const [newOpen, setNewOpen] = useState(false)
+  const [newOpenLocal, setNewOpenLocal] = useState(false)
+  const controlled = newOpenProp !== undefined
+  const newOpen = controlled ? newOpenProp : newOpenLocal
+  const setNewOpen = (open: boolean) => { if (controlled) onNewOpenChange?.(open); else setNewOpenLocal(open) }
   const columns: Column<FlowSummary>[] = [
     {
       key: 'name',
       header: 'Workflow',
       cell: f => (
         <div className="min-w-0">
-          <div className="truncate font-medium text-fg-0" title={f.name}>{f.name}</div>
-          <div className="truncate font-mono text-xs text-fg-3">{f.slug}</div>
+          <div className="truncate font-medium text-fg-0" title={f.slug}>{f.name}</div>
         </div>
       ),
     },
@@ -113,10 +133,10 @@ export function WorkflowsPanel({
       header: 'Version',
       cell: f => (
         <div className="flex flex-wrap items-center gap-1">
-          <Badge tone={f.status === 'active' ? 'verify' : 'neutral'} mono>{f.status}</Badge>
-          {f.published_version != null && <Badge tone="neutral" mono>v{f.published_version}</Badge>}
+          <Badge tone={f.status === 'active' ? 'verify' : 'neutral'}>{humanize(f.status)}</Badge>
+          {f.published_version != null && <Badge tone="neutral">Version {f.published_version}</Badge>}
           {f.latest_version != null && f.latest_version !== f.published_version && (
-            <Badge tone="amber" mono>draft v{f.latest_version}</Badge>
+            <Badge tone="amber">Draft version {f.latest_version}</Badge>
           )}
         </div>
       ),
@@ -124,12 +144,11 @@ export function WorkflowsPanel({
     {
       key: 'trigger',
       header: 'Trigger',
-      mono: true,
       cell: f =>
         f.routine ? (
-          <span title={f.routine.cron_expr}>{f.routine.cadence}</span>
+          <span>{scheduleWords(f.routine.cron_expr)}</span>
         ) : f.trigger ? (
-          <span>{f.trigger.on}{f.trigger.cron ? ` · ${f.trigger.cron}` : ''}</span>
+          <span>{f.trigger.cron ? scheduleWords(f.trigger.cron) : humanize(f.trigger.on)}</span>
         ) : '—',
     },
     { key: 'nodes', header: 'Nodes', hideOnMobile: true, cell: f => <span className="text-xs text-fg-2">{kindsLine(f.kinds)}</span> },
@@ -141,9 +160,9 @@ export function WorkflowsPanel({
       sortValue: f => f.last_run?.created_at ?? '',
       cell: f => (
         <div className="flex items-center justify-end gap-1.5">
-          {f.routine?.auto_paused_at && <Badge tone="alarm">auto-paused</Badge>}
+          {f.routine?.auto_paused_at && <Badge tone="alarm">Auto-paused</Badge>}
           <RunStatusBadge run={f.last_run} />
-          {f.last_run && <span className="font-mono text-xs text-fg-3">{relativeTime(f.last_run.created_at)}</span>}
+          {f.last_run && <TimeAgo className="text-xs text-fg-3" at={f.last_run.created_at} />}
         </div>
       ),
     },
@@ -154,18 +173,20 @@ export function WorkflowsPanel({
   return (
     <div className="space-y-4" data-testid="workflows-panel">
       {!flowsEnabled && (
-        <Alert tone="amber" title="Workflows are switched off on this install">
-          The kill switch <code className="font-mono">settings.flows_enabled</code> is off (the default). Definitions,
-          diagrams and past runs stay visible here; no workflow runs on its schedule or from Run now until an
-          operator turns it on.
+        <Alert tone="amber" title="Workflows are turned off for this install">
+          Workflows, their charts and past runs stay visible here, but none run on their schedule or from Run now
+          until an admin turns workflows on in Settings.
         </Alert>
       )}
 
       <section className="space-y-2">
-        <div className="flex items-center justify-between gap-2">
+        {/* Standalone, the panel carries its own create button. On the
+            Workflows page the header owns it and the title already says
+            "Workflows", so neither the button nor a repeat eyebrow shows. */}
+        {!controlled && <div className="flex items-center justify-between gap-2">
           <h3 className="flex items-center gap-2 text-xs font-semibold uppercase tracking-eyebrow text-fg-3">
             <Workflow className="h-3.5 w-3.5" /> Workflows
-            <span className="font-mono">{flows.length}</span>
+            <span>{flows.length}</span>
           </h3>
           {workspaces.length > 0 && (
             <Button
@@ -178,10 +199,10 @@ export function WorkflowsPanel({
               New workflow
             </Button>
           )}
-        </div>
+        </div>}
         <p className="max-w-3xl text-sm leading-snug text-fg-2">
-          Automated workflows run as typed steps with no agent session per run. The model is used only where a
-          workflow has an LLM step. Each one has a home card on the board. Pick a row to see its flow chart.
+          A workflow is a chain of steps that runs on a schedule or a trigger, with no bot session per run. The model is used only where a
+          workflow has an LLM step. A single instruction that repeats (like weekly research) is a scheduled task, listed under Runs; a strategy is the goal card either one can report to. Each one has a home card on the board. Pick a row to see its flow chart.
         </p>
         <DataTable
           columns={columns}
@@ -194,7 +215,7 @@ export function WorkflowsPanel({
           empty={{
             icon: <GitBranch className="h-5 w-5" />,
             title: 'No workflows yet',
-            description: 'Start one with New workflow: describe the goal and a builder agent drafts and self-tests it. Agents can do the same over the API or MCP (create_workflow).',
+            description: 'Start one with New workflow: describe the goal and a builder bot drafts and self-tests it. Bots and outside agents can do the same over the API or MCP.',
           }}
         />
       </section>
@@ -209,7 +230,7 @@ export function WorkflowsPanel({
       />
 
       {selected && (
-        <FlowDetail key={selected.id} flow={selected} labelOf={labelOf} flowsEnabled={flowsEnabled} onRunNow={onRunNow} onRunLifecycle={onRunLifecycle} onOpenRunLog={onOpenRunLog} />
+        <FlowDetail key={selected.id} flow={selected} labelOf={labelOf} flowsEnabled={flowsEnabled} onRunNow={onRunNow} onRunLifecycle={onRunLifecycle} onOpenRunLog={onOpenRunLog} onDetailsSaved={onDetailsSaved} />
       )}
     </div>
   )
@@ -232,7 +253,7 @@ function FlowRunNowButton({
     const r = await onRunNow(flow.id)
     setBusy(false)
     if (r.ok) toast.success(`Queued: ${flow.name}`)
-    else toast.error(`Blocked: ${flow.name}`, { description: r.reason ?? 'error' })
+    else toast.error(`Blocked: ${flow.name}`, { description: r.reason ? (/^[a-z0-9_]+$/.test(r.reason) ? humanize(r.reason) : r.reason) : 'Something went wrong. Try again in a moment.' })
   }, [flow.id, flow.name, onRunNow])
   return (
     <div className="flex items-center gap-2">
@@ -241,7 +262,7 @@ function FlowRunNowButton({
         size="sm"
         onClick={e => { e.stopPropagation(); void run() }}
         disabled={busy || disabled}
-        title={disabled ? 'Needs a published version and settings.flows_enabled = 1' : undefined}
+        title={disabled ? 'Needs a published version, and workflows turned on in Settings' : undefined}
         leftIcon={<Play className={cn('h-3.5 w-3.5', busy && 'animate-pulse')} />}
       >
         {busy ? 'Queuing…' : 'Run now'}
@@ -257,6 +278,7 @@ function FlowDetail({
   onRunNow,
   onRunLifecycle,
   onOpenRunLog,
+  onDetailsSaved,
 }: {
   flow: FlowSummary
   labelOf: (ws: string) => string
@@ -264,6 +286,7 @@ function FlowDetail({
   onRunNow: (flowId: number) => Promise<{ ok: boolean; reason?: string }>
   onRunLifecycle?: () => void
   onOpenRunLog?: (flow: FlowSummary, runId: number | null) => void
+  onDetailsSaved?: () => void
 }) {
   const [version, setVersion] = useState<number | null>(null)
   const { detail, error, reload } = useFlowDetail(flow.id, version)
@@ -329,16 +352,16 @@ function FlowDetail({
   const runColumns: Column<FlowRunSummary>[] = useMemo(() => [
     { key: 'id', header: 'Run', mono: true, cell: r => <Badge tone="neutral" mono>#{r.id}</Badge> },
     { key: 'status', header: 'Status', cell: r => <RunStatusBadge run={r} /> },
-    { key: 'trigger', header: 'Trigger', mono: true, hideOnMobile: true, cell: r => r.trigger_source ?? '—' },
-    { key: 'version', header: 'Ver.', mono: true, hideOnMobile: true, cell: r => `v${r.version}` },
+    { key: 'trigger', header: 'Trigger', hideOnMobile: true, cell: r => r.trigger_source ? humanize(r.trigger_source) : '—' },
+    { key: 'version', header: 'Version', hideOnMobile: true, cell: r => `v${r.version}` },
     {
       key: 'error',
       header: 'Error',
-      cell: r => r.error ? <span className="line-clamp-1 text-xs text-signal-alarm" title={r.error.title}>{r.error.type}: {r.error.title}</span> : <span className="text-fg-3">—</span>,
+      cell: r => r.error ? <span className="line-clamp-1 text-xs text-danger" title={r.error.type}>{r.error.title}</span> : <span className="text-fg-3">—</span>,
     },
-    { key: 'dur', header: 'Took', mono: true, align: 'right', hideOnMobile: true, cell: r => duration(r) },
-    { key: 'cost', header: 'Cost', mono: true, align: 'right', hideOnMobile: true, cell: r => (r.spent_usd > 0 ? `$${r.spent_usd.toFixed(3)}` : '—') },
-    { key: 'age', header: 'Age', mono: true, align: 'right', cell: r => relativeTime(r.created_at) },
+    { key: 'dur', header: 'Took', align: 'right', hideOnMobile: true, cell: r => duration(r) },
+    { key: 'cost', header: 'Cost', align: 'right', hideOnMobile: true, cell: r => (r.spent_usd > 0 ? formatCost(r.spent_usd) : '—') },
+    { key: 'age', header: 'Started', align: 'right', cell: r => <TimeAgo at={r.created_at} /> },
   ], [])
 
   return (
@@ -347,13 +370,12 @@ function FlowDetail({
         <div className="min-w-0">
           <h3 className="text-lg font-semibold text-fg-0">{flow.name}</h3>
           <div className="mt-1 flex flex-wrap items-center gap-1.5 text-xs text-fg-2">
-            <span className="font-mono">{flow.slug}</span>
             <Badge tone="neutral">{labelOf(flow.workspace)}</Badge>
-            <Badge tone={flow.status === 'active' ? 'verify' : 'neutral'} mono>{flow.status}</Badge>
+            <Badge tone={flow.status === 'active' ? 'verify' : 'neutral'}>{humanize(flow.status)}</Badge>
             {flow.routine && (
-              <span className="font-mono">
-                {flow.routine.cadence}
-                {flow.routine.enabled && flow.routine.next_run_at ? ` · next run ${relativeFuture(flow.routine.next_run_at)}` : ' · schedule paused'}
+              <span>
+                {scheduleWords(flow.routine.cron_expr)}
+                {flow.routine.enabled && flow.routine.next_run_at ? ` · next run ${formatRelativeTime(flow.routine.next_run_at)}` : ' · schedule paused'}
               </span>
             )}
             {flow.objective_id != null && (
@@ -381,15 +403,26 @@ function FlowDetail({
 
       {flow.routine?.auto_paused_at && (
         <Alert tone="alarm" title="Schedule auto-paused">
-          <span className="font-mono text-xs">{flow.routine.auto_pause_reason}</span> — use Resume in the banner on the Jobs tab.
+          <span className="text-xs">{flow.routine.auto_pause_reason}</span> — use Resume in the banner at the top of Workflows.
         </Alert>
       )}
-      {error && <Alert tone="alarm" title="Could not load workflow">{error}</Alert>}
+      {error && (
+        <Alert tone="alarm" title="Could not load workflow">
+          {friendlyError(error).message}
+          <details className="mt-1 text-xs text-fg-3"><summary>Details</summary>{error}</details>
+        </Alert>
+      )}
+
+      <FlowAboutSection
+        flow={flow}
+        goal={detail?.definition?.goal?.statement || detail?.builder?.goal || null}
+        onSaved={() => onDetailsSaved?.()}
+      />
 
       <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-fg-2">
         <span data-testid="flow-status-caption">
           {shownRun
-            ? <>Node status from run <span className="font-mono">#{shownRun.id}</span> ({shownRun.status}, {relativeTime(shownRun.created_at)} ago){runDetail ? '' : ' — the latest run of this version'}</>
+            ? <>Step status from run <span className="font-mono">#{shownRun.id}</span> ({humanize(shownRun.status).toLowerCase()}, <TimeAgo at={shownRun.created_at} />){runDetail ? '' : ' — the latest run of this version'}</>
             : 'No runs of this version yet — the chart shows the definition only.'}
         </span>
         <div className="flex items-center gap-2">
@@ -414,7 +447,6 @@ function FlowDetail({
           {detail.builder
             ? <>The builder{detail.builder.objective_id != null ? <> on card <a className="text-accent-hover hover:underline" href={`/o/${detail.builder.objective_id}`}>#{detail.builder.objective_id}</a></> : null} is turning the goal into a first draft ({detail.builder.used}/{detail.builder.max} drafts used). The chart appears once a version validates.</>
             : 'This workflow has no version yet.'}
-          {detail.builder?.goal && <span className="mt-1 block text-fg-2">Goal: {detail.builder.goal}</span>}
         </Alert>
       ) : view === 'canvas' ? (
         <>
@@ -477,26 +509,26 @@ function FlowDetail({
       {runDetail && runDetail.steps.length > 0 && (
         <div className="space-y-1">
           <h4 className="text-xs font-semibold uppercase tracking-eyebrow text-fg-3">
-            Steps of run #{runDetail.run.id}{runDetail.run.mode !== 'live' ? ` (${runDetail.run.mode} self-test — nothing was sent)` : ''}
+            Steps of run #{runDetail.run.id}{runDetail.run.mode !== 'live' ? ` (${humanize(runDetail.run.mode).toLowerCase()} self-test — nothing was sent)` : ''}
           </h4>
           <ul className="divide-y divide-line rounded-md border border-line text-xs">
             {runDetail.steps.map((s, i) => (
               <li key={i} className="flex flex-wrap items-center gap-2 px-2 py-1.5">
                 <span className="w-32 truncate font-mono text-fg-0">{s.node_id}{s.iteration ? `[${s.iteration}]` : ''}</span>
-                <Badge tone={s.status === 'succeeded' ? 'verify' : s.status === 'failed' ? 'alarm' : 'amber'} mono>
-                  {s.status === 'running' && runDetail.run.status === 'waiting' ? 'waiting' : s.status}
+                <Badge tone={s.status === 'succeeded' ? 'verify' : s.status === 'failed' ? 'alarm' : 'amber'}>
+                  {s.status === 'running' && runDetail.run.status === 'waiting' ? 'Waiting' : humanize(s.status)}
                 </Badge>
-                <span className="font-mono text-fg-3">attempt {s.attempt}</span>
-                {s.effect && <span className="font-mono text-fg-3">{s.effect}</span>}
+                <span className="text-fg-3">attempt {s.attempt}</span>
+                {s.effect && <span className="text-fg-3">{humanize(s.effect).toLowerCase()}</span>}
                 {s.simulated && (
-                  <Badge tone="amber" mono>{s.simulated.startsWith('would_') ? s.simulated.replace('_', ' ') : s.simulated}</Badge>
+                  <Badge tone="amber">{humanize(s.simulated)}</Badge>
                 )}
                 {s.simulated?.startsWith('would_') && s.input_preview && (
                   <span className="min-w-0 flex-1 truncate font-mono text-fg-3" title={s.input_preview}>{s.input_preview}</span>
                 )}
                 {s.error && (
-                  <span className="inline-flex min-w-0 flex-1 items-center gap-1 truncate text-signal-alarm" title={s.error.detail ?? s.error.title}>
-                    <AlertTriangle className="h-3 w-3 shrink-0" /> {s.error.type}: {s.error.title}
+                  <span className="inline-flex min-w-0 flex-1 items-center gap-1 truncate text-danger" title={s.error.detail ?? s.error.type}>
+                    <AlertTriangle className="h-3 w-3 shrink-0" /> {s.error.title}
                   </span>
                 )}
               </li>
@@ -509,7 +541,7 @@ function FlowDetail({
         <div className="flex items-center justify-between gap-2">
           <h4 className="text-xs font-semibold uppercase tracking-eyebrow text-fg-3">Recent runs</h4>
           {onOpenRunLog && (detail?.runs.length ?? 0) > 0 && (
-            <Button variant="ghost" size="sm" onClick={() => onOpenRunLog(flow, null)}>All executions</Button>
+            <Button variant="ghost" size="sm" onClick={() => onOpenRunLog(flow, null)}>All runs</Button>
           )}
         </div>
         <DataTable

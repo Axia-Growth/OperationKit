@@ -4,7 +4,7 @@
  * hidden from chat bots and denied to card sessions (`--disallowedTools`).
  */
 import type { McpServerTool } from '@operationkit/shared'
-import { cn } from '../ui'
+import { Checkbox, cn } from '../ui'
 
 export function McpToolList({
   tools,
@@ -25,17 +25,14 @@ export function McpToolList({
             {t.description && <div className="mt-0.5 line-clamp-2 text-xs leading-relaxed text-fg-2">{t.description}</div>}
           </div>
           {onToggle && (
-            <label className="mt-0.5 inline-flex shrink-0 cursor-pointer items-center gap-1.5 text-xs text-fg-2">
-              <input
-                type="checkbox"
-                className="h-4 w-4 accent-[color:var(--accent)]"
-                checked={t.enabled}
-                disabled={busyTool === t.name}
-                onChange={e => onToggle(t.name, e.target.checked)}
-                aria-label={`${t.enabled ? 'Turn off' : 'Turn on'} ${t.name}`}
-              />
-              {t.enabled ? 'On' : 'Off'}
-            </label>
+            <Checkbox
+              className="mt-0.5 shrink-0 gap-1.5 py-0 text-xs text-fg-2"
+              checked={t.enabled}
+              disabled={busyTool === t.name}
+              onChange={e => onToggle(t.name, e.target.checked)}
+              aria-label={`${t.enabled ? 'Turn off' : 'Turn on'} ${t.name}`}
+              label={t.enabled ? 'On' : 'Off'}
+            />
           )}
         </li>
       ))}

@@ -245,3 +245,26 @@ export function useFlowLiveEvents(
     }
   }, [flowId, debounceMs])
 }
+
+/**
+ * PATCH /api/flows/:id — edit a workflow's Notes and Tools (obj 900868). They
+ * describe the workflow and are not versioned: no self-test, no re-publish.
+ */
+export async function updateFlowDetails(
+  flowId: number,
+  body: { notes?: string; tools?: string[] },
+): Promise<{ ok: true; flow: FlowSummary } | { ok: false; error: string }> {
+  try {
+    const r = await fetch(`/api/flows/${flowId}`, {
+      method: 'PATCH',
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    })
+    const json = (await r.json().catch(() => ({}))) as { flow?: FlowSummary; error?: string }
+    if (!r.ok || !json.flow) return { ok: false, error: json.error || `HTTP ${r.status}` }
+    return { ok: true, flow: json.flow }
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : 'Request failed' }
+  }
+}

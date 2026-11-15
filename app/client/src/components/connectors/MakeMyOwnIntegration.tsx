@@ -10,12 +10,8 @@ import { Bot, KeyRound, BookOpen, Wrench } from 'lucide-react'
 import type { IntegrationBuilderCreateResponse } from '@operationkit/shared'
 import { api, ApiError } from '../../lib/api'
 import { useNavigate } from '../../context/nav'
-import { Alert, Button, Card } from '../ui'
+import { Alert, Button, Card, Field, Input, SectionHeader, Textarea } from '../ui'
 import { Select } from '../ui/Select'
-
-const FIELD =
-  'w-full rounded-md border border-line bg-surface-1 px-3 py-2 text-sm text-fg-0 outline-none transition-colors duration-fast ease-out placeholder:text-fg-3 hover:border-line-strong focus:border-accent focus-visible:ring-2 focus-visible:ring-accent/40'
-const LABEL = 'mb-1 block text-xs font-medium text-fg-1'
 
 function errText(err: unknown, fallback: string): string {
   if (err instanceof ApiError) return (err.body as { error?: string } | null)?.error || err.message || fallback
@@ -78,12 +74,12 @@ export function MakeMyOwnIntegration({
         <div className="grid h-10 w-10 shrink-0 place-items-center rounded-lg border border-line bg-surface-3 text-fg-1">
           <Bot className="h-5 w-5" />
         </div>
-        <div className="min-w-0">
-          <h3 className="font-display text-lg font-semibold text-fg-0">Make my own with the Integrations bot</h3>
-          <p className="mt-0.5 text-sm leading-relaxed text-fg-2">
-            For anything not in the list. The bot works in a chat on its own board card:
-          </p>
-        </div>
+        <SectionHeader
+          level={3}
+          className="mb-0"
+          title="Make my own with the Integrations bot"
+          description="For anything not in the list. The bot works in a chat on its own board card:"
+        />
       </div>
       <ol className="mt-3 grid gap-2 sm:grid-cols-2">
         {STEPS.map((s, i) => (
@@ -113,44 +109,38 @@ export function MakeMyOwnIntegration({
           className="mt-4 space-y-3"
           onSubmit={e => { e.preventDefault(); void start() }}
         >
-          <div>
-            <label className={LABEL} htmlFor={`${id}-target`}>
-              What do you want to connect? <span className="text-fg-3">(optional — the bot asks)</span>
-            </label>
-            <input
-              id={`${id}-target`}
-              className={`${FIELD} min-h-[44px] sm:min-h-[36px]`}
+          <Field id={`${id}-target`} label="What do you want to connect?" optional hint="The bot asks if you leave it empty.">
+            <Input
               value={target}
               onChange={e => setTarget(e.target.value)}
               maxLength={200}
               placeholder="Our Acme CRM — read contacts and log calls"
             />
-          </div>
-          <div>
-            <label className={LABEL} htmlFor={`${id}-docs`}>
-              API docs <span className="text-fg-3">(optional — a link, or paste the docs)</span>
-            </label>
-            <textarea
-              id={`${id}-docs`}
-              className={`${FIELD} min-h-[72px]`}
+          </Field>
+          <Field
+            id={`${id}-docs`}
+            label="API docs"
+            optional
+            hint="A link, or paste the docs. Do not paste keys here. The bot asks for them in a secure form."
+          >
+            <Textarea
+              className="min-h-[72px]"
               value={docs}
               onChange={e => setDocs(e.target.value)}
               maxLength={8000}
               placeholder="https://developers.acme.com/api"
             />
-            <p className="mt-1 text-xs text-fg-3">Do not paste keys here. The bot asks for them in a secure form.</p>
-          </div>
+          </Field>
           <div className="flex flex-wrap items-end justify-between gap-3">
-            <div>
-              <label className={LABEL} htmlFor={`${id}-ws`}>Workspace</label>
+            <Field id={`${id}-ws`} label="Workspace">
               <Select
-                id={`${id}-ws`} className="w-auto"
+                className="w-auto"
                 value={workspace}
                 onChange={v => setWorkspace(v)}
               >
                 {workspaces.map(w => <option key={w.value} value={w.value}>{w.label}</option>)}
               </Select>
-            </div>
+            </Field>
             <Button type="submit" variant="primary" loading={busy} disabled={!workspace}>
               Start the Integrations bot
             </Button>

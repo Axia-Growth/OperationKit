@@ -118,7 +118,7 @@ export function MarkdownEditor({
       saved: { text: 'Saved', tone: 'text-fg-3' },
       dirty: { text: 'Unsaved…', tone: 'text-fg-3' },
       saving: { text: 'Saving…', tone: 'text-accent' },
-      error: { text: 'Save failed — retrying on next edit', tone: 'text-signal-alarm' },
+      error: { text: 'Save failed — retrying on next edit', tone: 'text-danger' },
     }
     const b = badge[saveState]
     return (

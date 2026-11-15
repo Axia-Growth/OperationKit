@@ -40,14 +40,16 @@ jobs:
         run: bash install/test/cloudflare-mock-test.sh
       - name: Claude sign-in (link + code) against a mock
         run: bash install/test/claude-oauth-mock-test.sh
-      - name: Off-site backup setup (B2 prompt, retention, restore test) against a mock
+      - name: Off-site backup setup (B2 prompt, retention, BACKUP_HOME=offsite, status, other jobs) against a mock
         run: bash install/test/b2-setup-test.sh
+      - name: verify.sh test card can be created on every re-run (unique title, force, cleanup)
+        run: bash install/test/verify-card-test.sh
       - name: Secrets KEK host file + audit retention cron (D2/D5, obj 900540)
         run: bash install/test/secrets-kek-test.sh
       - name: Install docs links and anchors resolve
         run: node install/test/docs-links-test.mjs
       - name: shellcheck (shared libs + backup + B2 setup scripts)
-        run: shellcheck --version && shellcheck -x --severity=warning install/lib.sh install/api-bypass-lib.sh install/bic-lib.sh install/backup.sh install/b2-setup.sh install/test/b2-setup-test.sh install/test/api-bypass-paths-test.sh install/test/bic-lib-test.sh install/claude-oauth.sh install/claude-login.sh install/test/claude-oauth-mock-test.sh install/test/secrets-kek-test.sh
+        run: shellcheck --version && shellcheck -x --severity=warning install/lib.sh install/api-bypass-lib.sh install/bic-lib.sh install/verify-lib.sh install/backup.sh install/b2-setup.sh install/update.sh install/test/b2-setup-test.sh install/test/verify-card-test.sh install/test/api-bypass-paths-test.sh install/test/bic-lib-test.sh install/claude-oauth.sh install/claude-login.sh install/test/claude-oauth-mock-test.sh install/test/secrets-kek-test.sh
       - name: Without --skip-cloudflare an empty DOMAIN is refused, with the hint
         run: |
           if ./install.sh --config ci.conf --dry-run > out.txt 2>&1; then cat out.txt; exit 1; fi
@@ -114,12 +116,17 @@ jobs:
           sudo test -f /opt/operationkit/state/data/branding/ci-marker
           sudo bash scripts/starter-pack.sh status | grep -qE '^ON +knowledge-import'
           sudo bash install/backup.sh list --config ci.conf
+          # Which nightly backup runs here (read-only): the built-in job, nothing hand-made.
+          sudo bash install/backup.sh status --config ci.conf 2>&1 | tee status.out
+          grep -q 'nightly job:' status.out
+          grep -q 'other jobs:   none' status.out
       - name: update.sh (pre-update backup, rollback image tag, re-install at this commit)
         run: |
           sudo bash install/update.sh --config ci.conf --ref "$(git rev-parse HEAD)" -- --skip-ssh-hardening --skip-verify | tee update.log
           sudo find /opt/operationkit/backups -maxdepth 1 -name 'pre-update-*' | grep -q .
           sudo docker image ls operationkit-app --format '{{.Tag}}' | grep -q '^pre-update-'
           grep -q 'To go back to the version' update.log
+          grep -q 'nightly job:' update.log   # update.sh ends with backup.sh status
           sudo bash install/verify.sh --config ci.conf --local-only --skip-card
       - name: After update.sh, 3002 is on 127.0.0.1 + the Docker bridge only, and the bridge gets 200 (obj 900185)
         run: |

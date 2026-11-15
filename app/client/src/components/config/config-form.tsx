@@ -2,15 +2,12 @@
  * Shared Config page form tokens — extracted from ConfigPage.tsx (behavior frozen).
  */
 import type { ReactNode } from 'react'
-import { cn } from '../ui'
+import { cn, INPUT_CLS } from '../ui'
 
-// Shared input styling — token-bound, matches the Mission Control surface
-// language (no hardcoded hex). Used across the forms on this page.
-export const inputCls =
-  'w-full min-w-0 rounded-md border border-line bg-surface-1 px-3 py-2 text-sm text-fg-0 ' +
-  'placeholder-fg-3 transition-colors focus:border-accent focus:outline-none'
-export const selectCls =
-  'rounded-md border border-line bg-surface-1 px-2.5 py-2 text-sm text-fg-0 focus:border-accent focus:outline-none'
+// Legacy alias for the one text-control look (polish F5, obj 900806). New code
+// uses <Field>/<Input> from '../ui'. This stays only for the controls that still
+// take a class string (AssignmentsTab), so they match the primitive exactly.
+export const inputCls = cn(INPUT_CLS, 'h-11 sm:h-9')
 
 export function SectionLabel({ icon, children, className }: { icon?: ReactNode; children: ReactNode; className?: string }) {
   return (

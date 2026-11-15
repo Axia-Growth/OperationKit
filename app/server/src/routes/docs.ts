@@ -250,6 +250,18 @@ function resolveUnder(roots: string[], requested: unknown): string | null {
   // byte inside a string. Only a single string is a path.
   if (typeof requested !== 'string' || !requested) return null
   if (requested.includes('\0')) return null
+  // obj 900803: a transcript link like `~/notes/x.md` (the client no longer
+  // assumes whose home `~` is) resolves against the home of each allowed root;
+  // the expanded path still has to pass the containment check below.
+  if (requested.startsWith('~/')) {
+    for (const root of roots) {
+      const home = /^\/home\/[^/]+/.exec(path.resolve(root))?.[0]
+      if (!home) continue
+      const hit = resolveUnder(roots, home + requested.slice(1))
+      if (hit) return hit
+    }
+    return null
+  }
   const real = realDeep(path.resolve(requested))
   if (!real) return null
   // Re-resolve so the containment test below runs on the exact normalised,
@@ -373,6 +385,8 @@ router.get('/related', async (req: AuthRequest, res) => {
 // caller can see. `root` (MCP list_folders) narrows to one folder INSIDE it.
 // `roots` is kept for older clients and always lists just the knowledge folders.
 router.get('/tree', (req: AuthRequest, res) => {
+  // obj 900867: revalidated by ETag on every request (an unchanged tree is a 304), never shared-cached.
+  res.setHeader('Cache-Control', 'private, no-cache')
   const readRoots = getReadRoots(req)
   // obj 900021: advertise only the write roots inside the key's workspaces.
   const writeRoots = filterToKeyWorkspaces(req, getWriteRoots(req), r => r)

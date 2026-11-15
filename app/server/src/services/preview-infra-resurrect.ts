@@ -29,7 +29,7 @@
 import type { Database } from 'better-sqlite3'
 import type { Objective } from '@operationkit/shared'
 import { getDb } from '../db/index.js'
-import { PR_LINKAGE_REPO } from './pr-linkage.js'
+import { prLinkageRepo } from './pr-linkage.js'
 import { REPO_SCOPE_SQL, repoScopeParams } from './objective-prs.js'
 import { previewHostFor } from '../lib/preview-health.js'
 import { startSession } from './session-manager.js'
@@ -109,7 +109,8 @@ export function recordPreviewInfraResurrectAttempt(
  * without it a PR from another repo sharing the branch-name template could be
  * probed against the wrong host) and bounded.
  */
-export function selectPreviewInfraBlockedCandidates(db: Database, repo: string = PR_LINKAGE_REPO): Objective[] {
+export function selectPreviewInfraBlockedCandidates(db: Database, repo: string = prLinkageRepo()): Objective[] {
+  if (!repo) return []
   try {
     return db
       .prepare(
@@ -174,12 +175,14 @@ export interface ResurrectDecision {
 export async function resurrectPreviewInfraBlockedObjectives(
   db: Database,
   deps: { probe: PreviewProbe; startWorkingSession: StartWorkingSession },
-  repo: string = PR_LINKAGE_REPO,
+  repo: string = prLinkageRepo(),
 ): Promise<ResurrectDecision[]> {
   const decisions: ResurrectDecision[] = []
+  // obj 900803: no harness repo or no preview domain → nothing to probe.
+  if (!repo || !previewHostFor(0)) return decisions
   for (const obj of selectPreviewInfraBlockedCandidates(db, repo)) {
     const prNumber = obj.pr_number as number
-    const host = previewHostFor(prNumber)
+    const host = previewHostFor(prNumber) as string
     try {
       const attempts = countPreviewInfraResurrectAttempts(db, obj.id)
       if (attempts >= PREVIEW_INFRA_RESURRECT_CAP) {

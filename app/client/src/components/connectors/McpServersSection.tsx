@@ -8,7 +8,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import type { McpErrorKind, McpOAuthStartResponse, McpServerSummary } from '@operationkit/shared'
 import { api, ApiError } from '../../lib/api'
-import { Alert, Badge, Button, Card, EmptyState, Skeleton, useConfirm } from '../ui'
+import { Alert, Badge, Button, Card, EmptyState, Field, Input, RowActions, SectionHeader, Skeleton, useConfirm } from '../ui'
 import { ConnectMcpServerDialog } from './ConnectMcpServerDialog'
 import { McpToolList } from './McpToolList'
 import { authLabel, errorHint, errorTitle, mcpOAuthReturnCopy, serverInfoLine, statusBadge } from './mcpServerCopy'
@@ -113,18 +113,20 @@ function ServerCard({
             </div>
           </div>
           {isAdmin && (
-            <div className="flex flex-wrap gap-2">
+            <div className="flex flex-wrap items-center gap-2">
               {s.auth_type === 'oauth' && s.status === 'needs_auth' && (
-                <Button size="sm" variant="primary" loading={busy === 'signin'} onClick={() => void signIn()}>Sign in</Button>
-              )}
-              {s.auth_type === 'api_key' && (
-                <Button size="sm" variant="ghost" onClick={() => setReplacing(v => !v)} aria-expanded={replacing}>Replace key</Button>
+                <Button size="sm" variant="secondary" loading={busy === 'signin'} onClick={() => void signIn()}>Sign in</Button>
               )}
               <Button size="sm" variant="secondary" loading={busy === 'test'} onClick={() => void runTest()}>Test connection</Button>
-              <Button size="sm" variant="ghost" onClick={() => void patch({ enabled: !s.enabled }, 'Saving')}>
-                {s.enabled ? 'Turn off' : 'Turn on'}
-              </Button>
-              <Button size="sm" variant="danger" onClick={() => onRemove(s)}>Disconnect</Button>
+              {/* 3+ actions incl. a destructive one → the row "⋯" menu, Disconnect last (polish F5). */}
+              <RowActions
+                label={`Actions for ${s.name}`}
+                actions={[
+                  ...(s.auth_type === 'api_key' ? [{ label: 'Replace key', onSelect: () => setReplacing(true) }] : []),
+                  { label: s.enabled ? 'Turn off' : 'Turn on', onSelect: () => void patch({ enabled: !s.enabled }, 'Saving') },
+                  { label: 'Disconnect', onSelect: () => onRemove(s), danger: true },
+                ]}
+              />
             </div>
           )}
         </div>
@@ -134,19 +136,18 @@ function ServerCard({
             className="mt-3 flex flex-wrap items-end gap-2"
             onSubmit={e => { e.preventDefault(); if (newKey.trim()) void replaceKey() }}
           >
-            <div className="min-w-[240px] flex-1">
-              <label htmlFor={`mcp-key-${s.id}`} className="mb-1 block text-xs font-medium text-fg-1">New API key ({s.auth_header_name ?? 'Authorization'})</label>
-              <input
-                id={`mcp-key-${s.id}`}
+            <Field id={`mcp-key-${s.id}`} label={`New API key (${s.auth_header_name ?? 'Authorization'})`} className="min-w-[240px] flex-1">
+              <Input
                 type="password"
                 autoComplete="off"
                 spellCheck={false}
                 value={newKey}
                 onChange={e => setNewKey(e.target.value)}
-                className="min-h-[44px] w-full rounded-md border border-line bg-surface-1 px-3 font-mono text-sm text-fg-0 outline-none hover:border-line-strong focus:border-accent focus-visible:ring-2 focus-visible:ring-accent/40 sm:min-h-[36px]"
+                className="font-mono"
               />
-            </div>
-            <Button type="submit" size="sm" variant="primary" loading={busy === 'key'} disabled={!newKey.trim()}>Save and test</Button>
+            </Field>
+            <Button type="submit" variant="primary" loading={busy === 'key'} disabled={!newKey.trim()}>Save and test</Button>
+            <Button type="button" variant="ghost" onClick={() => { setReplacing(false); setNewKey('') }}>Cancel</Button>
           </form>
         )}
 
@@ -165,7 +166,7 @@ function ServerCard({
           </div>
         )}
         {!test && s.last_error && s.status !== 'connected' && (
-          <p className="mt-2 text-sm leading-relaxed text-signal-alarm">{s.last_error}</p>
+          <p className="mt-2 text-sm leading-relaxed text-danger">{s.last_error}</p>
         )}
       </div>
 
@@ -272,14 +273,13 @@ export function McpServersSection({
 
   return (
     <section aria-labelledby="mcp-servers-title" className="space-y-3" data-testid="mcp-servers-section">
-      <div className="flex flex-wrap items-end justify-between gap-3">
-        <div className="min-w-0">
-          <h3 id="mcp-servers-title" className="font-display text-lg font-semibold text-fg-0">MCP servers</h3>
-          <p className="mt-0.5 text-sm leading-relaxed text-fg-2">
-            Remote MCP servers give agents and chat bots extra tools. Each server belongs to one workspace.
-          </p>
-        </div>
-        <div className="flex flex-wrap items-center gap-2">
+      <SectionHeader
+        headingId="mcp-servers-title"
+        className="mb-0"
+        title="MCP servers"
+        description="Remote MCP servers give agents and chat bots extra tools. Each server belongs to one workspace."
+        actions={
+          <>
           <label className="sr-only" htmlFor="mcp-ws-picker">Workspace</label>
           <Select
             id="mcp-ws-picker"
@@ -293,8 +293,9 @@ export function McpServersSection({
               Connect an MCP server
             </Button>
           )}
-        </div>
-      </div>
+          </>
+        }
+      />
 
       {notice && (
         <div aria-live="polite">
@@ -316,7 +317,7 @@ export function McpServersSection({
           />
         ) : (
           <p className="rounded-lg border border-dashed border-line px-4 py-3 text-sm text-fg-3">
-            No MCP servers connected in this workspace{isAdmin ? ' — add one from New Integration.' : '.'}
+            No MCP servers connected in this workspace{isAdmin ? ' — add one from New integration.' : '.'}
           </p>
         )
       ) : (

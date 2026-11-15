@@ -174,6 +174,5 @@ export function contextTreeFirstEnabled(): boolean {
 
 // ── Server ──
 export const SERVER_PORT = parseInt(process.env.PORT || '3002', 10)
-export const CORS_ORIGINS = process.env.CORS_ORIGINS
-  ? process.env.CORS_ORIGINS.split(',')
-  : ['https://cc.example.com', 'http://localhost:5173', 'http://localhost:3002']
+// CORS origins: resolveCorsOrigins() in lib/install-defaults.ts (obj 900803) —
+// CORS_ORIGINS env → settings → the install's own public URL + local dev.

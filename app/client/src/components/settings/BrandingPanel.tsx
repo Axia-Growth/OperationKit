@@ -1,8 +1,9 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useId, useState } from 'react'
 import type { CSSProperties } from 'react'
 import { Card, CardHeader, CardBody } from '../ui/Card'
 import { Button } from '../ui/Button'
 import { CopyButton } from '../ui/CopyButton'
+import { Alert, Checkbox, Field, Input, SettingsSection, useConfirm } from '../ui'
 import type { Branding, BrandTokens } from '../../hooks/useBranding'
 import { invalidateBranding, brandTokenVars } from '../../hooks/useBranding'
 import { deriveAccent } from '@operationkit/shared'
@@ -70,24 +71,27 @@ const LOGO_SLOTS: Array<{ slot: 'wordmark' | 'wordmark-dark' | 'icon' | 'favicon
 ]
 
 function HexInput({ value, onChange, disabled, label }: { value: string; onChange: (v: string) => void; disabled?: boolean; label: string }) {
+  const auto = useId()
+  const id = `hex${auto.replace(/:/g, '')}`
   return (
-    <label className="flex flex-wrap items-center gap-2 text-sm text-fg-1">
-      <span className="w-36 shrink-0">{label}</span>
+    <div className="flex flex-wrap items-center gap-2 text-sm text-fg-1">
+      <label htmlFor={id} className="w-36 shrink-0">{label}</label>
       <input
         type="color"
+        aria-label={`${label} picker`}
         value={/^#[0-9a-fA-F]{6}$/.test(value) ? value : '#000000'}
         onChange={e => onChange(e.target.value)}
         disabled={disabled}
-        className="h-9 w-10 shrink-0 cursor-pointer rounded-md border border-line bg-surface-1 disabled:cursor-not-allowed disabled:opacity-50"
+        className="h-9 w-10 shrink-0 cursor-pointer rounded-md border border-line bg-surface-1 outline-none focus-visible:ring-2 focus-visible:ring-accent/40 disabled:cursor-not-allowed disabled:opacity-50"
       />
-      <input
-        type="text"
+      <Input
+        id={id}
         value={value}
         onChange={e => onChange(e.target.value)}
         disabled={disabled}
-        className="h-9 w-28 rounded-md border border-line bg-surface-1 px-2 font-mono text-sm text-fg-0 disabled:opacity-50"
+        className="w-28 px-2 font-mono"
       />
-    </label>
+    </div>
   )
 }
 
@@ -113,6 +117,7 @@ export function BrandingPanel() {
   const [error, setError] = useState('')
   const [notice, setNotice] = useState('')
   const [uploading, setUploading] = useState<string | null>(null)
+  const { confirm, confirmDialog } = useConfirm()
 
   useEffect(() => {
     let cancelled = false
@@ -257,6 +262,28 @@ export function BrandingPanel() {
     }
   }
 
+  // Destructive actions ask first (polish F5): Reset wipes the name and every
+  // colour; Clear removes an uploaded logo file.
+  async function confirmReset() {
+    const ok = await confirm({
+      title: 'Reset branding to the default?',
+      message: 'The product name, every color and the “Powered by” setting go back to the defaults. Uploaded logos are kept. This cannot be undone.',
+      confirmLabel: 'Reset branding',
+      danger: true,
+    })
+    if (ok) await reset()
+  }
+
+  async function confirmClearLogo(slot: string, label: string) {
+    const ok = await confirm({
+      title: `Clear the ${label.toLowerCase()}?`,
+      message: 'The uploaded file is removed and the default is shown instead.',
+      confirmLabel: 'Clear',
+      danger: true,
+    })
+    if (ok) await clearLogo(slot)
+  }
+
   const assetUrl: Record<string, string | null> = {
     wordmark: branding?.wordmark_url ?? null,
     'wordmark-dark': branding?.wordmark_dark_url ?? null,
@@ -266,55 +293,37 @@ export function BrandingPanel() {
 
   return (
     <div className="flex flex-col gap-4">
-      {error && (
-        <div className="rounded-md border border-signal-alarm/30 bg-signal-alarm/10 px-3 py-2 text-sm text-signal-alarm">
-          {error}
-        </div>
-      )}
-      {notice && !error && (
-        <div className="rounded-md border border-signal-verify/30 bg-signal-verify/10 px-3 py-2 text-sm text-signal-verify">
-          {notice}
-        </div>
-      )}
+      {confirmDialog}
+      {error && <Alert tone="alarm" title={error} />}
+      {notice && !error && <Alert tone="verify" title={notice} />}
 
       <Card>
         <CardHeader
           title="Brand"
-          eyebrow="Settings · Branding"
-          actions={
-            <>
-              <Button size="sm" variant="ghost" onClick={reset} disabled={saving}>Reset to default</Button>
-              <Button size="sm" variant="primary" onClick={save} loading={saving}>Save</Button>
-            </>
-          }
+          actions={<Button size="sm" variant="primary" onClick={save} loading={saving}>Save</Button>}
         />
         <CardBody className="flex flex-col gap-4">
-          <label className="flex flex-wrap items-center gap-2 text-sm text-fg-1">
-            <span className="w-36 shrink-0">Product name</span>
-            <input
-              type="text"
+          <Field
+            label="Product name"
+            id="branding-name"
+            hint={locked.has('name') ? 'Set via the OK_BRAND_NAME env var.' : undefined}
+            className="max-w-sm"
+          >
+            <Input
               value={name}
               onChange={e => setName(e.target.value)}
               disabled={locked.has('name')}
               maxLength={60}
-              className="h-9 w-full min-w-0 rounded-md border border-line bg-surface-1 px-2.5 text-base text-fg-0 disabled:opacity-50 sm:w-64"
             />
-            {locked.has('name') && <span className="text-fg-3">set via OK_BRAND_NAME env var</span>}
-          </label>
+          </Field>
 
-          <label className="flex items-start gap-2 text-sm text-fg-1">
-            <input
-              type="checkbox"
-              checked={poweredBy}
-              onChange={e => setPoweredBy(e.target.checked)}
-              disabled={locked.has('powered_by')}
-              className="mt-0.5 h-4 w-4 accent-[var(--accent)]"
-            />
-            <span>
-              Show a small “Powered by” credit for the underlying platform on the sign-in page
-              <span className="block text-xs text-fg-3">Off by default — leave it off for a fully white-labeled install.</span>
-            </span>
-          </label>
+          <Checkbox
+            checked={poweredBy}
+            onChange={e => setPoweredBy(e.target.checked)}
+            disabled={locked.has('powered_by')}
+            label="Show a small “Powered by” credit for the underlying platform on the sign-in page"
+            description="Off by default — leave it off for a fully white-labeled install."
+          />
 
           {tokens && (
             <div className="flex flex-col gap-3 border-t border-line-soft pt-4">
@@ -342,22 +351,19 @@ export function BrandingPanel() {
                       {locked.has(f.key) ? (
                         <span className="text-xs text-fg-3">env-locked</span>
                       ) : (
-                        <label className="inline-flex items-center gap-1.5 text-xs text-fg-2">
-                          <input
-                            type="checkbox"
-                            checked={auto}
-                            onChange={e => togglePinned(f.key, !e.target.checked)}
-                            className="h-3.5 w-3.5"
-                          />
-                          Auto (from accent)
-                        </label>
+                        <Checkbox
+                          checked={auto}
+                          onChange={e => togglePinned(f.key, !e.target.checked)}
+                          aria-label={`${f.label}: auto from accent`}
+                          label={<span className="text-xs text-fg-2">Auto (from accent)</span>}
+                        />
                       )}
                     </div>
                   )
                 })}
               </div>
               <details className="group rounded-md border border-line-soft bg-surface-0 px-3 py-2">
-                <summary className="cursor-pointer select-none py-1.5 text-sm font-medium text-fg-1">
+                <summary className="cursor-pointer select-none rounded py-1.5 text-sm font-medium text-fg-1 outline-none focus-visible:ring-2 focus-visible:ring-accent/40">
                   Advanced — status colors
                   <span className="ml-2 font-normal text-fg-3">semantic, not brand; most installs never change these</span>
                 </summary>
@@ -400,7 +406,8 @@ export function BrandingPanel() {
                 <input
                   type="file"
                   accept=".svg,.png,.ico,image/svg+xml,image/png,image/x-icon"
-                  className="hidden"
+                  aria-label={`Upload ${label}`}
+                  className="peer sr-only"
                   disabled={uploading === slot}
                   onChange={e => {
                     const file = e.target.files?.[0]
@@ -408,11 +415,18 @@ export function BrandingPanel() {
                     e.target.value = ''
                   }}
                 />
-                <span className="inline-flex h-8 cursor-pointer items-center rounded-md border border-line bg-surface-1 px-3 text-sm text-fg-1 hover:border-line-strong hover:bg-surface-3">
+                <span className="inline-flex h-8 cursor-pointer items-center rounded-md border border-line bg-surface-2 px-3 text-sm font-medium text-fg-0 transition-colors duration-fast hover:border-line-strong hover:bg-surface-3 peer-focus-visible:ring-2 peer-focus-visible:ring-accent">
                   {uploading === slot ? 'Uploading…' : 'Upload'}
                 </span>
               </label>
-              <Button size="sm" variant="ghost" onClick={() => clearLogo(slot)} disabled={uploading === slot}>Clear</Button>
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={() => void confirmClearLogo(slot, label)}
+                disabled={uploading === slot}
+              >
+                Clear
+              </Button>
             </div>
           ))}
         </CardBody>
@@ -421,16 +435,14 @@ export function BrandingPanel() {
       <Card>
         <CardHeader title="Set this up with your coding agent" eyebrow="Copy-paste prompt" />
         <CardBody className="flex flex-col gap-3">
-          <label className="flex flex-wrap items-center gap-2 text-sm text-fg-1">
-            <span className="shrink-0">Company website</span>
-            <input
+          <Field label="Company website" id="branding-website" className="max-w-sm">
+            <Input
               type="url"
               placeholder="https://acme.com"
               value={websiteUrl}
               onChange={e => setWebsiteUrl(e.target.value)}
-              className="h-9 w-full min-w-0 rounded-md border border-line bg-surface-1 px-2.5 text-base text-fg-0 sm:w-72"
             />
-          </label>
+          </Field>
           <div className="flex items-start gap-2">
             <pre className="flex-1 whitespace-pre-wrap rounded-md border border-line bg-surface-1 p-3 font-mono text-xs text-fg-1">
               {brandingAgentPrompt(websiteUrl)}
@@ -443,9 +455,27 @@ export function BrandingPanel() {
           </p>
         </CardBody>
       </Card>
+
+      {/* Danger zone — kept away from Save (polish F5). */}
+      <SettingsSection
+        title="Reset branding"
+        danger
+        description="Puts the product name, every color and the “Powered by” setting back to the defaults. Uploaded logos are kept."
+        actions={<Button size="sm" variant="danger" onClick={() => void confirmReset()} disabled={saving}>Reset to default</Button>}
+      />
     </div>
   )
 }
+
+/* Status pills in the live preview. They read the semantic tokens the
+   .brand-scope wrapper re-declares from the DRAFT colours (not the signal-*
+   tokens ui/Badge uses), so the preview shows what Save will produce. */
+const PREVIEW_STATUS_PILLS = [
+  { label: 'Done', tone: 'border-success/30 bg-success/10 text-success' },
+  { label: 'In review', tone: 'border-warning/30 bg-warning/10 text-warning' },
+  { label: 'Blocked', tone: 'border-danger/30 bg-danger/10 text-danger' },
+  { label: 'Working', tone: 'border-info/30 bg-info/10 text-info' },
+] as const
 
 /** Scoped live preview — applies the DRAFT tokens only to this subtree via
  * inline CSS custom properties, so editing doesn't repaint the whole app
@@ -463,7 +493,10 @@ function LivePreview({ tokens, name, branding }: { tokens: BrandTokens; name: st
     <Card>
       <CardHeader title="Live preview" eyebrow="Updates as you edit, before you Save" />
       <CardBody>
-        <div style={style} className="brand-scope flex flex-col gap-3 rounded-md border border-line bg-surface-0 p-4">
+        {/* A picture of the brand, not controls (obj 900807): inert, so the
+            sample "Primary action" is not a second real primary on the page
+            and cannot take focus or clicks. */}
+        <div style={style} className="brand-scope flex flex-col gap-3 rounded-md border border-line bg-surface-0 p-4" inert data-brand-preview="">
           <div className="flex flex-wrap items-center gap-4">
             <BrandLogo branding={draft} size="md" />
             <Button variant="primary" size="sm">Primary action</Button>
@@ -471,10 +504,9 @@ function LivePreview({ tokens, name, branding }: { tokens: BrandTokens; name: st
             <a href="#preview" onClick={e => e.preventDefault()} className="text-sm font-medium text-accent hover:underline">A link</a>
           </div>
           <div className="flex flex-wrap items-center gap-2">
-            <span className="rounded-full border border-success/30 bg-success/10 px-2 py-0.5 text-xs font-medium text-success">Done</span>
-            <span className="rounded-full border border-warning/30 bg-warning/10 px-2 py-0.5 text-xs font-medium text-warning">In review</span>
-            <span className="rounded-full border border-danger/30 bg-danger/10 px-2 py-0.5 text-xs font-medium text-danger">Blocked</span>
-            <span className="rounded-full border border-info/30 bg-info/10 px-2 py-0.5 text-xs font-medium text-info">Working</span>
+            {PREVIEW_STATUS_PILLS.map(p => (
+              <span key={p.label} className={`rounded-full border px-2 py-0.5 text-xs font-medium ${p.tone}`}>{p.label}</span>
+            ))}
             <span className="rounded-md border border-line bg-surface-selected px-2 py-0.5 text-xs font-medium text-fg-0 shadow-[inset_2px_0_0_var(--accent-text)]">Selected row</span>
             <span className="rounded-full border border-[color:var(--accent-line)] bg-[var(--accent-tint)] px-2 py-0.5 text-xs font-medium text-accent">Needs you</span>
           </div>

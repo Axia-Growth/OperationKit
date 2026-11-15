@@ -7,12 +7,14 @@ import path from 'path'
 import type { Objective } from '@operationkit/shared'
 import { getDb } from '../db/index.js'
 import { classifyObjectiveRepo } from './objective-prs.js'
-import { PR_LINKAGE_REPO } from './pr-linkage.js'
+import { prLinkageRepo } from './pr-linkage.js'
+import { previewHostFor } from '../lib/preview-health.js'
 import { getEffectiveGateMode, buildVisionRubricBlock, isBackendOnlyChange, type UiGateMode } from './design-context.js'
 import { maskWorkerScratch, buildReviewerArtifactBlock } from './prompt-builder.js'
 import { resolveBrowserPolicy, type BrowserPolicy } from '../lib/browser-policy.js'
 import { PLAYWRIGHT_MCP_VERSION } from '../lib/browser-pins.js'
 import { sharedBrowserEgressProxy } from './browser-egress-proxy.js'
+import { resolveBrandName } from './branding-config.js'
 
 const TMUX_SCRIPT_DIR = process.env.CC_SCRIPT_DIR || '/tmp/cc-scripts'
 
@@ -226,7 +228,7 @@ export function buildReviewerPrompt(
   // grade the diff. Emits a machine-readable <criteria_results> block (parsed by
   // the state-poller) plus <screenshot_paths>/<artifact_paths> for evidence.
   //
-  // obj 704718 — `pr-<n>.cc.example.com` is the preview host for PR_LINKAGE_REPO
+  // obj 704718 — `pr-<n>.<preview domain>` is the preview host for the harness repo
   // ONLY, and `pr_number` is not repo-scoped (obj 2040 carries 202 for example3, 702028
   // carries 245 for example-project — both colliding with cc-infra numbers). Keying the
   // preview URL on the bare number sends the reviewer to a cc-infra preview host for an
@@ -243,9 +245,13 @@ export function buildReviewerPrompt(
   const tryGetDb = () => { try { return getDb() } catch { return null } }
   const previewOverride = process.env.PREVIEW_BASE_URL
   const previewIsForThisObjective =
-    !!previewOverride || classifyObjectiveRepo(tryGetDb(), objective, PR_LINKAGE_REPO) !== 'other'
-  const previewBaseUrl = previewOverride || `https://pr-${objective.pr_number}.cc.example.com`
-  const testAgentSection = objective.pr_number && previewIsForThisObjective && !isBackendOnlyChange(filesTouched)
+    !!previewOverride || classifyObjectiveRepo(tryGetDb(), objective, prLinkageRepo()) !== 'other'
+  // obj 900803: no built-in preview domain. Without PREVIEW_BASE_URL or a configured
+  // preview domain (CC_PREVIEW_DOMAIN / settings) there is no live preview to drive.
+  const previewHost = objective.pr_number ? previewHostFor(objective.pr_number) : null
+  const previewBaseUrl = previewOverride || (previewHost ? `https://${previewHost}` : '')
+  const previewHostLabel = (() => { try { return new URL(previewBaseUrl).host } catch { return '<host>' } })()
+  const testAgentSection = objective.pr_number && previewBaseUrl && previewIsForThisObjective && !isBackendOnlyChange(filesTouched)
     ? [
         '## TEST-AGENT MODE (PR preview — DRIVE THE APP, DO NOT READ THE DIFF)',
         '',
@@ -283,7 +289,7 @@ export function buildReviewerPrompt(
         '- On a confirmed INFRA failure, probe at most 3 times over ~60s to confirm it is persistent, then',
         '  STOP — do not burn dozens of navigations/curls on a host that will not answer. Emit `<verdict>blocked`',
         '  and begin your `<findings>` with the exact marker line `PREVIEW-INFRA-UNREACHABLE: <host> <symptom>`',
-        '  (e.g. `PREVIEW-INFRA-UNREACHABLE: pr-583.cc.example.com 502-bad-gateway`) so automation can tell',
+        `  (e.g. \`PREVIEW-INFRA-UNREACHABLE: ${previewHostLabel} 502-bad-gateway\`) so automation can tell`,
         '  an infra block from a real verification failure.',
         '- Then DO record a code-level assessment of each locked criterion as SUPPORTING CONTEXT (clearly',
         '  labelled "not a browser-grounded pass"), so a re-review once the preview recovers is cheap. This',
@@ -346,7 +352,7 @@ export function buildReviewerPrompt(
     : ''
 
   return [
-    `You are the AI reviewer for Command Center objective #${objective.id} (iteration ${iteration}).`,
+    `You are the AI reviewer for ${resolveBrandName()} objective #${objective.id} (iteration ${iteration}).`,
     '',
     `Workspace: ${objective.workspace}`,
     `Type: ${objective.type}`,

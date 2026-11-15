@@ -1,10 +1,11 @@
 import { useState, useRef, useEffect, type FormEvent } from 'react'
 import { Plus, Pencil, Trash2, Check, X, FolderOpen } from 'lucide-react'
 import type { Project } from '@operationkit/shared'
-import { useConfirm } from './ui'
+import { Button, IconButton, Input, useConfirm } from './ui'
 import { ALL_PROJECTS, UNASSIGNED_PROJECT, type ProjectSelection } from '../lib/projectFilter'
 import { FilterDropdown, DropdownOption } from './FilterDropdown'
 import { Select } from './ui/Select'
+import { friendlyError } from '../lib/format'
 
 export interface OrgOption {
   slug: string
@@ -108,7 +109,7 @@ export function ProjectFilterBar({
       setEditing(null)
       setDraft('')
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Could not save project')
+      setError(`Could not save the project. ${friendlyError(err).message}`)
     } finally {
       setBusy(false)
     }
@@ -119,8 +120,8 @@ export function ProjectFilterBar({
     if (!(await confirm({
       title: `Delete project “${project.name}”?`,
       message: count > 0
-        ? `${count} objective${count === 1 ? '' : 's'} in this project will be kept and moved back to “No project”. Nothing is deleted except the folder itself.`
-        : 'This project has no objectives. Deleting removes the folder only.',
+        ? `${count} card${count === 1 ? '' : 's'} in this project will be kept and moved back to “No project”. Nothing is deleted except the folder itself.`
+        : 'This project has no cards. Deleting removes the folder only.',
       confirmLabel: 'Delete project',
       danger: true,
     }))) return
@@ -130,7 +131,7 @@ export function ProjectFilterBar({
       await onDelete(project.id)
       if (selection === project.id) onSelect(ALL_PROJECTS)
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Could not delete project')
+      setError(`Could not delete the project. ${friendlyError(err).message}`)
     } finally {
       setBusy(false)
     }
@@ -169,7 +170,7 @@ export function ProjectFilterBar({
                   onClick={() => { onSelect(p.id); close() }}
                   data-project-id={p.id}
                   trailing={typeof p.objective_count === 'number'
-                    ? <span className="font-mono text-xs text-fg-3">{p.objective_count}</span>
+                    ? <span className="text-xs text-fg-3">{p.objective_count}</span>
                     : undefined}
                 >
                   {chipLabel(p)}
@@ -202,7 +203,8 @@ export function ProjectFilterBar({
                       </Select>
                     )}
                     <div className="flex items-center gap-1">
-                      <input
+                      <Input
+                        size="xs"
                         ref={inputRef}
                         value={draft}
                         onChange={e => setDraft(e.target.value)}
@@ -211,57 +213,58 @@ export function ProjectFilterBar({
                         }}
                         placeholder={editing === 'new' ? 'New project name' : 'Project name'}
                         aria-label={editing === 'new' ? 'New project name' : 'Rename project'}
-                        className="min-w-0 flex-1 rounded-md border border-line bg-surface-2 px-2 py-1 text-xs text-fg-0 placeholder:text-fg-3 focus:border-accent focus:outline-none"
+                        className="h-7 flex-1"
                       />
-                      <button
+                      <IconButton
+                        size="sm"
                         type="submit"
                         disabled={busy || !draft.trim()}
-                        aria-label={editing === 'new' ? 'Create project' : 'Save project name'}
-                        className="rounded-md p-1.5 text-fg-2 transition-colors duration-fast ease-out hover:bg-surface-3 hover:text-fg-0 disabled:opacity-40"
+                        label={editing === 'new' ? 'Create project' : 'Save project name'}
+                        className="text-fg-2"
                       >
                         <Check className="h-3.5 w-3.5" />
-                      </button>
-                      <button
-                        type="button"
+                      </IconButton>
+                      <IconButton
+                        size="sm"
                         onClick={() => { setEditing(null); setError(null) }}
-                        aria-label="Cancel"
-                        className="rounded-md p-1.5 text-fg-2 transition-colors duration-fast ease-out hover:bg-surface-3 hover:text-fg-0"
+                        label="Cancel"
+                        className="text-fg-2"
                       >
                         <X className="h-3.5 w-3.5" />
-                      </button>
+                      </IconButton>
                     </div>
                   </form>
                 ) : (
                   <div className="flex items-center gap-1">
-                    <button
+                    <Button
                       type="button"
+                      size="xs"
+                      variant="ghost"
                       onClick={openCreate}
-                      className="inline-flex flex-1 items-center gap-1.5 rounded-md px-1.5 py-1 text-xs text-fg-2 transition-colors duration-fast ease-out hover:bg-surface-3 hover:text-fg-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/50"
+                      leftIcon={<Plus className="h-3.5 w-3.5" />}
+                      className="h-7 flex-1 justify-start gap-1.5 px-1.5 font-normal text-fg-2"
                     >
-                      <Plus className="h-3.5 w-3.5" />
                       New project
-                    </button>
+                    </Button>
                     {selected && (
                       <>
-                        <button
-                          type="button"
+                        <IconButton
+                          size="sm"
                           onClick={() => openRename(selected)}
-                          aria-label={`Rename ${selected.name}`}
-                          title="Rename this project"
-                          className="rounded-md p-1.5 text-fg-2 transition-colors duration-fast ease-out hover:bg-surface-3 hover:text-fg-0"
+                          label={`Rename ${selected.name}`}
+                          className="text-fg-2"
                         >
                           <Pencil className="h-3.5 w-3.5" />
-                        </button>
-                        <button
-                          type="button"
+                        </IconButton>
+                        <IconButton
+                          size="sm"
                           onClick={() => handleDelete(selected)}
                           disabled={busy}
-                          aria-label={`Delete ${selected.name}`}
-                          title="Delete this project (objectives are kept)"
-                          className="rounded-md p-1.5 text-fg-2 transition-colors duration-fast ease-out hover:bg-surface-3 hover:text-[color:var(--ok-alarm)] disabled:opacity-40"
+                          label={`Delete ${selected.name}`}
+                          className="text-fg-2 hover:text-[color:var(--ok-alarm)]"
                         >
                           <Trash2 className="h-3.5 w-3.5" />
-                        </button>
+                        </IconButton>
                       </>
                     )}
                   </div>

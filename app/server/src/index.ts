@@ -17,6 +17,7 @@ import agentKeyWebhooksRouter from './routes/agent-key-webhooks.js'
 import { startAgentWebhooks } from './services/agent-webhooks.js'
 import { agentKeyGuard } from './middleware/agent-key-guard.js'
 import objectivesRouter from './routes/objectives.js'
+import boardTriageRouter from './routes/board-triage.js'
 import needsSecretRouter from './routes/objective-needs-secret.js'
 import secretUploadRouter from './routes/secret-upload.js'
 import objectivesSearchRouter from './routes/objectives-search.js'
@@ -102,6 +103,7 @@ import { prewarmSessionOutputs } from './services/stream-parser.js'
 import { startDreamCycleScheduler } from './services/dream-cycle.js'
 import { startRoutineScheduler } from './services/routine-scheduler.js'
 import { resyncHighAgencyRoutines, startHighAgencyCronRefresh } from './services/agent-chat/high-agency.js'
+import { startBotMessageDelivery } from './services/agent-chat/bot-wake.js'
 import { startHighAgencySupervisor } from './services/high-agency-supervisor-scheduler.js'
 import { seedExistingBotsOnce } from './services/agent-chat/bot-workspaces.js'
 import { listAgents } from './services/agent-chat/engine.js'
@@ -118,6 +120,7 @@ import { startPrHealthWatchdog } from './services/pr-health-watchdog.js'
 import { startHostBootDaemons } from './services/host-boot-daemons.js'
 import { startSharedBrowserEgressProxy } from './services/browser-egress-proxy.js'
 import { resolveBrowserPolicy } from './lib/browser-policy.js'
+import { resolveCorsOrigins } from './lib/install-defaults.js'
 import { startN8nWatchdog } from './services/n8n-watchdog.js'
 import { startSlotHealthCheck } from './services/account-health-check.js'
 import { startDiskWatchdog } from './services/disk-watchdog.js'
@@ -197,7 +200,7 @@ try {
 const app = express()
 const server = createServer(app)
 
-// Behind the Caddy reverse proxy (cc.example.com -> localhost:3002), so that
+// Behind the Caddy reverse proxy (public host -> localhost:3002), so that
 // req.ip reflects the real client via X-Forwarded-For instead of Caddy's
 // loopback address (obj 702304).
 //
@@ -217,9 +220,9 @@ app.disable('x-powered-by')
 
 // Middleware
 app.use(securityHeaders)
-const corsOrigins = process.env.CORS_ORIGINS
-  ? process.env.CORS_ORIGINS.split(',')
-  : ['https://cc.example.com', 'http://localhost:5173', 'http://localhost:3002']
+// obj 900803: no built-in domain. CORS_ORIGINS env → settings → this install's
+// own public URL (CC_PUBLIC_URL / APP_BASE_URL / OK_DOMAIN) + local dev origins.
+const corsOrigins = resolveCorsOrigins()
 app.use(cors({
   origin: corsOrigins,
   credentials: true,
@@ -256,6 +259,7 @@ app.use('/api/objectives/search', objectivesSearchRouter)  // server-side object
 app.use('/api/secret-upload', secretUploadRouter)  // obj 719065: one-time write-only upload (token is the capability; no login)
 app.use('/api/objectives', needsSecretRouter)  // obj 718944: /:id/needs-secret — before objectivesRouter so a worker's CC_SESSION_TOKEN reaches it (objectivesRouter requires a login)
 app.use('/api/objectives', objectivesRouter)
+app.use('/api/board-triage', boardTriageRouter)  // Needs You bulk triage: people in the browser only, audited per batch + per card (obj 900869)
 app.use('/api/costs', costsRouter)  // /api/costs/summary, /daily, /by-objective, /by-account
 app.use('/api', feedRouter)  // /api/projects/:project/feed, /api/feed/all
 app.use('/api/docs', docsRouter)  // /api/docs/tree, /api/docs/file
@@ -515,6 +519,11 @@ if (scratchVerdict.scratch) {
   // model call; reads the board and writes review_items only. Kill switch:
   // settings.high_agency_supervisor_enabled = '0'.
   startHighAgencySupervisor()
+  // Bot-to-bot messaging (obj 900859): deliver queued bot messages by waking the
+  // recipient bot (a 15s drain + a drain right after each send). Host only, so a
+  // scratch copy never spends a model call. Kill switch:
+  // settings.bot_messaging_enabled = '0'.
+  startBotMessageDelivery()
   // Workflow engine (obj 900638, docs/design/WORKFLOWS.md §4). Arms its 2s tick here
   // (never on a scratch instance — startFlowEngine re-checks); every tick is a
   // heartbeat-only no-op until settings.flows_enabled = '1' (default '0' until B4).

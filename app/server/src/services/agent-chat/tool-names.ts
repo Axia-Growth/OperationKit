@@ -17,6 +17,10 @@ export const WEB_TOOLS = ['web_search', 'web_fetch'] as const
 // request and redacts the reply. The value never reaches the model, the chat
 // history or a log.
 export const SECRET_TOOLS = ['secrets'] as const
+// obj 900859: message another bot (message_bot), list / read those threads.
+// The other bot is woken with the message and its reply comes back on the same
+// thread. Only bots that may work in the same workspace can be reached.
+export const BOT_MESSAGE_TOOLS = ['bot_messages'] as const
 
 /**
  * Tools "All tools" does NOT grant (obj 900749). A bot gets one only when it is
@@ -32,6 +36,7 @@ export const KNOWN_TOOL_NAMES: ReadonlySet<string> = new Set<string>([
   ...MCP_TOOLS,
   ...WEB_TOOLS,
   ...SECRET_TOOLS,
+  ...BOT_MESSAGE_TOOLS,
 ])
 
 /** What "All tools" grants: every known tool except the explicit-only ones. */
@@ -51,7 +56,7 @@ export function listsAllTools(tools: readonly string[]): boolean {
   return tools.some(t => ALL_TOOLS_TOKENS.has(t.trim().toLowerCase()))
 }
 
-export type ToolGroup = 'web' | 'knowledge' | 'board' | 'connectors' | 'integrations' | 'secrets'
+export type ToolGroup = 'web' | 'knowledge' | 'board' | 'bots' | 'connectors' | 'integrations' | 'secrets'
 
 export interface ToolCatalogEntry {
   name: string
@@ -75,6 +80,7 @@ export const TOOL_CATALOG: readonly ToolCatalogEntry[] = [
   { name: 'get_objective', label: 'Read a card', description: 'Read one board card the person can see.', group: 'board' },
   { name: 'list_objectives', label: 'List cards', description: 'List board cards the person can see.', group: 'board' },
   { name: 'board_briefing', label: 'Board briefing', description: 'What is waiting on the person across their boards.', group: 'board' },
+  { name: 'bot_messages', label: 'Message other bots', description: 'Send another bot a message in the same workspace and get its reply on a shared thread.', group: 'bots' },
   { name: 'email', label: 'Email (drafts only)', description: 'Read the inbox and draft replies. Nothing is sent without a click.', group: 'connectors' },
   { name: 'calendar', label: 'Calendar (drafts only)', description: 'Read the calendar and draft events. Nothing is added without a click.', group: 'connectors' },
   { name: 'mcp', label: 'Workspace integrations (MCP)', description: 'Tools from the MCP servers connected to the workspace.', group: 'integrations' },

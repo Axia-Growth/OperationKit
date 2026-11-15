@@ -8,7 +8,8 @@
  */
 import { useState } from 'react'
 import type { ConnectorAccess, ConnectorStatus, ConnectorSummary } from '@operationkit/shared'
-import { Badge, Button, Card } from '../ui'
+import { ChevronDown } from 'lucide-react'
+import { Alert, Badge, Button, Card, Field, Input } from '../ui'
 import { AccessEditor } from './AccessEditor'
 import { fmtDate } from '../account-settings/helpers'
 import { GuidedOAuthWizard } from './GuidedOAuthWizard'
@@ -78,9 +79,9 @@ export function ConnectorCard({
         <div className="flex flex-wrap items-start justify-between gap-3 p-4 sm:p-5">
           <div className="min-w-0 flex-1">
             <div className="flex flex-wrap items-center gap-2">
-              <h2 id={`connector-${c.id}`} className="font-display text-lg font-semibold tracking-tight text-fg-0">
+              <h3 id={`connector-${c.id}`} className="font-display text-lg font-semibold tracking-tight text-fg-0">
                 {c.name}
-              </h2>
+              </h3>
               <StateBadge status={c.status} available={c.available} />
             </div>
             <p className="mt-1 max-w-prose text-sm leading-relaxed text-fg-2">{c.description}</p>
@@ -99,7 +100,7 @@ export function ConnectorCard({
         <div className="border-t border-line-soft p-4 sm:p-5">
           {connected ? (
             <div className="space-y-4">
-              {c.status.error && <p className="text-sm text-signal-alarm">{c.status.error}</p>}
+              {c.status.error && <Alert tone="alarm" title={c.status.error} />}
               <dl className="grid grid-cols-1 gap-x-6 gap-y-3 sm:grid-cols-2">
                 <div>
                   <dt className="text-xs uppercase tracking-eyebrow text-fg-3">Connected as</dt>
@@ -173,22 +174,17 @@ export function ConnectorCard({
               }}
             >
               {tokenFields.map(f => (
-                <div key={f.key}>
-                  <label htmlFor={`${c.id}-${f.key}`} className="mb-1 block text-xs font-medium text-fg-1">
-                    {f.label}
-                  </label>
-                  <input
-                    id={`${c.id}-${f.key}`}
+                <Field key={f.key} id={`${c.id}-${f.key}`} label={f.label} hint={f.help || undefined} className="max-w-xl">
+                  <Input
                     type={f.secret ? 'password' : 'text'}
                     autoComplete="off"
                     spellCheck={false}
                     value={fields[f.key] ?? ''}
                     onChange={e => setFields(prev => ({ ...prev, [f.key]: e.target.value }))}
                     placeholder={f.placeholder}
-                    className="min-h-[44px] w-full rounded-md border border-line bg-surface-1 px-3 font-mono text-sm text-fg-0 outline-none transition-colors duration-fast ease-out placeholder:text-fg-3 hover:border-line-strong focus:border-accent focus-visible:ring-2 focus-visible:ring-accent/40 sm:min-h-[36px]"
+                    className="font-mono"
                   />
-                  {f.help && <p className="mt-1 text-xs leading-relaxed text-fg-3">{f.help}</p>}
-                </div>
+                </Field>
               ))}
               <Button type="submit" variant="primary" loading={busy === 'connect'} disabled={!canSubmitToken}>
                 Connect {c.name}
@@ -218,14 +214,7 @@ export function ConnectorCard({
               <span className="block text-sm font-medium text-fg-0">Who can use it</span>
               <span className="block text-xs text-fg-3">{accessSummary(c.access)}</span>
             </span>
-            <svg
-              aria-hidden="true"
-              viewBox="0 0 20 20"
-              className={`h-4 w-4 shrink-0 text-fg-3 transition-transform duration-fast ease-out ${showAccess ? 'rotate-180' : ''}`}
-              fill="currentColor"
-            >
-              <path fillRule="evenodd" d="M5.23 7.21a.75.75 0 0 1 1.06.02L10 11.06l3.71-3.83a.75.75 0 1 1 1.08 1.04l-4.25 4.39a.75.75 0 0 1-1.08 0L5.21 8.27a.75.75 0 0 1 .02-1.06Z" clipRule="evenodd" />
-            </svg>
+            <ChevronDown aria-hidden="true" className={`h-4 w-4 shrink-0 text-fg-3 transition-transform duration-fast ease-out ${showAccess ? 'rotate-180' : ''}`} />
           </button>
           {showAccess && (
             <div id={`connector-access-${c.id}`} className="px-4 pb-5 pt-1 sm:px-5">

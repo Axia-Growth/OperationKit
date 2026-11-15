@@ -166,10 +166,10 @@ export function cleanupOrphanMermaid() {
 
 function errorBlockHtml(message: string, source: string): string {
   return (
-    `<div class="rounded border border-signal-alarm/30 bg-signal-alarm/10 p-3 text-xs text-signal-alarm">` +
+    `<div class="rounded border border-danger/30 bg-danger/10 p-3 text-xs text-danger">` +
     `<div class="font-medium mb-1">Mermaid render failed</div>` +
     `<div class="font-mono text-xs text-fg-1 whitespace-pre-wrap">${escapeHtml(message)}</div>` +
-    `<details class="mt-2"><summary class="cursor-pointer text-signal-alarm">Source</summary>` +
+    `<details class="mt-2"><summary class="cursor-pointer text-danger">Source</summary>` +
     `<pre class="mt-1 overflow-x-auto bg-surface-2 p-2 text-xs text-fg-0"><code>${escapeHtml(source)}</code></pre>` +
     `</details></div>`
   )

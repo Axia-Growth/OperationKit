@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Tabs } from '../ui'
+import { SegmentedControl } from '../ui'
 import type { TabItem } from '../ui'
 import { WorkspacesTab } from '../config/WorkspacesTab'
 import { UsersTab } from '../config/UsersTab'
@@ -17,9 +17,10 @@ export function SettingsOrg() {
         Workspaces and the people who can see them. A workspace is a boundary — its own board,
         secrets and membership — not a label; most teams only ever need one.
       </p>
-      <Tabs items={TABS} value={tab} onChange={setTab} label="Workspaces and people" panelClassName="mt-4">
-        {tab === 'orgs' ? <WorkspacesTab /> : <UsersTab />}
-      </Tabs>
+      {/* Settings already has the page's one tab row, so the Workspaces /
+          Users choice is a SegmentedControl (obj 900807), not a nested Tabs. */}
+      <SegmentedControl items={TABS} value={tab} onChange={setTab} label="Workspaces and people" />
+      <div className="mt-4">{tab === 'orgs' ? <WorkspacesTab /> : <UsersTab />}</div>
     </div>
   )
 }

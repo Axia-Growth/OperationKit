@@ -16,6 +16,8 @@ const TMP_DB = path.join(os.tmpdir(), `cc-secrets-route-${process.pid}-${Date.no
 process.env.DB_PATH = TMP_DB
 
 const { initDb, getDb } = await import('../db/index.js')
+// obj 900803: a fresh DB no longer seeds the author's workspaces — this suite uses them.
+const { seedLegacyWorkspaces } = await import('../__fixtures__/legacy-workspaces.js')
 const { default: router } = await import('./secrets.js')
 
 let server: http.Server
@@ -53,6 +55,7 @@ async function call(method: string, p: string, body?: unknown, cookie?: string) 
 beforeAll(async () => {
   if (fs.existsSync(TMP_DB)) fs.unlinkSync(TMP_DB)
   initDb()
+  await seedLegacyWorkspaces(getDb())
   const db = getDb()
   db.prepare(`INSERT INTO users (id, username, password_hash, role) VALUES (1, 'admin', 'x', 'admin')`).run()
   db.prepare(`INSERT INTO users (id, username, password_hash, role) VALUES (2, 'examplemem', 'x', 'member')`).run()

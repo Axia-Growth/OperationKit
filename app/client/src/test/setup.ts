@@ -1,3 +1,8 @@
+import { afterEach, beforeEach } from 'vitest'
+import { clearChatCache } from '../components/agent-chat/chat-cache'
+import { __resetKbCacheMemory, clearKbCache } from '../lib/kbCache'
+import { __resetKbResource } from '../lib/kbResource'
+
 // jsdom stubs UI SDK needs (top-layer popups, animations, layout reads), per
 // the ui-sdk skill's testing guide. Assigned, not `??=`: jsdom ships some of
 // these without the behaviour that matters.
@@ -54,3 +59,16 @@ if (typeof window !== 'undefined') {
     }),
   )
 }
+
+// obj 900865: the Bots page keeps a per-tab cache in module memory. Each test
+// starts from an empty one so a response stubbed in one test never paints in
+// the next.
+beforeEach(() => clearChatCache())
+
+// Context's client cache (obj 900867) is module-level by design (it is what
+// makes a return visit instant); tests must not see each other's entries.
+afterEach(() => {
+  clearKbCache()
+  __resetKbCacheMemory()
+  __resetKbResource()
+})

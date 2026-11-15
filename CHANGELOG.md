@@ -8,6 +8,52 @@ Notable operator-facing changes. Newest first.
 
 ## Unreleased
 
+### Backups: big homes go off-site as a folder, retention really prunes, hand-made jobs are named (obj 900861)
+
+Three changes to `install/backup.sh`, so a server with a large home can use the
+built-in nightly backup instead of a hand-made one:
+
+- **`BACKUP_HOME="offsite"`** (new, optional; default `archive` = unchanged).
+  With `BACKUP_TARGET` set, the nightly run leaves `home.tar.gz` out of the local
+  folder and sends `state/home` to restic **as a folder**, in its own snapshot
+  (tag `operationkit-home`). After the first night only what changed uploads, and
+  the local nightly folders stay small. Before, a 60 GB home was re-compressed
+  every night, kept `BACKUP_KEEP_LOCAL` times on the same disk, and uploaded
+  almost in full each time (a new gzip stream shares almost nothing with
+  yesterday's). The folder's `MANIFEST` names that night's home snapshot, so
+  `fetch` downloads the matching home next to the database, `restore` moves it
+  into place, and `verify` checks it is in the repository and not empty. A run
+  that sends nothing off-site (`manual`, `--no-offsite`, no `BACKUP_TARGET`)
+  still writes `home.tar.gz`.
+- **Off-site retention now prunes.** restic's `forget` groups snapshots by host
+  *and path* unless told otherwise, and every nightly folder has its own path
+  (`nightly-<time>`), so each snapshot was a group of one and the 7 / 4 / 6
+  policy never removed anything. It now groups by host and tags. **The first
+  night after updating, an install that has had off-site backups for more than a
+  week deletes the snapshots outside the policy** (the space is given back on
+  the next Sunday's prune). That is the policy that was always configured.
+- **Other backup jobs are named.** `install.sh`, `update.sh` (through
+  `install.sh`), `b2-setup.sh` and the new `backup.sh status` list any other
+  backup timer, `/etc/cron.d` file or root crontab line, so a hand-made backup
+  is not left running next to the built-in one. They only warn; nothing is
+  switched off for you.
+- **`backup.sh status`** (new, read-only): the nightly job and its time, the
+  off-site target, how home is kept, the newest nightly folder and its age
+  (a warning past 36 h means the job is not running), and other jobs.
+  `update.sh` prints it at the end.
+- Two runs started in the same second no longer share (and mix) one
+  `nightly-<time>` folder: the second waits for the next second.
+
+**What an operator must do: nothing**, unless a hand-made backup runs beside the
+built-in one, or the home is large. INSTALL.md → *Switching from a hand-made
+backup* has the steps.
+
+`install/verify.sh`'s re-runnable test card (unique title, `force: true`, card
+deleted afterwards — the "could not create the test card (409)" fix from obj
+900069) now has tests: `install/test/verify-card-test.sh` and
+`app/server/src/lib/install-verify-card.test.ts`, which runs the card body
+verify.sh sends through the board's real duplicate-title guard.
+
 ### The card browser is sandboxed, origin-restricted and pinned (obj 900791, restart of 900024)
 
 The Chromium that review/QA sessions drive through Playwright MCP used to be

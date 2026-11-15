@@ -182,7 +182,7 @@ describe('KbSetupStep', () => {
     const r = createRoot(el)
     await act(async () => { r.render(<KbSetupStep done />) })
     expect(el.textContent).toContain('Step 4')
-    expect(el.textContent).toContain('Set up your knowledge base')
+    expect(el.textContent).toContain('Set up your Context')
     expect(el.querySelector('[aria-label="Done"]')).toBeTruthy()
     expect(el.querySelector('a')?.getAttribute('href')).toBe('/knowledge/setup')
     act(() => r.unmount())

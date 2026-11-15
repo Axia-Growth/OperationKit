@@ -32,6 +32,12 @@ export const SCRUBBED_TABLES = [
   'agent_chat_threads',
   // obj 900839: the delegated-approval audit quotes the bot's message.
   'delegation_audit',
+  // obj 900859: what one bot tells another (and a conversation's subject) is
+  // model-written text that may quote a key pasted into a chat.
+  'bot_messages',
+  'bot_conversations',
+  // obj 900869: a bulk-triage batch carries a person-typed note.
+  'board_triage_batches',
 ] as const
 
 const WRITE_SQL_RE = new RegExp(

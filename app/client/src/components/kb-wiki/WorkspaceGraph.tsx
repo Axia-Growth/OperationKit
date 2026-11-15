@@ -2,13 +2,15 @@ import { useCallback, useEffect, useId, useMemo, useRef, useState, type PointerE
 import { Crosshair, Maximize2, Minimize2, Minus, Network, Plus } from 'lucide-react'
 import { matchPages, shortTitle, visibleGraph, type WorkspaceGraphNode, type WorkspaceGraphResponse } from '../../lib/kbWiki'
 import {
-  boundsOf, createSimulation, fitView, nodeRadius, reheat, settle, tick, zoomAt, ALPHA_MIN,
-  type Simulation, type View,
+  boundsOf, fitView, layoutInputFor, layoutSignature, nodeRadius, positionsOf, reheat, simAt, tick, unpackPositions, zoomAt, ALPHA_MIN,
+  type LayoutInput, type Positions, type Simulation, type View,
 } from '../../lib/kbGraphLayout'
+import { computeLayout, computeLayoutSync, SYNC_LAYOUT_MAX_NODES } from '../../lib/kbGraphLayoutRunner'
+import { useKbResource } from '../../lib/kbResource'
+import { kbGraphSpec, saveLayout, savedLayout } from '../../lib/kbContextData'
 import { Alert, EmptyState, IconButton, SearchInput, Skeleton, cn } from '../ui'
 import { Modal } from '../ui/Modal'
 import { kindName, toneOf } from './kinds'
-import { wikiApi, wsQuery } from './wikiApi'
 
 /* WorkspaceGraph (obj 900674) — the whole knowledge base as one Obsidian-style
    graph: every page a dot, every connection a line, read from the kb_edges
@@ -31,6 +33,24 @@ type Drag =
   | { kind: 'pan'; id: number; sx: number; sy: number; vx: number; vy: number; moved: boolean }
   | { kind: 'node'; id: number; index: number; sx: number; sy: number; moved: boolean }
 
+/** What the graph draws: the visible pages and links, and the settled layout they sit in (always a matching pair). */
+interface Drawn {
+  shown: { nodes: WorkspaceGraphNode[]; links: WorkspaceGraphResponse['links'] }
+  sim: Simulation
+}
+
+/** A layout stored for exactly this graph: rebuild it at rest, with no ticks at all. */
+function simFromSaved(input: LayoutInput, pos: Record<string, [number, number]>): Simulation | null {
+  const xs = new Float64Array(input.ids.length)
+  const ys = new Float64Array(input.ids.length)
+  for (let i = 0; i < input.ids.length; i++) {
+    const p = pos[input.ids[i]]
+    if (!p || !Number.isFinite(p[0]) || !Number.isFinite(p[1])) return null
+    xs[i] = p[0]; ys[i] = p[1]
+  }
+  return simAt(input, xs, ys)
+}
+
 export function WorkspaceGraph({
   workspace,
   onOpenNote,
@@ -44,9 +64,9 @@ export function WorkspaceGraph({
   /** Grow to the height of the parent (a flex column) instead of a fixed height. */
   fill?: boolean
 }) {
-  const [data, setData] = useState<WorkspaceGraphResponse | null>(null)
-  const [error, setError] = useState<string | null>(null)
-  const [loading, setLoading] = useState(true)
+  // Cached per user (obj 900867): a return visit draws the last graph at once; the server is asked again in the background.
+  const graphRes = useKbResource(kbGraphSpec(workspace), { refreshKey })
+  const { data, error, loading } = graphRes
   const [hiddenKinds, setHiddenKinds] = useState<Set<string>>(() => new Set())
   const [showIsolated, setShowIsolated] = useState(true)
   const [query, setQuery] = useState('')
@@ -70,31 +90,55 @@ export function WorkspaceGraph({
   const drag = useRef<Drag | null>(null)
   const raf = useRef<number | null>(null)
 
-  // ── Data ──
+  const wanted = useMemo(() => (data ? visibleGraph(data, { hiddenKinds, showIsolated }) : null), [data, hiddenKinds, showIsolated])
+
+  // ── Layout (obj 900867) ──
+  // 1. The server's layout (sent with the graph, cached with it) places every drawn
+  //    page → drawn at once, zero ticks. Hiding a kind keeps everyone else in place.
+  // 2. The layout saved in this browser for exactly this graph → zero ticks.
+  // 3. A small graph → settled inline (a few ms), seeded from what we have.
+  // 4. A big graph → settled in a Web Worker, seeded from what we have, while the
+  //    previous drawing (or a skeleton) stays on screen and the page stays responsive.
+  const serverPos = useMemo<Positions | null>(() => (data?.layout ? unpackPositions(data.nodes.map(n => n.rel), data.layout.pos) : null), [data])
+  const input = useMemo(() => (wanted ? layoutInputFor(wanted.nodes, wanted.links) : null), [wanted])
+  const sig = useMemo(() => (input ? layoutSignature(input) : null), [input])
+  const instant = useMemo<{ sim: Simulation; fresh: boolean } | null>(() => {
+    if (!input || !sig) return null
+    if (serverPos) {
+      const sim = simFromSaved(input, serverPos)
+      if (sim) return { sim, fresh: false }
+    }
+    const saved = savedLayout(workspace)
+    if (saved && saved.sig === sig) {
+      const sim = simFromSaved(input, saved.pos)
+      if (sim) return { sim, fresh: false }
+    }
+    if (input.ids.length <= SYNC_LAYOUT_MAX_NODES) return { sim: computeLayoutSync(input, saved?.pos ?? serverPos).sim, fresh: true }
+    return null
+  }, [input, sig, workspace, serverPos])
+  const [settledRaw, setSettled] = useState<(Drawn & { sig: string; ws: string }) | null>(null)
+  const settled = settledRaw?.ws === workspace ? settledRaw : null
   useEffect(() => {
-    let live = true
-    setLoading(true)
-    wikiApi<WorkspaceGraphResponse>(`/graph?${wsQuery(workspace)}`)
-      .then(g => { if (live) { setData(g); setError(null) } })
-      .catch(e => { if (live) { setData(null); setError((e as Error).message) } })
-      .finally(() => { if (live) setLoading(false) })
-    return () => { live = false }
-  }, [workspace, refreshKey])
-
-  const shown = useMemo(() => (data ? visibleGraph(data, { hiddenKinds, showIsolated }) : null), [data, hiddenKinds, showIsolated])
-
-  // ── Layout: a fresh simulation whenever the drawn set changes, settled before first paint ──
-  const sim = useMemo<Simulation | null>(() => {
-    if (!shown) return null
-    const index = new Map(shown.nodes.map((n, i) => [n.rel, i]))
-    const s = createSimulation(
-      shown.nodes.map(n => n.rel),
-      shown.nodes.map(n => n.degree),
-      shown.links.map(l => [index.get(l.a)!, index.get(l.b)!] as [number, number]),
-    )
-    settle(s)
-    return s
-  }, [shown])
+    if (!input || !sig || !wanted) return
+    if (instant) {
+      if (instant.fresh) saveLayout(workspace, { sig, pos: positionsOf(instant.sim) })
+      return
+    }
+    const ctrl = new AbortController()
+    computeLayout(input, { seed: savedLayout(workspace)?.pos ?? serverPos, signal: ctrl.signal })
+      .then(run => {
+        if (!run || ctrl.signal.aborted) return
+        saveLayout(workspace, { sig, pos: positionsOf(run.sim) })
+        setSettled({ shown: wanted, sim: run.sim, sig, ws: workspace })
+      })
+      .catch(() => {})
+    return () => ctrl.abort()
+  }, [input, sig, wanted, instant, workspace, serverPos])
+  // What is on screen: this graph when its layout is ready, else the last one drawn (never a mismatched pair).
+  const drawn: Drawn | null = wanted && instant ? { shown: wanted, sim: instant.sim } : settled
+  const laying = !!wanted && !instant && settled?.sig !== sig
+  const sim = drawn?.sim ?? null
+  const shown = drawn?.shown ?? null
 
   const byRel = useMemo(() => new Map((shown?.nodes ?? []).map((n, i) => [n.rel, { node: n, i }])), [shown])
   const neighbours = useMemo(() => {
@@ -256,8 +300,8 @@ export function WorkspaceGraph({
       </div>
     )
   }
-  if (error) return <Alert tone="alarm" title="Couldn't load the graph">{error}</Alert>
-  if (!data || !shown || !sim) return null
+  if (error && !data) return <Alert tone="alarm" title="Couldn't load the graph">{error}</Alert>
+  if (!data) return null
   if (data.nodes.length === 0) {
     return (
       <EmptyState
@@ -266,6 +310,16 @@ export function WorkspaceGraph({
         title="Nothing to graph yet"
         description="Upload files above or import your chats and calls. Every page they create shows up here as a dot, linked to the people, companies and topics it mentions."
       />
+    )
+  }
+  if (!shown || !sim) {
+    // A big graph is being arranged off the main thread (first visit, or the graph changed a lot).
+    return (
+      <div className="flex flex-col gap-3" aria-busy="true">
+        <span className="sr-only">Arranging {data.nodes.length} pages…</span>
+        <Skeleton className="h-9 w-full sm:w-72" />
+        <Skeleton className="h-[420px] w-full rounded-md sm:h-[560px]" />
+      </div>
     )
   }
 
@@ -298,6 +352,25 @@ export function WorkspaceGraph({
     }
   }
 
+  // Group the links by how they look; faded first, highlighted last (drawn on top).
+  const linkLayers: Array<{ key: string; d: string; count: number; on: boolean; faded: boolean; dashed: boolean }> = []
+  {
+    const byLook = new Map<string, { key: string; d: string[]; on: boolean; faded: boolean; dashed: boolean }>()
+    for (const l of shown.links) {
+      const a = pos(l.a), b = pos(l.b)
+      const on = focus !== null && (l.a === focus || l.b === focus)
+      const faded = !!((lit && !on) || (searching && !lit && !(matchSet.has(l.a) || matchSet.has(l.b))))
+      const dashed = l.kinds.length === 1 && l.kinds[0] === 'cited_by'
+      const key = `${on ? 2 : faded ? 0 : 1}${dashed ? 'd' : 's'}`
+      let layer = byLook.get(key)
+      if (!layer) byLook.set(key, (layer = { key, d: [], on, faded, dashed }))
+      layer.d.push(`M${a.x} ${a.y}L${b.x} ${b.y}`)
+    }
+    for (const layer of [...byLook.values()].sort((x, y) => x.key.localeCompare(y.key))) {
+      linkLayers.push({ ...layer, d: layer.d.join(''), count: layer.d.length })
+    }
+  }
+
   const body = (
     <div
       className={cn(
@@ -320,7 +393,7 @@ export function WorkspaceGraph({
         <span className="text-xs text-fg-3" aria-live="polite">
           {searching
             ? `${matches.length} match${matches.length === 1 ? '' : 'es'}${matches[0] ? ` — Enter opens “${shortTitle(matches[0].title, 28)}”` : ''}`
-            : `${shown.nodes.length} page${shown.nodes.length === 1 ? '' : 's'} · ${shown.links.length} connection${shown.links.length === 1 ? '' : 's'}`}
+            : `${shown.nodes.length} page${shown.nodes.length === 1 ? '' : 's'} · ${shown.links.length} connection${shown.links.length === 1 ? '' : 's'}${laying ? ' · arranging the latest pages…' : ''}`}
         </span>
       </div>
 
@@ -361,7 +434,7 @@ export function WorkspaceGraph({
           viewBox={`0 0 ${size.w} ${size.h}`}
           className={cn('block touch-none select-none', (expanded || fill) && 'absolute inset-0', drag.current ? 'cursor-grabbing' : focus ? 'cursor-pointer' : 'cursor-grab')}
           role="group"
-          aria-label={`Graph of ${shown.nodes.length} knowledge-base pages and ${shown.links.length} connections between them`}
+          aria-label={`Graph of ${shown.nodes.length} Context pages and ${shown.links.length} connections between them`}
           onPointerDown={onPointerDown}
           onPointerMove={onPointerMove}
           onPointerUp={onPointerUp}
@@ -369,21 +442,21 @@ export function WorkspaceGraph({
           onPointerLeave={() => { if (!drag.current) setHover(null) }}
         >
           <g transform={`translate(${v.x} ${v.y}) scale(${v.k})`}>
+            {/* Links (obj 900867): a handful of <path>s — one per look (highlighted, faded,
+                dashed) — instead of one <line> per link. 5,500 links used to be 5,500 DOM
+                nodes React rebuilt on every hover; now they are at most six. */}
             <g aria-hidden="true">
-              {shown.links.map(l => {
-                const a = pos(l.a), b = pos(l.b)
-                const on = focus !== null && (l.a === focus || l.b === focus)
-                const faded = (lit && !on) || (searching && !lit && !(matchSet.has(l.a) || matchSet.has(l.b)))
-                return (
-                  <line
-                    key={`${l.a}|${l.b}`}
-                    x1={a.x} y1={a.y} x2={b.x} y2={b.y}
-                    className={cn(on ? 'stroke-accent' : 'stroke-line-strong', faded && 'opacity-15')}
-                    strokeWidth={(on ? 1.6 : 0.9) / Math.sqrt(v.k)}
-                    strokeDasharray={l.kinds.length === 1 && l.kinds[0] === 'cited_by' ? `${3 / v.k} ${3 / v.k}` : undefined}
-                  />
-                )
-              })}
+              {linkLayers.map(layer => (
+                <path
+                  key={layer.key}
+                  d={layer.d}
+                  data-link-count={layer.count}
+                  fill="none"
+                  className={cn(layer.on ? 'stroke-accent' : 'stroke-line-strong', layer.faded && 'opacity-15')}
+                  strokeWidth={(layer.on ? 1.6 : 0.9) / Math.sqrt(v.k)}
+                  strokeDasharray={layer.dashed ? `${3 / v.k} ${3 / v.k}` : undefined}
+                />
+              ))}
             </g>
             {shown.nodes.map(n => {
               const p = pos(n.rel)
@@ -472,7 +545,7 @@ export function WorkspaceGraph({
         Bigger dots link to more pages. Hover a page to light up what it connects to, click to open it, drag it to pull its
         neighbours along. Dashed lines are “cited by a source” only.
         {data.truncated && ` The ${data.nodes.length} best-connected of ${data.counts.pages} pages are drawn.`}
-        {!!data.counts.unresolved && ` ${data.counts.unresolved} link${data.counts.unresolved === 1 ? ' points' : 's point'} at a page that is not in this knowledge base.`}
+        {!!data.counts.unresolved && ` ${data.counts.unresolved} link${data.counts.unresolved === 1 ? ' points' : 's point'} at a page that is not in this Context.`}
       </p>
     </div>
   )
@@ -487,7 +560,7 @@ export function WorkspaceGraph({
       labelledBy={titleId}
       panelClassName="inset-0 m-0 flex h-full max-h-none w-full max-w-none flex-col rounded-none border-0 overflow-x-hidden overflow-y-hidden bg-surface-0 p-3 shadow-none sm:p-5"
     >
-      <span id={titleId} hidden>Knowledge base graph, full screen</span>
+      <span id={titleId} hidden>Context graph, full screen</span>
       {body}
     </Modal>
   )

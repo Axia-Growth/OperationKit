@@ -28,7 +28,8 @@ describe('HostCronJobs', () => {
 
   it('lists tagged jobs', () => {
     const h = render(<HostCronJobs initial={[{ name: 'disk-cleanup', schedule: '0 3 * * *', scheduleHuman: 'Daily at 3:00', scriptPath: '/x/disk-cleanup.sh', logFile: '', logTail: '', logSize: 0, timezone: 'UTC' }]} />)
-    expect(h.textContent).toContain('Daily at 3:00')
+    expect(h.textContent).toContain('Every day at 3:00 AM (UTC)')
+    expect(h.textContent).not.toContain('0 3 * * *')
     expect(h.textContent).toContain('disk-cleanup.sh')
   })
 })

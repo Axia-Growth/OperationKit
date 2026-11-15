@@ -211,7 +211,7 @@ describe('absent / queued / cancelled required check → bounded, never indefini
     const d = evaluateCiGate(inputs({ rollup: [checkRun(REQ[0], '', 'QUEUED')], waitedMinutes: 1 }))
     const msg = buildHandback(d, 'your-org/operationkit', 527)
     expect(msg).toContain('gh pr checks 527 --repo your-org/operationkit --required')
-    expect(msg).not.toMatch(/escalates to Operator/)
+    expect(msg).not.toMatch(/escalates to the owner/)
     expect(msg.startsWith(GATE_HANDBACK_PREFIX)).toBe(true)
   })
 })

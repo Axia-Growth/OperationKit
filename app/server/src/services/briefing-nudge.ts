@@ -13,6 +13,7 @@
 import { listLoops, type Loop } from './loops.js'
 import { sendTelegram } from './notifier.js'
 import { callHaikuSummarizer } from './mentor-context.js'
+import { assistantNudgeEnabled } from '../lib/install-defaults.js'
 
 const CHECK_INTERVAL_MS = 60 * 1000
 const FIRE_HOUR = '07' // 7am, America/New_York
@@ -118,11 +119,13 @@ export async function runAssistantNudge(): Promise<boolean> {
 /**
  * Start the Assistant morning-nudge scheduler.
  * Fires once daily at 07:00 America/New_York (DST-aware).
- * Controlled by ASSISTANT_NUDGE_ENABLED env var (default: true).
+ * Opt-in (obj 900803): ASSISTANT_NUDGE_ENABLED env ('true'/'false') wins, else
+ * settings.assistant_nudge_enabled='1'. Off on a fresh install; an install that
+ * existed before keeps it ON via the one-time carry-over in lib/install-defaults.ts.
  */
 export function startBriefingNudgeScheduler(): void {
-  if (process.env.ASSISTANT_NUDGE_ENABLED === 'false') {
-    console.log('[briefing-nudge] Scheduler disabled via ASSISTANT_NUDGE_ENABLED=false')
+  if (!assistantNudgeEnabled()) {
+    console.log('[briefing-nudge] Scheduler off (opt-in: ASSISTANT_NUDGE_ENABLED=true or settings.assistant_nudge_enabled=1)')
     return
   }
   if (schedulerTimer) return

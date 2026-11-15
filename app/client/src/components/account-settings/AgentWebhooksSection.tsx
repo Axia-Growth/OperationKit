@@ -13,7 +13,11 @@ import { Badge } from '../../components/ui/Badge'
 import { Button } from '../../components/ui/Button'
 import { Skeleton } from '../../components/ui/Skeleton'
 import { cn } from '../../components/ui/cn'
-import { fmtDate } from './helpers'
+import { formatDateTime, humanize } from '../../lib/format'
+import { Alert } from '../ui/Alert'
+import { Checkbox, Field, Input } from '../ui/Field'
+import { EmptyState } from '../ui/EmptyState'
+import { SectionHeader } from '../ui/SettingsSection'
 import {
   AGENT_WEBHOOK_EVENTS,
   AGENT_WEBHOOK_EVENT_DESCRIPTIONS,
@@ -23,9 +27,6 @@ import {
   type AgentWebhookDelivery,
   type AgentWebhookEvent,
 } from '@operationkit/shared'
-
-const INPUT =
-  'mt-1 min-h-[44px] w-full rounded border border-line bg-surface px-2.5 py-2 text-base text-fg-0 placeholder:text-fg-3 transition-colors duration-base hover:border-line-strong focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/50 sm:min-h-[36px]'
 
 function errorText(err: unknown, fallback: string): string {
   if (err instanceof ApiError) return (err.body as { error?: string })?.error || err.message
@@ -70,18 +71,15 @@ export function AgentWebhooksSection() {
   }, [])
 
   return (
-    <section className="mt-6 rounded-lg border border-border bg-surface-raised p-5" aria-labelledby="agent-webhooks-heading">
-      <div className="mb-4">
-        <h2 id="agent-webhooks-heading" className="text-lg font-semibold text-fg-0">Agent webhooks</h2>
-        <p className="mt-1 max-w-prose text-xs text-fg-2">
-          Wake a bot when a card it created or started changes status, instead of it polling. Each POST carries the
-          card id, title, status, PR and link — never a secret or transcript — and is signed with the sender key.
-        </p>
-      </div>
+    <section className="mt-6 rounded-lg border border-line bg-surface-1 p-5" aria-labelledby="agent-webhooks-heading">
+      <SectionHeader
+        headingId="agent-webhooks-heading"
+        className="mb-4"
+        title="Agent webhooks"
+        description="Wake a bot when a card it created or started changes status, instead of it polling. Each POST carries the card id, title, status, PR and link — never a secret or transcript — and is signed with the sender key."
+      />
 
-      {error && (
-        <div role="alert" className="mb-3 rounded bg-signal-alarm/10 px-3 py-2 text-base text-signal-alarm">{error}</div>
-      )}
+      {error && <Alert tone="alarm" title={error} className="mb-3" />}
 
       {keys === null ? (
         <div className="space-y-2" aria-busy="true">
@@ -89,10 +87,12 @@ export function AgentWebhooksSection() {
           <Skeleton className="h-14 w-full" />
         </div>
       ) : keys.length === 0 ? (
-        <div className="rounded-md border border-dashed border-line px-4 py-6 text-center">
-          <p className="text-base text-fg-1">No active agent keys.</p>
-          <p className="mt-1 text-xs text-fg-2">Create an agent key above, then give it a webhook here.</p>
-        </div>
+        <EmptyState
+          compact
+          title="No active agent keys"
+          description="Create an agent key above, then give it a webhook here."
+          className="rounded-md border border-dashed border-line"
+        />
       ) : (
         <ul className="divide-y divide-line-soft rounded-md border border-line">
           {keys.map(k => {
@@ -290,49 +290,52 @@ function WebhookEditor({
       className="mt-3 space-y-4 rounded-md border border-line bg-surface-1 p-4"
       onSubmit={e => { e.preventDefault(); void save() }}
     >
-      {error && <div role="alert" className="rounded bg-signal-alarm/10 px-3 py-2 text-base text-signal-alarm">{error}</div>}
-      {notice && <div role="status" className="rounded-md border border-line bg-surface-3 px-3 py-2 text-base text-fg-0">{notice}</div>}
+      {error && <Alert tone="alarm" title={error} />}
+      {notice && <Alert tone="verify" title={notice} />}
 
-      <div>
-        <label htmlFor={id('url')} className="block text-xs font-medium text-fg-1">Webhook URL</label>
-        <input
-          id={id('url')}
+      <Field id={id('url')} label="Webhook URL">
+        <Input
           type="url"
           inputMode="url"
           value={url}
           onChange={e => setUrl(e.target.value)}
           placeholder="https://bot.example.com/cc-events"
-          className={cn(INPUT, 'font-mono')}
+          className="font-mono"
         />
-      </div>
+      </Field>
 
       <div>
-        <label htmlFor={id('secret')} className="block text-xs font-medium text-fg-1">Sender key</label>
-        <div className="mt-1 flex flex-col gap-2 sm:flex-row sm:items-start">
-          <input
-            id={id('secret')}
-            type="password"
-            autoComplete="new-password"
-            value={secret}
-            onChange={e => setSecret(e.target.value)}
-            placeholder={hook?.has_secret ? 'Stored — leave blank to keep it' : 'Paste your bot’s key, or generate one below'}
-            className={cn(INPUT, 'mt-0 font-mono flex-1')}
-          />
-          <Button
-            type="button"
-            className="shrink-0"
-            loading={saving}
-            disabled={!canGenerate}
-            onClick={() => void generateAndSave()}
-          >
-            {hook?.has_secret ? 'Generate new key' : 'Generate key'}
-          </Button>
-        </div>
-        <p className="mt-1 text-xs text-fg-2">
-          Sent as the auth header below and used to sign each body (<span className="font-mono">X-CC-Signature: sha256=…</span>).
-          {hook?.has_secret && <> Stored in Secrets as <span className="font-mono">{hook.secret_name}</span>.</>}
-          {' '}Generate has the server pick a random key instead of you typing one — shown once, right after you save.
-        </p>
+        <Field
+          id={id('secret')}
+          label="Sender key"
+          hint={
+            <>
+              Sent as the auth header below and used to sign each body (<span className="font-mono">X-CC-Signature: sha256=…</span>).
+              {hook?.has_secret && <> Stored in Secrets as <span className="font-mono">{hook.secret_name}</span>.</>}
+              {' '}Generate has the server pick a random key instead of you typing one — shown once, right after you save.
+            </>
+          }
+        >
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-start">
+            <Input
+              type="password"
+              autoComplete="new-password"
+              value={secret}
+              onChange={e => setSecret(e.target.value)}
+              placeholder={hook?.has_secret ? 'Stored — leave blank to keep it' : 'Paste your bot’s key, or generate one below'}
+              className="flex-1 font-mono"
+            />
+            <Button
+              type="button"
+              className="shrink-0"
+              loading={saving}
+              disabled={!canGenerate}
+              onClick={() => void generateAndSave()}
+            >
+              {hook?.has_secret ? 'Generate new key' : 'Generate key'}
+            </Button>
+          </div>
+        </Field>
         {revealedSecret && (
           <div role="status" className="mt-2 rounded-md border border-line-strong bg-surface-2 p-3">
             <p className="text-xs font-medium text-fg-1">Your new sender key (shown once — copy it now)</p>
@@ -345,57 +348,40 @@ function WebhookEditor({
       </div>
 
       <div className="grid gap-3 sm:grid-cols-2">
-        <div>
-          <label htmlFor={id('hname')} className="block text-xs font-medium text-fg-1">Header name</label>
-          <input id={id('hname')} value={headerName} maxLength={64} onChange={e => setHeaderName(e.target.value)} className={cn(INPUT, 'font-mono')} />
-        </div>
-        <div>
-          <label htmlFor={id('hprefix')} className="block text-xs font-medium text-fg-1">Value prefix</label>
-          <input id={id('hprefix')} value={headerPrefix} maxLength={32} onChange={e => setHeaderPrefix(e.target.value)} placeholder="(none)" className={cn(INPUT, 'font-mono')} />
-        </div>
+        <Field id={id('hname')} label="Header name">
+          <Input value={headerName} maxLength={64} onChange={e => setHeaderName(e.target.value)} className="font-mono" />
+        </Field>
+        <Field id={id('hprefix')} label="Value prefix">
+          <Input value={headerPrefix} maxLength={32} onChange={e => setHeaderPrefix(e.target.value)} placeholder="(none)" className="font-mono" />
+        </Field>
       </div>
       <p className="-mt-2 text-xs text-fg-2">
         Sends <span className="font-mono text-fg-1">{headerName || '…'}: {headerPrefix}&lt;sender key&gt;</span>
       </p>
 
       <fieldset>
-        <legend className="text-xs font-medium text-fg-1">Send these events</legend>
+        <legend className="text-sm font-medium text-fg-1">Send these events</legend>
         <div className="mt-1 grid gap-1 sm:grid-cols-2">
           {offeredEvents.map(e => {
             const on = events.includes(e)
             return (
-              <label
+              <Checkbox
                 key={e}
+                checked={on}
+                onChange={() => toggleEvent(e)}
                 className={cn(
-                  'flex min-h-[44px] cursor-pointer items-start gap-2.5 rounded-md border px-2.5 py-2 transition-colors duration-base',
+                  'flex min-h-[44px] rounded-md border px-2.5 py-2 transition-colors duration-base sm:min-h-[44px]',
                   on ? 'border-line-strong bg-surface-2' : 'border-transparent hover:bg-surface-3',
                 )}
-              >
-                <input
-                  type="checkbox"
-                  checked={on}
-                  onChange={() => toggleEvent(e)}
-                  className="mt-0.5 h-4 w-4 shrink-0 accent-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/50"
-                />
-                <span className="min-w-0">
-                  <span className="block font-mono text-xs text-fg-0">{e}</span>
-                  <span className="block text-xs text-fg-2">{AGENT_WEBHOOK_EVENT_DESCRIPTIONS[e]}</span>
-                </span>
-              </label>
+                label={<span className="block font-mono text-xs text-fg-0">{e}</span>}
+                description={AGENT_WEBHOOK_EVENT_DESCRIPTIONS[e]}
+              />
             )
           })}
         </div>
       </fieldset>
 
-      <label className="flex min-h-[44px] cursor-pointer items-center gap-2.5">
-        <input
-          type="checkbox"
-          checked={enabled}
-          onChange={e => setEnabled(e.target.checked)}
-          className="h-4 w-4 accent-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/50"
-        />
-        <span className="text-base text-fg-1">Enabled</span>
-      </label>
+      <Checkbox checked={enabled} onChange={e => setEnabled(e.target.checked)} label="Enabled" />
 
       <div className="flex flex-wrap gap-2 pt-1">
         <Button type="submit" variant="primary" loading={saving} disabled={!canSave}>
@@ -407,43 +393,50 @@ function WebhookEditor({
           </Button>
         )}
         {hook && (
-          <Button type="button" variant="danger" loading={removing} onClick={() => void remove()}>
+          // Destructive: kept apart from Save (pushed to the far end) and confirms first.
+          <Button type="button" variant="danger" className="sm:ml-auto" loading={removing} onClick={() => void remove()}>
             Remove
           </Button>
         )}
       </div>
 
       {test && (
-        <p role="status" className={cn('text-base', test.delivered ? 'text-signal-verify' : 'text-signal-alarm')}>
-          {test.delivered ? `Delivered — receiver answered ${test.status_code}.` : `Not delivered — ${test.error ?? 'no response'}.`}
-        </p>
+        <div role="status" className={cn('text-base', test.delivered ? 'text-success' : 'text-danger')}>
+          {test.delivered ? 'Delivered — the receiver accepted the test event.' : 'Not delivered — the receiver did not accept the test event.'}
+          {(test.status_code != null || test.error) && (
+            <details className="mt-1 text-xs text-fg-3">
+              <summary>Details</summary>
+              {[test.status_code != null ? `Status ${test.status_code}` : '', test.error ?? ''].filter(Boolean).join(' · ')}
+            </details>
+          )}
+        </div>
       )}
 
       {hook && (
         <div>
-          <h3 className="text-xs font-medium text-fg-1">Recent deliveries</h3>
+          <SectionHeader level={3} title="Recent deliveries" className="mb-2" />
           {deliveries === null ? (
-            <div className="mt-2 space-y-1.5" aria-busy="true">
+            <div className="space-y-1.5" aria-busy="true">
               <Skeleton className="h-8 w-full" />
               <Skeleton className="h-8 w-full" />
             </div>
           ) : deliveries.length === 0 ? (
-            <p className="mt-2 rounded-md border border-dashed border-line px-3 py-3 text-center text-xs text-fg-2">
+            <p className="rounded-md border border-dashed border-line px-3 py-3 text-center text-xs text-fg-2">
               Nothing sent yet. Use “Send test event” to check the receiver.
             </p>
           ) : (
-            <ul className="mt-2 divide-y divide-line-soft rounded-md border border-line" aria-label="Recent deliveries">
+            <ul className="divide-y divide-line-soft rounded-md border border-line" aria-label="Recent deliveries">
               {deliveries.map(d => (
                 <li key={d.id} className="flex flex-wrap items-center gap-x-3 gap-y-1 px-3 py-2 text-xs">
-                  <Badge tone={DELIVERY_TONE[d.status]}>{d.status}</Badge>
+                  <Badge tone={DELIVERY_TONE[d.status]}>{humanize(d.status)}</Badge>
                   <span className="font-mono text-fg-0">{d.event}</span>
                   <span className="text-fg-2">{d.objective_id ? `#${d.objective_id}` : 'test'}</span>
                   <span className="text-fg-2">
                     {d.attempts} {d.attempts === 1 ? 'try' : 'tries'}
-                    {d.last_status_code != null && <> · HTTP {d.last_status_code}</>}
+                    {d.last_status_code != null && <span title={`Status ${d.last_status_code}`}> · {d.last_status_code < 300 ? 'accepted' : 'refused by the receiver'}</span>}
                   </span>
-                  {d.last_error && d.status !== 'delivered' && <span className="min-w-0 truncate text-signal-alarm">{d.last_error}</span>}
-                  <span className="ml-auto text-fg-3">{fmtDate(d.delivered_at ?? d.created_at)}</span>
+                  {d.last_error && d.status !== 'delivered' && <span className="min-w-0 truncate text-danger" title={d.last_error}>Last try failed</span>}
+                  <span className="ml-auto text-fg-3" title={formatDateTime(d.delivered_at ?? d.created_at).title}>{formatDateTime(d.delivered_at ?? d.created_at).label}</span>
                 </li>
               ))}
             </ul>

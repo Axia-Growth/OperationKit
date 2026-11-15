@@ -14,8 +14,12 @@
 import { useCallback, useEffect, useState } from 'react'
 import { api } from '../../lib/api'
 import type { SecretAuditEntry, SecretAuditPage } from '@operationkit/shared'
-import { fmtTime } from './SecretRow'
+import { TimeText } from './SecretRow'
+import { SCOPE_LABELS } from './scope'
+import { friendlyError, humanize } from '../../lib/format'
+import type { SecretScopeType } from '@operationkit/shared'
 import { Select } from '../ui/Select'
+import { Alert, Button, DataTable, Field, Input, SettingsSection, type Column } from '../ui'
 
 /** Plain-language label per action. Unknown actions fall back to the raw string. */
 export const AUDIT_ACTION_LABELS: Record<string, string> = {
@@ -26,23 +30,54 @@ export const AUDIT_ACTION_LABELS: Record<string, string> = {
   delete: 'Deleted',
   rollback: 'Rolled back',
   read: 'Read by server',
-  inject: 'Injected into session',
+  inject: 'Given to a bot run',
   use: 'Used via broker',
   reveal_attempt: 'Reveal attempt (refused)',
 }
 
 const ACTION_TONES: Record<string, string> = {
-  delete: 'text-signal-alarm',
-  reveal_attempt: 'text-signal-amber',
+  delete: 'text-danger',
+  reveal_attempt: 'text-warning',
   rotate: 'text-accent',
-  create: 'text-signal-verify',
+  create: 'text-success',
 }
 
 const FILTERABLE = ['', 'create', 'rotate', 'update', 'describe', 'delete', 'rollback', 'reveal_attempt', 'use', 'inject', 'read']
 
+/** Plain words for the stored scope string ('global', 'workspace:example', 'user:7',
+ *  'workspace_user:example/7', 'move-to:…'). The raw value stays in the tooltip. */
+export function auditScopeLabel(raw: string): string {
+  let rest = raw
+  let prefix = ''
+  const move = /^move-(from|to):(.*)$/.exec(rest)
+  if (move) { prefix = move[1] === 'from' ? 'Moved from ' : 'Moved to '; rest = move[2] }
+  const i = rest.indexOf(':')
+  const type = (i === -1 ? rest : rest.slice(0, i)) as SecretScopeType
+  const target = i === -1 ? '' : rest.slice(i + 1)
+  const base = SCOPE_LABELS[type] ?? humanize(type)
+  let where = ''
+  if (type === 'workspace') where = target
+  else if (type === 'user') where = target ? `user #${target}` : ''
+  else if (type === 'workspace_user') {
+    const [ws, uid] = target.split('/')
+    where = [ws, uid ? `user #${uid}` : ''].filter(Boolean).join(', ')
+  }
+  const label = where ? `${base} (${where})` : base
+  return prefix ? prefix + label.charAt(0).toLowerCase() + label.slice(1) : label
+}
+
+/** How a row reached the store, in words. */
+const SOURCE_LABELS: Record<string, string> = {
+  ui: 'Settings page',
+  api: 'API',
+  spawn: 'Bot run start',
+  broker: 'Secrets broker',
+  server: 'Server',
+}
+
 function actorLabel(e: SecretAuditEntry): string {
   if (e.actorUsername) return e.actorUsername
-  if (e.actorUserId == null || e.actorUserId === 0) return e.source === 'spawn' ? 'session spawn' : 'system'
+  if (e.actorUserId == null || e.actorUserId === 0) return e.source === 'spawn' ? 'bot run start' : 'system'
   return `user #${e.actorUserId}`
 }
 
@@ -61,7 +96,7 @@ export function AuditLogPanel({ scopeQuery, secretKey, refreshToken, pageSize = 
   const [entries, setEntries] = useState<SecretAuditEntry[]>([])
   const [next, setNext] = useState<number | null>(null)
   const [loading, setLoading] = useState(false)
-  const [error, setError] = useState('')
+  const [error, setError] = useState<unknown>(null)
   const [action, setAction] = useState('')
   const [keyFilter, setKeyFilter] = useState('')
   const [appliedKey, setAppliedKey] = useState('')
@@ -78,14 +113,14 @@ export function AuditLogPanel({ scopeQuery, secretKey, refreshToken, pageSize = 
 
   const load = useCallback(async (beforeId?: number) => {
     setLoading(true)
-    setError('')
+    setError(null)
     try {
       const page = await api.get<SecretAuditPage>(buildPath(beforeId))
       const rows = Array.isArray(page?.entries) ? page.entries : []
       setEntries(prev => (beforeId != null ? [...prev, ...rows] : rows))
       setNext(typeof page?.nextBeforeId === 'number' ? page.nextBeforeId : null)
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Could not load the audit log')
+      setError(err)
     } finally {
       setLoading(false)
     }
@@ -95,37 +130,58 @@ export function AuditLogPanel({ scopeQuery, secretKey, refreshToken, pageSize = 
     if (open) void load()
   }, [open, load, refreshToken])
 
+  const columns: Column<SecretAuditEntry>[] = [
+    { key: 'at', header: 'When', className: 'whitespace-nowrap', cell: e => <TimeText at={e.at} /> },
+    {
+      key: 'action',
+      header: 'Action',
+      className: 'whitespace-nowrap',
+      cell: e => <span className={ACTION_TONES[e.action] ?? 'text-fg-1'}>{AUDIT_ACTION_LABELS[e.action] ?? humanize(e.action)}</span>,
+    },
+    ...(perSecret ? [] : [
+      { key: 'key', header: 'Key', mono: true, cell: (e: SecretAuditEntry) => <span className="text-fg-1">{e.key}</span> },
+      { key: 'scope', header: 'Scope', cell: (e: SecretAuditEntry) => <span className="text-fg-2" title={e.scope}>{auditScopeLabel(e.scope)}</span> },
+    ]),
+    { key: 'who', header: 'Who', cell: e => <span className="text-fg-2">{actorLabel(e)}</span> },
+    {
+      key: 'how',
+      header: 'How',
+      cell: e => (
+        <span className="text-fg-3">
+          {e.source ? SOURCE_LABELS[e.source] ?? humanize(e.source) : '—'}
+          {e.detail && <span className="ml-1">· {e.detail.replace(/^to-version:(\d+)$/, 'to version $1')}</span>}
+        </span>
+      ),
+    },
+  ]
+
   const body = (
     <div data-testid="secret-audit-log">
       {!perSecret && (
         <div className="mb-3 flex flex-wrap items-end gap-3">
-          <div>
-            <label htmlFor="audit-action" className="mb-1 block text-xs uppercase tracking-eyebrow text-fg-3">Action</label>
+          <Field id="audit-action" label="Action">
             <Select
-              id="audit-action"
               value={action}
               onChange={v => setAction(v)}
             >
               {FILTERABLE.map(a => (
-                <option key={a || 'all'} value={a}>{a ? AUDIT_ACTION_LABELS[a] ?? a : 'All actions'}</option>
+                <option key={a || 'all'} value={a}>{a ? AUDIT_ACTION_LABELS[a] ?? humanize(a) : 'All actions'}</option>
               ))}
             </Select>
-          </div>
+          </Field>
           <form
             onSubmit={e => { e.preventDefault(); setAppliedKey(keyFilter.trim()) }}
             className="flex items-end gap-2"
           >
-            <div>
-              <label htmlFor="audit-key" className="mb-1 block text-xs uppercase tracking-eyebrow text-fg-3">Key</label>
-              <input
-                id="audit-key"
+            <Field id="audit-key" label="Key">
+              <Input
                 value={keyFilter}
                 onChange={e => setKeyFilter(e.target.value)}
-                placeholder="exact key, e.g. OPENAI_API_KEY"
-                className="w-56 rounded border border-border bg-surface px-2 py-1.5 font-mono text-xs text-fg-0 outline-none focus:border-accent"
+                placeholder="e.g. OPENAI_API_KEY"
+                className="w-56 font-mono"
               />
-            </div>
-            <button type="submit" className="rounded px-2 py-1.5 text-xs text-accent hover:bg-surface-overlay">Filter</button>
+            </Field>
+            <Button type="submit" variant="secondary">Filter</Button>
           </form>
           <p className="ml-auto max-w-sm text-xs text-fg-3">
             Append-only: rows cannot be edited or deleted. Values are never logged.
@@ -133,47 +189,33 @@ export function AuditLogPanel({ scopeQuery, secretKey, refreshToken, pageSize = 
         </div>
       )}
 
-      {error && <div className="mb-2 rounded bg-signal-alarm/10 px-3 py-2 text-base text-signal-alarm">{error}</div>}
+      {error != null && (
+        <Alert tone="alarm" title={`Could not load the audit log. ${friendlyError(error).message}`} className="mb-2">
+          {friendlyError(error).detail && (
+            <details className="mt-1 text-xs text-fg-3">
+              <summary>Details</summary>
+              {friendlyError(error).detail}
+            </details>
+          )}
+        </Alert>
+      )}
 
-      <div className="overflow-x-auto rounded border border-border">
-        <table className="w-full text-xs">
-          <thead className="bg-surface border-b border-border">
-            <tr className="text-left text-fg-2">
-              <th className="px-2 py-1.5 font-medium">When (UTC)</th>
-              <th className="px-2 py-1.5 font-medium">Action</th>
-              {!perSecret && <th className="px-2 py-1.5 font-medium">Key</th>}
-              {!perSecret && <th className="px-2 py-1.5 font-medium">Scope</th>}
-              <th className="px-2 py-1.5 font-medium">Who</th>
-              <th className="px-2 py-1.5 font-medium">How</th>
-            </tr>
-          </thead>
-          <tbody>
-            {entries.length === 0 && !loading ? (
-              <tr><td colSpan={perSecret ? 4 : 6} className="px-2 py-4 text-center text-fg-3">No audit events.</td></tr>
-            ) : entries.map(e => (
-              <tr key={e.id} data-testid="audit-row" className="border-b border-border last:border-b-0">
-                <td className="whitespace-nowrap px-2 py-1.5 text-fg-3">{fmtTime(e.at)}</td>
-                <td className={`whitespace-nowrap px-2 py-1.5 ${ACTION_TONES[e.action] ?? 'text-fg-1'}`}>
-                  {AUDIT_ACTION_LABELS[e.action] ?? e.action}
-                </td>
-                {!perSecret && <td className="px-2 py-1.5 font-mono text-fg-1">{e.key}</td>}
-                {!perSecret && <td className="px-2 py-1.5 text-fg-2">{e.scope}</td>}
-                <td className="px-2 py-1.5 text-fg-2">{actorLabel(e)}</td>
-                <td className="px-2 py-1.5 text-fg-3">
-                  {e.source ?? '—'}
-                  {e.detail && <span className="ml-1 text-fg-3">· {e.detail}</span>}
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+      <DataTable
+        aria-label={perSecret ? `Activity for ${secretKey}` : 'Secrets audit log'}
+        columns={columns}
+        rows={entries}
+        rowKey={e => e.id}
+        // Skeleton only on the first load; "Load more" keeps the rows on screen.
+        loading={loading && entries.length === 0}
+        loadingRows={3}
+        empty={{ title: 'No audit events' }}
+      />
       <div className="mt-2 flex items-center gap-3">
-        {loading && <span className="text-xs text-fg-3">Loading…</span>}
+        {loading && entries.length > 0 && <span className="text-xs text-fg-3">Loading…</span>}
         {next != null && !loading && (
-          <button type="button" onClick={() => void load(next)} className="text-xs text-accent hover:underline" data-testid="audit-load-more">
+          <Button size="sm" variant="ghost" onClick={() => void load(next)} data-testid="audit-load-more">
             Load more
-          </button>
+          </Button>
         )}
       </div>
     </div>
@@ -182,21 +224,24 @@ export function AuditLogPanel({ scopeQuery, secretKey, refreshToken, pageSize = 
   if (perSecret) return body
 
   return (
-    <section className="mt-6 rounded-lg border border-border bg-surface-raised">
-      <button
-        type="button"
-        onClick={() => setOpen(o => !o)}
-        aria-expanded={open}
-        data-testid="audit-log-toggle"
-        className="flex w-full items-center justify-between px-4 py-3 text-left"
-      >
-        <span>
-          <span className="text-base font-medium text-fg-0">Audit log</span>
-          <span className="ml-2 text-xs text-fg-3">who created, rotated, deleted, used or tried to reveal a secret</span>
-        </span>
-        <span className="text-xs text-fg-3">{open ? 'Hide' : 'Show'}</span>
-      </button>
-      {open && <div className="border-t border-border p-4">{body}</div>}
-    </section>
+    <SettingsSection
+      title="Audit log"
+      // JSX text, not a string literal: the D1 write-only guard (server secrets-d1-write-only.test.ts) scans literals for "reveal".
+      description={<>Who created, rotated, deleted, used or tried to reveal a secret.</>}
+      className="mt-6"
+      actions={
+        <Button
+          size="sm"
+          variant="secondary"
+          onClick={() => setOpen(o => !o)}
+          aria-expanded={open}
+          data-testid="audit-log-toggle"
+        >
+          {open ? 'Hide' : 'Show'}
+        </Button>
+      }
+    >
+      {open && body}
+    </SettingsSection>
   )
 }

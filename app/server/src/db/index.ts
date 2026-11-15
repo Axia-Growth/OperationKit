@@ -31,6 +31,7 @@ import { initNeedsSecretSchema, initSecretRotationFlagsSchema, initSecretUploadT
 import { initAgentControlSchema } from './schema/agent-control.js'
 import { initAgentChatSchema } from './schema/agent-chat.js'
 import { initBotJobsSchema } from './schema/bot-jobs.js'
+import { initBotMessagesSchema } from './schema/bot-messages.js'
 import { initAgentWebhooksSchema } from './schema/agent-webhooks.js'
 import { initEmailSchema } from './schema/email.js'
 import { initAccountabilitySchema } from './schema/accountability.js'
@@ -42,8 +43,10 @@ import { initFlowSchema, enableFlowsOnce } from './schema/flow.js'
 import { initRoutineRunsSchema } from './schema/routine-runs.js'
 import { initKbEmbeddingsSchema } from './schema/kb-embeddings.js'
 import { initDelegationGrantsSchema } from './schema/delegation-grants.js'
+import { initBoardTriageSchema } from './schema/board-triage.js'
 import { installWriteScrubber } from './write-scrubber.js'
 import { redactForStorage } from '../services/secret-redaction.js'
+import { carryLegacyInstallDefaults, dbHadObjectivesTable } from '../lib/install-defaults.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const DB_PATH = process.env.DB_PATH || path.join(__dirname, '../../data/command-center.db')
@@ -81,6 +84,9 @@ export function initDb(): Database.Database {
   db = new Database(DB_PATH)
   db.pragma('journal_mode = WAL')
   db.pragma('foreign_keys = ON')
+  // obj 900803: was this DB already in use before this boot? Read BEFORE any
+  // CREATE TABLE so a brand-new file is told apart from an existing install.
+  const preExistingInstall = dbHadObjectivesTable(db)
 
   initCoreSchema(db)
 
@@ -1084,6 +1090,9 @@ export function initDb(): Database.Database {
   // approval/block ledger and the credential-revocation ledger. Additive
   // CREATE TABLEs only; nothing here alters an existing table.
   initBotJobsSchema(db)
+  // Bot-to-bot messaging (obj 900859): conversations between two bots in one
+  // workspace + the delivery outbox that wakes the recipient. Additive only.
+  initBotMessagesSchema(db)
   // Agent-key webhooks outbox (obj 719278) — reads objective_events, so after it.
   initAgentWebhooksSchema(db)
   // One-time email sign-in links (obj 900497). Additive CREATE TABLE only.
@@ -1108,6 +1117,11 @@ export function initDb(): Database.Database {
   // obj 900675: B4 shipped, so the Workflows switch goes ON once per install.
   // Marker-guarded: a later manual flows_enabled=0 survives every restart.
   if (enableFlowsOnce(db)) console.log('[flows] settings.flows_enabled switched on (one-time, obj 900675)')
+  // obj 900803: the old author-specific defaults (CORS origin, preview domain,
+  // harness repo, Assistant nudge ON) are now blank on a fresh install. An install
+  // that existed before keeps them, written ONCE as settings rows here.
+  const carried = carryLegacyInstallDefaults(db, preExistingInstall)
+  if (carried.length) console.log(`[install-defaults] kept previous defaults as settings (one-time, obj 900803): ${carried.join(', ')}`)
   // Per-run routine history (obj 900676): one row per routine fire. Additive table only.
   initRoutineRunsSchema(db)
   // Knowledge-base semantic index (obj 900816): chunk + doc + job tables. The
@@ -1116,6 +1130,8 @@ export function initDb(): Database.Database {
   // Delegated approvals (obj 900839): owner-issued bot grants + their audit log.
   // Additive tables only; no rows = the approval gate is unchanged (default deny).
   initDelegationGrantsSchema(db)
+  // Needs You bulk triage audit (obj 900869): one batch row + one row per card.
+  initBoardTriageSchema(db)
   // ── Secret scrubbing on persistence (obj 715532) ──────────────────────────
   // Installed LAST so migrations above run unwrapped. From here on, writes to
   // activity_log / objectives / session_events / … have known secret values and

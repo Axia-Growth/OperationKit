@@ -174,18 +174,21 @@ describe('Settings → Connectors', () => {
     expect(text).toContain('Connected as')
     expect(text).not.toContain('Google Workspace')
     expect(text).not.toContain('Not connected')
-    expect(button('New Integration')).toBeTruthy()
+    expect(button('New integration')).toBeTruthy()
   })
 
-  it('with nothing connected, says so and offers New Integration', async () => {
+  it('with nothing connected, says so and offers New integration', async () => {
     await render()
     expect(container.textContent).toContain('No integrations connected yet')
     expect(container.textContent).not.toContain('GitHub')
+    // F5 (obj 900806): ONE primary "New integration" — the empty state's CTA, not a second one in the header.
+    const ctas = Array.from(container.querySelectorAll('button')).filter(b => b.textContent?.trim() === 'New integration')
+    expect(ctas).toHaveLength(1)
   })
 
   it('New Integration offers Browse (setup guides) and Make my own', async () => {
     await render()
-    button('New Integration')!.click()
+    button('New integration')!.click()
     await flush()
     expect(window.location.search).toBe('?new=1')
     expect(container.querySelector('[data-testid="choose-browse"]')).toBeTruthy()

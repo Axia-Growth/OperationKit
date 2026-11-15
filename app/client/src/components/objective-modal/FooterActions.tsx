@@ -1,8 +1,11 @@
 /**
  * Delete / reopen / cancel / submit — extracted from ObjectiveModal.tsx
- * (behavior frozen).
+ * (behavior frozen). All four are the shared Button (polish F4, #900805): a
+ * disabled Create reads as the neutral disabled token, never a faded accent.
  */
 import type { Objective } from '@operationkit/shared'
+import { Button } from '../ui'
+import { REOPEN_LABEL } from '../../lib/statusActions'
 
 export function FooterActions({
   isEdit,
@@ -24,29 +27,25 @@ export function FooterActions({
   onReopen?: (id: number) => void
 }) {
   return (
-    <div className="flex items-center justify-between border-t border-line-soft pt-3">
+    <div className="flex items-center justify-between gap-2 border-t border-line-soft pt-3">
       {isEdit ? (
         <div className="flex items-center gap-1">
-          <button
+          <Button
             type="button"
+            variant="ghost"
             onClick={onDelete}
             disabled={loading}
-            className="rounded-md px-3 py-2 text-base text-flag-blocked transition-colors duration-fast ease-out hover:bg-flag-blocked/10"
+            className="px-3 text-danger hover:bg-danger/10 hover:text-danger"
           >
             Delete
-          </button>
-          {/* Re-Open a terminal-state objective (obj 702389) — the reopen
+          </Button>
+          {/* Re-open a terminal-state objective (obj 702389) — the reopen
               path for a DONE/cancelled objective found via search. Target
               is 'queue' per VALID_TRANSITIONS (done/cancelled → queue). */}
           {onReopen && objective && (objective.status === 'done' || objective.status === 'cancelled') && (
-            <button
-              type="button"
-              onClick={() => onReopen(objective.id)}
-              disabled={loading}
-              className="rounded-md px-3 py-2 text-base text-fg-1 transition-colors duration-fast ease-out hover:bg-surface-3 hover:text-fg-0"
-            >
-              Re-Open
-            </button>
+            <Button type="button" variant="ghost" onClick={() => onReopen(objective.id)} disabled={loading} className="px-3">
+              {REOPEN_LABEL}
+            </Button>
           )}
         </div>
       ) : (
@@ -54,20 +53,12 @@ export function FooterActions({
       )}
 
       <div className="flex gap-2">
-        <button
-          type="button"
-          onClick={onClose}
-          className="rounded-md px-4 py-2 text-base text-fg-1 transition-colors duration-fast ease-out hover:bg-surface-3 hover:text-fg-0"
-        >
+        <Button type="button" variant="ghost" onClick={onClose}>
           Cancel
-        </button>
-        <button
-          type="submit"
-          disabled={loading || !descHydrated}
-          className="rounded-md bg-accent px-4 py-2 text-base font-medium text-accent-fg transition-colors duration-fast ease-out hover:bg-accent-hover active:bg-accent-press disabled:opacity-50 min-h-[36px]"
-        >
+        </Button>
+        <Button type="submit" variant="primary" disabled={!descHydrated} loading={loading}>
           {uploading ? 'Uploading…' : loading ? 'Saving…' : !descHydrated ? 'Loading…' : isEdit ? 'Update' : 'Create'}
-        </button>
+        </Button>
       </div>
     </div>
   )

@@ -1,4 +1,7 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
+import { Skeleton, SkeletonText } from './ui/Skeleton'
+import { Spinner } from './ui/Button'
+import { ChevronRight } from 'lucide-react'
 import type { SessionMessage, ThreadSegment, ThreadTimeline as ThreadTimelineData, ThreadTimelineUnchanged } from '@operationkit/shared'
 import { renderMarkdown } from '../lib/markdown'
 import { api } from '../lib/api'
@@ -23,6 +26,8 @@ interface ThreadTimelineProps {
   scrollContainerRef: React.RefObject<HTMLElement | null>
   /** Notifies the viewer when the rendered content grows, so it can auto-scroll. */
   onContentChange?: () => void
+  /** Shown once the first fetch has landed and the session has no output. */
+  emptyState?: ReactNode
   /** Bubbles the live-stream connection state (SSE open / connecting / poll fallback)
    *  up to the viewer so it can render the header connection pill. */
   onConnState?: (state: ConnState) => void
@@ -59,7 +64,7 @@ function ActionsGap({
             onClick={onToggle}
             className="mb-1 flex w-full items-center gap-2 rounded-lg border border-line bg-surface-2 px-3 py-1.5 text-left text-xs text-fg-2 hover:text-fg-1"
           >
-            <span className="text-xs text-fg-3 transition-transform rotate-90">{'▸'}</span>
+            <ChevronRight aria-hidden="true" className="h-3.5 w-3.5 shrink-0 rotate-90 text-fg-3" />
             <span className="font-medium">Collapse {label} action{label !== 1 ? 's' : ''}</span>
           </button>
         )}
@@ -68,7 +73,9 @@ function ActionsGap({
             <GroupedMessages messages={slice} />
           </div>
         ) : (
-          <div className="pl-3 text-xs text-fg-3">{loading || !slice ? 'Loading…' : 'No activity'}</div>
+          loading || !slice
+            ? <div className="pl-3" role="status" aria-busy="true" aria-label="Loading actions"><SkeletonText lines={2} /></div>
+            : <div className="pl-3 text-xs text-fg-3">No activity</div>
         )}
       </div>
     )
@@ -79,9 +86,9 @@ function ActionsGap({
         onClick={onToggle}
         className="flex w-full items-center gap-2 rounded-lg border border-line bg-surface-2 px-3 py-1.5 text-left text-xs text-fg-2 hover:bg-surface-3 hover:text-fg-1"
       >
-        <span className="text-xs text-fg-3">{'▸'}</span>
+        <ChevronRight aria-hidden="true" className="h-3.5 w-3.5 shrink-0 text-fg-3" />
         <span className="font-medium">Expand to show {label} action{label !== 1 ? 's' : ''}</span>
-        {loading && <span className="ml-auto text-xs text-fg-3">Loading…</span>}
+        {loading && <Spinner className="ml-auto h-3 w-3 text-fg-3" />}
       </button>
     </div>
   )
@@ -90,10 +97,10 @@ function ActionsGap({
 // ── Divider (followup): child-complete nudge OR a user message ──
 
 function Divider({ seg }: { seg: Extract<ThreadSegment, { type: 'divider' }> }) {
-  const childMatch = seg.text.match(/^\[child-complete\](?:\s*×(\d+))?/)
+  const childMatch = seg.text.match(/^\[child-complete\](?:\s*\u00d7(\d+))?/) // \u00d7 = the multiplication sign the server writes
   if (childMatch) {
     const n = childMatch[1] ? parseInt(childMatch[1], 10) : 1
-    const label = n > 1 ? `${n} workers finished` : 'worker finished'
+    const label = n > 1 ? `${n} bots finished` : 'bot finished'
     return (
       <div className="my-3 flex items-center gap-2" title={seg.text}>
         <div className="h-px flex-1 bg-line" />
@@ -122,8 +129,8 @@ function Divider({ seg }: { seg: Extract<ThreadSegment, { type: 'divider' }> }) 
       {seg.queued && (
         // obj 900412: sent while the agent was mid-task. It was NOT restarted;
         // it reads this as soon as the current step finishes.
-        <span className="font-mono text-xs text-fg-3">
-          Agent is mid-task. It will read this when the current step finishes.
+        <span className="text-xs text-fg-3">
+          The bot is mid-task. It will read this when the current step finishes.
         </span>
       )}
     </div>
@@ -146,7 +153,7 @@ function Question({ seg }: { seg: Extract<ThreadSegment, { type: 'question' }> }
   )
 }
 
-export function ThreadTimeline({ objectiveId, status, onStatus, scrollContainerRef, onContentChange, onConnState, pendingEcho, onEchoLanded }: ThreadTimelineProps) {
+export function ThreadTimeline({ objectiveId, status, onStatus, scrollContainerRef, onContentChange, onConnState, pendingEcho, onEchoLanded, emptyState }: ThreadTimelineProps) {
   const [segments, setSegments] = useState<ThreadSegment[]>([])
   const [total, setTotal] = useState(0)
   const [loaded, setLoaded] = useState(false)
@@ -406,7 +413,10 @@ export function ThreadTimeline({ objectiveId, status, onStatus, scrollContainerR
     }
   }, [allExpanded, collapsibleGaps, fetchSlice])
 
-  if (!loaded && segments.length === 0) return null
+  // First fetch still in flight: a thread-shaped skeleton (polish F8) — this
+  // used to return null, leaving the pane blank or flashing its empty copy.
+  if (!loaded && segments.length === 0) return <ThreadSkeleton />
+  if (loaded && segments.length === 0) return <>{emptyState ?? null}</>
 
   return (
     <div className="space-y-1">
@@ -449,6 +459,18 @@ export function ThreadTimeline({ objectiveId, status, onStatus, scrollContainerR
             return null
         }
       })}
+    </div>
+  )
+}
+
+/** Placeholder for the first timeline fetch: a couple of message-shaped blocks. */
+function ThreadSkeleton() {
+  return (
+    <div className="space-y-4 py-2" role="status" aria-busy="true" aria-label="Loading session" data-testid="thread-skeleton">
+      <div className="flex justify-end"><Skeleton className="h-10 w-2/5 rounded-lg" /></div>
+      <SkeletonText lines={3} />
+      <Skeleton className="h-8 w-full rounded-lg" />
+      <SkeletonText lines={2} />
     </div>
   )
 }

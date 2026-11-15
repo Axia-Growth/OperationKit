@@ -16,7 +16,8 @@
  */
 import { useEffect, useMemo, useState, type FormEvent } from 'react'
 import { api } from '../../lib/api'
-import { Alert, Button, useConfirm } from '../ui'
+import { Plus } from 'lucide-react'
+import { Alert, Button, DataTable, Field, Input, RowActions, SettingsSection, useConfirm, type Column } from '../ui'
 import type { SecretSummary } from '@operationkit/shared'
 import { Select } from '../ui/Select'
 
@@ -104,47 +105,50 @@ export function ProviderKeysSection() {
     }
   }
 
+  const labelOf = (r: StoredProviderKey) =>
+    r.provider === 'CUSTOM'
+      ? `Custom: ${r.customSlug}`
+      : FIXED_PROVIDERS.find(p => p.id === r.provider)?.label ?? r.provider
+
+  const columns: Column<StoredProviderKey>[] = [
+    { key: 'provider', header: 'Provider', cell: r => <span className="font-medium text-fg-0">{labelOf(r)}</span> },
+    { key: 'version', header: 'Version', mono: true, cell: r => `v${r.version}` },
+    { key: 'updated', header: 'Updated', cell: r => <span className="text-fg-2">{fmtDate(r.updatedAt)}</span> },
+  ]
+
   return (
-    <section className="space-y-3 rounded-lg border border-line bg-surface-2 p-4" aria-labelledby="provider-keys-heading">
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div>
-          <h3 id="provider-keys-heading" className="font-display text-lg font-semibold tracking-tight text-fg-0">
-            API key providers
-          </h3>
-          <p className="mt-1 max-w-prose text-sm leading-relaxed text-fg-3">
-            Bring your own key for Anthropic, OpenAI, xAI, or any OpenAI-compatible endpoint, stored the same way as
-            every other secret here — encrypted, write-only, never shown again.
-          </p>
-        </div>
-        {!adding && <Button variant="secondary" onClick={() => setAdding(true)}>Add API key provider</Button>}
-      </div>
+    <SettingsSection
+      title="API key providers"
+      description="Bring your own key for Anthropic, OpenAI, xAI, or any OpenAI-compatible endpoint, stored the same way as every other secret here — encrypted, write-only, never shown again."
+      actions={!adding && (
+        <Button variant="secondary" leftIcon={<Plus className="h-4 w-4" />} onClick={() => setAdding(true)}>
+          Add API key provider
+        </Button>
+      )}
+      className="rounded-lg border border-line bg-surface-2 p-4"
+      bodyClassName="space-y-3"
+    >
+      {error && <Alert tone="alarm" title={error} />}
 
-      {error && <Alert tone="alarm">{error}</Alert>}
-
-      {rows === null ? (
-        <p className="text-sm text-fg-3">Loading…</p>
-      ) : rows.length === 0 && !adding ? (
-        <p className="rounded-md border border-dashed border-line px-3 py-4 text-center text-sm text-fg-3">
-          No provider keys yet.
-        </p>
-      ) : (
-        <ul className="divide-y divide-line-soft rounded-md border border-line">
-          {rows.map(r => {
-            const label =
-              r.provider === 'CUSTOM'
-                ? `Custom: ${r.customSlug}`
-                : FIXED_PROVIDERS.find(p => p.id === r.provider)?.label ?? r.provider
-            return (
-              <li key={r.secretKey} className="flex flex-wrap items-center justify-between gap-2 px-3 py-2.5">
-                <div>
-                  <p className="text-sm font-medium text-fg-0">{label}</p>
-                  <p className="text-xs text-fg-3">v{r.version} · updated {fmtDate(r.updatedAt)}</p>
-                </div>
-                <Button variant="danger" size="sm" onClick={() => void handleRemove(r.secretKey, label)}>Remove</Button>
-              </li>
-            )
-          })}
-        </ul>
+      {/* While the add form is open, an empty list is just noise. */}
+      {(rows === null || rows.length > 0 || !adding) && (
+        <DataTable
+          aria-label="Provider API keys"
+          columns={columns}
+          rows={rows ?? []}
+          rowKey={r => r.secretKey}
+          loading={rows === null}
+          loadingRows={2}
+          mobileTitle={r => labelOf(r)}
+          empty={{ title: 'No provider keys yet', description: 'Add one to run models on your own API key.' }}
+          rowActionsAlways
+          rowActions={r => (
+            <RowActions
+              label={`Actions for ${labelOf(r)}`}
+              actions={[{ label: 'Remove', danger: true, onSelect: () => void handleRemove(r.secretKey, labelOf(r)) }]}
+            />
+          )}
+        />
       )}
 
       {adding && (
@@ -155,7 +159,7 @@ export function ProviderKeysSection() {
         />
       )}
       {confirmDialog}
-    </section>
+    </SettingsSection>
   )
 }
 
@@ -198,59 +202,42 @@ function AddProviderKeyForm({ existing, onCancel, onSaved }: {
 
   return (
     <form onSubmit={handleSubmit} className="space-y-3 rounded-md border border-line bg-surface-1 p-4">
-      {error && <Alert tone="alarm">{error}</Alert>}
+      {error && <Alert tone="alarm" title={error} />}
       {duplicate && <Alert tone="amber">A key for this provider already exists — remove it first to replace it.</Alert>}
 
-      <div>
-        <label htmlFor="provider-key-provider" className="mb-1 block text-xs text-fg-2">Provider</label>
-        <Select
-          id="provider-key-provider"
-          value={provider}
-          onChange={v => setProvider(v as ProviderChoice)} className="w-full"
-        >
+      <Field label="Provider" id="provider-key-provider">
+        <Select value={provider} onChange={v => setProvider(v as ProviderChoice)} className="w-full">
           {FIXED_PROVIDERS.map(p => <option key={p.id} value={p.id}>{p.label}</option>)}
           <option value="CUSTOM">OpenAI-compatible (custom base URL)</option>
         </Select>
-      </div>
+      </Field>
 
       {provider === 'CUSTOM' && (
         <>
-          <div>
-            <label htmlFor="provider-key-name" className="mb-1 block text-xs text-fg-2">Name</label>
-            <input
-              id="provider-key-name"
-              value={name}
-              onChange={e => setName(e.target.value)}
-              placeholder="e.g. Together AI"
-              className="min-h-[40px] w-full rounded border border-line bg-surface px-2.5 py-2 text-base text-fg-0"
-            />
-          </div>
-          <div>
-            <label htmlFor="provider-key-base-url" className="mb-1 block text-xs text-fg-2">Base URL</label>
-            <input
-              id="provider-key-base-url"
+          <Field label="Name" id="provider-key-name">
+            <Input value={name} onChange={e => setName(e.target.value)} placeholder="e.g. Together AI" />
+          </Field>
+          <Field label="Base URL" id="provider-key-base-url">
+            <Input
               type="url"
               value={baseUrl}
               onChange={e => setBaseUrl(e.target.value)}
               placeholder="https://api.example.com/v1"
-              className="min-h-[40px] w-full rounded border border-line bg-surface px-2.5 py-2 font-mono text-base text-fg-0"
+              className="font-mono"
             />
-          </div>
+          </Field>
         </>
       )}
 
-      <div>
-        <label htmlFor="provider-key-value" className="mb-1 block text-xs text-fg-2">API key</label>
-        <input
-          id="provider-key-value"
+      <Field label="API key" id="provider-key-value" hint="Stored encrypted; never shown again.">
+        <Input
           type="password"
           autoComplete="off"
           value={apiKey}
           onChange={e => setApiKey(e.target.value)}
-          placeholder="Stored encrypted; never shown again"
-          className="min-h-[40px] w-full rounded border border-line bg-surface px-2.5 py-2 font-mono text-base text-fg-0"
+          className="font-mono"
         />
-      </div>
+      </Field>
 
       <div className="flex flex-wrap gap-2 pt-1">
         <Button type="submit" variant="primary" loading={saving} disabled={!canSave}>Save key</Button>

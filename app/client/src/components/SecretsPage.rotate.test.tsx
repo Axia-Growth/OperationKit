@@ -67,11 +67,25 @@ const { apiMock, ApiErrorMock } = vi.hoisted(() => {
 
 vi.mock('../lib/api', () => ({ api: apiMock, ApiError: ApiErrorMock }))
 vi.mock('../context/AuthContext', () => ({ useAuth: () => ({ user: { id: 1, role: 'admin', username: 'operator' } }) }))
-vi.mock('./ui', () => ({
+// Real primitives (DataTable, RowActions, Field…); only the portal Modal and the
+// confirm dialog are stubbed so the test drives the page inline.
+vi.mock('./ui', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('./ui')>()),
   Modal: ({ children }: { children: React.ReactNode }) => <div role="dialog">{children}</div>,
-  Skeleton: () => <div />,
   useConfirm: () => ({ confirm: vi.fn(() => Promise.resolve(true)), confirmDialog: null }),
 }))
+/** Opens a secret row's "⋯" menu (ui/RowActions) and picks an item. */
+async function pickRowAction(scope: ParentNode, key: string, item: string) {
+  const { click } = await import('../test/render')
+  const trigger = scope.querySelector(`[aria-label="Actions for ${key}"]`)
+  await click(trigger)
+  const menuId = trigger?.getAttribute('aria-controls')
+  const menu = (menuId && document.getElementById(menuId)) || document
+  const entry = Array.from(menu.querySelectorAll<HTMLElement>('[role="menuitem"]')).find(m => m.textContent?.trim() === item)
+  if (!entry) throw new Error(`no "${item}" in the row menu for ${key}`)
+  await click(entry)
+}
+
 
 import { SecretsPage } from './SecretsPage'
 
@@ -87,13 +101,10 @@ describe('Secrets — rotate, describe, audit (obj 900498)', () => {
     root = createRoot(container)
   })
 
-  const button = (label: string) =>
-    Array.from(container.querySelectorAll('button')).find(b => b.textContent === label) as HTMLButtonElement | undefined
-
   async function openEdit() {
     flushSync(() => root.render(<SecretsPage />))
     await flush()
-    flushSync(() => button('Edit')!.dispatchEvent(new MouseEvent('click', { bubbles: true })))
+    await pickRowAction(container, 'STRIPE_KEY', 'Edit')
     await flush()
   }
 
@@ -107,7 +118,9 @@ describe('Secrets — rotate, describe, audit (obj 900498)', () => {
     flushSync(() => root.render(<SecretsPage />))
     await flush()
     expect(container.querySelector('[data-testid="secret-description"]')?.textContent).toBe('billing worker')
-    expect(container.querySelector('[data-testid="secret-last-used"]')?.textContent).toBe('2026-11-10 09:15')
+    const lastUsed = container.querySelector('[data-testid="secret-last-used"]')
+    expect(lastUsed?.textContent).not.toMatch(/2026-11-10/)
+    expect(lastUsed?.querySelector('[title]')?.getAttribute('title')).toMatch(/2026/)
     expect(container.textContent).toContain('••••••')
   })
 
@@ -158,7 +171,7 @@ describe('Secrets — rotate, describe, audit (obj 900498)', () => {
     expect(toggle).toBeTruthy()
     flushSync(() => toggle.dispatchEvent(new MouseEvent('click', { bubbles: true })))
     await flush()
-    const rows = container.querySelectorAll('[data-testid="audit-row"]')
+    const rows = container.querySelectorAll('[data-testid="secret-audit-log"] table tbody tr')
     expect(rows).toHaveLength(2)
     expect(rows[0]!.textContent).toContain('Reveal attempt (refused)')
     expect(rows[1]!.textContent).toContain('Rotated')

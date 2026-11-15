@@ -13,7 +13,8 @@ import { useState, useEffect } from 'react'
 import { Server } from 'lucide-react'
 import { Card, Badge, Skeleton } from '../ui'
 import { api } from '../../lib/api'
-import { formatBytes, formatName } from '../config/config-form'
+import { formatName } from '../config/config-form'
+import { describeCron, formatBytes } from '../../lib/format'
 import { HOST_CRON_ANCHOR } from '../../lib/routes'
 
 export interface CronJob {
@@ -28,7 +29,13 @@ export interface CronJob {
 }
 
 export const HOST_CRON_EXPLAINER =
-  'Scripts in this server’s crontab that run on their own schedule, outside the routine scheduler above — backups, cleanup, health checks. Only entries tagged “# command-center: <name>” are listed. Edit them on the host.'
+  'Scripts this server runs on its own schedule, outside the workflow scheduler above — backups, cleanup, health checks. Only entries tagged “# command-center: <name>” are listed. Edit them on the server.'
+
+/** A host crontab entry in words, on its own clock. Falls back to the server's own wording. */
+function scheduleWords(job: CronJob): string {
+  const words = describeCron(job.schedule, { utc: job.timezone === 'UTC' })
+  return words === 'Custom schedule' && job.scheduleHuman ? job.scheduleHuman : words
+}
 
 export function HostCronJobs({ initial }: { initial?: CronJob[] } = {}) {
   const [jobs, setJobs] = useState<CronJob[]>(initial ?? [])
@@ -50,8 +57,8 @@ export function HostCronJobs({ initial }: { initial?: CronJob[] } = {}) {
         id="host-cron-heading"
         className="flex items-center gap-2 text-xs uppercase tracking-eyebrow text-fg-3 font-semibold"
       >
-        <Server className="h-3.5 w-3.5" /> Host cron jobs
-        {!loading && <span className="font-mono text-fg-3">{jobs.length}</span>}
+        <Server className="h-3.5 w-3.5" /> Server schedules
+        {!loading && <span className="text-fg-3">{jobs.length}</span>}
       </h3>
       <p className="max-w-3xl text-sm leading-snug text-fg-2">{HOST_CRON_EXPLAINER}</p>
 
@@ -63,7 +70,7 @@ export function HostCronJobs({ initial }: { initial?: CronJob[] } = {}) {
           </div>
         </Card>
       ) : failed ? (
-        <p className="text-sm text-signal-amber">Couldn’t read the host crontab from the server.</p>
+        <p className="text-sm text-warning">Couldn’t read the host crontab from the server.</p>
       ) : jobs.length === 0 ? (
         <p data-testid="host-cron-none" className="text-sm text-fg-3">None tagged on this server.</p>
       ) : (
@@ -77,14 +84,13 @@ export function HostCronJobs({ initial }: { initial?: CronJob[] } = {}) {
                     <Badge tone="verify">Active</Badge>
                   </div>
                   <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-fg-3">
-                    <span>{job.scheduleHuman}</span>
-                    {job.timezone !== 'UTC' && <Badge tone="neutral" mono>{job.timezone}</Badge>}
-                    <span className="font-mono text-xs">{job.schedule}</span>
+                    <span>{scheduleWords(job)}</span>
+                    {job.timezone !== 'UTC' && <Badge tone="neutral">{job.timezone}</Badge>}
                   </div>
                 </div>
                 <div className="shrink-0 text-left font-mono text-xs text-fg-3 sm:text-right">
                   <div>{job.scriptPath.split('/').pop()}</div>
-                  {job.logSize > 0 && <div className="mt-0.5">Log: {formatBytes(job.logSize)}</div>}
+                  {job.logSize > 0 && <div className="mt-0.5 font-sans">Log: {formatBytes(job.logSize)}</div>}
                 </div>
               </div>
               {job.logTail && (

@@ -46,6 +46,8 @@ source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 source "$(dirname "${BASH_SOURCE[0]}")/api-bypass-lib.sh"
 # shellcheck source=install/bic-lib.sh
 source "$(dirname "${BASH_SOURCE[0]}")/bic-lib.sh"
+# shellcheck source=install/verify-lib.sh
+source "$(dirname "${BASH_SOURCE[0]}")/verify-lib.sh"
 
 CONFIG=
 LOCAL_ONLY=0
@@ -280,9 +282,9 @@ else
   # inside the duplicate-guard window (409), so the fixed title "Install check:
   # say hello" made every verify after the first one fail. The marker is also
   # what the worker has to echo back, so one value does both jobs.
-  marker="OK-INSTALL-CHECK-$(date +%s)-$RANDOM"
-  card=$(jq -nc --arg w "$SLUG" --arg m "$marker" '{title:("Install check: say hello " + $m), workspace:$w, start:true, skip_ai_review:true, force:true,
-    description:("This is an automated install check. Reply with exactly this text and nothing else, then stop: " + $m + ". Do not create or edit any files.")}')
+  # The body is built in install/verify-lib.sh (install/test/verify-card-test.sh).
+  marker=$(ok_verify_marker)
+  card=$(ok_verify_card_json "$SLUG" "$marker")
   id=$(api POST /api/objectives "$card" | jq -r '.id // .objective.id // empty')
   if [ -z "$id" ]; then fail "could not create the test card ($(code): $(head -c 300 "$TMPD/body"))"; else
     VERIFY_CARD_ID=$id   # cleanup() removes it on the way out, pass or fail

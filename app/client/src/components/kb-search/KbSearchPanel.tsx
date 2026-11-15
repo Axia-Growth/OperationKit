@@ -71,7 +71,7 @@ export function KbSearchPanel({ workspace, root, selectedPath, onOpen, children 
         onSubmit={e => { e.preventDefault(); setSubmitTick(t => t + 1) }}
       >
         <SearchInput
-          aria-label="Search the knowledge base"
+          aria-label="Search Context"
           placeholder="Search pages…"
           value={query}
           onChange={e => { setSubmitTick(0); setQuery(e.target.value) }}

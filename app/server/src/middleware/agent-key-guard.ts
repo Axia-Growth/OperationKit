@@ -94,6 +94,13 @@ export function requiredScope(method: string, path: string, body: unknown): Scop
       if (m === 'POST' && /^\/secret-requests\/[^/]+\/upload-token$/.test(rest)) {
         return { kind: 'scope', scope: 'board:secrets_request' }
       }
+      // obj 900869: a bot approving a Needs You card is NOT the board:done
+      // signature — the route itself only lets an eligible card through (an
+      // active delegation grant, or the bot's own reviewed work). Claiming a
+      // card only sets owner_bot. Both are ordinary writes.
+      if (m === 'POST' && (rest === '/bot-approve' || rest === '/claim')) {
+        return { kind: 'scope', scope: 'board:write' }
+      }
       // Starting planning / approving a plan launches a session = a start.
       if (m === 'POST' && (rest === '/planning/start' || rest === '/planning/approve')) {
         return { kind: 'scope', scope: 'board:start' }
@@ -168,6 +175,8 @@ export function flowScope(method: string, path: string): ScopeRule {
     if (is('') || is('/validate') || is(`/${FLOW_ID}/versions`)) return { kind: 'scope', scope: 'board:write' }
     if (is(`/${FLOW_ID}/test`) || is(`/${FLOW_ID}/runs`)) return { kind: 'scope', scope: 'board:start' }
   }
+  // obj 900868: Notes + Tools on a workflow describe it; same scope as drafting.
+  if (method === 'PATCH' && is(`/${FLOW_ID}`)) return { kind: 'scope', scope: 'board:write' }
   // POST /api/flows/:id/publish lands here on purpose.
   return { kind: 'off_surface' }
 }

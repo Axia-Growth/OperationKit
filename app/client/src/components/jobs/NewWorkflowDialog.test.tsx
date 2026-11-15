@@ -105,4 +105,36 @@ describe('NewWorkflowDialog', () => {
     render({ workspaces: ['acme', 'beta'] }) // new array identity, as the live board does every few seconds
     expect(q<HTMLTextAreaElement>('textarea')!.value).toBe('half-written goal')
   })
+
+  it("obj 900868: sends optional Notes and Tools (typed tools become a clean list)", async () => {
+    fetchMock.mockResolvedValue({
+      status: 201,
+      json: async () => ({ flow_id: 9, slug: "t", workspace: "beta", objective_id: 1, builder: { objective_id: 1, status: "queue", max_iterations: 6, queue_hold: null } }),
+    })
+    render()
+    const toolsInput = q<HTMLInputElement>("[data-testid=\"flow-tools-input\"] input")!
+    act(() => {
+      type(q<HTMLTextAreaElement>("textarea")!, "Sync bookings")
+      type(document.body.querySelectorAll("textarea")[2] as HTMLTextAreaElement, "Skip test bookings.")
+      type(toolsInput, "HubSpot, Slack,")
+    })
+    act(() => { type(toolsInput, "Google Sheets") })
+    act(() => { toolsInput.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true })) })
+    // Chips, each removable by name.
+    expect(q("[aria-label=\"Remove Slack\"]")).not.toBeNull()
+    await act(async () => { q<HTMLButtonElement>("button[type=\"submit\"]")!.click() })
+    const body = JSON.parse(fetchMock.mock.calls[0][1].body)
+    expect(body.notes).toBe("Skip test bookings.")
+    expect(body.tools).toEqual(["HubSpot", "Slack", "Google Sheets"])
+  })
+
+  it("obj 900868: leaves notes and tools out when empty", async () => {
+    fetchMock.mockResolvedValue({ status: 201, json: async () => ({ flow_id: 9, slug: "t", workspace: "beta", objective_id: 1, builder: { objective_id: 1, status: "queue", max_iterations: 6, queue_hold: null } }) })
+    render()
+    act(() => type(q<HTMLTextAreaElement>("textarea")!, "Sync bookings"))
+    await act(async () => { q<HTMLButtonElement>("button[type=\"submit\"]")!.click() })
+    const body = JSON.parse(fetchMock.mock.calls[0][1].body)
+    expect(body).not.toHaveProperty("notes")
+    expect(body).not.toHaveProperty("tools")
+  })
 })

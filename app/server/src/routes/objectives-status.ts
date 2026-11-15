@@ -2,7 +2,7 @@
  * PATCH /:id/status — extracted from objectives.ts (behavior frozen).
  * Registered on the same /api/objectives router. Status machine and SQL unchanged.
  */
-import { Router } from 'express'
+import { Router, type Response } from 'express'
 import { getDb } from '../db/index.js'
 import { type AuthRequest } from '../middleware/auth.js'
 import {
@@ -57,8 +57,58 @@ import { markAutoStartRequested } from '../lib/queue-autostart.js'
 import { workingStartAction, marksPriorSessionFailed } from '../lib/working-start.js'
 import { findRunningTwinForStart, recordDedupe, duplicateStartConflictBody, duplicateGuardWindowHours } from '../lib/objective-dedupe.js'
 
+/**
+ * Who is moving a card when the move does not come straight from the public
+ * PATCH (obj 900869): the Needs You bulk triage (a human, batched) and a bot
+ * approval under a grant/rule. Both run THIS handler so every gate below (floor,
+ * oracle, outcome, CI-green, session teardown, leases, worktree reap, orphan
+ * cleanup) applies exactly as it does to a click — the only differences are the
+ * audit actor/pathway and whether the move counts as a HUMAN terminal.
+ */
+export interface StatusChangeContext {
+  actor: string
+  pathway: string
+  /** false for a bot approval: a bot closing a card is not a human ending it. */
+  humanTerminal: boolean
+}
+
+type StatusRequest = AuthRequest & { statusChangeContext?: StatusChangeContext }
+
+export interface StatusChangeResult {
+  code: number
+  body: unknown
+}
+
+/**
+ * Run the PATCH /:id/status handler in-process for one card and capture its
+ * answer instead of sending it. `req` supplies the caller's identity (user,
+ * agent key); id/status/context are this call's own.
+ */
+export async function runStatusChange(
+  req: AuthRequest,
+  id: number,
+  status: ObjectiveStatus,
+  ctx: StatusChangeContext,
+): Promise<StatusChangeResult> {
+  const shimReq = Object.create(req) as StatusRequest
+  Object.defineProperty(shimReq, 'params', { value: { id: String(id) }, enumerable: true })
+  Object.defineProperty(shimReq, 'body', { value: { status }, enumerable: true })
+  shimReq.statusChangeContext = ctx
+  const out: StatusChangeResult = { code: 200, body: undefined }
+  const shimRes = {
+    status(code: number) { out.code = code; return shimRes },
+    json(body: unknown) { out.body = body; return shimRes },
+  }
+  await handleStatusPatch(shimReq, shimRes as unknown as Response)
+  return out
+}
+
 export function registerObjectiveStatusRoutes(router: Router): void {
-router.patch('/:id/status', async (req: AuthRequest, res) => {
+  router.patch('/:id/status', (req: AuthRequest, res) => handleStatusPatch(req, res))
+}
+
+async function handleStatusPatch(req: StatusRequest, res: Response): Promise<void> {
+  const ctx: StatusChangeContext = req.statusChangeContext ?? { actor: 'user', pathway: 'public-patch-status', humanTerminal: true }
   const { status } = req.body as StatusChangeRequest
   const db = getDb()
 
@@ -459,7 +509,7 @@ router.patch('/:id/status', async (req: AuthRequest, res) => {
   // human-terminated when a human ends it (→ done/review), and clear the marker
   // when a human explicitly reopens it (→ working). Machine reactivation pathways
   // consult this marker under CC_HUMAN_TERMINAL_GUARD (default OFF → dry-run).
-  if (status === 'done' || status === 'review') {
+  if ((status === 'done' || status === 'review') && ctx.humanTerminal) {
     db.prepare('UPDATE objectives SET terminal_by_human = 1 WHERE id = ?').run(req.params.id)
   } else if (status === 'working') {
     db.prepare('UPDATE objectives SET terminal_by_human = 0 WHERE id = ?').run(req.params.id)
@@ -471,8 +521,8 @@ router.patch('/:id/status', async (req: AuthRequest, res) => {
     eventType: 'status_change',
     fromStatus: existing.status,
     toStatus: status,
-    actor: 'user',
-    pathway: 'public-patch-status',
+    actor: ctx.actor,
+    pathway: ctx.pathway,
     sessionId: existing.session_id,
     titleSnapshot: existing.title,
     workspace: existing.workspace,
@@ -510,6 +560,4 @@ router.patch('/:id/status', async (req: AuthRequest, res) => {
   }
 
   res.json(updated)
-})
-
 }

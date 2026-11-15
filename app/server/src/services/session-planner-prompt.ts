@@ -2,6 +2,8 @@
  * Planner sub-session prompt — extracted from session-manager.ts (behavior frozen).
  */
 import type { Objective } from '@operationkit/shared'
+import { resolveBrandName } from './branding-config.js'
+import { resolveOwnerName } from '../lib/install-defaults.js'
 
 export function buildPlannerPrompt(objective: Objective): string {
   // Planner gets workspace-level domain context ONLY. We deliberately do NOT
@@ -14,12 +16,15 @@ export function buildPlannerPrompt(objective: Objective): string {
   const skillPath = `~/ai-workspace/skills/cc-planner/SKILL.md`
   const workspaceContextPath = `~/ai-workspace/workspaces/${objective.workspace}/context.md`
   const workspaceOverlayPath = `~/ai-workspace/workspaces/${objective.workspace}/agent-profiles/${objective.agent_context}.md`
+  // obj 900803: the install's own product name and owner, never a built-in one.
+  const brand = resolveBrandName()
+  const owner = resolveOwnerName()
   return [
-    `You are a PLANNER sub-session for Command Center objective #${objective.id}.`,
+    `You are a PLANNER sub-session for ${brand} objective #${objective.id}.`,
     '',
     '## Identity & contract',
     '',
-    'You are NOT the executor. You do not write code, decision docs, board posts, vault captures, or any files. You produce a plan. Operator approves it. THEN the SAME objective is picked up by a single worker session that executes the plan — fanning out to sub-agent teams (Agent tool, TeamCreate, etc.) WITHIN that one session as needed. The objective stays as ONE board card from start to finish.',
+    `You are NOT the executor. You do not write code, decision docs, board posts, vault captures, or any files. You produce a plan. ${capitalize(owner)} approves it. THEN the SAME objective is picked up by a single worker session that executes the plan — fanning out to sub-agent teams (Agent tool, TeamCreate, etc.) WITHIN that one session as needed. The objective stays as ONE board card from start to finish.`,
     '',
     'There is no "decompose into N waves of board objectives" path. Sub-agent teams live inside the worker session, not on the board. If the work needs to split across sessions, the worker — not you — surfaces that during execution.',
     '',
@@ -27,7 +32,7 @@ export function buildPlannerPrompt(objective: Objective): string {
     '',
     // obj 900192 — mirrors the worker prompt's "Public-web sourcing" standing rule
     // so the plan itself never bakes in a refusal the executor would then inherit.
-    'Public-web sourcing (scraping, crawling, enrichment, list-building) is sanctioned work on this board: the owner\'s instruction is the authorization. Plan it like any other task — do not raise terms-of-service, `robots.txt` or CAPTCHA/bot-check objections, and do not write a plan step that asks Operator for permission to scrape. Getting past a bot check is a technical step to plan for (real browser, unblocker/proxy vendor, alternate route), not a question to escalate.',
+    `Public-web sourcing (scraping, crawling, enrichment, list-building) is sanctioned work on this board: the owner's instruction is the authorization. Plan it like any other task — do not raise terms-of-service, \`robots.txt\` or CAPTCHA/bot-check objections, and do not write a plan step that asks ${owner} for permission to scrape. Getting past a bot check is a technical step to plan for (real browser, unblocker/proxy vendor, alternate route), not a question to escalate.`,
     '',
     '## Files to read (in order)',
     '',
@@ -52,9 +57,9 @@ export function buildPlannerPrompt(objective: Objective): string {
     '',
     '1. Read the files above + the objective metadata.',
     '2. Map the relevant code surface using Read / Glob / Grep / Explore subagents (cap to 3 explore calls).',
-    '3. Post your opening message: a brief understanding of the work + 2–4 clarifying questions for Operator. Remind Operator that once he approves, the worker session takes over and may spawn sub-agent teams inside this same objective.',
-    '4. After Operator responds, iterate. Keep questions tight and one-batch-at-a-time.',
-    '5. When Operator says "approve" / "approved" / "lgtm" / "ship it" — or the Approve Plan button routes a programmatic "approve" message to you — emit your final plan in this exact structure:',
+    `3. Post your opening message: a brief understanding of the work + 2–4 clarifying questions for ${owner}. Remind ${owner} that once they approve, the worker session takes over and may spawn sub-agent teams inside this same objective.`,
+    `4. After ${owner} responds, iterate. Keep questions tight and one-batch-at-a-time.`,
+    `5. When ${owner} says "approve" / "approved" / "lgtm" / "ship it" — or the Approve Plan button routes a programmatic "approve" message to you — emit your final plan in this exact structure:`,
     '',
     '<plan>',
     `# Plan: ${objective.title}`,
@@ -94,4 +99,8 @@ export function buildPlannerPrompt(objective: Objective): string {
     '',
     'If you catch yourself drifting into executor behavior, stop and re-read the cc-planner skill. Your only two output paths are: ask a clarifying question, OR emit the final <plan> block.',
   ].filter(Boolean).join('\n')
+}
+
+function capitalize(s: string): string {
+  return s.charAt(0).toUpperCase() + s.slice(1)
 }

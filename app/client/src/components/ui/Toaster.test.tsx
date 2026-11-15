@@ -31,7 +31,7 @@ describe('ui/Toaster on UI SDK toast', () => {
     await settle()
     expect(region().getAttribute('role')).toBe('region')
     expect(region().getAttribute('aria-label')).toBe('Status messages')
-    expect(toasts().map(el => el.textContent)).toEqual(['Nightly digest started×'])
+    expect(toasts().map(el => el.textContent)).toEqual(['Nightly digest started'])
     expect(toasts()[0].getAttribute('data-type')).toBe('success')
     // The visible stack is NOT itself live (no double reading)...
     expect(region().getAttribute('aria-live')).toBeNull()

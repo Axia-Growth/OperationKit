@@ -12,9 +12,11 @@ import type { Workspace } from '@operationkit/shared'
 import { CommandPalette } from './lazy-overlays'
 import { AlertBell } from './AlertBell'
 import { NavIcon, type NavIconName } from './nav-icons'
-import { Tooltip } from './ui/Tooltip'
+import { IconButton } from './ui/Button'
+import { commandPaletteShortcut } from '../lib/platform'
 import { Menu, MenuContent, MenuGroup, MenuGroupLabel, MenuItem, MenuSeparator, MenuTrigger } from './ui/Menu'
 import { HAS_CHAT_PAGE } from '../lib/optional-pages'
+import { prefetchContext } from '../lib/kbContextData'
 import { SYSTEM_ROUTE, LEGACY_SYSTEM_ROUTES, AGENTS_ROUTE, JOBS_ROUTE, agentsTabRoute } from '../lib/routes'
 
 interface LayoutProps {
@@ -101,9 +103,37 @@ export interface AccountMenuItem {
 export const ACCOUNT_MENU: AccountMenuItem[] = [
   { href: '/settings',   label: 'Settings', icon: 'config',    aliases: [],                          section: 'account' },
   { href: SYSTEM_ROUTE,  label: 'System',   icon: 'dashboard', aliases: [...LEGACY_SYSTEM_ROUTES],    section: 'admin' },
-  { href: AGENTS_ROUTE,  label: 'Agents & Skills', icon: 'system',    aliases: ['/agent-templates'],         section: 'admin' },
+  { href: AGENTS_ROUTE,  label: 'Bots & skills', icon: 'system',    aliases: ['/agent-templates'],         section: 'admin' },
 ]
 
+
+interface PaletteEntry {
+  label: string
+  keywords?: string[]
+  onSelect: () => void
+}
+
+/** Extra words a palette row answers to — old names and close synonyms. */
+const PALETTE_KEYWORDS: Record<string, string[]> = {
+  '/chat': ['chat', 'assistant'],
+  '/': ['cards', 'kanban', 'home'],
+  '/knowledge': ['knowledge base', 'docs', 'notes', 'wiki'],
+  [JOBS_ROUTE]: ['jobs', 'routines', 'runs'],
+  '/settings': ['preferences', 'models', 'api', 'mcp', 'branding'],
+  [SYSTEM_ROUTE]: ['health', 'status'],
+  [AGENTS_ROUTE]: ['agents', 'skills', 'registry'],
+}
+
+/** One row per label: the first one wins (the gated nav order). */
+export function dedupePaletteItems<T extends { label: string }>(items: T[]): T[] {
+  const seen = new Set<string>()
+  return items.filter(i => {
+    const k = i.label.toLowerCase()
+    if (seen.has(k)) return false
+    seen.add(k)
+    return true
+  })
+}
 
 /**
  * Pages that read the org selection, and so show the top-bar org switcher
@@ -115,6 +145,15 @@ export function isOrgScopedPath(path: string): boolean {
     || /^\/o\/\d+\/?$/.test(path)
     || path === '/knowledge' || path.startsWith('/knowledge/')
     || path === JOBS_ROUTE || path === AGENTS_ROUTE
+}
+
+/**
+ * Context (obj 900867): reaching for its link starts loading the page and its
+ * data, so the click lands on a page that is already on its way.
+ */
+const CONTEXT_PREFETCH = { onPointerEnter: prefetchContext, onFocus: prefetchContext, onTouchStart: prefetchContext }
+function prefetchProps(href: string) {
+  return href === '/knowledge' ? CONTEXT_PREFETCH : undefined
 }
 
 export function Layout({ children, selectedWorkspaces, onWorkspacesChange, pageScroll = false }: LayoutProps) {
@@ -206,6 +245,7 @@ export function Layout({ children, selectedWorkspaces, onWorkspacesChange, pageS
   // Which avatar menu is open. Desktop and mobile each have their own trigger.
   const [userMenu, setUserMenu] = useState<'desktop' | 'mobile' | null>(null)
   const [paletteOpen, setPaletteOpen] = useState(false)
+  const paletteShortcut = useMemo(() => commandPaletteShortcut(), [])
 
   // ⌘K / Ctrl+K — desktop only via media-query gate; we still listen everywhere
   // but the palette UI is hidden under <sm anyway.
@@ -220,26 +260,27 @@ export function Layout({ children, selectedWorkspaces, onWorkspacesChange, pageS
     return () => document.removeEventListener('keydown', onKey)
   }, [])
 
-  // ⌘K palette lists the full gated nav set: primary bar, avatar menu, settings, parked pages.
+  // ⌘K palette lists the full gated nav set: primary bar, avatar menu, then a
+  // few deep links. Plain names only (obj 900807): no URL paths on screen, and
+  // each page once — the old list showed /settings paths and two Settings rows.
+  // Old names (Knowledge, Jobs…) still match through keywords.
   const paletteItems = useMemo(() => {
-    const items = [...navItems, ...accountRows, ...adminRows].map(n => ({
+    const items: PaletteEntry[] = [...navItems, ...accountRows, ...adminRows].map(n => ({
       label: n.label,
-      hint: n.href,
+      keywords: PALETTE_KEYWORDS[n.href],
       onSelect: () => { navigate(n.href) },
     }))
-    items.push({ label: 'Settings', hint: '/settings', onSelect: () => { navigate('/settings') } })
-    items.push({ label: 'Integrations', hint: '/settings/integrations', onSelect: () => { navigate('/settings/integrations') } })
+    items.push({ label: 'Integrations', keywords: ['connectors', 'github', 'google'], onSelect: () => { navigate('/settings/integrations') } })
     if (canSeeSettings) {
-      items.push({ label: 'Secrets', hint: '/settings/secrets', onSelect: () => { navigate('/settings/secrets') } })
+      items.push({ label: 'Secrets', keywords: ['keys', 'credentials'], onSelect: () => { navigate('/settings/secrets') } })
     }
     if (isAdmin) {
       items.push(
-        { label: 'Workspace settings', hint: '/settings/workspaces', onSelect: () => { navigate('/settings/workspaces') } },
-        { label: 'Agent registry', hint: agentsTabRoute('registry'), onSelect: () => { navigate(agentsTabRoute('registry')) } },
-        { label: 'Agent templates', hint: agentsTabRoute('templates'), onSelect: () => { navigate(agentsTabRoute('templates')) } },
+        { label: 'Workspace settings', keywords: ['users', 'members'], onSelect: () => { navigate('/settings/workspaces') } },
+        { label: 'Bot templates', keywords: ['starter', 'import'], onSelect: () => { navigate(agentsTabRoute('templates')) } },
       )
     }
-    return items
+    return dedupePaletteItems(items)
   }, [navItems, accountRows, adminRows, canSeeSettings, isAdmin, navigate])
 
   // The avatar dropdown, identical on desktop and mobile, on the UI SDK menu
@@ -250,9 +291,8 @@ export function Layout({ children, selectedWorkspaces, onWorkspacesChange, pageS
       <MenuGroup>
         <MenuGroupLabel className="mb-1 border-b border-line-soft px-2.5 pb-2">
           <span className="block text-base font-medium text-fg-0">{username}</span>
-          {isAdmin && (
-            <span className="mt-0.5 inline-block rounded-sm bg-status-review/20 px-1.5 py-0.5 text-xs text-status-review">admin</span>
-          )}
+          {/* No role pill (obj 900807): it was a lowercase "admin" in the review
+              colour, which read as a status. The admin rows below already say it. */}
         </MenuGroupLabel>
         {[...accountRows, ...adminRows].map(item => {
           const active = isMenuActive(item)
@@ -290,12 +330,22 @@ export function Layout({ children, selectedWorkspaces, onWorkspacesChange, pageS
         ? 'flex min-h-full flex-col overflow-x-clip bg-surface-0'
         : 'flex h-full flex-col overflow-x-hidden bg-surface-0'}
     >
-      {/* ── Desktop top bar ── */}
-      <header className={`${pageScroll ? 'sticky top-0 z-30 ' : ''}hidden items-center justify-between border-b border-line bg-surface-0 px-5 py-2 sm:flex`}>
+      {/* ── Desktop top bar ──
+          Stable chrome (obj 900807): a 1fr | auto | 1fr grid, so "Jump to
+          page" sits in the exact middle of the bar on every page. The org
+          switcher lives in the RIGHT cluster: when it hides (Bots, Settings,
+          System) only that cluster changes, never the search. Below xl the nav
+          drops to icons (label kept for screen readers + tooltip) so the left
+          column never spills into the middle one. */}
+      <header
+        data-testid="desktop-top-bar"
+        className={`${pageScroll ? 'sticky top-0 z-30 ' : ''}hidden grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-3 border-b border-line bg-surface-0 px-5 py-2 sm:grid`}
+      >
         {/* Left: brand + primary nav */}
-        <nav aria-label="Primary" className="flex items-center gap-0.5">
+        <nav aria-label="Primary" className="flex min-w-0 items-center gap-0.5 justify-self-start">
           <a href="/" aria-label={`${brandName} home`} onClick={onNavClick('/')} className="mr-3 flex min-w-0 items-center rounded-md">
-            <BrandLogo theme={theme} size="sm" />
+            <span className="lg:hidden"><BrandLogo theme={theme} size="sm" showName={false} allowWordmark={false} /></span>
+            <span className="hidden lg:flex"><BrandLogo theme={theme} size="sm" /></span>
           </a>
           {navItems.map(item => {
             const active = isActive(item)
@@ -304,51 +354,54 @@ export function Layout({ children, selectedWorkspaces, onWorkspacesChange, pageS
                 key={item.href}
                 href={item.href}
                 onClick={onNavClick(item.href)}
+                {...prefetchProps(item.href)}
                 aria-current={active ? 'page' : undefined}
-                className={`inline-flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-sm font-medium outline-none transition-colors duration-fast ease-out focus-visible:ring-2 focus-visible:ring-accent/60 ${
+                title={item.label}
+                className={`inline-flex shrink-0 items-center gap-1.5 rounded-md px-2.5 py-1.5 text-sm font-medium outline-none transition-colors duration-fast ease-out focus-visible:ring-2 focus-visible:ring-accent/60 ${
                   active ? 'bg-surface-selected text-fg-0' : 'text-fg-2 hover:bg-surface-3 hover:text-fg-0'
                 }`}
               >
                 <NavIcon name={item.icon} variant={active ? 'solid' : 'outline'} className={`h-3.5 w-3.5 ${active ? 'text-accent' : ''}`} />
-                {item.label}
+                <span className="sr-only xl:not-sr-only">{item.label}</span>
               </a>
             )
           })}
         </nav>
 
-        {/* Center: ⌘K "Jump to page" + the global org switcher (obj 900666).
-            "Jump to" goes to PAGES; finding a CARD is the board's "Search
-            cards" (/). Both labels say which is which. */}
-        <div className="flex items-center gap-2">
+        {/* Center: ⌘K / Ctrl K "Jump to page". It goes to PAGES; finding a
+            CARD is the board's "Search cards" (/). Both labels say which is
+            which. Nothing else shares this column, so it never moves. */}
+        <div data-testid="top-bar-center" className="flex items-center justify-center">
           <button
             onClick={() => setPaletteOpen(true)}
             className="inline-flex items-center gap-2 rounded-md border border-line bg-surface-2 px-2.5 py-1.5 text-xs text-fg-2 outline-none transition-colors duration-fast ease-out hover:border-line-strong hover:text-fg-1 focus-visible:ring-2 focus-visible:ring-accent/60"
             aria-label="Jump to a page (command palette)"
-            title="Jump to a page or setting. To find a card, use Search cards on the board (/)."
+            title={`Jump to a page or setting (${paletteShortcut}). To find a card, use Search cards on the board (/).`}
           >
             <NavIcon name="search" className="h-3.5 w-3.5" />
-            <span>Jump to page…</span>
-            <span className="font-mono text-xs text-fg-3">⌘K</span>
+            <span className="hidden md:inline">Jump to page…</span>
+            <kbd data-testid="palette-shortcut" className="font-sans text-xs text-fg-3">{paletteShortcut}</kbd>
           </button>
-          {showWorkspace && !hideWorkspaceSelector && (
-            <OrgSwitcher {...orgSwitcherProps} triggerClassName="text-xs" />
-          )}
         </div>
 
-        {/* Right: notifications, theme, avatar menu (Settings, then System / Agents for admins) */}
-        {user && (
-          <div className="flex items-center gap-1">
+        {/* Right: the org switcher (pages that read it), notifications, theme,
+            avatar menu (Settings, then System / Agents for admins). */}
+        <div className="flex min-w-0 items-center justify-end gap-1 justify-self-end">
+          {showWorkspace && !hideWorkspaceSelector && (
+            <div data-testid="top-bar-workspace" className="mr-1 min-w-0">
+              <OrgSwitcher {...orgSwitcherProps} align="right" triggerClassName="text-xs max-w-[10rem] lg:max-w-[16rem]" />
+            </div>
+          )}
+          {user && (
+            <>
             <AlertBell />
-            <Tooltip content={theme === 'light' ? 'Dark mode' : 'Light mode'} type="description" side="bottom">
-              <button
-                type="button"
-                onClick={toggleTheme}
-                className="inline-flex h-8 w-8 items-center justify-center rounded-md text-fg-2 outline-none transition-colors duration-fast ease-out hover:bg-surface-3 hover:text-fg-0 focus-visible:ring-2 focus-visible:ring-accent/60"
-                aria-label={theme === 'light' ? 'Switch to dark mode' : 'Switch to light mode'}
-              >
-                {theme === 'light' ? <Moon className="h-4 w-4" /> : <Sun className="h-4 w-4" />}
-              </button>
-            </Tooltip>
+            <IconButton
+              label={theme === 'light' ? 'Switch to dark mode' : 'Switch to light mode'}
+              onClick={toggleTheme}
+              className="text-fg-2"
+            >
+              {theme === 'light' ? <Moon className="h-4 w-4" /> : <Sun className="h-4 w-4" />}
+            </IconButton>
           <Menu open={userMenu === 'desktop'} onOpenChange={o => setUserMenu(o ? 'desktop' : null)}>
             <MenuTrigger
               aria-label="Account menu"
@@ -364,13 +417,14 @@ export function Layout({ children, selectedWorkspaces, onWorkspacesChange, pageS
             </MenuTrigger>
             {renderAccountMenu(user.username)}
           </Menu>
-          </div>
-        )}
+            </>
+          )}
+        </div>
       </header>
 
       {/* ── Mobile top bar (minimal) ── */}
-      <header className={`${pageScroll ? 'sticky top-0 z-30 ' : ''}flex items-center justify-between border-b border-line bg-surface-0 px-3 py-2 sm:hidden`}
-        style={{ paddingTop: 'calc(0.5rem + env(safe-area-inset-top))' }}
+      <header className={`${pageScroll ? 'sticky top-0 z-30 ' : ''}flex items-center justify-between border-b border-line bg-surface-0 px-3 py-0.5 sm:hidden`}
+        style={{ paddingTop: 'calc(0.125rem + env(safe-area-inset-top))' }}
       >
         <a href="/" aria-label={`${brandName} home`} onClick={onNavClick('/')} className="flex min-w-0 items-center rounded-md">
           <BrandLogo theme={theme} size="sm" showName={false} allowWordmark={false} />
@@ -381,24 +435,28 @@ export function Layout({ children, selectedWorkspaces, onWorkspacesChange, pageS
         )}
 
         {user && (
-          <div className="flex items-center gap-1">
+          <div className="flex items-center">
             <AlertBell />
-            <button
-              type="button"
+            {/* 44px tap target on the phone bar (obj 900807); IconButton is 44px below sm. */}
+            <IconButton
+              size="sm"
+              label={theme === 'light' ? 'Switch to dark mode' : 'Switch to light mode'}
               onClick={toggleTheme}
-              className="inline-flex h-7 w-7 items-center justify-center rounded-md text-fg-2"
-              aria-label={theme === 'light' ? 'Switch to dark mode' : 'Switch to light mode'}
+              className="text-fg-2"
             >
               {theme === 'light' ? <Moon className="h-4 w-4" /> : <Sun className="h-4 w-4" />}
-            </button>
+            </IconButton>
           <Menu open={userMenu === 'mobile'} onOpenChange={o => setUserMenu(o ? 'mobile' : null)}>
             <MenuTrigger
               aria-label="Account menu"
-              className={`flex h-7 w-7 items-center justify-center rounded-full border text-xs font-semibold text-fg-1 ${
-                menuActive || userMenu === 'mobile' ? 'border-line-strong bg-surface-4' : 'border-line bg-surface-3'
-              }`}
+              // 44px tap target (obj 900807); the visible circle stays 28px.
+              className="group flex h-11 w-11 items-center justify-center rounded-full outline-none"
             >
-              {user.username[0].toUpperCase()}
+              <span className={`flex h-7 w-7 items-center justify-center rounded-full border text-xs font-semibold text-fg-1 ${
+                menuActive || userMenu === 'mobile' ? 'border-line-strong bg-surface-4' : 'border-line bg-surface-3'
+              }`}>
+                {user.username[0].toUpperCase()}
+              </span>
             </MenuTrigger>
             {renderAccountMenu(user.username)}
           </Menu>
@@ -423,6 +481,7 @@ export function Layout({ children, selectedWorkspaces, onWorkspacesChange, pageS
                 key={item.href}
                 href={item.href}
                 onClick={onNavClick(item.href)}
+                {...prefetchProps(item.href)}
                 aria-current={active ? 'page' : undefined}
                 aria-label={item.shortLabel ? item.label : undefined}
                 className={`flex flex-1 flex-col items-center justify-center gap-0.5 py-2 transition-colors duration-fast ease-out ${

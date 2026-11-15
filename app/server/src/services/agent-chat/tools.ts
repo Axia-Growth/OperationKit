@@ -41,6 +41,16 @@ import { botWorkspaceAllowlist } from './bot-workspaces.js'
 import { containedIn, realpathOrNull, workspaceScopeRoots } from '../../lib/kb-workspace-scope.js'
 import { searchKnowledgeBase } from '../kb-semantic/search.js'
 import { noteKbWrite } from '../kb-semantic/service.js'
+import type { ChatLane } from './threads.js'
+import {
+  BotMessageRefused,
+  botMessageWorkspaces,
+  conversationInScope,
+  conversationMessages,
+  listConversations,
+  sendBotMessage,
+  type BotRef,
+} from './bot-messaging.js'
 
 export interface ToolSpec {
   type: 'function'
@@ -63,6 +73,14 @@ export interface ToolContext {
   now?: () => Date
   /** web_search / web_fetch plumbing (obj 900671): tests inject fetches; the engine passes the turn's abort signal. */
   web?: WebToolDeps
+  /** The chat lane this turn runs in (obj 900859): where a bot message's reply is posted back. */
+  lane?: ChatLane
+  /**
+   * Set when this turn is a bot-to-bot WAKE (bot-wake.ts): the conversation that
+   * woke the bot and how deep the chain already is. Narrows the bot-message tools
+   * to that conversation's ONE workspace.
+   */
+  botWake?: { conversationId: number; depth: number }
 }
 
 /** What the chat UI shows for a tool call (drafts get buttons, cards get a status chip). */
@@ -73,6 +91,8 @@ export interface ToolOutcome {
   summary: string
   draft_id?: number
   objective_id?: number
+  /** A bot-to-bot conversation this call started or used (obj 900859) — the chat shows an "Open thread" link. */
+  bot_conversation_id?: number
 }
 
 export class ToolUseError extends Error {}
@@ -148,6 +168,24 @@ const SPECS: Record<string, ToolSpec[]> = {
         headers: { type: 'object', additionalProperties: { type: 'string' } },
         body: { type: 'string', description: 'Request body. For JSON, send the JSON text and a Content-Type: application/json header.' },
       }, ['url']))],
+  // obj 900859: talk to another bot. The message wakes the other bot; its reply comes back on the same thread.
+  bot_messages: [
+    fn('message_bot', 'Send a message to ANOTHER BOT on this install (by its slug or name) and get its answer. The other bot is woken with your message, works on it with its own tools, and its reply is posted back into this chat on the same thread — usually within a minute. To follow up on a thread, pass its conversation_id instead of "to". Messages go only to bots that may work in the same workspace. The thread is readable by the people of that workspace in the Bots page, so do not put anything there they should not see.',
+      obj({
+        to: { type: 'string', description: 'The other bot\'s slug (e.g. "dev") or name. Omit when replying on conversation_id.' },
+        text: { type: 'string', description: 'What you want the other bot to know or do. Be specific: it does not see this chat.' },
+        conversation_id: { type: 'integer', description: 'Continue an existing bot conversation instead of starting one.' },
+        workspace: { type: 'string', description: 'Workspace slug to hold the conversation in. Omit for this chat\'s workspace.' },
+        subject: { type: 'string', description: 'A short title for a new conversation.' },
+      }, ['text'])),
+    fn('list_bot_conversations', 'List your conversations with other bots (newest first): who, which workspace, the last message and whether a message is still waiting for a reply.',
+      obj({
+        with: { type: 'string', description: 'Only conversations with this bot (slug).' },
+        limit: { type: 'integer', minimum: 1, maximum: 50, description: 'Default 20' },
+      })),
+    fn('read_bot_conversation', 'Read one of your bot conversations in full: every message, reply and delivery status.',
+      obj({ conversation_id: { type: 'integer' } }, ['conversation_id'])),
+  ],
   email: [
     fn('email_list_inbox', 'List recent emails in the inbox (newest first).',
       obj({ limit: { type: 'integer', minimum: 1, maximum: 50 }, unread_only: { type: 'boolean' } })),
@@ -800,6 +838,7 @@ function s(args: Record<string, unknown>, key: string, required = false): string
  * synchronous runTool below, unchanged.
  */
 export async function runChatTool(ctx: ToolContext, fnName: string, args: Record<string, unknown>): Promise<ToolOutcome> {
+  if (BOT_MESSAGE_FNS.has(fnName)) return runBotMessageTool(ctx, fnName, args)
   if (fnName === 'secrets_list' || fnName === 'secret_http') return runSecretTool(ctx, fnName, args)
   if (fnName === 'search' && args.mode !== 'keyword' && agentHasTool(ctx.agent, 'search')) {
     // obj 900816: hybrid knowledge search (async: the query is embedded). Falls back
@@ -822,6 +861,113 @@ export async function runChatTool(ctx: ToolContext, fnName: string, args: Record
   } catch (err) {
     if (err instanceof WebToolError) throw new ToolUseError(err.message)
     throw err
+  }
+}
+
+// ── bot-to-bot messaging (obj 900859) ──
+
+const BOT_MESSAGE_FNS: ReadonlySet<string> = new Set(['message_bot', 'list_bot_conversations', 'read_bot_conversation'])
+
+/**
+ * Where this bot may read and write bot messages in THIS turn: (person ∩ bot),
+ * and in a wake only the workspace of the conversation that woke it.
+ */
+function botMessageScope(ctx: ToolContext): string[] {
+  const scope = botMessageWorkspaces(ctx.userId, ctx.agent.slug)
+  return ctx.botWake ? scope.filter(w => w === ctx.workspace) : scope
+}
+
+/** Every bot on the install, as addressing needs it. Loaded lazily: the engine imports this file. */
+async function allBotRefs(): Promise<BotRef[]> {
+  const { listAgents } = await import('./engine.js')
+  return listAgents().agents.map(a => ({ slug: a.slug, name: a.name }))
+}
+
+async function runBotMessageTool(ctx: ToolContext, fnName: string, args: Record<string, unknown>): Promise<ToolOutcome> {
+  if (!agentHasTool(ctx.agent, 'bot_messages')) throw new ToolUseError(`Tool "${fnName}" is not allowed for this agent.`)
+  const bots = await allBotRefs()
+  const nameOf = (slug: string) => bots.find(b => b.slug === slug)?.name ?? slug
+  const scope = botMessageScope(ctx)
+
+  if (fnName === 'message_bot') {
+    if (!ctx.workspace && !args.conversation_id && !args.workspace) throw new ToolUseError(noWorkspaceMessage(ctx))
+    try {
+      const lane = ctx.lane ?? { kind: 'main' as const }
+      const r = sendBotMessage({
+        from: { slug: ctx.agent.slug, name: ctx.agent.name },
+        userId: ctx.userId,
+        to: args.to,
+        conversationId: args.conversation_id,
+        workspace: args.workspace,
+        defaultWorkspace: ctx.workspace,
+        text: args.text,
+        subject: args.subject,
+        bots,
+        // Inside a wake there is no chat lane to answer into: the reply stays on the thread.
+        origin: ctx.botWake ? null : { userId: ctx.userId, agentSlug: ctx.agent.slug, threadId: lane.kind === 'thread' ? lane.id : null },
+        wake: ctx.botWake ?? null,
+      })
+      return {
+        result: {
+          conversation_id: r.conversation.id,
+          message_id: r.message.id,
+          to: { slug: r.recipient.slug, name: r.recipient.name },
+          workspace: r.conversation.workspace,
+          status: 'queued',
+          note: ctx.botWake
+            ? `${r.recipient.name} will answer on bot conversation #${r.conversation.id}; read it later with read_bot_conversation.`
+            : `${r.recipient.name} is being woken now. Its reply will be posted into this chat when it arrives. Tell the person you asked it and that the answer will appear here.`,
+        },
+        summary: `${r.created ? 'Messaged' : 'Followed up with'} ${r.recipient.name} in ${r.conversation.workspace} (bot conversation #${r.conversation.id})`,
+        bot_conversation_id: r.conversation.id,
+      }
+    } catch (err) {
+      if (err instanceof BotMessageRefused) throw new ToolUseError(err.message)
+      throw err
+    }
+  }
+
+  if (fnName === 'list_bot_conversations') {
+    const withSlug = typeof args.with === 'string' && args.with.trim() ? args.with.trim() : undefined
+    const limit = Math.min(50, Math.max(1, Math.trunc(Number(args.limit) || 20)))
+    const rows = listConversations({ workspaces: scope, bot: ctx.agent.slug, withBot: withSlug, limit })
+    const conversations = rows.map(c => {
+      const other = c.initiator_slug === ctx.agent.slug ? c.recipient_slug : c.initiator_slug
+      return {
+        conversation_id: c.id,
+        workspace: c.workspace,
+        with: { slug: other, name: nameOf(other) },
+        started_by_you: c.initiator_slug === ctx.agent.slug,
+        subject: c.subject,
+        messages: c.message_count,
+        waiting_for_reply: c.pending,
+        failed: c.failed,
+        last: c.last_preview,
+        last_activity: c.last_message_at,
+      }
+    })
+    return { result: { conversations }, summary: `Listed bot conversations (${conversations.length})` }
+  }
+
+  // read_bot_conversation
+  const id = Math.trunc(Number(args.conversation_id))
+  const c = conversationInScope(id, scope, ctx.agent.slug)
+  // Same answer for "no such conversation" and "not yours / not this workspace": no existence oracle.
+  if (!c) throw new ToolUseError(`Bot conversation #${args.conversation_id} not found.`)
+  const entries = conversationMessages(c, { limit: 100 }).map(m => ({
+    id: m.id,
+    kind: m.kind,
+    from: m.from_slug === ctx.agent.slug ? 'you' : nameOf(m.from_slug),
+    ...(m.tool_name ? { tool: m.tool_name } : {}),
+    text: m.body.length > MAX_READ_CHARS ? `${m.body.slice(0, MAX_READ_CHARS)}… [cut]` : m.body,
+    ...(m.kind === 'message' ? { status: m.status } : {}),
+    at: m.created_at,
+  }))
+  const other = c.initiator_slug === ctx.agent.slug ? c.recipient_slug : c.initiator_slug
+  return {
+    result: { conversation_id: c.id, workspace: c.workspace, with: { slug: other, name: nameOf(other) }, subject: c.subject, entries },
+    summary: `Read bot conversation #${c.id} with ${nameOf(other)}`,
+    bot_conversation_id: c.id,
   }
 }
 

@@ -9,7 +9,8 @@
 import { useEffect, useState, type FormEvent } from 'react'
 import { api, ApiError } from '../../lib/api'
 import { useAuth } from '../../context/AuthContext'
-import { Modal, useConfirm } from '../ui'
+import { Plus, X } from 'lucide-react'
+import { Alert, Button, DataTable, Field, IconButton, Input, Modal, RowActions, SettingsSection, useConfirm, type Column } from '../ui'
 import type { SecretSummary, SetSecretRequest } from '@operationkit/shared'
 
 const MASK = '••••••'
@@ -58,58 +59,55 @@ export function MySecretsSection() {
 
   if (!user) return null
 
+  const columns: Column<SecretSummary>[] = [
+    { key: 'key', header: 'Key', mono: true, cell: s => <span className="text-fg-1">{s.key}</span> },
+    {
+      key: 'value',
+      header: 'Value',
+      mono: true,
+      cell: () => <span role="img" aria-label="value hidden, write-only" className="text-fg-3">{MASK}</span>,
+    },
+    { key: 'version', header: 'Version', mono: true, cell: s => `v${s.version}` },
+  ]
+
   return (
-    <section className="mt-5 rounded-lg border border-border bg-surface-raised p-5">
-      <div className="mb-4 flex items-start justify-between gap-4">
-        <div>
-          <h2 className="text-lg font-semibold text-fg-0">My secrets</h2>
-          <p className="mt-1 text-xs text-fg-3">
-            Personal secrets scoped to you. Stored encrypted; the value is never shown again after you save it.
-          </p>
-        </div>
-        <button
+    <SettingsSection
+      title="My secrets"
+      description="Personal secrets scoped to you. Stored encrypted; the value is never shown again after you save it."
+      actions={
+        <Button
+          variant="primary"
           onClick={() => { setEditingKey(null); setModalOpen(true) }}
-          className="shrink-0 rounded-md bg-accent px-3 py-1.5 text-base font-medium text-accent-fg transition-colors duration-fast ease-out hover:bg-accent-hover"
+          leftIcon={<Plus className="h-4 w-4" aria-hidden />}
         >
-          + New
-        </button>
-      </div>
+          New secret
+        </Button>
+      }
+    >
+      {error && <Alert tone="alarm" title={error} className="mb-3" />}
 
-      {error && (
-        <div className="mb-3 rounded bg-signal-alarm/10 px-3 py-2 text-base text-signal-alarm">{error}</div>
-      )}
-
-      {loading ? (
-        <div className="text-base text-fg-3">Loading…</div>
-      ) : secrets.length === 0 ? (
-        <div className="rounded-lg border border-dashed border-border p-6 text-center text-base text-fg-3">
-          No personal secrets yet.
-        </div>
-      ) : (
-        <table className="w-full text-base">
-          <thead className="border-b border-border">
-            <tr className="text-left text-xs text-fg-2">
-              <th className="py-2 font-medium">Key</th>
-              <th className="py-2 font-medium">Value</th>
-              <th className="py-2 font-medium">Version</th>
-              <th className="py-2 font-medium text-right">Actions</th>
-            </tr>
-          </thead>
-          <tbody>
-            {secrets.map(s => (
-              <tr key={s.key} className="border-b border-border last:border-b-0">
-                <td className="py-2 font-mono text-xs text-fg-1">{s.key}</td>
-                <td className="py-2 font-mono text-fg-3">{MASK}</td>
-                <td className="py-2 text-fg-2">v{s.version}</td>
-                <td className="py-2 text-right space-x-2">
-                  <button onClick={() => { setEditingKey(s.key); setModalOpen(true) }} className="text-xs text-accent hover:underline">Edit</button>
-                  <button onClick={() => handleDelete(s.key)} className="text-xs text-signal-alarm hover:underline">Delete</button>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      )}
+      <DataTable
+        aria-label="My secrets"
+        columns={columns}
+        rows={secrets}
+        rowKey={s => s.key}
+        loading={loading}
+        loadingRows={3}
+        rowActionsAlways
+        rowActions={s => (
+          <RowActions
+            label={`Actions for ${s.key}`}
+            actions={[
+              { label: 'Edit', onSelect: () => { setEditingKey(s.key); setModalOpen(true) } },
+              { label: 'Delete', onSelect: () => void handleDelete(s.key), danger: true },
+            ]}
+          />
+        )}
+        empty={{
+          title: 'No personal secrets yet',
+          description: 'Add a key only you and your sessions use. Its value is write-only once saved.',
+        }}
+      />
 
       {modalOpen && (
         <MySecretModal
@@ -120,7 +118,7 @@ export function MySecretsSection() {
         />
       )}
       {confirmDialog}
-    </section>
+    </SettingsSection>
   )
 }
 
@@ -154,45 +152,43 @@ function MySecretModal({ userId, editingKey, onClose, onSaved }: {
   }
 
   return (
-    <Modal open onClose={onClose} variant="center" labelledBy="my-secret-title" panelClassName="max-w-lg bg-surface-raised">
+    <Modal open onClose={onClose} variant="center" labelledBy="my-secret-title" panelClassName="max-w-lg bg-surface-1">
       <div className="p-6">
         <div className="mb-4 flex items-center justify-between">
-          <h2 id="my-secret-title" className="text-lg font-semibold text-fg-0">{isEdit ? 'Edit Secret' : 'New Secret'}</h2>
-          <button onClick={onClose} className="text-fg-3 hover:text-fg-1" type="button">
-            <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
-            </svg>
-          </button>
+          <h2 id="my-secret-title" className="text-lg font-semibold text-fg-0">{isEdit ? 'Edit secret' : 'New secret'}</h2>
+          <IconButton label="Close" onClick={onClose} className="-mr-2 text-fg-3">
+            <X className="h-5 w-5" aria-hidden />
+          </IconButton>
         </div>
-        {error && <div className="mb-3 rounded bg-signal-alarm/10 px-3 py-2 text-base text-signal-alarm">{error}</div>}
-        <form onSubmit={handleSubmit} className="space-y-3">
-          <div>
-            <label className="mb-1 block text-xs text-fg-2">Key {isEdit && <span className="text-fg-3">(locked)</span>}</label>
-            <input
-              type="text"
+        {error && <Alert tone="alarm" title={error} className="mb-3" />}
+        <form onSubmit={handleSubmit} className="space-y-4">
+          <Field id="my-secret-key" label={<>Key{isEdit && <span className="ml-1.5 font-normal text-fg-3">(locked)</span>}</>}>
+            <Input
               value={key}
               onChange={e => setKey(e.target.value)}
               disabled={isEdit}
               placeholder="e.g. MY_API_KEY"
-              className="w-full rounded border border-border bg-surface px-2 py-1.5 font-mono text-base text-fg-0 outline-none focus:border-accent disabled:opacity-50"
+              className="font-mono"
             />
-          </div>
-          <div>
-            <label className="mb-1 block text-xs text-fg-2">Value</label>
-            <input
+          </Field>
+          <Field
+            id="my-secret-value"
+            label="Value"
+            hint={isEdit ? 'Re-enter the value to set a new version. The current value is never shown.' : undefined}
+          >
+            <Input
               type="password"
               autoComplete="off"
               value={value}
               onChange={e => setValue(e.target.value)}
-              placeholder={isEdit ? 're-enter the value to set a new version' : 'secret value'}
-              className="w-full rounded border border-border bg-surface px-2 py-1.5 font-mono text-base text-fg-0 outline-none focus:border-accent"
+              className="font-mono"
             />
-          </div>
+          </Field>
           <div className="flex justify-end gap-2 pt-2">
-            <button type="button" onClick={onClose} className="rounded px-3 py-1.5 text-base text-fg-2 hover:bg-surface-overlay">Cancel</button>
-            <button type="submit" disabled={saving} className="rounded bg-accent px-3 py-1.5 text-base font-medium text-accent-fg hover:bg-accent-hover disabled:opacity-50">
+            <Button type="button" variant="ghost" onClick={onClose}>Cancel</Button>
+            <Button type="submit" variant="primary" disabled={saving}>
               {saving ? 'Saving...' : isEdit ? 'Update' : 'Create'}
-            </button>
+            </Button>
           </div>
         </form>
       </div>

@@ -13,6 +13,12 @@ export interface WorkspaceRecord {
   archived: boolean
   /** Slug this workspace was folded into by workspace-merge (obj 900667), or null. */
   merged_into?: string | null
+  /**
+   * obj 900870: set when the owner deleted this (already archived) workspace.
+   * A soft-delete — nothing else is removed; the row only leaves the admin
+   * archived list. null = not deleted.
+   */
+  deleted_at?: string | null
   sort_order: number
   created_at: string
   updated_at: string
@@ -29,6 +35,7 @@ interface WorkspaceRow {
   default_agent_pool: string
   archived: number
   merged_into?: string | null
+  deleted_at?: string | null
   sort_order: number
   created_at: string
   updated_at: string
@@ -58,6 +65,7 @@ function rowToRecord(row: WorkspaceRow): WorkspaceRecord {
     default_agent_pool: parseJsonArray(row.default_agent_pool),
     archived: !!row.archived,
     merged_into: row.merged_into ?? null,
+    deleted_at: row.deleted_at ?? null,
     sort_order: row.sort_order,
     created_at: row.created_at,
     updated_at: row.updated_at,
@@ -77,9 +85,19 @@ export function invalidateWorkspacesCache(): void {
   cache = null
 }
 
-export function listWorkspaces(opts: { includeArchived?: boolean } = {}): WorkspaceRecord[] {
-  const records = Array.from(loadCache().values())
-  return opts.includeArchived ? records : records.filter(w => !w.archived)
+/**
+ * Workspaces for display. Archived rows only with `includeArchived`; deleted
+ * rows (obj 900870 — always also archived) only with `includeDeleted`, so the
+ * admin list stops showing a workspace the owner deleted.
+ */
+export function listWorkspaces(
+  opts: { includeArchived?: boolean; includeDeleted?: boolean } = {},
+): WorkspaceRecord[] {
+  return Array.from(loadCache().values()).filter(w => {
+    if (w.deleted_at && !opts.includeDeleted) return false
+    if (w.archived && !opts.includeArchived) return false
+    return true
+  })
 }
 
 export function getWorkspace(slug: string): WorkspaceRecord | undefined {
@@ -140,7 +158,10 @@ export function workspaceExists(slug: string): boolean {
 }
 
 export function getWorkspaceSlugs(opts: { includeArchived?: boolean } = {}): string[] {
-  return listWorkspaces(opts).map(w => w.slug)
+  // A deleted workspace is a subset of archived (obj 900870). Internal callers
+  // that ask for archived slugs (doc-path attribution, graph sync) still get
+  // it, so old cards and docs keep resolving to their original workspace.
+  return listWorkspaces({ ...opts, includeDeleted: !!opts.includeArchived }).map(w => w.slug)
 }
 
 export function getDocRoots(slug: string): { read: string[]; write: string[] } {
@@ -231,6 +252,49 @@ export function archiveWorkspace(slug: string): boolean {
     .run(slug)
   invalidateWorkspacesCache()
   return result.changes > 0
+}
+
+export type SoftDeleteResult =
+  | { ok: true; workspace: WorkspaceRecord }
+  | { ok: false; reason: 'not_found' | 'not_archived' | 'already_deleted' }
+
+/**
+ * Delete an ARCHIVED workspace (obj 900870) so it leaves the archived list.
+ *
+ * Soft-delete on purpose: only `deleted_at`/`deleted_by` are set. The row
+ * stays (so `merged_into` redirects and old cards keep resolving), and NO
+ * cards, secrets (workspace-scoped or Shared), repos, integrations, members or
+ * other workspaces are touched. An active workspace is refused — archive it
+ * first. Reversible with `undeleteWorkspace`.
+ */
+export function softDeleteArchivedWorkspace(slug: string, userId: number | null): SoftDeleteResult {
+  const existing = getWorkspace(slug)
+  if (!existing) return { ok: false, reason: 'not_found' }
+  if (existing.deleted_at) return { ok: false, reason: 'already_deleted' }
+  if (!existing.archived) return { ok: false, reason: 'not_archived' }
+  // The archived = 1 guard is repeated in SQL so a concurrent restore cannot
+  // race this into deleting an active workspace.
+  const result = getDb()
+    .prepare(
+      `UPDATE workspaces SET deleted_at = datetime('now'), deleted_by = ?, updated_at = datetime('now')
+       WHERE slug = ? AND archived = 1 AND deleted_at IS NULL`,
+    )
+    .run(userId, slug)
+  invalidateWorkspacesCache()
+  if (result.changes === 0) return { ok: false, reason: 'not_archived' }
+  return { ok: true, workspace: getWorkspace(slug)! }
+}
+
+/** Undo `softDeleteArchivedWorkspace`: the workspace returns to the archived list (still archived). */
+export function undeleteWorkspace(slug: string): WorkspaceRecord | undefined {
+  const result = getDb()
+    .prepare(
+      `UPDATE workspaces SET deleted_at = NULL, deleted_by = NULL, updated_at = datetime('now')
+       WHERE slug = ? AND deleted_at IS NOT NULL`,
+    )
+    .run(slug)
+  invalidateWorkspacesCache()
+  return result.changes > 0 ? getWorkspace(slug) : undefined
 }
 
 /**

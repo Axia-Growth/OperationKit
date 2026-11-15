@@ -22,7 +22,7 @@ export function SecurityStrip({ compact = false }: { compact?: boolean }) {
       aria-label="How secrets are protected"
     >
       {ITEMS.map(({ icon: Icon, title, text }) => (
-        <li key={title} className="flex items-start gap-2 rounded-md border border-border bg-surface-raised px-3 py-2">
+        <li key={title} className="flex items-start gap-2 rounded-md border border-line bg-surface-1 px-3 py-2">
           <Icon aria-hidden className="mt-0.5 h-4 w-4 shrink-0 text-status-working" />
           <span className="min-w-0">
             <span className="block text-sm font-medium text-fg-0">{title}</span>

@@ -10,6 +10,7 @@ import type { Objective } from '@operationkit/shared'
 const TMP_DB = path.join(os.tmpdir(), `cc-preview-resurrect-test-${process.pid}-${Date.now()}.db`)
 process.env.DB_PATH = TMP_DB
 process.env.HARNESS_REPO = 'your-org/operationkit'
+process.env.CC_PREVIEW_DOMAIN = 'cc.example.com' // obj 900803: no built-in preview domain
 
 const { initDb, getDb } = await import('../db/index.js')
 const {
@@ -22,7 +23,8 @@ const {
   selectPreviewInfraBlockedCandidates,
   resurrectPreviewInfraBlockedObjectives,
 } = await import('./preview-infra-resurrect.js')
-const { PR_LINKAGE_REPO } = await import('./pr-linkage.js')
+const { prLinkageRepo } = await import('./pr-linkage.js')
+const PR_LINKAGE_REPO = prLinkageRepo()
 
 const REPO = PR_LINKAGE_REPO
 

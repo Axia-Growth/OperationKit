@@ -32,9 +32,13 @@ import {
   repoScopeParams,
 } from './objective-prs.js'
 import { parsePrNumberFromUrl } from './pr-url.js'
+import { resolveHarnessRepo } from '../lib/install-defaults.js'
 
-/** Default target repo for `gh` calls — overridable for tests/alternate deploys. */
-export const PR_LINKAGE_REPO = process.env.HARNESS_REPO || 'your-org/operationkit'
+/** Target repo for `gh` calls: HARNESS_REPO env → settings → '' (unset, obj 900803).
+ * Read per call — the settings row only exists once initDb has run. */
+export function prLinkageRepo(): string {
+  return resolveHarnessRepo()
+}
 
 /** The gating commit-status context this whole subsystem exists to keep alive. */
 export const HARNESS_CONTEXT = 'harness/test-agent'
@@ -145,7 +149,8 @@ export const EARNED_STATUS_BACKSTOP_INTERVAL_MS = 10 * 60 * 1000
  *
  * Never throws — a query failure returns [] and the recent-window path is unaffected.
  */
-export function selectAgedEarnedStatusTargets(db: Database, repo: string = PR_LINKAGE_REPO): Objective[] {
+export function selectAgedEarnedStatusTargets(db: Database, repo: string = prLinkageRepo()): Objective[] {
+  if (!repo) return []
   try {
     return db
       .prepare(
@@ -178,6 +183,8 @@ export async function discoverAndBackfillPR(
   gh: GhExec,
 ): Promise<DiscoverResult> {
   if (objective.pr_number != null) return { linked: false, reason: 'already-linked' }
+  // obj 900803: no harness repo configured on this install → nothing to search.
+  if (!prLinkageRepo()) return { linked: false, reason: 'no-harness-repo' }
 
   // obj 704718 — this only ever searches PR_LINKAGE_REPO, so it must not backfill a
   // cc-infra pr_number onto an objective that demonstrably belongs to another repo.
@@ -187,7 +194,7 @@ export async function discoverAndBackfillPR(
   // objective. An objective with NO resolvable repo is still allowed through — that is
   // the normal state of a fresh worker whose PR has not been recorded yet, and it is
   // precisely what this function exists to resolve.
-  if (classifyObjectiveRepo(db, objective, PR_LINKAGE_REPO) === 'other') {
+  if (classifyObjectiveRepo(db, objective, prLinkageRepo()) === 'other') {
     return { linked: false, reason: 'other-repo' }
   }
 
@@ -198,7 +205,7 @@ export async function discoverAndBackfillPR(
   try {
     raw = await gh([
       'pr', 'list',
-      '--repo', PR_LINKAGE_REPO,
+      '--repo', prLinkageRepo(),
       '--head', branch,
       '--state', 'all',
       '--json', 'number,url,headRefName',
@@ -236,7 +243,7 @@ export async function discoverAndBackfillPR(
       // obj 704718 — tag the log row with the repo we actually searched. Without this
       // the row's repo is only inferred from pr_url, so a PR listing that returns no
       // `url` leaves a repo-less row, and `pr_number` alone cannot disambiguate it.
-      repo: PR_LINKAGE_REPO,
+      repo: prLinkageRepo(),
     })
   } catch (err) {
     console.warn(`[pr-linkage] backfill write failed for obj ${objective.id}:`, (err as Error).message)
@@ -298,6 +305,7 @@ export async function selfHealHarnessStatus(
     return { posted: false, reason: 'wrong-status' }
   }
   if (!latestVerdictIsPass(db, objective)) return { posted: false, reason: 'not-pass' }
+  if (!prLinkageRepo()) return { posted: false, reason: 'no-harness-repo' }
 
   // Scope to the harness repo. This subsystem posts `harness/test-agent` ONLY on
   // PR_LINKAGE_REPO. An objective whose PR lives in a DIFFERENT repo (example / example2 /
@@ -316,7 +324,7 @@ export async function selfHealHarnessStatus(
   // must be positively established (pr_url → objective_prs.repo → project hint); an
   // unresolvable repo is `unknown-repo` and we do nothing. "Could not tell" must never
   // be spelled "mine" on the write path to a merge gate.
-  const prRepo = classifyObjectiveRepo(db, objective, PR_LINKAGE_REPO)
+  const prRepo = classifyObjectiveRepo(db, objective, prLinkageRepo())
   if (prRepo === 'other') return { posted: false, reason: 'other-repo' }
   if (prRepo === 'unknown') return { posted: false, reason: 'unknown-repo' }
 
@@ -325,7 +333,7 @@ export async function selfHealHarnessStatus(
 
   let sha: string
   try {
-    sha = (await gh(['api', `repos/${PR_LINKAGE_REPO}/pulls/${prNumber}`, '--jq', '.head.sha'])).trim()
+    sha = (await gh(['api', `repos/${prLinkageRepo()}/pulls/${prNumber}`, '--jq', '.head.sha'])).trim()
   } catch (err) {
     console.warn(`[pr-linkage] self-heal head-sha read failed for PR #${prNumber} (obj ${objective.id}):`, (err as Error).message)
     return { posted: false, reason: 'gh-error-sha', pr_number: prNumber }
@@ -345,7 +353,7 @@ export async function selfHealHarnessStatus(
   let latestState: string | null = null
   try {
     const out = await gh([
-      'api', `repos/${PR_LINKAGE_REPO}/commits/${sha}/statuses`,
+      'api', `repos/${prLinkageRepo()}/commits/${sha}/statuses`,
       '--jq', '.[] | "\\(.context)\\t\\(.state)"',
     ])
     for (const line of out.split('\n')) {

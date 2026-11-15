@@ -3,6 +3,7 @@ import { ShieldCheck, X } from 'lucide-react'
 import type { FlowNodeAttempt, FlowNodeInspectResponse } from '../../../../shared/flow/api'
 import { fetchFlowNode } from '../../hooks/useFlows'
 import { Alert, Badge, Button } from '../ui'
+import { formatCost } from '../../lib/format'
 
 /**
  * Click-to-inspect side panel (card B7, docs/design/WORKFLOWS.md §6.2): the
@@ -48,7 +49,7 @@ function AttemptView({ a, label }: { a: FlowNodeAttempt; label?: string }) {
         {a.effect && <span className="font-mono">{a.effect}</span>}
         {a.simulated && <Badge tone="amber" mono>{a.simulated.replace('_', ' ')}</Badge>}
         <span className="font-mono">{dur(a)}</span>
-        {a.cost_usd > 0 && <span className="font-mono">${a.cost_usd.toFixed(4)}</span>}
+        {a.cost_usd > 0 && <span>{formatCost(a.cost_usd)}</span>}
         {a.truncated && <span className="font-mono text-fg-3">(capped)</span>}
       </div>
       <Block title="Error" text={a.error} testId="flow-inspector-error" />

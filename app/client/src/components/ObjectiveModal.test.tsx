@@ -14,14 +14,15 @@ async function flush() {
   flushSync(() => {})
   await Promise.resolve()
 }
-import type { Objective } from '@operationkit/shared'
+import type { ModelRow, Objective } from '@operationkit/shared'
+import { modelOptions } from '../lib/model-options'
 
 // obj 700128 — prove ObjectiveModal is memoized so board-level WebSocket
-// broadcasts (which re-render KanbanBoard every few seconds while live sessions
+// broadcasts (which re-render the board every few seconds while live sessions
 // run) do NOT re-render the open modal. A broadcast-driven re-render reconciled
 // ~36 attribute changes across the modal subtree, which dismissed any open
 // native <select> in Chrome (the "bouncing/closing" bug). React.memo + the fact
-// that all props from KanbanBoard are referentially stable means an identical-
+// that all props from the board are referentially stable means an identical-
 // props parent re-render skips the modal entirely — while a changed `objective`
 // prop (e.g. Edit a different card) still re-renders it.
 
@@ -30,6 +31,8 @@ import type { Objective } from '@operationkit/shared'
 // ObjectiveModalImpl is the only caller, so call-count == render-count.
 // Mutable so a test can supply org subfolders; default is "no projects yet".
 const { PROJECTS } = vi.hoisted(() => ({ PROJECTS: [] as Array<Record<string, unknown>> }))
+// obj 900863: registry rows GET /models returns; empty unless a test fills it.
+const { MODEL_ROWS } = vi.hoisted(() => ({ MODEL_ROWS: [] as Array<Record<string, unknown>> }))
 
 const { useAuthSpy } = vi.hoisted(() => ({
   useAuthSpy: vi.fn(() => ({ user: { id: 1, role: 'admin', username: 'operator' } })),
@@ -48,7 +51,7 @@ vi.mock('../hooks/useWorkspaces', () => ({
 vi.mock('../lib/api', () => ({
   api: {
     get: vi.fn((url: string) => {
-      if (url === '/models') return Promise.resolve({ models: [], default: '' })
+      if (url === '/models') return Promise.resolve({ models: MODEL_ROWS, default: MODEL_ROWS.length ? 'claude-opus-5-5' : '' })
       if (url === '/admin/users') return Promise.resolve([])
       if (url === '/workspaces-config') return Promise.resolve({ workspaces: {} })
       // obj 708826 — the Project control now reads the projects table.
@@ -62,7 +65,9 @@ vi.mock('../lib/api', () => ({
 }))
 
 // Pass children straight through so the modal body renders into the DOM.
-vi.mock('./ui', () => ({
+// Keep the real primitives (Button, IconButton, Input, …); stub only these.
+vi.mock('./ui', async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
   Modal: ({ children }: { children: React.ReactNode }) => <div role="dialog">{children}</div>,
   useConfirm: () => ({ confirm: vi.fn(), confirmDialog: null }),
 }))
@@ -81,7 +86,7 @@ const selectNamed = (root: ParentNode, name: string) =>
   root.querySelector<HTMLElement>(`button[role="combobox"][aria-label="${name}"]`)
 
 // Module-level stable prop identities — these must NEVER change between renders,
-// mirroring KanbanBoard's useCallback-stabilized handlers. If they changed,
+// mirroring the board's useCallback-stabilized handlers. If they changed,
 // memo's shallow compare would (correctly) re-render and the test would be moot.
 const onClose = vi.fn()
 const onCreate = vi.fn((_data: unknown) => Promise.resolve({} as Objective))
@@ -148,7 +153,7 @@ describe('ObjectiveModal — memoized against parent re-renders (obj 700128)', (
     const after = useAuthSpy.mock.calls.length
     expect(after).toBeGreaterThan(before)
     // And the new objective's title is rendered (it really re-rendered with new props).
-    expect(container.querySelector('[role="dialog"]')?.textContent).toContain('Edit Objective')
+    expect(container.querySelector('[role="dialog"]')?.textContent).toContain('Edit card')
   })
 })
 
@@ -260,7 +265,7 @@ describe('ObjectiveModal — create form fields (obj 708877)', () => {
 
   it('edit mode shows all fields including title and description', async () => {
     const dialog = await mount(SAMPLE_OBJECTIVE)
-    expect(dialog.textContent).toContain('Edit Objective')
+    expect(dialog.textContent).toContain('Edit card')
     expect(dialog.querySelectorAll('textarea')).toHaveLength(2)
   })
 
@@ -336,9 +341,16 @@ describe('ObjectiveModal — multi-owner picker (obj 711023)', () => {
     root = createRoot(container)
   })
 
-  async function mount(objective: Objective | null, workspace = 'example') {
+  async function mount(objective: Objective | null, workspace = 'example', waitForPicker = true) {
     flushSync(() => root.render(<Harness objective={objective} workspace={workspace} />))
     await flush()
+    // The picker only renders once GET /admin/users has resolved AND React has
+    // committed setUsers. That commit runs on a scheduler task (default lane),
+    // not inside flush()'s single setTimeout(0) — on a loaded CI runner it can
+    // land a tick later, which failed all three tests below at once on the
+    // public-tree leg (obj 900869, run 43679009686). Wait for it, bounded.
+    const deadline = Date.now() + 2000
+    while (waitForPicker && !selectNamed(container, 'Add owner') && Date.now() < deadline) await flush()
     return container.querySelector('[role="dialog"]') as HTMLElement
   }
 
@@ -425,7 +437,7 @@ describe('ObjectiveModal — multi-owner picker (obj 711023)', () => {
   it('non-admin: sends undefined for assignment (no regression)', async () => {
     useAuthSpy.mockImplementation(() => ({ user: { id: 2, role: 'member', username: 'casey' } }))
     try {
-      const dialog = await mount(null)
+      const dialog = await mount(null, 'example', false) // members get no picker
 
       const title = dialog.querySelector('textarea') as HTMLTextAreaElement
       setNativeValue(title, 'Member obj')
@@ -440,6 +452,37 @@ describe('ObjectiveModal — multi-owner picker (obj 711023)', () => {
       expect(payload.assigned_user_ids).toBeUndefined()
     } finally {
       useAuthSpy.mockImplementation(() => ({ user: { id: 1, role: 'admin', username: 'operator' } }))
+    }
+  })
+})
+
+describe('ObjectiveModal model picker uses the shared model list (obj 900863)', () => {
+  it('lists the registry rows in the same format as Settings → Models and the bot page', async () => {
+    const rows: ModelRow[] = [
+      { id: 'claude-fable-5-2', label: 'Claude Fable 5.2', engine: 'claude', enabled: true, is_default: false, is_planner: false, sort_order: 1 },
+      { id: 'claude-opus-5-5', label: 'Claude Opus 5.5', engine: 'claude', enabled: true, is_default: true, is_planner: true, sort_order: 4 },
+      { id: 'grok-4', label: 'Grok 4', engine: 'grok', enabled: true, is_default: false, is_planner: false, sort_order: 40 },
+    ]
+    MODEL_ROWS.splice(0, MODEL_ROWS.length, ...(rows as unknown as Array<Record<string, unknown>>))
+    ;(api.get as unknown as ReturnType<typeof vi.fn>).mockImplementation((url: string) => {
+      if (url === '/models') return Promise.resolve({ models: MODEL_ROWS, default: 'claude-opus-5-5' })
+      return Promise.resolve([])
+    })
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const root = createRoot(container)
+    try {
+      flushSync(() => root.render(<Harness objective={null} />))
+      await flush()
+      const trigger = selectNamed(container, 'Model')!
+      expect(trigger.textContent).toContain('Claude Opus 5.5 (claude-opus-5-5)')
+      await click(trigger)
+      await flush()
+      expect(optionsOf(trigger).map(o => o.textContent!.trim())).toEqual(modelOptions(rows).map(o => o.label))
+    } finally {
+      MODEL_ROWS.splice(0, MODEL_ROWS.length)
+      flushSync(() => root.unmount())
+      container.remove()
     }
   })
 })

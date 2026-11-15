@@ -151,6 +151,30 @@ conf_validate() {
   local bt; bt=$(conf BACKUP_TARGET)
   [ -z "$bt" ] || [[ "$bt" =~ ^(s3|b2):[^[:space:]]+$ ]] \
     || die "BACKUP_TARGET must look like s3:https://<endpoint>/<bucket>/<folder> or b2:<bucket>:<folder> (got '$bt')"
+  case "$(conf BACKUP_HOME archive)" in archive|offsite) ;; *) die "BACKUP_HOME must be archive or offsite (got '$(conf BACKUP_HOME)')" ;; esac
+}
+
+# other_backup_jobs — print one line per backup job on this server that is NOT
+# the built-in one (/etc/cron.d/operationkit-backup): a systemd timer, a file in
+# /etc/cron.d or a line in root's crontab that mentions restic, b2 or backup.
+# Two nightly backups of the same data double the load, fight over the restic
+# repository lock and make it unclear which copy is the real one, so the
+# installer, update.sh (through install.sh) and b2-setup.sh all name them.
+# Read-only. OK_CRON_DIR / OK_ROOT_CRONTAB: test hooks only.
+other_backup_jobs() {
+  local d=${OK_CRON_DIR:-/etc/cron.d} f
+  # dpkg-db-backup.timer ships with Ubuntu (it saves the package database): not ours.
+  systemctl list-timers --all --no-legend 2>/dev/null | grep -iE 'b2|restic|backup' | grep -vE 'operationkit|dpkg-db-backup' \
+    | awk '{print "systemd timer " $(NF-1)}' || true
+  for f in "$d"/*; do
+    [ -f "$f" ] || continue
+    case "$(basename "$f")" in operationkit-backup|operationkit-backup.tmp) continue ;; esac
+    grep -vE '^[[:space:]]*(#|$)' "$f" 2>/dev/null | grep -qiE 'restic|backup|\<b2\>' && echo "cron file $f"
+  done
+  local tab
+  if [ -n "${OK_ROOT_CRONTAB-}" ]; then tab=$(cat "$OK_ROOT_CRONTAB" 2>/dev/null || true)
+  else tab=$(crontab -l -u root 2>/dev/null || true); fi
+  grep -vE '^[[:space:]]*(#|$)' <<<"$tab" | grep -iE 'restic|backup|\<b2\>' | sed 's/^/root crontab: /' || true
 }
 
 # conf_set FILE KEY VALUE — position-preserving upsert of KEY="VALUE" in a

@@ -16,6 +16,7 @@
  * 'down' — no open PR is not an outage.
  */
 import type { Database } from 'better-sqlite3'
+import { resolvePreviewDomain } from './install-defaults.js'
 
 export interface PreviewCanary {
   objectiveId: number
@@ -51,8 +52,11 @@ export function pickPreviewCanary(db: Database): PreviewCanary | null {
   return { objectiveId: row.id, prNumber: row.pr_number, title: row.title, updatedAt: row.updated_at }
 }
 
-export function previewHostFor(prNumber: number): string {
-  return `pr-${prNumber}.cc.example.com`
+/** `pr-<N>.<preview domain>`, or null when this install has no preview host
+ * (CC_PREVIEW_DOMAIN env → settings, obj 900803; no built-in domain). */
+export function previewHostFor(prNumber: number): string | null {
+  const domain = resolvePreviewDomain()
+  return domain ? `pr-${prNumber}.${domain}` : null
 }
 
 export type PreviewProbeResult = { ok: boolean; httpCode: number | null; ms: number | null; error: string | null }

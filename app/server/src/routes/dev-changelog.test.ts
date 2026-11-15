@@ -14,6 +14,8 @@ process.env.DB_PATH = TMP_DB
 process.env.JWT_SECRET = 'test-secret-devchangelog'
 
 const { initDb, getDb } = await import('../db/index.js')
+// obj 900803: a fresh DB no longer seeds the author's workspaces — this suite uses them.
+const { seedLegacyWorkspaces } = await import('../__fixtures__/legacy-workspaces.js')
 const { default: devChangelogRouter } = await import('./dev-changelog.js')
 
 let server: http.Server
@@ -35,6 +37,7 @@ function token(role: 'admin' | 'member'): string {
 beforeAll(async () => {
   if (fs.existsSync(TMP_DB)) fs.unlinkSync(TMP_DB)
   initDb()
+  await seedLegacyWorkspaces(getDb())
   const app = makeApp()
   await new Promise<void>(resolve => {
     server = app.listen(0, () => resolve())

@@ -6,6 +6,8 @@ export interface TabItem {
   key: string
   label: string
   count?: number
+  /** Optional lucide icon before the label (e.g. a pinned thread). */
+  icon?: ReactNode
 }
 
 /* Tabs — segmented track on the UI SDK tabs behavior (obj 900819): one Tab
@@ -81,6 +83,7 @@ export function Tabs({
               'data-[selected]:bg-surface-2 data-[selected]:text-fg-0 data-[selected]:shadow-pop data-[selected]:ring-1 data-[selected]:ring-line',
             )}
           >
+            {t.icon}
             {t.label}
             {typeof t.count === 'number' && (
               <span className={cn('font-mono text-xs', t.key === value ? 'text-fg-1' : 'text-fg-3')}>{t.count}</span>

@@ -21,6 +21,8 @@ process.env.DB_PATH = TMP_DB
 process.env.JWT_SECRET = 'test-secret-control-layer-xxxx'
 
 const { initDb, getDb } = await import('../db/index.js')
+// obj 900803: a fresh DB no longer seeds the author's workspaces — this suite uses them.
+const { seedLegacyWorkspaces } = await import('../__fixtures__/legacy-workspaces.js')
 const { default: authRouter } = await import('./auth.js')
 const { default: objectivesRouter } = await import('./objectives.js')
 const { default: agentControlRouter } = await import('./agent-control.js')
@@ -94,6 +96,7 @@ function seed(workspace: string, status = 'review', title = 'seeded'): number {
 beforeAll(async () => {
   if (fs.existsSync(TMP_DB)) fs.unlinkSync(TMP_DB)
   initDb()
+  await seedLegacyWorkspaces(getDb())
   getDb().prepare(`INSERT INTO users (id, username, password_hash, role) VALUES (?, 'operator', 'x', 'admin')`).run(ADMIN_ID)
   const app = express()
   app.use(express.json())

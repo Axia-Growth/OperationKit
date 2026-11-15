@@ -26,7 +26,7 @@ export function ProgressBar({
       <div
         className={cn(
           'h-full rounded-full transition-[width] duration-300',
-          tone === 'amber' ? 'bg-signal-amber' : tone === 'alarm' ? 'bg-signal-alarm' : 'bg-accent',
+          tone === 'amber' ? 'bg-warning' : tone === 'alarm' ? 'bg-danger' : 'bg-accent',
         )}
         style={{ width: `${v}%` }}
       />

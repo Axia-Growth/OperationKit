@@ -17,7 +17,9 @@ export const LEGACY_SYSTEM_ROUTES = ['/dashboard', '/costs'] as const
  * (obj 900684): /settings/agents-skills redirects here.
  */
 export const AGENTS_ROUTE = '/agents'
-export const AGENTS_TABS = ['registry', 'board', 'templates'] as const
+// One tab level (obj 900807): the registry's old inner Roster / Assignments /
+// Skill graph tabs are top-level tabs now. 'registry' is the roster.
+export const AGENTS_TABS = ['registry', 'assignments', 'graph', 'board', 'templates'] as const
 export type AgentsTab = typeof AGENTS_TABS[number]
 export const agentsTabRoute = (tab: AgentsTab) => `${AGENTS_ROUTE}?tab=${tab}`
 
@@ -80,3 +82,30 @@ export const REMOVED_ROUTES: ReadonlyArray<string> = [
   '/status',
   '/contacts',
 ]
+
+/**
+ * The Bots page: /chat and /chat/<bot> (obj 900865). App.tsx gives all of
+ * these ONE page-transition key, so picking another bot updates the page in
+ * place instead of unmounting and refetching it.
+ */
+export function isChatPath(pathname: string): boolean {
+  return pathname === '/chat' || pathname.startsWith('/chat/')
+}
+
+/**
+ * The page-transition key App.tsx hands PageTransition, which REMOUNTS its
+ * children whenever the key changes. So the key names a page, not a URL:
+ * - every board path (/, /w/<ws>, /o/<id>, …) is 'board', so switching
+ *   workspace keeps the board and its WebSocket;
+ * - every /settings/* tab is 'settings';
+ * - every /chat and /chat/<bot> is 'chat' (obj 900865). A per-URL key here
+ *   unmounted the whole Bots page on each bot click — sidebar, bot-list fetch
+ *   and fade-in included — which made a switch slow and left a blank pane.
+ */
+export function pageTransitionKey(pathname: string, isBoardPath: boolean): string {
+  if (pathname === '/archive') return 'archive'
+  if (isBoardPath) return 'board'
+  if (pathname.startsWith('/settings')) return 'settings'
+  if (isChatPath(pathname)) return 'chat'
+  return pathname
+}

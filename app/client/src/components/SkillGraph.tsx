@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import { Plus, Minus, Crosshair, Network } from 'lucide-react'
 import { Badge, Button, IconButton, EmptyState, Skeleton, cn } from './ui'
+import { friendlyError, humanize } from '../lib/format'
 
 /**
  * Skill Graph — the OperationKit three-layer graph, rendered from the
@@ -183,7 +184,7 @@ function layoutGraph(data: SkillGraphPayload): { nodes: GraphNode[]; edges: Grap
       radius: s.depth > 1 ? NODE_R.skill - 2 : NODE_R.skill,
       needsImprovement: s.needs_improvement,
       description: s.description,
-      detail: `${consumers} agent${consumers === 1 ? '' : 's'} · ${s.tools.length} tool${s.tools.length === 1 ? '' : 's'}`,
+      detail: `${consumers} bot${consumers === 1 ? '' : 's'} · ${s.tools.length} tool${s.tools.length === 1 ? '' : 's'}`,
     })
     for (const t of s.tools) {
       if (data.tools[t]) edges.push({ from: `skill:${slug}`, to: `tool:${t}`, kind: 'tool' })
@@ -441,11 +442,11 @@ export function GraphCanvas({ data, onOpenNode, alarmLabel = 'needs work' }: {
 
       {/* Legend */}
       <div className="pointer-events-none absolute bottom-3 left-3 flex flex-wrap items-center gap-x-3 gap-y-1.5 rounded-md border border-line bg-surface-1/90 px-3 py-2 text-xs backdrop-blur">
-        <LegendDot layer="agent" label="agent" />
+        <LegendDot layer="agent" label="bot" />
         <LegendDot layer="skill" label="skill" />
         <LegendDot layer="tool" label="tool" />
         <span className="flex items-center gap-1.5 border-l border-line pl-3 text-fg-2">
-          <span className="inline-block h-2.5 w-2.5 rounded-full border-[1.5px] border-signal-alarm" />
+          <span className="inline-block h-2.5 w-2.5 rounded-full border-[1.5px] border-danger" />
           {alarmLabel}
         </span>
         <span className="text-fg-2">dashed = load-on-demand</span>
@@ -474,9 +475,12 @@ export function GraphCanvas({ data, onOpenNode, alarmLabel = 'needs work' }: {
 const LAYER_DOT: Record<Layer, string> = {
   agent: 'bg-status-working',
   skill: 'bg-accent',
-  tool: 'bg-signal-verify',
+  tool: 'bg-success',
 }
 const LAYER_TONE = { agent: 'info', skill: 'accent', tool: 'verify' } as const
+const LAYER_LABEL: Record<Layer, string> = { agent: 'Bot', skill: 'Skill', tool: 'Tool' }
+/** Where the graph was read from, in words (the server sends a code). */
+const SOURCE_LABEL: Record<string, string> = { 'frontmatter-layer-graph': 'Read from skill files' }
 
 function LegendDot({ layer, label }: { layer: Layer; label: string }) {
   return (
@@ -494,10 +498,10 @@ function NodeCard({ node, onClose, onOpen, className }: { node: GraphNode; onClo
       <div className="flex items-start justify-between gap-2">
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-1.5">
-            <Badge tone={LAYER_TONE[node.layer]}>{node.layer}</Badge>
-            {node.needsImprovement && <Badge tone="alarm">needs work</Badge>}
+            <Badge tone={LAYER_TONE[node.layer]}>{LAYER_LABEL[node.layer]}</Badge>
+            {node.needsImprovement && <Badge tone="alarm">Needs work</Badge>}
           </div>
-          <div className="mt-1.5 break-words font-mono text-xs font-medium text-fg-0">{node.slug}</div>
+          <div className="mt-1.5 break-words text-xs font-medium text-fg-0" title={node.slug}>{node.label}</div>
         </div>
         {onClose && (
           <Button variant="ghost" size="sm" onClick={onClose} aria-label="Close detail">Close</Button>
@@ -528,7 +532,7 @@ export function SkillGraphTab() {
       .then(async r => {
         if (!r.ok) {
           const body = await r.json().catch(() => ({}))
-          throw new Error(body.error || 'Failed to load the skill graph')
+          throw new Error(body.error || `HTTP ${r.status}`)
         }
         return r.json()
       })
@@ -570,7 +574,7 @@ export function SkillGraphTab() {
         <EmptyState
           icon={<Network className="h-5 w-5" />}
           title="Skill graph unavailable"
-          description={error || 'The layer graph returned no data.'}
+          description={error ? friendlyError(error).message : 'The skill graph came back empty.'}
         />
       </div>
     )
@@ -581,14 +585,14 @@ export function SkillGraphTab() {
     <div className="flex h-full min-h-[520px] flex-col">
       <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 border-b border-line px-5 py-3">
         <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
-          <h3 className="font-display text-base font-semibold text-fg-0">Skill Graph</h3>
-          <span className="font-mono text-xs text-fg-2">
-            {c.agents} agents · {c.skills} skills · {c.tools} tools
+          <h3 className="font-display text-base font-semibold text-fg-0">Skill graph</h3>
+          <span className="text-xs text-fg-2">
+            {c.agents} bots · {c.skills} skills · {c.tools} tools
           </span>
-          <span className="font-mono text-xs text-fg-2">
-            {c.agent_skill_edges} agent→skill · {c.skill_tool_edges} skill→tool
+          <span className="text-xs text-fg-2">
+            {c.agent_skill_edges} bot→skill · {c.skill_tool_edges} skill→tool
           </span>
-          <Badge tone="verify">{data.source}</Badge>
+          <Badge tone="verify">{SOURCE_LABEL[data.source] ?? humanize(data.source)}</Badge>
         </div>
         <span className="text-xs text-fg-2">Drag to pan · scroll to zoom · click a node to inspect</span>
       </div>

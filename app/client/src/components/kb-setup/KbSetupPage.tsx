@@ -53,7 +53,7 @@ function ServerKbSetup({ workspace, pollMs }: { workspace: string; pollMs?: numb
     return (
       <PageContainer>
         <Intro />
-        {loading ? <Skeleton className="h-40 w-full" /> : <Alert tone="amber" title="No workspace">You need access to a workspace to set up its knowledge base.</Alert>}
+        {loading ? <Skeleton className="h-40 w-full" /> : <Alert tone="amber" title="No workspace">You need access to a workspace to set up its Context.</Alert>}
       </PageContainer>
     )
   }
@@ -75,7 +75,7 @@ function ServerKbSetup({ workspace, pollMs }: { workspace: string; pollMs?: numb
 function Intro({ actions }: { actions?: ReactNode }) {
   return (
     <PageHeader
-      title="Set up your knowledge base"
+      title="Set up your Context"
       breadcrumbs={[{ label: 'Context', href: '/knowledge' }, { label: 'Setup' }]}
       description="Drop in your existing documents, spreadsheets, decks and notes. The setup agent reads each one and files what it finds into people, companies, projects, decisions, processes, products and a glossary."
       actions={actions}
@@ -354,7 +354,7 @@ function UploadState({
           <ul className="space-y-1.5">
             {READ_KINDS.map(k => (
               <li key={k} className="flex items-center gap-2 text-fg-1">
-                <CheckCircle2 className="h-3.5 w-3.5 shrink-0 text-signal-verify" aria-hidden="true" />{k}
+                <CheckCircle2 className="h-3.5 w-3.5 shrink-0 text-success" aria-hidden="true" />{k}
               </li>
             ))}
           </ul>
@@ -369,7 +369,7 @@ function UploadState({
             </ul>
           </div>
           <p className="flex gap-2 rounded-md bg-surface-inset p-2.5 text-sm text-fg-2">
-            <ShieldAlert className="mt-0.5 h-3.5 w-3.5 shrink-0 text-signal-amber" aria-hidden="true" />
+            <ShieldAlert className="mt-0.5 h-3.5 w-3.5 shrink-0 text-warning" aria-hidden="true" />
             Passwords and API keys found inside files are removed before anything is read, and flagged so you can change them.
           </p>
         </CardBody>
@@ -383,11 +383,11 @@ function UploadState({
 const ITEM_META: Record<ItemStatus, { label: string; tone: 'neutral' | 'info' | 'verify' | 'amber' | 'alarm'; icon: ReactNode }> = {
   pending: { label: 'Waiting', tone: 'neutral', icon: <Circle className="h-4 w-4 text-fg-3" aria-hidden="true" /> },
   working: { label: 'Reading', tone: 'info', icon: <Loader2 className="cc-spin h-4 w-4 text-status-working" aria-hidden="true" /> },
-  done: { label: 'Filed', tone: 'verify', icon: <CheckCircle2 className="h-4 w-4 text-signal-verify" aria-hidden="true" /> },
+  done: { label: 'Filed', tone: 'verify', icon: <CheckCircle2 className="h-4 w-4 text-success" aria-hidden="true" /> },
   unchanged: { label: 'Unchanged', tone: 'neutral', icon: <Equal className="h-4 w-4 text-fg-2" aria-hidden="true" /> },
   duplicate: { label: 'Duplicate', tone: 'neutral', icon: <Copy className="h-4 w-4 text-fg-2" aria-hidden="true" /> },
-  skipped: { label: 'Skipped', tone: 'amber', icon: <MinusCircle className="h-4 w-4 text-signal-amber" aria-hidden="true" /> },
-  failed: { label: 'Failed', tone: 'alarm', icon: <XCircle className="h-4 w-4 text-signal-alarm" aria-hidden="true" /> },
+  skipped: { label: 'Skipped', tone: 'amber', icon: <MinusCircle className="h-4 w-4 text-warning" aria-hidden="true" /> },
+  failed: { label: 'Failed', tone: 'alarm', icon: <XCircle className="h-4 w-4 text-danger" aria-hidden="true" /> },
 }
 
 function ProgressState({
@@ -510,7 +510,7 @@ function Stat({ label, value, tone }: { label: string; value: number; tone?: 'al
     <div className="rounded-lg border border-line bg-surface-2 px-3 py-2.5">
       <p className="text-xs text-fg-2">{label}</p>
       <p className={cn('font-display text-2xl font-semibold leading-tight',
-        tone === 'alarm' && value > 0 ? 'text-signal-alarm' : tone === 'amber' && value > 0 ? 'text-signal-amber' : 'text-fg-0')}>
+        tone === 'alarm' && value > 0 ? 'text-danger' : tone === 'amber' && value > 0 ? 'text-warning' : 'text-fg-0')}>
         {value}
       </p>
     </div>
@@ -572,10 +572,10 @@ function SummaryState({
         <Alert
           tone="alarm"
           title={`Secrets removed from ${secrets.length} ${secrets.length === 1 ? 'file' : 'files'}`}
-          // The kit's border-signal-alarm/30 tint is not generated (var() colors take no alpha), so mix it here.
+          // The kit's border-danger/30 tint is not generated (var() colors take no alpha), so mix it here.
           className="border-[color:color-mix(in_srgb,var(--ok-alarm)_40%,transparent)] bg-[color:color-mix(in_srgb,var(--ok-alarm)_8%,transparent)]"
         >
-          <p>These were taken out before the files were read and are not in your knowledge base. Change them where they are used — they were sitting in plain files.</p>
+          <p>These were taken out before the files were read and are not in your Context. Change them where they are used — they were sitting in plain files.</p>
           <ul className="mt-1.5 space-y-1" data-testid="secrets-list">
             {secrets.map(x => (
               <li key={x.path}>
@@ -598,7 +598,7 @@ function SummaryState({
               <div key={sec.key} className="bg-surface-2 px-4 py-3" data-section={sec.key}>
                 <p className={cn('text-sm font-medium', any ? 'text-fg-0' : 'text-fg-3')}>{sec.label}</p>
                 <p className="mt-1 text-sm text-fg-2">
-                  <span className={cn('font-mono', Number(v.created) > 0 && 'text-signal-verify')}>{Number(v.created)} new</span>
+                  <span className={cn('font-mono', Number(v.created) > 0 && 'text-success')}>{Number(v.created)} new</span>
                   <span className="text-fg-3"> · </span>
                   <span className="font-mono">{Number(v.updated)} updated</span>
                 </p>
@@ -639,7 +639,7 @@ function QuestionsPanel({ questions, kb, onAnswered }: { questions: OpenQuestion
         actions={<HelpCircle className="h-4 w-4 text-fg-3" aria-hidden="true" />}
       />
       <CardBody className="space-y-3">
-        <p className="text-sm text-fg-2">The agent was not sure about these. Your answers go into the knowledge base. They are also in your decision queue.</p>
+        <p className="text-sm text-fg-2">The bot was not sure about these. Your answers go into your Context. They are also in your decision queue.</p>
         {questions === null ? <SkeletonText lines={3} /> : open.length === 0 ? (
           <p className="text-sm text-fg-3">Nothing to answer right now.</p>
         ) : open.map(q => <QuestionRow key={q.id} q={q} kb={kb} onAnswered={onAnswered} />)}
@@ -678,7 +678,7 @@ function QuestionRow({ q, kb, onAnswered }: { q: OpenQuestion; kb: KbSetupApi; o
         <Button size="sm" variant="ghost" disabled={!!busy} loading={busy === 'dismiss'}
           onClick={() => send({ dismiss: true }, 'dismiss')}>Dismiss</Button>
       </div>
-      {err && <p className="mt-1.5 text-xs text-signal-alarm">{err}</p>}
+      {err && <p className="mt-1.5 text-xs text-danger">{err}</p>}
     </div>
   )
 }

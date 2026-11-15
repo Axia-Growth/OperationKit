@@ -63,6 +63,7 @@ import {
 } from './poller-decisions.js'
 import { delegatorParentOf } from './poller-delegator.js'
 import { noteStartReason } from './session-start-reasons.js'
+import { resolveHarnessRepo } from '../lib/install-defaults.js'
 
 /** A single parsed test-agent criterion result (PR-gated harness loop). */
 interface CriterionResult {
@@ -410,7 +411,8 @@ export function currentTreeShaForObjective(obj: Objective): string | null {
 // Best-effort: post a `harness/test-agent` commit status to the PR head SHA so the
 // PR is gated on the test-agent verdict. Only fires when obj.pr_number is set; any
 // `gh` failure is logged and swallowed so the poller never breaks on it.
-const HARNESS_REPO = process.env.HARNESS_REPO || 'your-org/operationkit'
+// obj 900803: HARNESS_REPO env → settings → unset (no status is posted then).
+const harnessRepo = (): string => resolveHarnessRepo()
 
 /**
  * Env for server-side `gh` invocations. The Node server runs as root with HOME=/root
@@ -493,6 +495,8 @@ export function postHarnessStatus(obj: Objective, state: 'success' | 'failure', 
       // a transient GET miss shouldn't silently skip the gating post.
       await withRetry(
         async () => {
+          const HARNESS_REPO = harnessRepo()
+          if (!HARNESS_REPO) return
           const sha = await ghApi([`repos/${HARNESS_REPO}/pulls/${prNumber}`, '--jq', '.head.sha'])
           if (!sha) throw new Error(`no head SHA for PR #${prNumber}`)
           await ghApi([

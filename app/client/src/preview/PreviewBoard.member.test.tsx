@@ -123,7 +123,9 @@ vi.mock('../components/design/primitives', () => ({
   AgentMonogram: () => null,
 }))
 
-vi.mock('../components/ui', () => ({
+// Keep the real primitives (Button, IconButton, Input, …); stub only these.
+vi.mock('../components/ui', async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
   useConfirm: () => ({ confirm: () => Promise.resolve(true), confirmDialog: null }),
 }))
 

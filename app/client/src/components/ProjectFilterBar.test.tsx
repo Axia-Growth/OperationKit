@@ -15,7 +15,9 @@ async function flush() {
 }
 
 // Auto-accept the delete confirmation so the DELETE path is exercised.
-vi.mock('./ui', () => ({
+// Keep the real primitives (Button, IconButton, Input, …); stub only these.
+vi.mock('./ui', async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
   useConfirm: () => ({ confirm: () => Promise.resolve(true), confirmDialog: null }),
 }))
 

@@ -116,7 +116,7 @@ export function useRoutines(): UseRoutinesResult {
       }
       setError(null)
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Failed to load routines')
+      setError(e instanceof Error ? e.message : 'Could not load scheduled tasks')
     } finally {
       setLoading(false)
     }
@@ -150,7 +150,7 @@ export function useRoutines(): UseRoutinesResult {
       void refresh()
       return { ok: r.status === 201, error: body.error }
     } catch (e) {
-      return { ok: false, error: e instanceof Error ? e.message : 'Failed to create strategy job' }
+      return { ok: false, error: e instanceof Error ? e.message : 'Could not create the scheduled task' }
     }
   }, [refresh])
 
@@ -161,7 +161,7 @@ export function useRoutines(): UseRoutinesResult {
       void refresh()
       return { ok: r.ok, error: body.error }
     } catch (e) {
-      return { ok: false, error: e instanceof Error ? e.message : 'Failed to resume routine' }
+      return { ok: false, error: e instanceof Error ? e.message : 'Could not resume the scheduled task' }
     }
   }, [refresh])
 

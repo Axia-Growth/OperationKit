@@ -2,14 +2,33 @@ import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent, type
 import { ArrowLeft, FileSpreadsheet, FileText, FileType2, MessageSquareText, RotateCcw, Sparkles, Upload, X } from 'lucide-react'
 import { renderMarkdown } from '../lib/markdown'
 import { useWorkspaces } from '../hooks/useWorkspaces'
+import { useKbResource } from '../lib/kbResource'
+import { KB_IMPORT_ENABLED } from '../lib/kbContextData'
 import {
-  Alert, Badge, Button, Card, CardBody, CardHeader, EmptyState, IconButton, Modal, Skeleton, SkeletonText, cn,
+  Alert, Badge, Button, Card, CardBody, CardHeader, EmptyState, IconButton, Modal, PageContainer, PageHeader, Skeleton, SkeletonText, cn,
 } from './ui'
 import { SaveAnswerButton } from './kb-wiki/SaveAnswerButton'
 import { WikiSection } from './kb-wiki/WikiSection'
 import { PageGraph } from './kb-wiki/PageGraph'
 import { wikilinksToLinks, type WikiPageSummary } from '../lib/kbWiki'
 import { Select } from './ui/Select'
+import { formatDateTime, friendlyError } from '../lib/format'
+
+/** A plain sentence for a failure, with the technical detail collapsed underneath. */
+function ErrorText({ error }: { error: string }) {
+  const { message, detail } = friendlyError(error)
+  return (
+    <>
+      {message}
+      {detail && (
+        <details className="mt-1 text-xs text-fg-3">
+          <summary>Details</summary>
+          {detail}
+        </details>
+      )}
+    </>
+  )
+}
 
 /* Import files — the Knowledge base page's file import (starter pack
    `knowledge-import`, obj 719936). Upload messy files, watch the librarian
@@ -99,17 +118,9 @@ export function citationsToLinks(answer: string, sources: AskResult['sources']):
 }
 
 /** Is file import switched on for this install? (Drives the Knowledge base page's Import button.) */
+/** Whether file import (and with it the Graph view) is on — read from Context's cache first (obj 900867), then the server. */
 export function useKnowledgeImportEnabled(): boolean {
-  const [on, setOn] = useState(false)
-  useEffect(() => {
-    let live = true
-    fetch('/api/kb-ingest/enabled', { credentials: 'include' })
-      .then(r => (r.ok ? r.json() : { pack_enabled: false }))
-      .then(b => { if (live) setOn(b.pack_enabled === true) })
-      .catch(() => { if (live) setOn(false) })
-    return () => { live = false }
-  }, [])
-  return on
+  return useKbResource(KB_IMPORT_ENABLED).data === true
 }
 
 export function KnowledgeImportPanel({ workspace, onClose }: { workspace: string; onClose: () => void }) {
@@ -143,7 +154,7 @@ export function KnowledgeImportPanel({ workspace, onClose }: { workspace: string
     try {
       const r = await fetch(`/api/kb-ingest/status?${q}`, { credentials: 'include' })
       const body = await r.json()
-      if (!r.ok) throw new Error(body.error ?? `HTTP ${r.status}`)
+      if (!r.ok) throw new Error(`HTTP ${r.status}${body.error ? `: ${body.error}` : ''}`)
       setStatus(body)
       setLoadError(null)
     } catch (e) {
@@ -173,7 +184,7 @@ export function KnowledgeImportPanel({ workspace, onClose }: { workspace: string
       for (const f of arr) fd.append('files', f)
       const r = await fetch(`/api/kb-ingest/upload?${q}`, { method: 'POST', credentials: 'include', body: fd })
       const body = await r.json().catch(() => ({}))
-      if (!r.ok) throw new Error(body.error ?? `Upload failed (HTTP ${r.status})`)
+      if (!r.ok) throw new Error(`HTTP ${r.status}${body.error ? `: ${body.error}` : ''}`)
       await load()
     } catch (e) {
       setUploadError((e as Error).message)
@@ -189,7 +200,7 @@ export function KnowledgeImportPanel({ workspace, onClose }: { workspace: string
     try {
       const r = await fetch(`/api/kb-ingest/samples?${q}`, { method: 'POST', credentials: 'include' })
       const body = await r.json().catch(() => ({}))
-      if (!r.ok) throw new Error(body.error ?? `HTTP ${r.status}`)
+      if (!r.ok) throw new Error(`HTTP ${r.status}${body.error ? `: ${body.error}` : ''}`)
       await load()
     } catch (e) {
       setUploadError((e as Error).message)
@@ -219,7 +230,7 @@ export function KnowledgeImportPanel({ workspace, onClose }: { workspace: string
         body: JSON.stringify({ workspace: ws, question: qText }),
       })
       const body = await r.json().catch(() => ({}))
-      if (!r.ok) throw new Error(body.error ?? `HTTP ${r.status}`)
+      if (!r.ok) throw new Error(`HTTP ${r.status}${body.error ? `: ${body.error}` : ''}`)
       setAnswer({ ...body, question: qText })
     } catch (err) {
       setAskError((err as Error).message)
@@ -233,7 +244,7 @@ export function KnowledgeImportPanel({ workspace, onClose }: { workspace: string
     try {
       const r = await fetch(`/api/kb-ingest/note?${q}&path=${encodeURIComponent(rel)}`, { credentials: 'include' })
       const body = await r.json()
-      if (!r.ok) throw new Error(body.error ?? `HTTP ${r.status}`)
+      if (!r.ok) throw new Error(`HTTP ${r.status}${body.error ? `: ${body.error}` : ''}`)
       setOpenNote(body)
     } catch (e) {
       setNoteError((e as Error).message)
@@ -278,22 +289,24 @@ export function KnowledgeImportPanel({ workspace, onClose }: { workspace: string
   ) : null
 
   return (
-    <div className="flex-1 overflow-y-auto bg-surface-0">
-      <div className="mx-auto w-full max-w-6xl px-4 py-5 sm:px-6">
-        <div className="mb-5 flex flex-wrap items-start justify-between gap-3">
-          <div className="min-w-0 max-w-2xl">
-            <h1 className="text-xl font-semibold tracking-tight text-fg-0">Import files</h1>
-            <p className="mt-1 text-base leading-relaxed text-fg-2">
-              Add spreadsheets, PDFs, Word documents and meeting transcripts. The librarian reads each one on this server and files it into knowledge-base notes — one per organization, person, project, product and topic — with links back to the original.
-            </p>
-          </div>
-          <div className="flex flex-wrap items-center gap-2">
-            {wsPicker}
-            <Button variant="ghost" onClick={onClose} leftIcon={<ArrowLeft className="h-4 w-4" aria-hidden="true" />}>
-              Back to notes
-            </Button>
-          </div>
-        </div>
+    // The standard page shell (obj 900807): PageContainer's 1200px width and
+    // gutters, PageHeader's title type and breadcrumb — was a one-off
+    // max-w-6xl wrapper with its own 20px h1.
+    <div className="min-h-0 flex-1 bg-surface-0">
+      <PageContainer>
+        <PageHeader
+          title="Import files"
+          breadcrumbs={[{ label: 'Context' }, { label: 'Import files' }]}
+          description="Add spreadsheets, PDFs, Word documents and meeting transcripts. The librarian reads each one on this server and files it into Context notes — one per organization, person, project, product and topic — with links back to the original."
+          actions={
+            <>
+              {wsPicker}
+              <Button variant="ghost" onClick={onClose} leftIcon={<ArrowLeft className="h-4 w-4" aria-hidden="true" />}>
+                Back to notes
+              </Button>
+            </>
+          }
+        />
 
         {status && !status.pack_enabled && (
           <EmptyState
@@ -302,7 +315,7 @@ export function KnowledgeImportPanel({ workspace, onClose }: { workspace: string
           />
         )}
 
-        {loadError && <Alert tone="alarm" title="Couldn't load your imported files" className="mb-4">{loadError}</Alert>}
+        {loadError && <Alert tone="alarm" title="Couldn't load your imported files" className="mb-4"><ErrorText error={loadError} /></Alert>}
 
         {status?.pack_enabled !== false && <div className="grid grid-cols-[minmax(0,1fr)] gap-5 lg:grid-cols-[minmax(0,1.15fr)_minmax(0,1fr)]">
           {/* ── Ask ── */}
@@ -323,7 +336,8 @@ export function KnowledgeImportPanel({ workspace, onClose }: { workspace: string
                 />
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <span className="text-xs text-fg-3">Answers use only your uploaded files, with links to where each fact came from.</span>
-                  <Button type="submit" variant="primary" loading={asking} disabled={!question.trim() || !hasKnowledge} leftIcon={<MessageSquareText className="h-4 w-4" aria-hidden="true" />}>
+                  {/* The page is Import files, so Choose files is its one filled primary (obj 900807). */}
+                  <Button type="submit" variant="secondary" loading={asking} disabled={!question.trim() || !hasKnowledge} leftIcon={<MessageSquareText className="h-4 w-4" aria-hidden="true" />}>
                     Ask
                   </Button>
                 </div>
@@ -355,7 +369,7 @@ export function KnowledgeImportPanel({ workspace, onClose }: { workspace: string
                   <SkeletonText lines={5} />
                 </div>
               )}
-              {askError && <Alert tone="alarm" title="Couldn't answer that" className="mt-4">{askError}</Alert>}
+              {askError && <Alert tone="alarm" title="Couldn't answer that" className="mt-4"><ErrorText error={askError} /></Alert>}
               {answer && (
                 <div className="mt-5 border-t border-line-soft pt-4" aria-live="polite">
                   <div
@@ -420,7 +434,7 @@ export function KnowledgeImportPanel({ workspace, onClose }: { workspace: string
                 </div>
               </div>
 
-              {uploadError && <Alert tone="alarm" title="Upload failed">{uploadError}</Alert>}
+              {uploadError && <Alert tone="alarm" title="Upload failed"><ErrorText error={uploadError} /></Alert>}
 
               {!status && !loadError && (
                 <div className="flex flex-col gap-2" aria-busy="true">
@@ -449,13 +463,13 @@ export function KnowledgeImportPanel({ workspace, onClose }: { workspace: string
                         <FileIcon kind={f.kind} />
                         <div className="min-w-0 flex-1">
                           <div className="truncate text-base font-medium text-fg-0" title={f.file_name}>{f.file_name}</div>
-                          <div className="text-xs text-fg-3">{new Date(f.uploaded_at).toLocaleString()}</div>
+                          <div className="text-xs text-fg-3" title={formatDateTime(f.uploaded_at).title}>{formatDateTime(f.uploaded_at).label}</div>
                         </div>
                         <Badge tone={STATUS_LABEL[f.status].tone}>{STATUS_LABEL[f.status].label}</Badge>
                       </div>
                       {f.status === 'failed' && f.error && (
                         <div className="flex items-start justify-between gap-2 pl-6">
-                          <p className="text-sm text-signal-alarm">{f.error}</p>
+                          <p className="text-sm text-danger">{f.error}</p>
                           {f.kind !== 'unsupported' && (
                             <Button size="sm" variant="ghost" leftIcon={<RotateCcw className="h-3.5 w-3.5" aria-hidden="true" />} onClick={() => { void retry(f.id) }}>
                               Try again
@@ -488,7 +502,7 @@ export function KnowledgeImportPanel({ workspace, onClose }: { workspace: string
                         </div>
                       )}
                       {f.status === 'done' && (f.warnings ?? []).length > 0 && (
-                        <p className="pl-6 text-xs text-signal-amber">{f.warnings!.join(' ')}</p>
+                        <p className="pl-6 text-xs text-warning">{f.warnings!.join(' ')}</p>
                       )}
                     </li>
                   ))}
@@ -500,7 +514,7 @@ export function KnowledgeImportPanel({ workspace, onClose }: { workspace: string
 
         {ws && status?.pack_enabled !== false && <WikiSection workspace={ws} onOpenNote={rel => { void viewNote(rel) }} onPages={setWikiPages} refreshKey={wikiKey + files.filter(f => f.status === 'done').length} />}
 
-        {noteError && <Alert tone="alarm" title="Couldn't open that note" className="mt-4">{noteError}</Alert>}
+        {noteError && <Alert tone="alarm" title="Couldn't open that note" className="mt-4"><ErrorText error={noteError} /></Alert>}
 
         <Modal open={!!openNote} onClose={() => setOpenNote(null)} labelledBy="import-note-title" panelClassName="max-w-3xl w-full">
           {openNote && (
@@ -520,7 +534,7 @@ export function KnowledgeImportPanel({ workspace, onClose }: { workspace: string
             </div>
           )}
         </Modal>
-      </div>
+      </PageContainer>
     </div>
   )
 }

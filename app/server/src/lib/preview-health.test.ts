@@ -81,8 +81,24 @@ describe('pickPreviewCanary', () => {
 })
 
 describe('previewHostFor', () => {
-  it('builds the pr-N hostname', () => {
-    expect(previewHostFor(586)).toBe('pr-586.cc.example.com')
+  // obj 900803: no built-in preview domain — CC_PREVIEW_DOMAIN env → settings → none.
+  afterAll(() => { delete process.env.CC_PREVIEW_DOMAIN })
+
+  it('builds the pr-N hostname under the configured preview domain', () => {
+    process.env.CC_PREVIEW_DOMAIN = 'preview.example.test'
+    expect(previewHostFor(586)).toBe('pr-586.preview.example.test')
+  })
+
+  it('reads the domain from settings when the env does not set it', () => {
+    delete process.env.CC_PREVIEW_DOMAIN
+    getDb().prepare("INSERT OR REPLACE INTO settings (key, value) VALUES ('install_preview_domain', 'ops.example.test')").run()
+    expect(previewHostFor(7)).toBe('pr-7.ops.example.test')
+    getDb().prepare("DELETE FROM settings WHERE key = 'install_preview_domain'").run()
+  })
+
+  it('is null when this install has no preview domain (fresh install)', () => {
+    delete process.env.CC_PREVIEW_DOMAIN
+    expect(previewHostFor(586)).toBeNull()
   })
 })
 

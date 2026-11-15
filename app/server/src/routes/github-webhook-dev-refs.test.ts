@@ -5,7 +5,11 @@ import path from 'path'
 import http from 'http'
 import crypto from 'crypto'
 import express from 'express'
-import { SELF_REPO } from '../services/auto-deploy.js'
+import { selfRepo } from '../services/auto-deploy.js'
+
+// obj 900803: no built-in harness repo any more — configure it like an install does.
+process.env.HARNESS_REPO = process.env.HARNESS_REPO || 'your-org/operationkit'
+const SELF_REPO = selfRepo()
 
 // Real SQLite via initDb(). Env MUST be set before the dynamic import of
 // db/index.js (and of the router, which reads GITHUB_WEBHOOK_SECRET per call
@@ -22,6 +26,8 @@ process.env.PREVIEW_SPOOL_HOST_KICK = '0'
 delete process.env.ANTHROPIC_API_KEY
 
 const { initDb, getDb } = await import('../db/index.js')
+// obj 900803: a fresh DB no longer seeds the author's workspaces — this suite uses them.
+const { seedLegacyWorkspaces } = await import('../__fixtures__/legacy-workspaces.js')
 const { default: githubWebhookRouter, resetDeliveryDedupe } = await import('./github-webhook.js')
 
 let server: http.Server
@@ -38,6 +44,7 @@ function makeApp(): express.Express {
 beforeAll(async () => {
   if (fs.existsSync(TMP_DB)) fs.unlinkSync(TMP_DB)
   initDb()
+  await seedLegacyWorkspaces(getDb())
   const app = makeApp()
   await new Promise<void>(resolve => {
     server = app.listen(0, () => resolve())

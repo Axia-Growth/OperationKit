@@ -5,8 +5,13 @@
 import { useEffect, useState } from 'react'
 import { api, ApiError } from '../../lib/api'
 import { useConfirm } from '../ui'
+// Direct module paths (not the '../ui' barrel) so suites that mock the barrel
+// with only Modal/useConfirm still render this card.
 import { Badge } from '../ui/Badge'
 import { Button } from '../../components/ui/Button'
+import { Alert } from '../ui/Alert'
+import { Field, Input } from '../ui/Field'
+import { SectionHeader } from '../ui/SettingsSection'
 import { fmtDate } from './helpers'
 import type { ApiKeyIssued, ApiKeySummary } from '@operationkit/shared'
 
@@ -94,45 +99,42 @@ export function ApiKeySection() {
   const configured = !!summary?.configured
 
   return (
-    <section className="rounded-lg border border-border bg-surface-raised p-5">
-      <div className="mb-4 flex items-start justify-between gap-4">
-        <div>
-          <h2 className="text-lg font-semibold text-fg-0">API key</h2>
-          <p className="mt-1 text-xs text-fg-3">
+    <section className="rounded-lg border border-line bg-surface-1 p-5" aria-labelledby="api-key-heading">
+      <SectionHeader
+        headingId="api-key-heading"
+        className="mb-4"
+        title="API key"
+        description={
+          <>
             For your own scripts: full REST access that acts as you everywhere. Paste as{' '}
             <span className="font-mono">Authorization: Bearer …</span>. We only show the full key once. Do not give it
             to a bot — make a scoped agent key above instead (this key is read-only over MCP).
-          </p>
-        </div>
-        {configured && (
-          // Same green status badge as Connected / Healthy / Active elsewhere; the
-          // greige uppercase chip read as a warning (QA obj 900621).
-          <Badge tone="verify" className="shrink-0">Active</Badge>
-        )}
-      </div>
+          </>
+        }
+        actions={
+          configured && (
+            // Same green status badge as Connected / Healthy / Active elsewhere; the
+            // greige uppercase chip read as a warning (QA obj 900621).
+            <Badge tone="verify" className="shrink-0">Active</Badge>
+          )
+        }
+      />
 
-      {error && (
-        <div className="mb-3 rounded bg-signal-alarm/10 px-3 py-2 text-base text-signal-alarm">{error}</div>
-      )}
+      {error && <Alert tone="alarm" title={error} className="mb-3" />}
 
       {loading ? (
         <div className="text-base text-fg-3">Loading…</div>
       ) : (
         <div className="space-y-3">
           {plaintext && (
-            <div className="space-y-2">
-              <label className="block text-xs text-fg-2">Copy this now — it will not be shown again</label>
+            <Field label="Copy this now — it will not be shown again">
               <div className="flex flex-col gap-2 sm:flex-row">
-                <input
-                  readOnly
-                  value={plaintext}
-                  className="w-full rounded border border-accent/40 bg-surface px-2.5 py-2 font-mono text-base text-fg-0"
-                />
+                <Input readOnly value={plaintext} className="font-mono" onFocus={e => e.currentTarget.select()} />
                 <Button variant="primary" className="shrink-0" onClick={() => void copy()}>
                   {copied ? 'Copied' : 'Copy'}
                 </Button>
               </div>
-            </div>
+            </Field>
           )}
 
           {!plaintext && configured && (
@@ -146,23 +148,13 @@ export function ApiKeySection() {
           )}
 
           <div className="flex flex-wrap gap-2 pt-1">
-            <button
-              type="button"
-              onClick={() => void generate()}
-              disabled={busy}
-              className="rounded-md border border-border px-3 py-1.5 text-base text-fg-1 transition-colors duration-fast ease-out hover:bg-surface-3 hover:text-fg-0 disabled:opacity-50"
-            >
+            <Button type="button" variant="secondary" onClick={() => void generate()} disabled={busy}>
               {busy ? 'Working…' : configured ? 'Generate new key' : 'Generate API key'}
-            </button>
+            </Button>
             {configured && (
-              <button
-                type="button"
-                onClick={() => void revoke()}
-                disabled={busy}
-                className="rounded-md border border-signal-alarm/40 px-3 py-1.5 text-base text-signal-alarm transition-colors duration-fast ease-out hover:bg-signal-alarm/10 disabled:opacity-50"
-              >
+              <Button type="button" variant="danger" onClick={() => void revoke()} disabled={busy}>
                 Revoke
-              </button>
+              </Button>
             )}
           </div>
         </div>

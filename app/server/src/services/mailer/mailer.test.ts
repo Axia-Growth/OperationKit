@@ -7,7 +7,7 @@ import { dnsHelpFor, checkDomainDns } from './dns-help.js'
 import { startSmtpSink, decodeParts, type SmtpSink } from './smtp-sink.testkit.js'
 import type { FetchLike } from './types.js'
 
-const brand = { name: 'Acme Ops', logoUrl: null, accent: '#112233' }
+const brand = { name: 'Acme Ops', logoUrl: null, accent: '#112233', accentFg: '#fefefe' }
 
 describe('address hygiene', () => {
   it('validates addresses and strips header-injection characters', () => {

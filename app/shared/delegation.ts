@@ -61,6 +61,12 @@ export interface DelegationGrant {
 export interface DelegationGrantsResponse {
   /** The registry bot this chat bot speaks as; null = it cannot hold a grant. */
   bot: { id: string; name: string } | null
+  /**
+   * Set when `bot` was derived automatically from the chat bot's file rather
+   * than read from the stored registry (obj 900862). `linked` = it is the
+   * shipped bot this chat bot is the install copy of.
+   */
+  bot_auto?: { linked: boolean }
   /** Why `bot` is null, in plain words. */
   bot_unavailable_reason?: string
   /** Workspaces a new grant may name for this bot. */
@@ -68,4 +74,20 @@ export interface DelegationGrantsResponse {
   grants: DelegationGrant[]
   /** True when the caller may create or revoke (a signed-in admin in the browser). */
   can_manage: boolean
+  /**
+   * Present when `bot` is null (obj 900862): how the owner can register this
+   * chat bot in one click — as a new bot, or linked to an existing one.
+   */
+  registration?: DelegationRegistrationOptions
+  /** Set on the response to a successful registration. */
+  registered?: { id: string; name: string; linked: boolean }
+}
+
+export interface DelegationRegistrationOptions {
+  /** The id a NEW bot would get (the chat bot's name); null = it can only be linked. */
+  new_bot_id: string | null
+  /** Existing registry bots it could be linked to. */
+  existing: { id: string; name: string }[]
+  /** Pre-selected existing bot id; null = register as a new bot. */
+  suggested: string | null
 }

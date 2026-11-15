@@ -65,7 +65,7 @@ export const mermaidBlockSpec = createReactBlockSpec(
               Mermaid source
             </summary>
             <textarea
-              className="mt-1 w-full rounded border border-border bg-surface-2 p-2 font-mono text-xs text-fg-0 focus:border-accent focus:outline-none"
+              className="mt-1 w-full rounded border border-line bg-surface-2 p-2 font-mono text-xs text-fg-0 focus:border-accent focus:outline-none"
               rows={Math.max(3, Math.min(12, draft.split('\n').length + 1))}
               value={draft}
               onChange={(e) => setDraft(e.target.value)}

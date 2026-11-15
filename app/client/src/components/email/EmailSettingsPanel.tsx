@@ -9,8 +9,7 @@
  */
 import { useCallback, useEffect, useMemo, useState, type FormEvent, type ReactNode } from 'react'
 import { CheckCircle2, CircleAlert, Mail, Send } from 'lucide-react'
-import { Alert, Badge, Button, Card, CardHeader, Skeleton, cn, useConfirm } from '../ui'
-import { inputCls, SectionLabel } from '../config/config-form'
+import { Alert, Badge, Button, Card, CardHeader, Field, Input, SettingsSection, Skeleton, cn, useConfirm } from '../ui'
 import {
   emailAgentPrompt, emailApi, PROVIDER_LABEL,
   type DnsHelp, type EmailProvider, type EmailSetup, type EmailSetupInput, type SmtpSecurity,
@@ -48,16 +47,6 @@ function toInput(s: EmailSetup, fallbackUrl: string): EmailSetupInput {
     smtp: { ...s.smtp },
     credential: '',
   }
-}
-
-function Field({ label, hint, children, htmlFor }: { label: string; hint?: ReactNode; children: ReactNode; htmlFor: string }) {
-  return (
-    <div className="min-w-0 space-y-1">
-      <label htmlFor={htmlFor} className="block text-xs font-medium text-fg-1">{label}</label>
-      {children}
-      {hint && <p className="text-xs leading-snug text-fg-3">{hint}</p>}
-    </div>
-  )
 }
 
 export function EmailStatusBadge({ setup }: { setup: EmailSetup | null }) {
@@ -176,7 +165,6 @@ export function EmailSettingsPanel({ onChange, className }: EmailSettingsPanelPr
       {confirmDialog}
       <Card inset>
         <CardHeader
-          eyebrow="Settings"
           title={<span className="flex items-center gap-2"><Mail className="h-4 w-4 text-fg-2" aria-hidden="true" />Email</span>}
           actions={<EmailStatusBadge setup={setup} />}
         />
@@ -217,31 +205,31 @@ export function EmailSettingsPanel({ onChange, className }: EmailSettingsPanelPr
           <Card inset>
             <CardHeader eyebrow="Step 2" title="Sender and credentials" />
             <div className="grid gap-3 p-4 sm:grid-cols-2">
-              <Field label="From name" htmlFor="email-from-name" hint="Shown as the sender, e.g. your company name.">
-                <input id="email-from-name" className={inputCls} value={form.from_name} placeholder="Your company"
+              <Field label="From name" id="email-from-name" hint="Shown as the sender, e.g. your company name.">
+                <Input value={form.from_name} placeholder="Your company"
                   onChange={e => set({ from_name: e.target.value })} />
               </Field>
-              <Field label="From address" htmlFor="email-from-address" hint="Must be on a domain you verified with the provider.">
-                <input id="email-from-address" type="email" className={inputCls} value={form.from_address} placeholder="no-reply@yourdomain.com"
+              <Field label="From address" id="email-from-address" hint="Must be on a domain you verified with the provider.">
+                <Input type="email" value={form.from_address} placeholder="no-reply@yourdomain.com"
                   onChange={e => set({ from_address: e.target.value })} />
               </Field>
-              <Field label="Reply-to (optional)" htmlFor="email-reply-to" hint="Where replies go. Leave blank to use the from address.">
-                <input id="email-reply-to" type="email" className={inputCls} value={form.reply_to} placeholder="help@yourdomain.com"
+              <Field label="Reply-to" optional id="email-reply-to" hint="Where replies go. Leave blank to use the from address.">
+                <Input type="email" value={form.reply_to} placeholder="help@yourdomain.com"
                   onChange={e => set({ reply_to: e.target.value })} />
               </Field>
-              <Field label="This site's address" htmlFor="email-app-url" hint="Links in emails point here.">
-                <input id="email-app-url" type="url" className={inputCls} value={form.app_url} placeholder="https://ops.yourdomain.com"
+              <Field label="This site's address" id="email-app-url" hint="Links in emails point here.">
+                <Input type="url" value={form.app_url} placeholder="https://ops.yourdomain.com"
                   onChange={e => set({ app_url: e.target.value })} />
               </Field>
 
               {provider === 'smtp' && (
                 <>
-                  <Field label="SMTP host" htmlFor="email-smtp-host">
-                    <input id="email-smtp-host" className={inputCls} value={form.smtp.host} placeholder="smtp.yourprovider.com"
+                  <Field label="SMTP host" id="email-smtp-host">
+                    <Input value={form.smtp.host} placeholder="smtp.yourprovider.com"
                       onChange={e => setSmtp({ host: e.target.value })} />
                   </Field>
                   <div className="grid grid-cols-2 gap-3">
-                    <Field label="Security" htmlFor="email-smtp-security">
+                    <Field label="Security" id="email-smtp-security">
                       <Select id="email-smtp-security" className="w-full" value={form.smtp.security}
                         onChange={v => { const s = v as SmtpSecurity; setSmtp({ security: s, port: SECURITY_PORT[s] }) }}>
                         <option value="starttls">STARTTLS</option>
@@ -249,13 +237,13 @@ export function EmailSettingsPanel({ onChange, className }: EmailSettingsPanelPr
                         <option value="none">None (local only)</option>
                       </Select>
                     </Field>
-                    <Field label="Port" htmlFor="email-smtp-port">
-                      <input id="email-smtp-port" inputMode="numeric" className={inputCls} value={String(form.smtp.port || '')}
+                    <Field label="Port" id="email-smtp-port">
+                      <Input inputMode="numeric" value={String(form.smtp.port || '')}
                         onChange={e => setSmtp({ port: Number(e.target.value.replace(/\D/g, '')) || 0 })} />
                     </Field>
                   </div>
-                  <Field label="Username" htmlFor="email-smtp-user" hint="Leave blank if the server needs no sign-in.">
-                    <input id="email-smtp-user" className={inputCls} value={form.smtp.username} autoComplete="off"
+                  <Field label="Username" id="email-smtp-user" hint="Leave blank if the server needs no sign-in.">
+                    <Input value={form.smtp.username} autoComplete="off"
                       onChange={e => setSmtp({ username: e.target.value })} />
                   </Field>
                 </>
@@ -263,10 +251,10 @@ export function EmailSettingsPanel({ onChange, className }: EmailSettingsPanelPr
 
               {(provider !== 'smtp' || form.smtp.username) && (
                 <Field
-                  label={CREDENTIAL_LABEL[provider]} htmlFor="email-credential"
+                  label={CREDENTIAL_LABEL[provider]} id="email-credential"
                   hint={<>Stored encrypted in Secrets as <code className="font-mono">{setup.credential_keys[provider]}</code>. Never shown again; agent sessions never receive it.</>}
                 >
-                  <input id="email-credential" type="password" autoComplete="new-password" className={cn(inputCls, 'font-mono')}
+                  <Input type="password" autoComplete="new-password" className="font-mono"
                     value={form.credential ?? ''}
                     placeholder={hasStoredCredential ? '•••••••• saved — leave blank to keep' : 'paste it here'}
                     onChange={e => set({ credential: e.target.value })} />
@@ -275,10 +263,8 @@ export function EmailSettingsPanel({ onChange, className }: EmailSettingsPanelPr
             </div>
             <div className="flex flex-wrap items-center gap-2 border-t border-line px-4 py-3">
               <Button type="submit" variant="primary" size="sm" loading={saving} disabled={!dirty && !!setup.provider}>Save</Button>
-              {setup.provider && (
-                <Button type="button" variant="ghost" size="sm" onClick={turnOff}>Turn off email</Button>
-              )}
-              {saveMsg && <span className={cn('text-xs', saveMsg.tone === 'verify' ? 'text-signal-verify' : 'text-signal-alarm')} role="status">{saveMsg.text}</span>}
+              {saveMsg?.tone === 'verify' && <span className="text-xs text-success" role="status">{saveMsg.text}</span>}
+              {saveMsg && saveMsg.tone !== 'verify' && <Alert tone="alarm" title={saveMsg.text} className="w-full" />}
             </div>
           </Card>
         )}
@@ -288,19 +274,21 @@ export function EmailSettingsPanel({ onChange, className }: EmailSettingsPanelPr
         <Card inset>
           <CardHeader eyebrow="Step 3" title="Send a test email" />
           <div className="space-y-3 p-4">
-            <div className="flex flex-col gap-2 sm:flex-row">
-              <input aria-label="Send test to" type="email" className={cn(inputCls, 'sm:flex-1')} placeholder="you@yourdomain.com"
-                value={testTo} onChange={e => setTestTo(e.target.value)} />
-              <Button type="button" variant="primary" size="sm" className="shrink-0" loading={testing}
-                disabled={!setup.configured || dirty || !testTo.includes('@')} onClick={sendTest}
-                leftIcon={<Send className="h-3.5 w-3.5" />}>
-                Send test email
-              </Button>
-            </div>
+            <Field label="Send a test to" id="email-test-to">
+              <div className="flex flex-col gap-2 sm:flex-row">
+                <Input type="email" className="sm:flex-1" placeholder="you@yourdomain.com"
+                  value={testTo} onChange={e => setTestTo(e.target.value)} />
+                <Button type="button" variant="secondary" className="shrink-0" loading={testing}
+                  disabled={!setup.configured || dirty || !testTo.includes('@')} onClick={sendTest}
+                  leftIcon={<Send className="h-3.5 w-3.5" />}>
+                  Send test email
+                </Button>
+              </div>
+            </Field>
             {dirty && <p className="text-xs text-fg-3">Save your changes first.</p>}
             {testMsg && <Alert tone={testMsg.tone} title={testMsg.tone === 'verify' ? 'Sent' : 'Test failed'}>{testMsg.text}</Alert>}
             {!testMsg && setup.last_test && (
-              <p className={cn('flex items-center gap-1.5 text-xs', setup.last_test.ok ? 'text-signal-verify' : 'text-signal-alarm')}>
+              <p className={cn('flex items-center gap-1.5 text-xs', setup.last_test.ok ? 'text-success' : 'text-danger')}>
                 {setup.last_test.ok ? <CheckCircle2 className="h-3.5 w-3.5" /> : <CircleAlert className="h-3.5 w-3.5" />}
                 Last test {setup.last_test.ok ? 'sent' : 'failed'} {new Date(setup.last_test.at).toLocaleString()} (to *@{setup.last_test.to_domain})
                 {setup.last_test.error ? ` — ${setup.last_test.error}` : ''}
@@ -313,6 +301,16 @@ export function EmailSettingsPanel({ onChange, className }: EmailSettingsPanelPr
       {provider && dns && <DnsHelpCard dns={dns} />}
 
       <AgentPromptBox title="Have your coding agent set up email" prompt={prompt} />
+
+      {/* Danger zone — kept away from Save (polish F5). */}
+      {setup.provider && (
+        <SettingsSection
+          title="Turn off email"
+          danger
+          description="Deletes the stored email credentials. Invites and password resets go back to showing the password on screen."
+          actions={<Button type="button" variant="danger" size="sm" onClick={turnOff}>Turn off email</Button>}
+        />
+      )}
     </div>
   )
 }
@@ -345,18 +343,17 @@ function DnsHelpCard({ dns }: { dns: DnsHelp }) {
           ))}
         </div>
         {check && !check.error && (
-          <div>
-            <SectionLabel>What {check.domain} publishes now</SectionLabel>
+          <SettingsSection title={<>What {check.domain} publishes now</>} level={3}>
             <ul className="space-y-1 text-xs">
-              <li className={check.spf ? 'text-signal-verify' : 'text-signal-amber'}>
+              <li className={check.spf ? 'text-success' : 'text-warning'}>
                 SPF: {check.spf ? <code className="break-all font-mono">{check.spf}</code> : 'not found'}
               </li>
-              <li className={check.dmarc ? 'text-signal-verify' : 'text-signal-amber'}>
+              <li className={check.dmarc ? 'text-success' : 'text-warning'}>
                 DMARC: {check.dmarc ? <code className="break-all font-mono">{check.dmarc}</code> : 'not found'}
               </li>
               <li className="text-fg-3">DKIM: check the provider's dashboard — it shows a green "verified" once the record is live.</li>
             </ul>
-          </div>
+          </SettingsSection>
         )}
       </div>
     </Card>

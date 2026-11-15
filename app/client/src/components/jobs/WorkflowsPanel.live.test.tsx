@@ -49,7 +49,7 @@ const RUN: FlowRunSummary = {
 }
 const FLOW: FlowSummary = {
   id: 12, slug: 'weekly-account-review', name: 'Weekly account review', workspace: 'acme', status: 'active',
-  published_version: 2, latest_version: 2, objective_id: 500, created_by: 'user:1', created_at: RUN.created_at, updated_at: RUN.created_at,
+  published_version: 2, latest_version: 2, objective_id: 500, created_by: 'user:1', created_at: RUN.created_at, updated_at: RUN.created_at, notes: null, tools: [],
   trigger: { on: 'schedule', cron: '0 7 * * 1' }, node_count: 30, kinds: {}, routine: null, last_run: RUN,
 }
 const DETAIL: FlowDetailResponse = {

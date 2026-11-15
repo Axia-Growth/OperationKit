@@ -25,6 +25,8 @@ export type AuditEventType =
   | 'message'
   | 'edit'
   | 'agent_action'
+  /** obj 900869: a card's bot owner / human assignees changed (claim, bulk reassign). */
+  | 'owner_change'
 
 export interface AuditEntry {
   objectiveId: number

@@ -19,6 +19,7 @@ usage() {
 parse_common_args "$@"
 [ ${#REST_ARGS[@]} -eq 0 ] || die "unknown argument: ${REST_ARGS[0]}"
 [ "$(id -u)" -eq 0 ] || die "run as root"
+refuse_on_operationkit_install
 
 REPO_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
 CONF_DIR=/root/.config/cc-backup

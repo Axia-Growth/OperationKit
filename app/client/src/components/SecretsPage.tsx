@@ -35,7 +35,7 @@ import { RotationFlagsPanel } from './secrets/RotationFlagsPanel'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useAuth } from '../context/AuthContext'
 import { api, ApiError } from '../lib/api'
-import { Skeleton, useConfirm } from './ui'
+import { Alert, Button, DataTable, Input, useConfirm } from './ui'
 import type {
   SecretScopeType,
   SecretSummary,
@@ -46,11 +46,11 @@ import {
   scopeDescription, scopeOf, scopeQuery,
   type Scope, type ScopeFilter,
 } from './secrets/scope'
-import { SECRET_TABLE_COLUMNS, SecretRow } from './secrets/SecretRow'
+import { SecretRowActions, secretColumns } from './secrets/SecretRow'
 import { SecurityStrip } from './secrets/SecurityStrip'
 import { BotAccessModal } from './secrets/BotAccessModal'
 import { botAccessStatus, loadBotAccess, type BotAccessState } from './secrets/botAccess'
-import { Search } from 'lucide-react'
+import { KeyRound, Plus, Search, SearchX } from 'lucide-react'
 import { SecretModal } from './secrets/SecretModal'
 import { VersionHistoryModal } from './secrets/VersionHistoryModal'
 import { AuditLogPanel } from './secrets/AuditLogPanel'
@@ -225,6 +225,14 @@ export function SecretsPage({ embedded = false }: { embedded?: boolean }) {
     }
   }
 
+  // Columns read the lookups and bot-access state; rebuilt only when those change.
+  const columns = useMemo(() => secretColumns({
+    orgName,
+    userName,
+    botAccess: s => botAccessStatus(s.key, botAccess),
+    onBotAccess: s => (botAccess && !botAccess.blockedKeys.has(s.key) ? () => setBotTarget(s) : undefined),
+  }), [orgName, userName, botAccess])
+
   if (principals && !principals.canUseGlobal && orgs.length === 0) {
     return (
       <div className="flex h-full items-center justify-center text-fg-3 text-base">
@@ -240,15 +248,17 @@ export function SecretsPage({ embedded = false }: { embedded?: boolean }) {
           <div>
             {!embedded && <h1 className="text-xl font-semibold text-fg-0">Secrets</h1>}
             <p className={embedded ? 'text-base text-fg-2' : 'mt-1 text-base text-fg-2'}>
-              Keys and tokens your workers, bots and integrations use.
+              Keys and tokens your bots and integrations use.
             </p>
           </div>
-          <button
+          <Button
+            variant="primary"
             onClick={openCreate}
-            className="shrink-0 whitespace-nowrap rounded-md bg-accent px-3 py-1.5 text-base font-medium text-accent-fg transition-colors duration-fast ease-out hover:bg-accent-hover"
+            leftIcon={<Plus className="h-4 w-4" aria-hidden />}
+            className="shrink-0"
           >
-            + New
-          </button>
+            New secret
+          </Button>
         </div>
 
         <SecurityStrip />
@@ -258,18 +268,17 @@ export function SecretsPage({ embedded = false }: { embedded?: boolean }) {
 
         {/* Toolbar: search + scope filter on one line. "All scopes" is the cross-organization admin view. */}
         <div className="mb-3 flex flex-wrap items-center gap-2">
-          <label className="relative min-w-[12rem] flex-1 sm:max-w-xs">
-            <span className="sr-only">Search secrets</span>
-            <Search aria-hidden className="pointer-events-none absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-fg-3" />
-            <input
+          <div className="min-w-[12rem] flex-1 sm:max-w-xs">
+            <Input
               type="search"
               value={query}
               onChange={e => setQuery(e.target.value)}
               placeholder="Search by name"
+              aria-label="Search secrets"
               data-testid="secret-search"
-              className="w-full rounded border border-border bg-surface py-1.5 pl-7 pr-2 text-base text-fg-0 outline-none focus:border-accent"
+              leading={<Search className="h-3.5 w-3.5" />}
             />
-          </label>
+          </div>
           <span className="inline-flex" title={isAllScopes ? 'Every secret you may see. Each row acts on its own scope.' : SCOPE_HINTS[scopeFilter as SecretScopeType]}>
             <Select
               value={scopeFilter}
@@ -320,65 +329,46 @@ export function SecretsPage({ embedded = false }: { embedded?: boolean }) {
           <p className="-mt-1 mb-3 text-xs text-fg-3">{SCOPE_HINTS[scopeFilter as SecretScopeType]}</p>
         )}
 
-        {error && (
-          <div className="mb-4 rounded bg-signal-alarm/10 px-3 py-2 text-base text-signal-alarm">{error}</div>
-        )}
+        {error && <Alert tone="alarm" title={error} className="mb-4" />}
 
-        <div className="overflow-x-auto rounded-lg border border-border bg-surface-raised">
-          <table className="w-full text-base">
-            <thead className="bg-surface border-b border-border">
-              <tr className="text-left text-xs text-fg-2">
-                <th className="px-3 py-2 font-medium">Scope</th>
-                <th className="px-3 py-2 font-medium">Name</th>
-                <th className="px-3 py-2 font-medium">Value</th>
-                <th className="px-3 py-2 font-medium" title="Which hosts a bot may send this secret to. Off = no bot can use it.">Bot access</th>
-                <th className="px-3 py-2 font-medium">Updated</th>
-                <th className="px-3 py-2 font-medium">Last used</th>
-                <th className="px-3 py-2 font-medium text-right">Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              {loading ? (
-                Array.from({ length: 3 }).map((_, i) => (
-                  <tr key={i} className="border-b border-border last:border-b-0">
-                    <td className="px-3 py-2"><Skeleton className="h-4 w-32" /></td>
-                    <td className="px-3 py-2"><Skeleton className="h-4 w-28" /></td>
-                    <td className="px-3 py-2"><Skeleton className="h-4 w-16" /></td>
-                    <td className="px-3 py-2"><Skeleton className="h-4 w-14" /></td>
-                    <td className="px-3 py-2"><Skeleton className="h-4 w-24" /></td>
-                    <td className="px-3 py-2"><Skeleton className="h-4 w-24" /></td>
-                    <td className="px-3 py-2"><div className="flex justify-end gap-2"><Skeleton className="h-4 w-8" /><Skeleton className="h-4 w-10" /></div></td>
-                  </tr>
-                ))
-              ) : visibleRows.length === 0 ? (
-                <tr>
-                  <td colSpan={SECRET_TABLE_COLUMNS} className="px-3 py-8 text-center text-base text-fg-3">
-                    {query.trim() && rows.length > 0
-                      ? `No secret matches "${query.trim()}".`
-                      : isAllScopes ? 'No secrets yet. Click "New" to add one.' : 'No secrets at this scope. Click "New" to add one.'}
-                  </td>
-                </tr>
-              ) : (
-                visibleRows.map((s, i) => (
-                  <SecretRow
-                    key={s.id}
-                    secret={s}
-                    // Group the all-scopes list by scope type so it reads as
-                    // "everything Command-Center-wide, then per organization…".
-                    groupHeader={isAllScopes && (i === 0 || visibleRows[i - 1]!.scopeType !== s.scopeType) ? SCOPE_LABELS[s.scopeType] : null}
-                    orgName={orgName}
-                    userName={userName}
-                    botAccess={botAccessStatus(s.key, botAccess)}
-                    onBotAccess={botAccess && !botAccess.blockedKeys.has(s.key) ? () => setBotTarget(s) : undefined}
-                    onHistory={() => setHistoryTarget(s)}
-                    onEdit={() => openEdit(s)}
-                    onDelete={() => void handleDelete(s)}
-                  />
-                ))
-              )}
-            </tbody>
-          </table>
-        </div>
+        {/* The all-scopes view is grouped by scope type so it reads as
+            "everything Command-Center-wide, then per workspace…". Every row
+            action acts on the ROW's scope, never the filter. */}
+        <DataTable
+          aria-label="Secrets"
+          columns={columns}
+          rows={visibleRows}
+          rowKey={s => s.id}
+          loading={loading}
+          loadingRows={3}
+          groupBy={isAllScopes ? s => s.scopeType : undefined}
+          groupHeader={k => SCOPE_LABELS[k as SecretScopeType] ?? k}
+          mobileTitle={s => <span className="font-mono text-sm">{s.key}</span>}
+          rowActionsAlways
+          rowActions={s => (
+            <SecretRowActions
+              secret={s}
+              onBotAccess={botAccess && !botAccess.blockedKeys.has(s.key) ? () => setBotTarget(s) : undefined}
+              onHistory={() => setHistoryTarget(s)}
+              onEdit={() => openEdit(s)}
+              onDelete={() => void handleDelete(s)}
+            />
+          )}
+          empty={
+            query.trim() && rows.length > 0
+              ? {
+                  icon: <SearchX className="h-5 w-5" aria-hidden="true" />,
+                  title: 'No matches',
+                  description: `No secret matches "${query.trim()}".`,
+                }
+              : {
+                  icon: <KeyRound className="h-5 w-5" aria-hidden="true" />,
+                  title: isAllScopes ? 'No secrets yet' : 'No secrets at this scope',
+                  description: 'Store API keys and tokens once; bots and integrations use them by name.',
+                  action: <Button variant="secondary" size="sm" onClick={openCreate}>Add secret</Button>,
+                }
+          }
+        />
 
         {/* obj 900498 — append-only audit log of every create/rotate/delete/use/reveal attempt. Admin only. */}
         {isGlobalAdmin && <AuditLogPanel refreshToken={secrets} />}

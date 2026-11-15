@@ -1,30 +1,61 @@
-import type { Objective } from '@operationkit/shared'
+import {
+  OWNER_UNASSIGNED_TOKEN,
+  botOwnerToken,
+  cardBot,
+  isBotOwnerToken,
+  ownerFilterTokens,
+  type Objective,
+} from '@operationkit/shared'
 
 /* ─────────────────────────────────────────────────────────
    Assignee filter — pure logic for the board's multi-select
    assignee filter (obj 700857). Kept framework-free so the
    matching / default / roster rules are unit-testable without
    mounting the board. The React state + localStorage wiring
-   lives in KanbanBoard.tsx; these are the primitives it uses.
+   lives in preview/PreviewBoard.tsx; these are the primitives it uses.
    ───────────────────────────────────────────────────────── */
 
 /** Sentinel token for the "Unassigned" bucket. Wrapped in double underscores so
  *  it can't realistically collide with a real username. Selected tokens are
  *  usernames + this. */
-export const UNASSIGNED_TOKEN = '__unassigned__'
+export const UNASSIGNED_TOKEN = OWNER_UNASSIGNED_TOKEN
+
+/** obj 900869: bots are owners too. A bot's filter token is `bot:<registry id>`. */
+export { botOwnerToken, isBotOwnerToken }
 
 const STORAGE_PREFIX = 'cc-assignee-filter:'
 
-type AssigneeLike = Pick<Objective, 'assigned_usernames'>
+type AssigneeLike = Pick<Objective, 'assigned_usernames'> & Partial<Pick<Objective, 'owner_bot' | 'bot_owner' | 'bot_owner_name'>>
 
-/** True when `obj` should be shown given the set of selected assignee tokens:
+/** True when `obj` should be shown given the set of selected owner tokens:
  *  - matches if ANY of its `assigned_usernames` is selected, OR
- *  - it has no assignees and UNASSIGNED_TOKEN is selected.
- *  An empty selection matches nothing. */
+ *  - it has no assignees and UNASSIGNED_TOKEN is selected, OR
+ *  - its bot (obj 900869) is selected (`bot:<id>`).
+ *  An empty selection matches nothing. The people AND the bot on a card all
+ *  count, so "Me" still shows my card while a bot works it, and a bot's token
+ *  still shows the card it handed to me (shared/ownership.ts ownerFilterTokens). */
 export function matchesAssigneeFilter(obj: AssigneeLike, selected: ReadonlySet<string>): boolean {
-  const names = obj.assigned_usernames ?? []
-  if (names.length === 0) return selected.has(UNASSIGNED_TOKEN)
-  return names.some(n => selected.has(n))
+  return ownerFilterTokens({ status: '', ...obj }).some(t => selected.has(t))
+}
+
+export interface BotRosterEntry {
+  /** Filter token: `bot:<registry id>`. */
+  token: string
+  id: string
+  name: string
+}
+
+/** Distinct bots behind `objectives` (owner_bot, else the chat-slug bot the
+ *  server resolved), sorted by display name. Derived from the data, like
+ *  `assigneeRoster`, so a new bot appears as soon as it owns a card. */
+export function botRoster(objectives: ReadonlyArray<AssigneeLike>): BotRosterEntry[] {
+  const byId = new Map<string, BotRosterEntry>()
+  for (const o of objectives) {
+    const id = cardBot(o)
+    if (!id || byId.has(id)) continue
+    byId.set(id, { token: botOwnerToken(id), id, name: (o.bot_owner_name ?? '').trim() || id })
+  }
+  return [...byId.values()].sort((a, b) => a.name.localeCompare(b.name))
 }
 
 /** Distinct assignee usernames present across `objectives`, alpha-sorted.

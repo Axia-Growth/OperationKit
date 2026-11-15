@@ -14,6 +14,8 @@ process.env.DB_PATH = TMP_DB
 process.env.DEV_ITEM_UPLOAD_DIR = TMP_UPLOADS
 
 const { initDb, getDb } = await import('../db/index.js')
+// obj 900803: a fresh DB no longer seeds the author's workspaces — this suite uses them.
+const { seedLegacyWorkspaces } = await import('../__fixtures__/legacy-workspaces.js')
 const { hashIngestToken, resetRateLimits } = await import('../middleware/dev-ingest-token.js')
 const { default: publicDevRouter } = await import('./public-dev.js')
 
@@ -60,6 +62,7 @@ beforeAll(async () => {
     if (fs.existsSync(f)) fs.unlinkSync(f)
   }
   initDb()
+  await seedLegacyWorkspaces(getDb())
   setTokenHash('example-project', TOKEN)
   setTokenHash('example2', OTHER_TOKEN)
 

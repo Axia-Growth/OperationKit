@@ -59,7 +59,8 @@ function fireAlert(severity: 'high' | 'normal', title: string, message: string, 
 }
 
 async function runCheck(): Promise<void> {
-  const canary = pickPreviewCanary(getDb())
+  // obj 900803: no preview domain configured → there is no preview tier to watch.
+  const canary = previewHostFor(0) ? pickPreviewCanary(getDb()) : null
   const probe = canary ? await probePreviewHost(canary.prNumber) : null
   const status = derivePreviewStatus(canary, probe)
 

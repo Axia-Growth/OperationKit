@@ -15,6 +15,10 @@ export {
 } from './self-test.js'
 export { diffFlowNodes, type FlowNodeChange, type FlowNodeDiff } from './diff.js'
 export type * from './api.js'
+export {
+  FLOW_NOTES_MAX_CHARS, FLOW_TOOLS_MAX, FLOW_TOOL_MAX_CHARS, normalizeFlowTools, splitFlowTools, parseFlowDetails, readFlowTools,
+  type FlowDetailsPatch,
+} from './details.js'
 export { applyJsonPatch, isJsonPatch, parseJsonPointer, JSON_PATCH_MAX_OPS, type JsonPatchOp, type JsonPatchResult } from './json-patch.js'
 export {
   classifyRepairPatch, flowFailureSignature, isDefinitionRot, REPAIR_BLOCKER_CODES,

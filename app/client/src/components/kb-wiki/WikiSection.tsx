@@ -77,7 +77,7 @@ export function WikiSection({
 
   return (
     <Card inset className="mt-5">
-      <CardHeader eyebrow="Wiki" title="Your knowledge base" />
+      <CardHeader eyebrow="Context" title="Your Context" />
       <CardBody className="flex flex-col gap-4">
         <p className="max-w-[72ch] text-sm leading-relaxed text-fg-2">
           Everything you upload or import is turned into linked pages — one per person, company and topic — each
@@ -93,11 +93,11 @@ export function WikiSection({
           ]}
           value={tab}
           onChange={k => setTab(k as Tab)}
-          label="Knowledge base views"
+          label="Context views"
           panelClassName="mt-4 flex flex-col gap-4"
         >
         {tab === 'graph' && <WorkspaceGraph workspace={workspace} onOpenNote={onOpenNote} refreshKey={refreshKey + localKey} />}
-        {error && tab === 'wiki' && <Alert tone="alarm" title="Couldn't load the wiki">{error}</Alert>}
+        {error && tab === 'wiki' && <Alert tone="alarm" title="Couldn't load your Context pages">{error}</Alert>}
         {tab === 'wiki' && (
           <WikiBrowser
             workspace={workspace}

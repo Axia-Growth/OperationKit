@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useMemo, useRef, useState } from 'react'
 import { api } from '../../lib/api'
 import { Alert, Button, cn } from '../ui'
 import { HighAgencySection } from './HighAgencySection'
@@ -14,6 +14,9 @@ import {
   type ToolGroup,
 } from './types'
 import { Select } from '../ui/Select'
+import { ModelPicker } from '../ModelPicker'
+import { modelOptionLabel, providerForModel } from '../../lib/model-options'
+import type { ModelRow } from '@operationkit/shared'
 
 /* A bot's settings, on the bot's own page (obj 900671).
 
@@ -27,22 +30,42 @@ import { Select } from '../ui/Select'
    read-only, so a person can tell what a bot can do before asking it.
 
    High Agency (obj 900748) sits at the bottom with its own Save: it is a
-   schedule, not a model/tools override, so "Reset to file" never touches it. */
+   schedule, not a model/tools override, so "Reset to file" never touches it.
+
+   obj 900862: Workspace access, Approve on my behalf and High Agency sit below
+   the long tool list, out of sight on an ordinary laptop screen even now that
+   the panel scrolls (obj 900864). A "Jump to" row reaches each in one click. */
+
+const SECTION_LINKS: Array<{ label: string; idPrefix: string }> = [
+  { label: 'Workspace access', idPrefix: 'bot-ws-title' },
+  { label: 'Approve on my behalf', idPrefix: 'bot-delegation-title' },
+  { label: 'High Agency', idPrefix: 'high-agency-title' },
+]
 
 const GROUP_LABELS: Record<ToolGroup, string> = {
   web: 'Web',
   knowledge: 'Knowledge',
   board: 'Board',
+  bots: 'Other bots',
   connectors: 'Email & calendar',
   integrations: 'Integrations',
   secrets: 'Secrets',
 }
 
-const GROUP_ORDER: ToolGroup[] = ['web', 'knowledge', 'board', 'connectors', 'integrations', 'secrets']
+const GROUP_ORDER: ToolGroup[] = ['web', 'knowledge', 'board', 'bots', 'connectors', 'integrations', 'secrets']
 
 const PROVIDERS: ProviderId[] = ['claude', 'anthropic', 'openai', 'xai', 'openai-compatible', 'demo']
 
-type Meta = Pick<AgentsResponse, 'tool_catalog' | 'model_suggestions' | 'default_models' | 'web' | 'providers'>
+type Meta = Pick<AgentsResponse, 'tool_catalog' | 'models' | 'model_suggestions' | 'default_models' | 'web' | 'providers'>
+
+/** The picker entry that opens a free-text model id (custom endpoints, ids not in the registry). */
+const CUSTOM_MODEL = '__cc_custom_model__'
+
+/** Old servers only send per-provider id suggestions; shape them as registry rows. */
+function registryRowsFromSuggestions(ids: string[], provider: ProviderId): ModelRow[] {
+  const engine: ModelRow['engine'] = provider === 'xai' ? 'grok' : provider === 'openai' ? 'codex' : 'claude'
+  return ids.map((id, i) => ({ id, label: id, engine, enabled: true, is_default: false, is_planner: false, sort_order: i }))
+}
 
 function sameSet(a: string[], b: string[]): boolean {
   if (a.length !== b.length) return false
@@ -80,13 +103,51 @@ export function BotSettingsPanel({
   const [accessVersion, setAccessVersion] = useState(0)
   const [error, setError] = useState<string | null>(null)
   const [saved, setSaved] = useState(false)
+  const panelRef = useRef<HTMLElement>(null)
+
+  // Scroll THIS panel to a section. Not scrollIntoView: that also scrolls the
+  // page shell, which is overflow-hidden but still programmatically scrollable,
+  // and leaves the header shifted off-screen with a blank band below.
+  const jumpTo = (targetId: string) => {
+    const panel = panelRef.current
+    const el = document.getElementById(targetId)
+    if (!panel || !el) return false
+    const top = el.getBoundingClientRect().top - panel.getBoundingClientRect().top + panel.scrollTop - 12
+    panel.scrollTo?.({ top: Math.max(0, top), behavior: 'smooth' })
+    return true
+  }
 
   // The provider a turn would use if saved now: the picked one, else the one
   // answering today (the file's, the install default, or automatic).
   const effectiveProvider: ProviderId = provider || fileDefaults.provider || agent.answered_by.id
-  const suggestions = meta.model_suggestions?.[effectiveProvider] ?? []
   const modelFallback = fileDefaults.model || meta.default_models?.[effectiveProvider] || ''
-  const datalistId = `bot-model-suggestions-${agent.slug}`
+  // obj 900863: every bot offers the SAME list — the install's enabled model
+  // registry, the rows Settings → Models and the card modal use — in the same
+  // dropdown. The old free-text field + datalist was filtered by the browser
+  // against whatever was already typed, so a bot with a saved model (e.g.
+  // "claude-opus-5") only ever showed the Opus ids, while a bot with an empty
+  // field showed everything. A server without `models` falls back to its
+  // per-provider suggestions.
+  const models: ModelRow[] = useMemo(
+    () => meta.models ?? registryRowsFromSuggestions(meta.model_suggestions?.[effectiveProvider] ?? [], effectiveProvider),
+    [meta.models, meta.model_suggestions, effectiveProvider],
+  )
+  const [customModel, setCustomModel] = useState(false)
+  const fallbackRow = models.find(m => m.id === modelFallback)
+  const defaultLabel = modelFallback
+    ? `Default — ${fallbackRow ? modelOptionLabel(fallbackRow) : modelFallback}`
+    : 'Default (install default)'
+  const pickModel = (v: string) => {
+    setSaved(false)
+    if (v === CUSTOM_MODEL) { setCustomModel(true); return }
+    setCustomModel(false)
+    setModel(v)
+    // The full list spans providers: picking an xAI model on a Claude bot
+    // switches the provider too, so the saved pair can actually run.
+    const row = models.find(m => m.id === v)
+    const next = row ? providerForModel(row.engine, effectiveProvider) : null
+    if (next) setProvider(next)
+  }
 
   const byGroup = useMemo(() => {
     const m = new Map<ToolGroup, ToolCatalogEntry[]>()
@@ -135,6 +196,7 @@ export function BotSettingsPanel({
       const r = await api.del<{ agent: ChatAgentInfo }>(`/agent-chat/agents/${encodeURIComponent(agent.slug)}/config`)
       setProvider('')
       setModel('')
+      setCustomModel(false)
       setAllTools(r.agent.all_tools ?? false)
       setTools(r.agent.tools.filter(t => catalog.some(c => c.name === t)))
       onSaved(r.agent)
@@ -151,7 +213,21 @@ export function BotSettingsPanel({
   const enabledNames = new Set(agent.effective_tools ?? agent.tools)
 
   return (
-    <section aria-label={`Settings for ${agent.name}`} className="border-b border-line bg-surface-1 px-3 py-3 sm:px-6">
+    /* The panel is its own scroll area inside the conversation column (obj 900864).
+       It used to be an unshrinkable flex child ~2000px tall in a ~850px pane: the
+       bottom (Save, High Agency) was clipped, and its absolutely positioned
+       visually-hidden inputs/labels had no positioned ancestor, so they stretched
+       the DOCUMENT; a wheel over the panel then scrolled the whole app off-screen
+       and left a band of bare page background (black in dark mode). `min-h-0` +
+       `overflow-y-auto` let it shrink to the pane and scroll; `relative` keeps
+       those hidden controls inside it; `overscroll-contain` stops the scroll
+       chaining to the page. */
+    <section
+      ref={panelRef}
+      aria-label={`Settings for ${agent.name}`}
+      data-testid="bot-settings-panel"
+      className="relative min-h-0 shrink overflow-y-auto overscroll-contain border-b border-line bg-surface-1 px-3 py-3 sm:px-6"
+    >
       <div className="mx-auto flex max-w-[760px] flex-col gap-4">
         <div className="flex items-center justify-between gap-2">
           <h3 className="font-display text-base font-semibold text-fg-0">Bot settings</h3>
@@ -171,6 +247,22 @@ export function BotSettingsPanel({
           </Button>
         </div>
 
+        <nav aria-label={`Jump to a section of ${agent.name}'s settings`} className="-mt-2 flex flex-wrap items-center gap-x-1 gap-y-1 text-xs text-fg-2">
+          <span>Jump to:</span>
+          {SECTION_LINKS.map(l => (
+            <a
+              key={l.idPrefix}
+              href={`#${l.idPrefix}-${agent.slug}`}
+              onClick={e => {
+                if (jumpTo(`${l.idPrefix}-${agent.slug}`)) e.preventDefault()
+              }}
+              className="rounded px-1.5 py-0.5 text-accent-hover underline-offset-2 hover:underline focus:outline-none focus:ring-2 focus:ring-accent/30"
+            >
+              {l.label}
+            </a>
+          ))}
+        </nav>
+
         {!isAdmin && (
           <p className="text-xs text-fg-2">Only an admin can change a bot&apos;s model or tools.</p>
         )}
@@ -178,18 +270,26 @@ export function BotSettingsPanel({
         <div className="grid gap-3 sm:grid-cols-2">
           <div>
             <label htmlFor={`bot-model-${agent.slug}`} className="mb-1 block text-xs font-medium text-fg-1">Default model</label>
-            <input
+            <ModelPicker
               id={`bot-model-${agent.slug}`}
-              list={datalistId}
-              value={model}
+              models={models}
+              value={customModel ? CUSTOM_MODEL : model}
               disabled={!isAdmin || saving}
-              placeholder={modelFallback ? `${modelFallback} (default)` : 'Model id'}
-              onChange={e => { setModel(e.target.value); setSaved(false) }}
-              className={inputCls}
+              leading={[{ value: '', label: defaultLabel }]}
+              trailing={[{ value: CUSTOM_MODEL, label: 'Other model id…' }]}
+              onChange={pickModel}
             />
-            <datalist id={datalistId}>
-              {suggestions.map(m => <option key={m} value={m} />)}
-            </datalist>
+            {customModel && (
+              <input
+                id={`bot-model-custom-${agent.slug}`}
+                aria-label="Model id"
+                value={model}
+                disabled={!isAdmin || saving}
+                placeholder="Model id, e.g. a custom endpoint's model"
+                onChange={e => { setModel(e.target.value); setSaved(false) }}
+                className={cn(inputCls, 'mt-2')}
+              />
+            )}
             <p className="mt-1 text-xs text-fg-2">
               Answers now with <span className="text-fg-1">{PROVIDER_LABELS[agent.answered_by.id]}{agent.answered_by.model ? ` · ${agent.answered_by.model}` : ''}</span>. Leave empty for the default.
             </p>

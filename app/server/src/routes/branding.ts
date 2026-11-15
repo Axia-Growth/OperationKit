@@ -15,6 +15,7 @@ import fs from 'fs'
 import path from 'path'
 import multer from 'multer'
 import { requireAuth, requireAdmin, type AuthRequest } from '../middleware/auth.js'
+import { deriveAccent } from '@operationkit/shared'
 import {
   resolveBrandName,
   resolveBrandTokens,
@@ -26,6 +27,7 @@ import {
   resolvePoweredBy,
   brandingDataDir,
   DEFAULT_BRAND_NAME,
+  type BrandTokens,
 } from '../services/branding-config.js'
 
 const DEFAULT_ASSET_DIR = path.join(import.meta.dirname, '..', '..', '..', 'client', 'src', 'assets', 'brand')
@@ -93,13 +95,76 @@ export function monogramSvg(name: string, accent: string, fg: string): string {
     + `<text x="16" y="22" text-anchor="middle" font-family="system-ui,sans-serif" font-size="18" font-weight="700" fill="${escapeXml(fg)}">${letter}</text></svg>`
 }
 
-/** Injects the install's brand name + favicon into index.html so even the
- * first paint (before JS) shows the client's brand, not the default. */
+/** The CSS custom properties the client's applyBrandTokens() sets on <html>
+ * (hooks/useBranding.ts brandTokenVars) — same names, same derivation. */
+export function brandTokenCssVars(tokens: BrandTokens): Record<string, string> {
+  const d = deriveAccent(tokens.accent)
+  return {
+    '--accent': tokens.accent,
+    '--accent-hover': tokens.accentHover,
+    '--accent-press': tokens.accentPress,
+    '--accent-fg': tokens.accentFg,
+    '--brand-accent-text': d.textLight,
+    '--brand-accent-text-dark': d.textDark,
+    '--brand-verify': tokens.verify,
+    '--brand-verify-on-dark': tokens.verifyOnDark,
+    '--brand-caution': tokens.caution,
+    '--brand-caution-on-dark': tokens.cautionOnDark,
+  }
+}
+
+const HEX = /^#[0-9a-fA-F]{3,8}$/
+
+/** An inline `<style>` carrying the install's resolved accent tokens. `html:root`
+ * outranks index.css's `:root` default, so the first paint already uses the
+ * install's accent instead of flashing the shipped one until /api/branding
+ * answers (obj 900803). Only hex values are emitted — nothing else can reach CSS. */
+export function brandTokenStyle(env: NodeJS.ProcessEnv = process.env): string {
+  const vars = Object.entries(brandTokenCssVars(resolveBrandTokens(env)))
+    .filter(([, v]) => HEX.test(v))
+    .map(([k, v]) => `${k}:${v}`)
+    .join(';')
+  return `<style id="brand-tokens">html:root{${vars}}</style>`
+}
+
+/** Injects the install's brand name, favicon, accent tokens, web manifest and
+ * apple-touch-icon into index.html, so even the first paint (before JS) shows
+ * the client's brand, not the default (obj 900543, obj 900803). */
 export function renderBrandedIndex(html: string, env: NodeJS.ProcessEnv = process.env): string {
   const name = escapeXml(resolveBrandName(env))
+  const head = [
+    brandTokenStyle(env),
+    '<link rel="manifest" href="/api/branding/manifest.webmanifest" />',
+    '<link rel="apple-touch-icon" href="/api/branding/apple-touch-icon" />',
+    `<meta name="apple-mobile-web-app-title" content="${name}" />`,
+  ].join('\n    ')
   return html
     .replace(/<title>[^<]*<\/title>/, `<title>${name}</title>`)
     .replace(/<link rel="icon"[^>]*>/, '<link rel="icon" href="/api/branding/favicon" />')
+    .replace(/<style id="brand-tokens">[^<]*<\/style>\s*/g, '')
+    .replace(/<link rel="(?:manifest|apple-touch-icon)"[^>]*>\s*/g, '')
+    .replace(/<meta name="apple-mobile-web-app-title"[^>]*>\s*/g, '')
+    .replace(/<\/head>/, `  ${head}\n  </head>`)
+}
+
+/** Web app manifest built from the install's brand (name, accent, icon). */
+export function brandManifest(env: NodeJS.ProcessEnv = process.env, dataDir: string = brandingDataDir(env)) {
+  const name = resolveBrandName(env)
+  const tokens = resolveBrandTokens(env)
+  const icon = resolveAsset('icon', env, dataDir)
+  const icons = icon
+    ? [{ src: '/api/branding/apple-touch-icon', type: icon.type, purpose: 'any', ...(icon.type === 'image/svg+xml' ? { sizes: 'any' } : {}) }]
+    : [{ src: '/api/branding/apple-touch-icon', sizes: 'any', type: 'image/svg+xml', purpose: 'any' }]
+  return {
+    name,
+    short_name: name.length > 12 ? name.slice(0, 12).trim() : name,
+    start_url: '/',
+    scope: '/',
+    display: 'standalone',
+    theme_color: tokens.accent,
+    background_color: '#ffffff',
+    icons,
+  }
 }
 
 /** Back-compat for obj 719935 callers/tests: the original single-logo API. */
@@ -185,6 +250,22 @@ router.get('/wordmark', serveAsset('wordmark'))
 router.get('/wordmark-dark', serveAsset('wordmark-dark'))
 router.get('/icon', serveAsset('icon'))
 router.get('/favicon', serveAsset('favicon'))
+
+// obj 900803: installable-app metadata from the install's own brand.
+router.get('/manifest.webmanifest', (_req, res) => {
+  res.setHeader('Content-Type', 'application/manifest+json')
+  res.setHeader('Cache-Control', 'no-cache')
+  res.send(JSON.stringify(brandManifest()))
+})
+// The install's icon (an upload, or the shipped icon on an un-branded install);
+// a white-labeled install with no icon gets its generated monogram.
+router.get('/apple-touch-icon', (req: AuthRequest, res) => {
+  if (resolveAsset('icon')) return serveAsset('icon')(req, res)
+  const t = resolveBrandTokens()
+  res.setHeader('Content-Type', 'image/svg+xml')
+  res.setHeader('Cache-Control', 'no-cache')
+  res.send(monogramSvg(resolveBrandName(), t.accent, t.accentFg))
+})
 
 // ── Admin: set brand name / accent tokens ──────────────────────────────────
 router.post('/', requireAuth, requireAdmin, (req: AuthRequest, res) => {

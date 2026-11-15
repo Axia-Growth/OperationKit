@@ -10,6 +10,7 @@ import {
 } from '@ui-sdk/react/select'
 import { Check, ChevronDown } from 'lucide-react'
 import { cn } from './cn'
+import { useFieldControl } from './Field'
 
 /* Select on the UI SDK select behavior (obj 900819): a button trigger with a
    listbox popup drawn in our tokens (so the list matches the theme in light
@@ -96,6 +97,9 @@ export function Select({
   'aria-describedby'?: string
   'aria-invalid'?: boolean
 }) {
+  // Inside a ui/Field the label, hint and error wire up on their own (polish F5).
+  const field = useFieldControl({ id, 'aria-describedby': ariaDescribedBy, 'aria-invalid': ariaInvalid, required })
+  id = field.id
   const items = options ?? optionsFromChildren(children)
   // The open list carries the same name as the field, so a screen reader says
   // "Scope, listbox" rather than a bare "listbox". A <label htmlFor> names the
@@ -116,7 +120,7 @@ export function Select({
       itemToLabel={(v) => textOf(items.find((o) => toSdk(o.value) === v)?.label) || v}
       name={name}
       disabled={disabled}
-      required={required}
+      required={field.required}
       placeholder={placeholder}
       presentation="auto"
       loop
@@ -125,8 +129,8 @@ export function Select({
         id={id}
         aria-label={ariaLabel}
         aria-labelledby={ariaLabelledBy}
-        aria-describedby={ariaDescribedBy}
-        aria-invalid={ariaInvalid || undefined}
+        aria-describedby={field['aria-describedby']}
+        aria-invalid={field['aria-invalid']}
         className={cn(SELECT_TRIGGER, className)}
       >
         <SelectValue className="min-w-0 truncate data-[placeholder]:text-fg-3" />

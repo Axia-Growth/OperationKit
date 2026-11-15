@@ -1,5 +1,9 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { Archive, Plus, Search, Workflow } from 'lucide-react'
+import { commandPaletteShortcut } from '../lib/platform'
+import { Archive, Inbox, ListChecks, Plus, Search, Workflow } from 'lucide-react'
+import { EmptyState } from '../components/ui/EmptyState'
+import { Skeleton } from '../components/ui/Skeleton'
+import { BoardSkeleton } from './BoardSkeleton'
 import {
   OBJECTIVE_STATUSES,
   type Objective,
@@ -18,6 +22,7 @@ import {
   UNASSIGNED_TOKEN,
   matchesAssigneeFilter,
   assigneeRoster,
+  botRoster,
   defaultAssigneeSelection,
   loadAssigneeSelection,
   saveAssigneeSelection,
@@ -39,11 +44,27 @@ import { SessionViewer } from '../components/SessionViewer'
 import { ObjectiveModal } from '../components/ObjectiveModal'
 import { ObjectiveSearchPanel } from '../components/lazy-overlays'
 import { NewWorkflowDialog } from '../components/jobs/NewWorkflowDialog'
+import { Button, Eyebrow } from '../components/ui'
 import { PreviewCard } from './PreviewCard'
+import { NeedsYouTriageBar } from '../components/NeedsYouTriageBar'
+import { pruneSelection, toggleSelection } from '../lib/triage'
+import { ColumnScroller } from './ColumnScroller'
 
 interface PreviewBoardProps {
   /** Selected org slugs. Empty = All organizations. */
   workspaces: Workspace[]
+}
+
+/** Empty-column copy (polish F8): a calm line about what lands here, instead
+ *  of a blank strip under the column header. */
+const COLUMN_EMPTY: Record<ObjectiveStatus, { title: string; description: string }> = {
+  planning: { title: 'Nothing in planning', description: 'Cards being scoped land here.' },
+  queue: { title: 'Queue is empty', description: 'New cards wait here until a session starts.' },
+  working: { title: 'Nothing running', description: 'Cards with a live session show up here.' },
+  ai_review: { title: 'Nothing in AI review', description: 'Finished work is checked here before it reaches you.' },
+  review: { title: 'Nothing needs you', description: 'Cards waiting on your decision land here.' },
+  done: { title: 'Nothing done yet', description: 'Finished cards collect here.' },
+  cancelled: { title: 'Nothing retired', description: 'Retired cards collect here.' },
 }
 
 export function PreviewBoard({ workspaces }: PreviewBoardProps) {
@@ -178,9 +199,15 @@ export function PreviewBoard({ workspaces }: PreviewBoardProps) {
     return roster
   }, [topLevel, doneObjectives, user?.username])
 
+  // obj 900869: bots are owners too — the filter lists every bot on a card.
+  const botOptions = useMemo(
+    () => botRoster([...topLevel, ...doneObjectives]),
+    [topLevel, doneObjectives],
+  )
+
   const allOwnerTokens = useMemo(
-    () => [UNASSIGNED_TOKEN, ...assigneeOptions],
-    [assigneeOptions],
+    () => [UNASSIGNED_TOKEN, ...assigneeOptions, ...botOptions.map(b => b.token)],
+    [assigneeOptions, botOptions],
   )
   const everyoneSelected = allOwnerTokens.length > 0 && allOwnerTokens.every(t => selectedAssignees.has(t))
 
@@ -232,6 +259,31 @@ export function PreviewBoard({ workspaces }: PreviewBoardProps) {
     return orderBoardColumns(cols, isMobile)
   }, [grouped, isMobile])
 
+  // ── Needs You bulk triage (obj 900869) ───────────────────────────────────
+  // Selection lives only in this view. It is always pruned to the cards the
+  // Needs You column shows right now, so a card that leaves the column while
+  // selected (a bot picks it up, someone else approves it) cannot be acted on.
+  const [triageMode, setTriageMode] = useState(false)
+  const [triageSel, setTriageSel] = useState<Set<number>>(() => new Set())
+  const [triageAnchor, setTriageAnchor] = useState<number | null>(null)
+  const needsYouIds = useMemo(() => grouped.review.map(o => o.id), [grouped.review])
+  const triageSelected = useMemo(() => {
+    const live = pruneSelection(triageSel, needsYouIds)
+    return grouped.review.filter(o => live.has(o.id))
+  }, [triageSel, needsYouIds, grouped.review])
+  const toggleTriage = useCallback((id: number, shift: boolean) => {
+    setTriageSel(prev => toggleSelection(pruneSelection(prev, needsYouIds), id, { range: shift, anchor: triageAnchor, order: needsYouIds }))
+    setTriageAnchor(id)
+  }, [needsYouIds, triageAnchor])
+  const exitTriage = useCallback(() => {
+    setTriageMode(false)
+    setTriageSel(new Set())
+    setTriageAnchor(null)
+  }, [])
+  useEffect(() => {
+    if (triageMode && needsYouIds.length === 0) exitTriage()
+  }, [triageMode, needsYouIds.length, exitTriage])
+
   const handleOpen = useCallback((o: Objective) => {
     setSessionObjective(o)
   }, [])
@@ -269,7 +321,7 @@ export function PreviewBoard({ workspaces }: PreviewBoardProps) {
   }, [])
 
   if (loading) {
-    return <div className="flex flex-1 items-center justify-center text-base text-fg-2">Loading board…</div>
+    return <BoardSkeleton />
   }
 
   return (
@@ -279,10 +331,19 @@ export function PreviewBoard({ workspaces }: PreviewBoardProps) {
           right — everything on one line, then the board. The organization is
           no longer chosen here: the top-bar switcher next to "Jump to" sets it
           for the whole app. */}
+      {/* obj 900807: ONE row at every width. At 390px it used to wrap to two
+          rows (filters, then actions), so the top bar + this header took ~140px
+          before the first card. The filters now scroll sideways in their own
+          strip (its right edge fades, so it reads as scrollable); the actions
+          stay pinned on the right. */}
       <div
         data-testid="board-header"
-        className="flex flex-wrap items-center gap-2 border-b border-line px-4 py-2 md:flex-nowrap"
+        className="flex flex-nowrap items-center gap-2 border-b border-line px-3 py-2 sm:px-4"
       >
+        <div
+          data-testid="board-filters"
+          className="-my-1 flex min-w-0 flex-1 items-center gap-2 overflow-x-auto py-1 pr-4 [mask-image:linear-gradient(to_right,#000_calc(100%-24px),transparent)] [scrollbar-width:none] sm:flex-none sm:overflow-visible sm:pr-0 sm:[mask-image:none] [&::-webkit-scrollbar]:hidden"
+        >
         <ProjectFilterBar
           projects={projects}
           selection={projectSel}
@@ -296,14 +357,16 @@ export function PreviewBoard({ workspaces }: PreviewBoardProps) {
         />
         <OwnerFilterSelect
           options={assigneeOptions}
+          bots={botOptions}
           selected={selectedAssignees}
           everyoneSelected={everyoneSelected}
           currentUser={user?.username}
           onToggle={toggleAssignee}
           onEveryone={selectEveryone}
         />
+        </div>
 
-        <div className="ml-auto flex items-center gap-2">
+        <div className="ml-auto flex shrink-0 items-center gap-2">
           {/* obj 900669 — the "need you" count is the Needs You column's own
               length (same array, same filters), so the header can never report
               fewer cards than the column shows. Cards with an agent still
@@ -311,7 +374,7 @@ export function PreviewBoard({ workspaces }: PreviewBoardProps) {
           {grouped.review.length > 0 && (
             <span
               data-testid="board-needs-you-count"
-              className="inline-flex items-center gap-1 whitespace-nowrap text-xs text-fg-1"
+              className="hidden items-center gap-1 whitespace-nowrap text-xs text-fg-1 sm:inline-flex"
             >
               <span className="font-mono font-semibold text-accent">{grouped.review.length}</span>
               need you
@@ -336,62 +399,101 @@ export function PreviewBoard({ workspaces }: PreviewBoardProps) {
           </span>
           {/* The ONE card search. It is not the top bar's "Jump to" (⌘K),
               which goes to pages; this one finds cards — so it says so. */}
-          <button
-            type="button"
+          {/* Header actions are all Button sm (32px), so New (primary, no
+              visible border) is the same height as its neighbours (polish F4). */}
+          <Button
+            size="sm"
             onClick={() => setSearchOpen(true)}
             aria-label="Search cards"
-            title="Search cards — every stage, including done. Press /. (To go to a page, use Jump to ⌘K in the top bar.)"
-            className="inline-flex items-center gap-1.5 rounded-md border border-line bg-surface-2 px-2.5 py-1.5 text-base text-fg-2 hover:border-line-strong hover:text-fg-1"
+            title={`Search cards — every stage, including done. Press /. (To go to a page, use Jump to ${commandPaletteShortcut()} in the top bar.)`}
+            leftIcon={<Search className="h-4 w-4" />}
           >
-            <Search className="h-4 w-4" />
             <span className="hidden md:inline">Search cards</span>
-            <span className="hidden font-mono text-xs text-fg-3 md:inline">/</span>
-          </button>
-          <button
-            type="button"
+            <kbd className="hidden font-mono text-xs text-fg-3 md:inline">/</kbd>
+          </Button>
+          <Button
+            size="sm"
             onClick={() => navigate('/archive')}
+            aria-label="Archive"
             title="Full done / retired library"
-            className="inline-flex items-center gap-1.5 rounded-md border border-line bg-surface-2 px-2.5 py-1.5 text-base text-fg-2 hover:border-line-strong hover:text-fg-1"
+            leftIcon={<Archive className="h-4 w-4" />}
           >
-            <Archive className="h-4 w-4" />
             <span className="hidden md:inline">Archive</span>
-          </button>
+          </Button>
           {orgRecords.length > 0 && (
-            <button
-              type="button"
+            <Button
+              size="sm"
               onClick={() => setWorkflowOpen(true)}
               title="New workflow: describe a goal and a builder agent drafts and self-tests it"
               aria-label="New workflow"
               data-testid="board-new-workflow"
-              className="inline-flex items-center gap-1.5 rounded-md border border-line bg-surface-2 px-2.5 py-1.5 text-base text-fg-2 hover:border-line-strong hover:text-fg-1"
+              leftIcon={<Workflow className="h-4 w-4" />}
             >
-              <Workflow className="h-4 w-4" />
               <span className="hidden md:inline">Workflow</span>
-            </button>
+            </Button>
           )}
-          <button
-            type="button"
+          <Button
+            size="sm"
+            variant="primary"
             onClick={handleNewObjective}
-            className="inline-flex items-center gap-1 rounded-md bg-accent px-3 py-1.5 text-base font-medium text-accent-fg hover:bg-accent-hover"
+            leftIcon={<Plus className="h-4 w-4" />}
           >
-            <Plus className="h-4 w-4" />
             New
-          </button>
+          </Button>
         </div>
       </div>
       {error && (
         <div className="border-b border-line px-4 py-1.5 text-xs text-[color:var(--ok-alarm)]">{error}</div>
       )}
-      <div className="flex min-h-0 flex-1 gap-3 overflow-x-auto p-3 sm:p-4">
+      {triageMode && (
+        <NeedsYouTriageBar
+          selected={triageSelected}
+          columnCount={grouped.review.length}
+          onSelectAll={() => setTriageSel(new Set(needsYouIds))}
+          onClear={() => setTriageSel(new Set())}
+          onExit={exitTriage}
+          onFinished={r => {
+            // Drop the cards that changed; keep skipped/failed ones selected so
+            // they can be looked at or retried.
+            const changed = new Set(r.items.filter(i => i.result === 'ok').map(i => i.objective_id))
+            setTriageSel(prev => new Set([...prev].filter(id => !changed.has(id))))
+          }}
+        />
+      )}
+      <ColumnScroller className="flex min-h-0 flex-1 gap-3 overflow-x-auto p-3 sm:p-4">
         {columns.map(status => (
           <section key={status} data-status={status} className="cc-ws-col max-h-full w-[300px] shrink-0 overflow-hidden">
-            <div className="flex items-center px-3 py-2">
-              <span className="text-xs font-medium uppercase tracking-eyebrow text-fg-2">
-                {STATUS_META[status].label}
-              </span>
-              <span data-testid={`column-count-${status}`} className="ml-auto font-mono text-xs text-fg-3">{grouped[status].length}</span>
+            {/* Header text sits on the same left edge as the card text below:
+                the list's px-2 + the card's 1px border + its px-3 (polish F4). */}
+            <div className="flex items-center px-2 pb-2 pt-2.5">
+              <div className="flex flex-1 items-center border-x border-transparent px-3">
+                <Eyebrow className="text-fg-2">{STATUS_META[status].label}</Eyebrow>
+                {status === 'review' && grouped.review.length > 0 && !triageMode && (
+                  <Button
+                    size="xs"
+                    variant="ghost"
+                    onClick={() => setTriageMode(true)}
+                    data-testid="triage-toggle"
+                    title="Select cards in Needs You to approve, reassign or dismiss them in a batch"
+                    leftIcon={<ListChecks className="h-3.5 w-3.5" aria-hidden="true" />}
+                    className="-my-1 ml-2 text-fg-2"
+                  >
+                    Select
+                  </Button>
+                )}
+                <span data-testid={`column-count-${status}`} className="ml-auto text-xs tabular-nums text-fg-3">{grouped[status].length}</span>
+              </div>
             </div>
             <div className="min-h-0 flex-1 space-y-2 overflow-y-auto px-2 pb-3">
+              {grouped[status].length === 0 && (status !== 'done' || (doneLoaded && !doneLoading && !doneHasMore)) && (
+                <EmptyState
+                  compact
+                  icon={<Inbox className="h-5 w-5" aria-hidden="true" />}
+                  title={COLUMN_EMPTY[status].title}
+                  description={COLUMN_EMPTY[status].description}
+                  className="px-2"
+                />
+              )}
               {grouped[status].map(obj => (
                 <PreviewCard
                   key={obj.id}
@@ -401,35 +503,43 @@ export function PreviewBoard({ workspaces }: PreviewBoardProps) {
                   onEdit={handleEditObjective}
                   onChangeStatus={handleChangeStatus}
                   showOrgChip={workspaces.length !== 1}
+                  workspaceLabel={orgLabelOf}
+                  selectable={triageMode && status === 'review'}
+                  selected={triageMode && status === 'review' && triageSel.has(obj.id)}
+                  onToggleSelect={toggleTriage}
                 />
               ))}
               {status === 'done' && (
                 <>
                   {doneLoading && (
-                    <div className="px-2 py-3 text-center text-xs text-fg-3">Loading done…</div>
+                    <div className="space-y-2" role="status" aria-busy="true" aria-label="Loading done cards">
+                      <Skeleton className="h-14 w-full rounded-md" />
+                      <Skeleton className="h-14 w-full rounded-md" />
+                    </div>
                   )}
                   {!doneLoading && (doneHasMore || !doneLoaded) && (
-                    <button
-                      type="button"
+                    <Button
+                      size="sm"
                       onClick={() => loadMoreDone()}
-                      className="w-full rounded-md border border-dashed border-line px-3 py-2 text-xs text-fg-2 hover:border-line-strong hover:text-fg-0"
+                      className="w-full border-dashed bg-transparent text-xs text-fg-2"
                     >
                       {doneLoaded ? 'Load more done' : 'Load done'}
-                    </button>
+                    </Button>
                   )}
-                  <button
-                    type="button"
+                  <Button
+                    size="sm"
+                    variant="ghost"
                     onClick={() => navigate('/archive')}
-                    className="w-full rounded-md px-3 py-2 text-xs text-fg-2 hover:text-fg-0"
+                    className="w-full text-xs text-fg-2"
                   >
                     View full archive
-                  </button>
+                  </Button>
                 </>
               )}
             </div>
           </section>
         ))}
-      </div>
+      </ColumnScroller>
 
       {/* Mounted only while open, like ObjectiveModal below: the board does not
           render the dialog's Modal until someone asks for a workflow. */}

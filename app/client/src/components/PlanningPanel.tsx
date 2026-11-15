@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useId, useRef, useState, type ClipboardEvent } from 'react'
-import { Paperclip } from 'lucide-react'
+import { FileText, Image as ImageIcon, Info, Paperclip, X } from 'lucide-react'
 import type { Objective, SessionMessage } from '@operationkit/shared'
 import { api } from '../lib/api'
+import { formatBytes, friendlyError } from '../lib/format'
 import { Modal } from './ui/Modal'
+import { IconButton } from './ui/Button'
 import { useConfirm } from './ui/ConfirmDialog'
 import { filesFromClipboard, useFileDrop } from '../hooks/useFileDrop'
 import { GroupedMessages } from './SessionMessages'
@@ -128,7 +130,7 @@ export function PlanningPanel({ objective: initialObjective, onClose, onApproved
       const data = await api.post<{ session_id: string }>(`/objectives/${objective.id}/planning/start`, {})
       setObjective(prev => ({ ...prev, planning_session_id: data.session_id }))
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Failed to start planner')
+      setError(`Could not start the planner. ${friendlyError(e).message}`)
     }
     setStarting(false)
   }
@@ -151,10 +153,10 @@ export function PlanningPanel({ objective: initialObjective, onClose, onApproved
         const data = await res.json()
         setAttachedFiles(prev => [...prev, ...data.files])
       } else {
-        setError('Upload failed')
+        setError('The upload did not work. Try again.')
       }
     } catch {
-      setError('Upload failed — network error')
+      setError('The upload did not work. Check your connection and try again.')
     }
     setUploading(false)
     if (fileInputRef.current) fileInputRef.current.value = ''
@@ -164,11 +166,6 @@ export function PlanningPanel({ objective: initialObjective, onClose, onApproved
     setAttachedFiles(prev => prev.filter((_, i) => i !== index))
   }
 
-  function formatFileSize(bytes: number): string {
-    if (bytes < 1024) return `${bytes}B`
-    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)}KB`
-    return `${(bytes / (1024 * 1024)).toFixed(1)}MB`
-  }
 
   const { isDragging, dropProps } = useFileDrop(handleUpload, !uploading && !sending)
 
@@ -198,7 +195,7 @@ export function PlanningPanel({ objective: initialObjective, onClose, onApproved
       messageCountRef.current += 1
       setTimeout(() => fetchMessages(), 500)
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Failed to send')
+      setError(`Could not send your message. ${friendlyError(e).message}`)
     }
     setSending(false)
   }
@@ -211,7 +208,7 @@ export function PlanningPanel({ objective: initialObjective, onClose, onApproved
       const updated = await api.post<Objective>(`/objectives/${objective.id}/planning/approve`, {})
       onApproved(updated)
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Approve failed — does the planner have a <plan>…</plan> block in its latest response?')
+      setError(`Could not approve the plan. ${friendlyError(e).message} The planner's latest reply may not contain a plan yet.`)
     }
     setApproving(false)
   }
@@ -228,7 +225,7 @@ export function PlanningPanel({ objective: initialObjective, onClose, onApproved
       await api.post(`/objectives/${objective.id}/planning/cancel`, {})
       onClose()
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Cancel failed')
+      setError(`Could not cancel planning. ${friendlyError(e).message}`)
     }
   }
 
@@ -242,15 +239,15 @@ export function PlanningPanel({ objective: initialObjective, onClose, onApproved
       labelledBy={titleId}
       panelClassName="flex flex-col inset-0 m-0 h-full max-h-none w-full max-w-none rounded-none border-0 overflow-x-hidden overflow-y-hidden bg-surface shadow-none"
     >
-      <div className="flex items-center justify-between border-b border-border px-4 py-3 bg-surface-raised">
+      <div className="flex items-center justify-between border-b border-line px-4 py-3 bg-surface-1">
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2">
-            <span className="rounded bg-status-planning/20 text-status-planning border border-status-planning/30 px-1.5 py-0.5 text-xs font-semibold">PLANNING</span>
+            <span
+              className="rounded bg-status-planning/20 text-status-planning border border-status-planning/30 px-1.5 py-0.5 text-xs font-semibold"
+              title={objective.planning_session_id ? `Planner session: ${objective.planning_session_id}` : undefined}
+            >PLANNING</span>
             <h3 id={titleId} className="text-base font-medium text-fg-0 truncate">{objective.title}</h3>
           </div>
-          {objective.planning_session_id && (
-            <div className="text-xs text-fg-3 font-mono truncate mt-0.5">{objective.planning_session_id}</div>
-          )}
         </div>
         <div className="flex items-center gap-2 ml-3">
           {sessionStarted && (
@@ -258,27 +255,21 @@ export function PlanningPanel({ objective: initialObjective, onClose, onApproved
               <button
                 onClick={handleApprove}
                 disabled={approving}
-                className="rounded-lg bg-signal-verify hover:bg-signal-verify/90 px-3 py-1.5 text-xs font-medium text-surface-1 disabled:opacity-50"
+                className="rounded-lg bg-success hover:bg-success/90 px-3 py-1.5 text-xs font-medium text-surface-1 disabled:opacity-50"
               >
-                {approving ? 'Approving...' : 'Approve Plan'}
+                {approving ? 'Approving…' : 'Approve plan'}
               </button>
               <button
                 onClick={handleCancel}
-                className="rounded-lg px-2.5 py-1.5 text-xs font-medium text-fg-2 border border-border hover:text-fg-0 hover:border-border-hover"
+                className="rounded-lg px-2.5 py-1.5 text-xs font-medium text-fg-2 border border-line hover:text-fg-0 hover:border-line-strong"
               >
-                Cancel Planning
+                Cancel planning
               </button>
             </>
           )}
-          <button
-            onClick={onClose}
-            aria-label="Close planning"
-            className="rounded-lg p-2 text-fg-2 hover:text-fg-1 hover:bg-surface-overlay"
-          >
-            <svg aria-hidden="true" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
-            </svg>
-          </button>
+          <IconButton label="Close" onClick={onClose}>
+            <X aria-hidden="true" className="h-5 w-5" />
+          </IconButton>
         </div>
       </div>
 
@@ -286,14 +277,14 @@ export function PlanningPanel({ objective: initialObjective, onClose, onApproved
         <div className="flex-1 flex items-center justify-center px-6">
           <div className="max-w-md text-center space-y-4">
             <p className="text-base text-fg-2">
-              This is a Project-type objective, so it starts in the planning stage. A read-only planner sub-session will ask you clarifying questions, then emit a plan you approve. Approving the plan starts the worker — you do not click Start again.
+              This is a project card, so it starts in the planning stage. A read-only planner will ask you clarifying questions, then write a plan for you to approve. Approving the plan starts the bot — you do not click Start again.
             </p>
             <button
               onClick={handleStart}
               disabled={starting}
               className="rounded-md bg-status-planning/90 hover:bg-status-planning px-4 py-2 text-base font-medium text-surface-0 disabled:opacity-50 transition-colors duration-fast ease-out"
             >
-              {starting ? 'Starting planner...' : 'Start Planning'}
+              {starting ? 'Starting planner…' : 'Start planning'}
             </button>
             <div>
               <button
@@ -302,7 +293,7 @@ export function PlanningPanel({ objective: initialObjective, onClose, onApproved
                     await api.patch(`/objectives/${objective.id}/status`, { status: 'queue' })
                     onClose()
                   } catch (e) {
-                    setError(e instanceof Error ? e.message : 'Skip failed')
+                    setError(`Could not skip planning. ${friendlyError(e).message}`)
                   }
                 }}
                 className="text-xs text-fg-2 hover:text-fg-1 underline"
@@ -311,7 +302,7 @@ export function PlanningPanel({ objective: initialObjective, onClose, onApproved
               </button>
             </div>
             {error && (
-              <div className="rounded bg-signal-alarm/10 px-3 py-2 text-xs text-signal-alarm">{error}</div>
+              <div className="rounded bg-danger/10 px-3 py-2 text-xs text-danger">{error}</div>
             )}
           </div>
         </div>
@@ -328,23 +319,23 @@ export function PlanningPanel({ objective: initialObjective, onClose, onApproved
                     <span className="cc-think-dot text-status-planning" />
                     <span className="cc-think-dot text-status-planning" />
                   </div>
-                  <div className="text-base text-fg-2">Planner is loading context...</div>
+                  <div className="text-base text-fg-2">Planner is loading context…</div>
                 </div>
               )}
               <GroupedMessages messages={messages} />
             </div>
           </div>
 
-          <div className="border-t border-border bg-surface-raised">
+          <div className="border-t border-line bg-surface-1">
             <div className="max-w-4xl mx-auto px-3 pt-2 pb-3">
-              <div className="mb-2 rounded bg-surface px-3 py-1.5 text-xs text-fg-2 border border-border/60 flex items-center gap-2">
-                <span className="text-signal-verify">●</span>
-                <span>Planner is read-only. Click <span className="text-signal-verify font-medium">Approve Plan</span> to lock the plan and start the worker.</span>
+              <div className="mb-2 rounded bg-surface px-3 py-1.5 text-xs text-fg-2 border border-line/60 flex items-center gap-2">
+                <Info aria-hidden="true" className="h-3.5 w-3.5 shrink-0 text-success" />
+                <span>Planner is read-only. Click <span className="text-success font-medium">Approve plan</span> to lock the plan and start the bot.</span>
               </div>
               {error && (
-                <div className="mb-2 rounded bg-signal-alarm/10 px-3 py-1.5 text-xs text-signal-alarm flex items-center justify-between">
+                <div className="mb-2 rounded bg-danger/10 px-3 py-1.5 text-xs text-danger flex items-center justify-between">
                   <span>{error}</span>
-                  <button onClick={() => setError(null)} className="ml-2 text-signal-alarm/60 hover:text-signal-alarm">&times;</button>
+                  <button onClick={() => setError(null)} aria-label="Dismiss error" className="ml-2 text-danger/60 hover:text-danger"><X aria-hidden="true" className="h-3.5 w-3.5" /></button>
                 </div>
               )}
               {/* Attached files chips */}
@@ -353,11 +344,11 @@ export function PlanningPanel({ objective: initialObjective, onClose, onApproved
                   {attachedFiles.map((f, i) => {
                     const isImage = f.mimetype.startsWith('image/')
                     return (
-                      <span key={i} className="inline-flex items-center gap-1.5 rounded-md bg-surface-overlay border border-border px-2 py-1 text-xs text-fg-1">
-                        <span>{isImage ? '🖼️' : '📄'}</span>
+                      <span key={i} className="inline-flex items-center gap-1.5 rounded-md bg-surface-2 border border-line px-2 py-1 text-xs text-fg-1">
+                        {isImage ? <ImageIcon aria-hidden="true" className="h-3.5 w-3.5 shrink-0 text-fg-3" /> : <FileText aria-hidden="true" className="h-3.5 w-3.5 shrink-0 text-fg-3" />}
                         <span className="truncate max-w-[150px]">{f.originalName}</span>
-                        <span className="text-fg-3">{formatFileSize(f.size)}</span>
-                        <button onClick={() => removeFile(i)} className="text-fg-2 hover:text-signal-alarm ml-0.5">&times;</button>
+                        <span className="text-fg-3">{formatBytes(f.size)}</span>
+                        <button onClick={() => removeFile(i)} aria-label="Remove file" className="text-fg-2 hover:text-danger ml-0.5"><X aria-hidden="true" className="h-3 w-3" /></button>
                       </span>
                     )
                   })}
@@ -365,7 +356,7 @@ export function PlanningPanel({ objective: initialObjective, onClose, onApproved
               )}
               <div
                 {...dropProps}
-                className={`flex items-end gap-2 rounded-lg border bg-surface px-2 py-1.5 transition-colors ${isDragging ? 'border-accent border-dashed bg-accent/5' : 'border-border focus-within:border-accent'}`}
+                className={`flex items-end gap-2 rounded-lg border bg-surface px-2 py-1.5 transition-colors ${isDragging ? 'border-accent border-dashed bg-accent/5' : 'border-line focus-within:border-accent'}`}
               >
                 {/* Hidden file input */}
                 <input

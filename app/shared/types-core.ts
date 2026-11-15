@@ -5,6 +5,7 @@
  * `@operationkit/shared` still resolves to types.ts, which re-exports this.
  */
 import type { DelegationStamp } from './delegation.js'
+import type { CardOwner } from './ownership.js'
 // ── Enums & Literals ──
 
 // `review` is the human review gate, always positioned after `ai_review`. It
@@ -183,6 +184,8 @@ export interface WorkspaceRecord {
   doc_write_roots: string[]
   default_agent_pool: string[]
   archived: boolean
+  /** obj 900870: soft-delete stamp of an archived workspace the owner deleted (admin `?include_deleted=1` only). */
+  deleted_at?: string | null
   sort_order: number
   created_at: string
   updated_at: string
@@ -373,6 +376,16 @@ export interface Objective {
   /** obj 900270: the Grok bot that owns this card (name or id), set explicitly by
    *  the filer on create/update. NULL = unowned. Never inferred from the key. */
   owner_bot?: string | null
+  /** obj 900869: the bot behind this card — `owner_bot`, else the registry bot
+   *  that owns `agent_context`'s chat slug. Server-resolved in mapObjective. */
+  bot_owner?: string | null
+  /** obj 900869: display name of `bot_owner` (registry name). */
+  bot_owner_name?: string | null
+  /** obj 900869: username of `created_by` (the Needs You owner when nobody is assigned). */
+  created_by_username?: string | null
+  /** obj 900869: who owns the card right now (bot while it works, human in
+   *  Needs You). Derived by `cardOwner` in shared/ownership.ts. */
+  current_owner?: CardOwner
   /** Secrets the worker is blocked on (obj 718944). Names + reasons only —
    *  never values. Empty/absent = not waiting on a secret. */
   needs_secret?: NeedsSecretItem[]

@@ -16,25 +16,29 @@
  *     repo (PUBLIC_DOCS_BASE in hooks/useBranding.ts). They used to be hard-coded to the private
  *     upstream repo, which the OSS genericizer rewrites to the non-existent
  *     github.com/your-org/operationkit on public installs.
+ *
+ * obj 900803: a white-labeled install (its own name or marks) never links out
+ * to the default product's public repo — only the on-install spec + discovery
+ * doc are shown there.
  */
 import { useMemo, type ReactNode } from 'react'
 // Direct module paths (not the '../ui' barrel) so suites that mock the barrel
 // with only Modal/useConfirm (e.g. AccountSettings.google.test.tsx) still render this card.
-import { Card, CardHeader, CardBody } from '../ui/Card'
+import { SectionHeader } from '../ui/SettingsSection'
 import { CopyButton } from '../ui/CopyButton'
-import { PUBLIC_DOCS_BASE } from '../../hooks/useBranding'
+import { PUBLIC_DOCS_BASE, useBranding } from '../../hooks/useBranding'
 
 /** Every link the card renders. Exported for tests. */
-export function apiDocLinks(origin: string) {
+export function apiDocLinks(origin: string, whiteLabel = false) {
   return {
     spec: `${origin}/api/openapi.json`,
     discovery: `${origin}/api/agent`,
-    readme: `${PUBLIC_DOCS_BASE}/docs/api/README.md`,
-    agentPrompt: `${PUBLIC_DOCS_BASE}/docs/api/AGENT-PROMPT.md`,
+    readme: whiteLabel ? null : `${PUBLIC_DOCS_BASE}/docs/api/README.md`,
+    agentPrompt: whiteLabel ? null : `${PUBLIC_DOCS_BASE}/docs/api/AGENT-PROMPT.md`,
   }
 }
 
-const LINK = 'text-accent-hover underline-offset-2 hover:text-accent hover:underline'
+const LINK = 'text-accent underline-offset-2 hover:text-accent-hover hover:underline'
 
 function Snippet({ code }: { code: string }) {
   return (
@@ -54,21 +58,26 @@ function DocLink({ href, children }: { href: string; children: ReactNode }) {
 
 export function ApiMcpDocs() {
   const origin = useMemo(() => (typeof window !== 'undefined' ? window.location.origin : 'https://<your-install-host>'), [])
-  const links = useMemo(() => apiDocLinks(origin), [origin])
+  const whiteLabel = useBranding().white_label
+  const links = useMemo(() => apiDocLinks(origin, whiteLabel), [origin, whiteLabel])
 
   const curlExample = `curl -s ${origin}/api/agent/attention \\\n  -H "Authorization: Bearer cc_live_…"`
 
   return (
-    <Card inset className="mt-6" aria-labelledby="api-mcp-docs-heading" data-testid="api-mcp-docs">
-      <CardHeader title="API docs" eyebrow="Reference" />
-      <CardBody className="space-y-5">
+    <section className="mt-6 rounded-lg border border-line bg-surface-1 p-5" aria-labelledby="api-mcp-docs-heading" data-testid="api-mcp-docs">
+      <SectionHeader headingId="api-mcp-docs-heading" className="mb-4" title="API docs" />
+      <div className="space-y-5">
         <p className="max-w-prose text-sm leading-relaxed text-fg-2">
           The full, current contract for this install is the live spec at{' '}
           <DocLink href={links.spec}><code className="font-mono">{links.spec}</code></DocLink> (never stale) and
           the discovery doc at <DocLink href={links.discovery}><code className="font-mono">{links.discovery}</code></DocLink>.
-          The guide (auth, scopes, the agent loop, every REST route and its MCP tool) is{' '}
-          <DocLink href={links.readme}>docs/api/README.md</DocLink>, and a portable prompt for handing an agent this
-          whole API in one shot is <DocLink href={links.agentPrompt}>docs/api/AGENT-PROMPT.md</DocLink>.
+          {links.readme && links.agentPrompt && (
+            <>
+              {' '}The guide (auth, scopes, the agent loop, every REST route and its MCP tool) is{' '}
+              <DocLink href={links.readme}>docs/api/README.md</DocLink>, and a portable prompt for handing an agent this
+              whole API in one shot is <DocLink href={links.agentPrompt}>docs/api/AGENT-PROMPT.md</DocLink>.
+            </>
+          )}
         </p>
 
         <p className="max-w-prose text-xs text-fg-3">
@@ -78,17 +87,19 @@ export function ApiMcpDocs() {
         </p>
 
         <div className="space-y-2">
-          <div className="flex items-center justify-between gap-2">
-            <h3 className="text-sm font-semibold text-fg-0">REST — copy-paste curl example</h3>
-            <CopyButton value={curlExample} label="Copy curl" />
-          </div>
+          <SectionHeader
+            level={3}
+            className="mb-0 sm:items-center"
+            title="REST — copy-paste curl example"
+            actions={<CopyButton value={curlExample} label="Copy curl" />}
+          />
           <p className="text-xs text-fg-3">
             Every call: <code className="font-mono">Authorization: Bearer cc_live_…</code>. This one reads the
             cards that need a decision (<code className="font-mono">board:read</code>).
           </p>
           <Snippet code={curlExample} />
         </div>
-      </CardBody>
-    </Card>
+      </div>
+    </section>
   )
 }

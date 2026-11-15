@@ -1,6 +1,5 @@
 import { useState, useCallback, useMemo, useEffect } from 'react'
-import { useBranding } from '../hooks/useBranding'
-import { ExternalLink, AlertCircle, Clock, Play, Pause, Inbox, CheckCircle2, Loader2, Target, Plus, Workflow, History } from 'lucide-react'
+import { ExternalLink, AlertCircle, Clock, Play, Pause, Inbox, CheckCircle2, Loader2, Target, Plus, Workflow, History, ChevronDown } from 'lucide-react'
 import type { Objective, ObjectiveStatus, Workspace } from '@operationkit/shared'
 import { useObjectives } from '../hooks/useObjectives'
 import { useRoutines, isAutoPaused, type RoutineSummary, type StrategyOption, type StrategyJobInput } from '../hooks/useRoutines'
@@ -11,13 +10,14 @@ import { KnowledgeIndexPanel } from './jobs/KnowledgeIndexPanel'
 import { useAuth } from '../context/AuthContext'
 import { ExecutionsPanel, type ExecutionsTarget } from './jobs/ExecutionsPanel'
 import { WorkflowsPanel, RunStatusBadge } from './jobs/WorkflowsPanel'
+import { countForWorkspace } from './jobs/workspaceTabCounts'
 import { useFlows } from '../hooks/useFlows'
 import { flowRunLane } from '../../../shared/flow/run-status'
 import type { FlowRunSummary } from '../../../shared/flow/api'
 import { HOST_CRON_ANCHOR } from '../lib/routes'
 import { useWorkspaces } from '../hooks/useWorkspaces'
 import { SessionViewer } from './SessionViewer'
-import { relativeTime, relativeFuture } from '../lib/time'
+import { describeCron, formatCost, formatDateTime, formatRelativeTime, friendlyError, humanize } from '../lib/format'
 import {
   PageContainer,
   PageHeader,
@@ -30,6 +30,10 @@ import {
   DataTable,
   Alert,
   Modal,
+  Menu,
+  MenuTrigger,
+  MenuContent,
+  MenuItem,
   cn,
   type Column,
   type TabItem,
@@ -54,7 +58,7 @@ type JobLane = 'running' | 'needs_review' | 'complete'
 
 const LANE_META: Record<JobLane, { label: string; hint: string; icon: typeof Loader2 }> = {
   running:      { label: 'Running',      hint: 'Automated runs in flight',                                  icon: Loader2 },
-  needs_review: { label: 'Needs Review', hint: 'Has a question or a system-improvement opportunity',        icon: AlertCircle },
+  needs_review: { label: 'Needs review', hint: 'Has a question or a system-improvement opportunity',        icon: AlertCircle },
   complete:     { label: 'Complete',     hint: 'Clean runs, nothing for you to do',                         icon: CheckCircle2 },
 }
 const LANE_ORDER: JobLane[] = ['running', 'needs_review', 'complete']
@@ -101,9 +105,10 @@ function writeQuery(next: { view: JobsView; kind: KindFilter; flow: number | nul
   window.history.replaceState(window.history.state, '', `${window.location.pathname}${qs ? `?${qs}` : ''}${window.location.hash}`)
 }
 
-/** Compact USD formatter for job cost (sub-cent runs round to $0.00). */
-function formatCost(n: number): string {
-  return `$${(Number(n) || 0).toFixed(2)}`
+/** Relative time with the absolute local time in the tooltip. */
+function TimeAgo({ at }: { at: string | null | undefined }) {
+  const t = formatDateTime(at)
+  return <span title={t.title}>{t.label}</span>
 }
 
 /** Map an ObjectiveStatus onto the canonical pipeline StatusPill status. */
@@ -117,7 +122,6 @@ export function laneOf(o: Pick<Objective, 'status' | 'job_disposition'>): JobLan
 }
 
 export function JobsBoard(_props: JobsBoardProps) {
-  const brandName = useBranding().name
   // Jobs are workspace-agnostic automated runs; show them all regardless of the
   // board's workspace selector (admin-only surface). useObjectives('all') still
   // wires the same WebSocket live-update path the main board uses.
@@ -137,6 +141,9 @@ export function JobsBoard(_props: JobsBoardProps) {
   const [sessionObjective, setSessionObjective] = useState<Objective | null>(null)
   const [wsFilter, setWsFilter] = useState<string>(ALL)
   const [authoring, setAuthoring] = useState(false)
+  // "New workflow" is the page's one filled primary (obj 900807), so its
+  // dialog is opened from the header; WorkflowsPanel renders it.
+  const [newWorkflowOpen, setNewWorkflowOpen] = useState(false)
   const isAdmin = useAuth().user?.role === 'admin'
   // obj 900676 — the n8n-style Executions view (run list + the selected run's log).
   const [executions, setExecutions] = useState<ExecutionsTarget | null>(null)
@@ -250,21 +257,20 @@ export function JobsBoard(_props: JobsBoardProps) {
 
   // Workspace filter as Tabs (chips collapsed onto the accent token system —
   // no per-workspace color sprawl).
-  const wsTabs: TabItem[] = useMemo(
-    () => [
-      { key: ALL, label: 'All', count: allJobs.length + flowRuns.length },
-      ...wsOptions.map(ws => ({
-        key: ws,
-        label: labelOf(ws),
-        count: allJobs.filter(j => j.workspace === ws).length + flowRuns.filter(r => r.workspace === ws).length,
-      })),
-    ],
-    [wsOptions, allJobs, flowRuns, labelOf]
-  )
+  // obj 900868: each count is the number of rows THIS view shows for that
+  // workspace (workflows on Workflows; runs of the picked kind on Runs), never a
+  // fixed jobs + runs total that the list below may not contain.
+  const wsTabs: TabItem[] = useMemo(() => {
+    const input = { view, kind: kindFilter, jobs: allJobs, flowRuns, flows }
+    return [
+      { key: ALL, label: 'All', count: countForWorkspace(input, null) },
+      ...wsOptions.map(ws => ({ key: ws, label: labelOf(ws), count: countForWorkspace(input, ws) })),
+    ]
+  }, [view, kindFilter, wsOptions, allJobs, flowRuns, flows, labelOf])
   const kindTabs: TabItem[] = useMemo(
     () => [
       { key: 'all', label: 'All' },
-      { key: 'agent', label: 'Agent jobs' },
+      { key: 'agent', label: 'Bot runs' },
       { key: 'flow', label: 'Workflows' },
     ],
     []
@@ -276,7 +282,7 @@ export function JobsBoard(_props: JobsBoardProps) {
   const routineColumns: Column<RoutineSummary>[] = [
     {
       key: 'title',
-      header: 'Routine',
+      header: 'Scheduled task',
       cell: r => (
         <div className="flex items-center gap-2">
           <span
@@ -293,7 +299,7 @@ export function JobsBoard(_props: JobsBoardProps) {
               className="shrink-0 text-xs text-accent-hover hover:underline"
               onClick={e => { e.stopPropagation(); openFlow(r.flow_id as number) }}
             >
-              diagram
+              Diagram
             </button>
           )}
         </div>
@@ -309,7 +315,7 @@ export function JobsBoard(_props: JobsBoardProps) {
       header: 'Owner',
       cell: r =>
         r.strategy_title ? (
-          <span className="inline-flex items-center gap-1 text-xs text-accent-hover" title={`Owned by strategy #${r.strategy_objective_id}`}>
+          <span className="inline-flex items-center gap-1 text-xs text-accent-hover" title={`Owned by strategy card #${r.strategy_objective_id}`}>
             <Target className="h-3 w-3 shrink-0" />
             <span className="truncate max-w-[160px]">{r.strategy_title}</span>
           </span>
@@ -325,29 +331,27 @@ export function JobsBoard(_props: JobsBoardProps) {
     },
     {
       key: 'cadence',
-      header: 'Cadence',
-      mono: true,
-      cell: r => r.cadence,
+      header: 'Schedule',
+      // Routine crons match on the server clock (UTC).
+      cell: r => describeCron(r.cron_expr, { utc: true }),
     },
     {
       key: 'next',
-      header: 'Next in',
-      mono: true,
+      header: 'Next run',
       sortable: true,
       sortValue: r => r.next_run_at ?? '',
       cell: r =>
         r.enabled && r.next_run_at
-          ? relativeFuture(r.next_run_at)
-          : <span className="text-fg-3">paused</span>,
+          ? <span title={formatDateTime(r.next_run_at).title}>{formatRelativeTime(r.next_run_at)}</span>
+          : <span className="text-fg-3">Paused</span>,
     },
     {
       key: 'last',
       header: 'Last run',
-      mono: true,
       align: 'right',
       sortable: true,
       sortValue: r => r.last_run_at ?? '',
-      cell: r => (r.last_run_at ? `${relativeTime(r.last_run_at)} ago` : '—'),
+      cell: r => (r.last_run_at ? <TimeAgo at={r.last_run_at} /> : '—'),
     },
     {
       key: 'inflight',
@@ -356,7 +360,7 @@ export function JobsBoard(_props: JobsBoardProps) {
       sortable: true,
       sortValue: r => r.pending,
       cell: r =>
-        r.pending > 0 ? <Badge tone="info" mono>{r.pending} in flight</Badge> : <span className="text-fg-3">—</span>,
+        r.pending > 0 ? <Badge tone="info">{r.pending} in flight</Badge> : <span className="text-fg-3">—</span>,
     },
   ]
 
@@ -372,7 +376,7 @@ export function JobsBoard(_props: JobsBoardProps) {
           <div className="min-w-0">
             <div className="truncate font-medium text-fg-0" title={job.title}>{job.title}</div>
             {job.job_disposition === 'needs_review' && job.job_review_note && (
-              <div className="mt-1 rounded-md bg-signal-amber/10 px-2 py-1 text-xs leading-snug text-signal-amber">
+              <div className="mt-1 rounded-md bg-warning/10 px-2 py-1 text-xs leading-snug text-warning">
                 {job.job_review_note}
               </div>
             )}
@@ -384,7 +388,7 @@ export function JobsBoard(_props: JobsBoardProps) {
                 {spawned.map(s => (
                   <span key={s.id} className="inline-flex items-center gap-1 text-xs text-accent-hover">
                     <ExternalLink className="h-3 w-3" />
-                    spawned #{s.id}: {s.title}
+                    Started card #{s.id}: {s.title}
                   </span>
                 ))}
               </div>
@@ -416,17 +420,15 @@ export function JobsBoard(_props: JobsBoardProps) {
     },
     {
       key: 'created',
-      header: 'Age',
-      mono: true,
+      header: 'Started',
       align: 'right',
       sortable: true,
       sortValue: job => job.created_at,
-      cell: job => relativeTime(job.created_at),
+      cell: job => <TimeAgo at={job.created_at} />,
     },
     {
       key: 'cost',
       header: 'Cost',
-      mono: true,
       align: 'right',
       hideOnMobile: true,
       sortable: true,
@@ -450,8 +452,8 @@ export function JobsBoard(_props: JobsBoardProps) {
             <span className="truncate font-medium text-fg-0" title={r.flow_name}>{r.flow_name}</span>
           </div>
           {r.error && (
-            <p className="mt-1 line-clamp-2 text-xs leading-snug text-signal-alarm">
-              {r.error.type}: {r.error.title}
+            <p className="mt-1 line-clamp-2 text-xs leading-snug text-danger" title={humanize(r.error.type)}>
+              {r.error.title}
             </p>
           )}
         </div>
@@ -460,11 +462,10 @@ export function JobsBoard(_props: JobsBoardProps) {
     { key: 'workspace', header: 'Workspace', hideOnMobile: true, cell: r => <Badge tone="neutral">{labelOf(r.workspace)}</Badge> },
     { key: 'status', header: 'Status', cell: r => <RunStatusBadge run={r} /> },
     { key: 'id', header: 'Run', mono: true, hideOnMobile: true, cell: r => <Badge tone="neutral" mono>run #{r.id}</Badge> },
-    { key: 'created', header: 'Age', mono: true, align: 'right', sortable: true, sortValue: r => r.created_at, cell: r => relativeTime(r.created_at) },
+    { key: 'created', header: 'Started', align: 'right', sortable: true, sortValue: r => r.created_at, cell: r => <TimeAgo at={r.created_at} /> },
     {
       key: 'cost',
       header: 'Cost',
-      mono: true,
       align: 'right',
       hideOnMobile: true,
       cell: r => (r.spent_usd > 0 ? formatCost(r.spent_usd) : <span className="text-fg-3">—</span>),
@@ -478,10 +479,9 @@ export function JobsBoard(_props: JobsBoardProps) {
     <PageContainer width="wide">
       <PageHeader
         title="Workflows"
-        breadcrumbs={[{ label: brandName }, { label: 'Workflows' }]}
         description={
           `${jobs.length + workflowRunCount} automated ${jobs.length + workflowRunCount === 1 ? 'run' : 'runs'}` +
-          ` · ${visibleRoutines.length} ${visibleRoutines.length === 1 ? 'routine' : 'routines'} · ${enabledCount} active` +
+          ` · ${visibleRoutines.length} scheduled · ${enabledCount} active` +
           ` · ${visibleFlows.length} ${visibleFlows.length === 1 ? 'workflow' : 'workflows'}`
         }
         actions={
@@ -491,39 +491,74 @@ export function JobsBoard(_props: JobsBoardProps) {
             )}
             {!routinesEnabled && (
               <Badge tone="alarm">
-                <Pause className="h-3 w-3" /> scheduler paused
+                <Pause className="h-3 w-3" /> Scheduler paused
               </Badge>
             )}
-            <Button
-              variant="primary"
-              size="sm"
-              onClick={() => setAuthoring(true)}
-              leftIcon={<Plus className="h-3.5 w-3.5" />}
-            >
-              New strategy job
-            </Button>
+            {/* One filled primary, and it matches the title (obj 900807):
+                New workflow. A scheduled task is the rarer create, so it sits
+                in the menu beside it. */}
+            {workspaces.length > 0 ? (
+              <div className="flex items-center gap-1">
+                <Button
+                  variant="primary"
+                  size="sm"
+                  onClick={() => { setView('workflows'); setNewWorkflowOpen(true) }}
+                  leftIcon={<Plus className="h-3.5 w-3.5" />}
+                  data-testid="new-workflow-button"
+                >
+                  New workflow
+                </Button>
+                <Menu>
+                  <MenuTrigger
+                    aria-label="More ways to create"
+                    data-testid="workflows-create-menu"
+                    className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-line bg-surface-2 text-fg-1 outline-none transition-colors duration-fast hover:border-line-strong hover:bg-surface-3 focus-visible:ring-2 focus-visible:ring-accent/60"
+                  >
+                    <ChevronDown className="h-4 w-4" aria-hidden="true" />
+                  </MenuTrigger>
+                  <MenuContent aria-label="Create" side="bottom" align="end">
+                    <MenuItem value="scheduled-task" label="New scheduled task" icon={<Target className="h-4 w-4" />} onSelect={() => setAuthoring(true)}>
+                      New scheduled task
+                    </MenuItem>
+                  </MenuContent>
+                </Menu>
+              </div>
+            ) : (
+              <Button variant="primary" size="sm" onClick={() => setAuthoring(true)} leftIcon={<Plus className="h-3.5 w-3.5" />}>
+                New scheduled task
+              </Button>
+            )}
           </div>
         }
       />
 
       {error && (
-        <Alert tone="alarm" title="Jobs feed degraded" className="mb-4">
-          {error}
+        <Alert tone="alarm" title="Some runs could not be loaded" className="mb-4">
+          {friendlyError(error).message}
+          <details className="mt-1 text-xs text-fg-3"><summary>Details</summary>{error}</details>
         </Alert>
       )}
 
-      {/* Workflows | Runs (obj 900640; Workflows first since obj 900675) */}
+      {/* Workflows | Runs (obj 900640; Workflows first since obj 900675) — the
+          page's ONE tab level. The filters ride on the same row (obj 900807):
+          they used to stack as a second segmented row under the tabs. */}
       <Toolbar
         left={<Tabs items={VIEW_TABS} value={view} onChange={k => setView(k === 'runs' ? 'runs' : 'workflows')} label="Workflows views" />}
-        right={view === 'runs' ? <SegmentedControl items={kindTabs} value={kindFilter} onChange={k => setKindFilter(k as KindFilter)} label="Run kind" /> : undefined}
+        right={
+          <>
+            {view === 'runs' && <SegmentedControl items={kindTabs} value={kindFilter} onChange={k => setKindFilter(k as KindFilter)} label="Run kind" />}
+            {wsOptions.length > 0 && (
+              <Select aria-label="Workspace" value={wsFilter} onChange={v => setWsFilter(v)}>
+                {wsTabs.map(t => (
+                  <option key={t.key} value={t.key}>
+                    {t.key === ALL ? 'All workspaces' : t.label}{t.count != null ? ` (${t.count})` : ''}
+                  </option>
+                ))}
+              </Select>
+            )}
+          </>
+        }
       />
-
-      {/* Workspace filter */}
-      {wsOptions.length > 0 && (
-        <Toolbar
-          left={<SegmentedControl items={wsTabs} value={wsFilter} onChange={setWsFilter} label="Workspace" />}
-        />
-      )}
 
       {/* Auto-paused routines (K consecutive failures) with one-click Resume —
           agent, script and workflow routines alike. */}
@@ -542,6 +577,9 @@ export function JobsBoard(_props: JobsBoardProps) {
           workspaces={workspaces.map(w => w.slug)}
           defaultWorkspace={wsFilter !== ALL ? wsFilter : null}
           onCreated={r => { void refreshFlows(); setSelectedFlow(r.flow_id) }}
+          onDetailsSaved={() => { void refreshFlows() }}
+          newOpen={newWorkflowOpen}
+          onNewOpenChange={setNewWorkflowOpen}
           onOpenRunLog={(f, runId) => setExecutions({ type: 'flow', flowId: f.id, title: f.name, ...(runId != null ? { focus: { flowRunId: runId } } : {}) })}
         />
       ) : (<>
@@ -549,10 +587,10 @@ export function JobsBoard(_props: JobsBoardProps) {
       {/* ── Scheduled routines — the global DataTable. ── */}
       <section className="mb-6 space-y-2">
         <h3 className="flex items-center gap-2 text-xs uppercase tracking-eyebrow text-fg-3 font-semibold">
-          <Clock className="h-3.5 w-3.5" /> Scheduled routines
+          <Clock className="h-3.5 w-3.5" /> Scheduled tasks
         </h3>
         <p className="max-w-3xl text-sm leading-snug text-fg-2">
-          Recurring work the app schedules itself. An agent job opens a card for each run; a workflow run is a row in the lanes below, with no card and no session. Click a routine or a run to open its executions: every recorded run and what happened in it.
+          A scheduled task is one instruction that runs by itself on a schedule. A bot task opens a card for each run; a script task runs a command; a task marked Workflow starts a step-by-step workflow. A task can belong to a strategy, the goal card it reports to. Click a task or a run to see every recorded run and what happened in it.
         </p>
         <DataTable
           columns={routineColumns}
@@ -579,8 +617,8 @@ export function JobsBoard(_props: JobsBoardProps) {
           )}
           empty={{
             icon: <Clock className="h-5 w-5" />,
-            title: 'No scheduled routines',
-            description: wsFilter !== ALL ? `Nothing scheduled for ${labelOf(wsFilter)}.` : 'Routines you schedule will appear here.',
+            title: 'No scheduled tasks',
+            description: wsFilter !== ALL ? `Nothing scheduled for ${labelOf(wsFilter)}.` : 'Scheduled tasks you create will appear here.',
           }}
         />
       </section>
@@ -605,12 +643,12 @@ export function JobsBoard(_props: JobsBoardProps) {
             <h3
               className={cn(
                 'flex items-center gap-2 text-xs uppercase tracking-eyebrow font-semibold',
-                lane === 'needs_review' ? 'text-signal-amber' : 'text-fg-3',
+                lane === 'needs_review' ? 'text-warning' : 'text-fg-3',
               )}
             >
               <Icon className={cn('h-3.5 w-3.5', lane === 'running' && 'animate-spin')} strokeWidth={1.75} />
               {meta.label}
-              <span className="font-mono text-fg-3">{rows.length + runRows.length}</span>
+              <span className="text-fg-3">{rows.length + runRows.length}</span>
             </h3>
             {kindFilter !== 'flow' && (rows.length > 0 || runRows.length === 0 || loading) && (
             <DataTable
@@ -693,7 +731,7 @@ export function JobsBoard(_props: JobsBoardProps) {
         <NewStrategyJobModal
           strategies={strategies}
           workspaces={workspaces.map(w => ({ slug: w.slug, name: w.name }))}
-          defaultWorkspace={wsFilter !== ALL ? wsFilter : (workspaces[0]?.slug ?? 'operator')}
+          defaultWorkspace={wsFilter !== ALL ? wsFilter : (workspaces[0]?.slug ?? '')}
           onClose={() => setAuthoring(false)}
           onCreate={createStrategyJob}
         />
@@ -776,11 +814,10 @@ function NewStrategyJobModal({
     <Modal open onClose={onClose} labelledBy="new-strategy-job-title" panelClassName="w-full max-w-lg">
       <div className="p-5">
         <h2 id="new-strategy-job-title" className="flex items-center gap-2 text-lg font-semibold text-fg-0">
-          <Target className="h-4 w-4 text-accent" /> New strategy job
+          <Target className="h-4 w-4 text-accent" /> New scheduled task
         </h2>
         <p className="mt-1 text-xs text-fg-2">
-          A strategy owns a recurring research routine; each run becomes a child of the strategy and its
-          summary feeds back into the strategy&apos;s context.
+          A strategy is a goal card: it does not run by itself. A scheduled task does the recurring work for it (for example weekly research); each run becomes a sub-card of the strategy and its summary feeds back into the strategy&apos;s context.
         </p>
 
         <div className="mt-4 space-y-3">
@@ -788,9 +825,9 @@ function NewStrategyJobModal({
             <label className={labelCls}>Owning strategy</label>
             <Select className="w-full" aria-label="Owning strategy" value={strategyChoice} onChange={v => setStrategyChoice(v)}>
               {strategies.map(s => (
-                <option key={s.id} value={String(s.id)}>{s.title} (#{s.id})</option>
+                <option key={s.id} value={String(s.id)}>{s.title}</option>
               ))}
-              <option value={NEW}>➕ New strategy…</option>
+              <option value={NEW}>New strategy…</option>
             </Select>
           </div>
 
@@ -814,8 +851,8 @@ function NewStrategyJobModal({
               </Select>
             </div>
             <div>
-              <label className={labelCls}>Cadence</label>
-              <Select className="w-full" aria-label="Cadence" value={cadence} onChange={v => setCadence(v as StrategyJobInput['cadence'])}>
+              <label className={labelCls}>Schedule</label>
+              <Select className="w-full" aria-label="Schedule" value={cadence} onChange={v => setCadence(v as StrategyJobInput['cadence'])}>
                 {CADENCES.map(c => <option key={c.value} value={c.value}>{c.label}</option>)}
               </Select>
             </div>
@@ -840,7 +877,7 @@ function NewStrategyJobModal({
             )}
             {cadence !== 'hourly' && (
               <div>
-                <label className={labelCls}>Hour (24h, server time)</label>
+                <label className={labelCls}>Hour (24h, UTC)</label>
                 <Select className="w-full" aria-label="Hour" value={String(hour)} onChange={v => setHour(Number(v))}>
                   {Array.from({ length: 24 }, (_, i) => i).map(h => <option key={h} value={h}>{String(h).padStart(2, '0')}:07</option>)}
                 </Select>
@@ -849,7 +886,7 @@ function NewStrategyJobModal({
           </div>
 
           <div>
-            <label className={labelCls}>Job title</label>
+            <label className={labelCls}>Task name</label>
             <input
               className={fieldCls}
               placeholder="e.g. Weekly competitor research"
@@ -873,13 +910,18 @@ function NewStrategyJobModal({
             Enable on the schedule immediately
           </label>
 
-          {err && <Alert tone="alarm" title="Could not create">{err}</Alert>}
+          {err && (
+            <Alert tone="alarm" title="Could not create">
+              {friendlyError(err).message}
+              <details className="mt-1 text-xs text-fg-3"><summary>Details</summary>{err}</details>
+            </Alert>
+          )}
         </div>
 
         <div className="mt-5 flex items-center justify-end gap-2">
           <Button variant="ghost" size="sm" onClick={onClose} disabled={busy}>Cancel</Button>
           <Button variant="primary" size="sm" onClick={submit} disabled={!valid || busy}>
-            {busy ? 'Creating…' : 'Create strategy job'}
+            {busy ? 'Creating…' : 'Create scheduled task'}
           </Button>
         </div>
       </div>
@@ -895,18 +937,18 @@ function RoutineHealthBadges({ routine: r }: { routine: RoutineSummary }) {
   const tip = [r.last_error, r.last_output_tail?.slice(-300)].filter(Boolean).join('\n')
   return (
     <div className="flex flex-wrap items-center gap-1" title={tip || undefined}>
-      {r.kind === 'script' && <Badge tone="neutral" mono>script</Badge>}
-      {r.kind === 'flow' && <Badge tone="accent" mono>workflow</Badge>}
+      {r.kind === 'script' && <Badge tone="neutral">Script</Badge>}
+      {r.kind === 'flow' && <Badge tone="accent">Workflow</Badge>}
       {r.kind === 'script' && r.last_run_status && (
-        <Badge tone={SCRIPT_STATUS_TONE[r.last_run_status]} mono>
-          {r.last_run_status}
+        <Badge tone={SCRIPT_STATUS_TONE[r.last_run_status]}>
+          {humanize(r.last_run_status, { ok: 'OK' })}
           {r.last_run_status === 'failed' && r.last_exit_code != null ? ` (${r.last_exit_code})` : ''}
         </Badge>
       )}
       {isAutoPaused(r) ? (
-        <Badge tone="alarm">auto-paused</Badge>
+        <Badge tone="alarm">Auto-paused</Badge>
       ) : streak > 0 ? (
-        <Badge tone="amber" mono>
+        <Badge tone="amber">
           {streak}/{r.auto_pause_threshold || '∞'} failed
         </Badge>
       ) : r.kind !== 'script' && r.kind !== 'flow' ? (
@@ -935,9 +977,9 @@ function RunNowButton({
     try {
       const res = await onRunNow(routine.id)
       if (res.ok) toast.success(`Started: ${name}`)
-      else toast.error(`Blocked: ${name}`, res.reason ? { description: res.reason } : undefined)
+      else toast.error(`Blocked: ${name}`, res.reason ? { description: /^[a-z0-9_]+$/.test(res.reason) ? humanize(res.reason) : res.reason } : undefined)
     } catch (e) {
-      toast.error(`Run failed: ${name}`, { description: e instanceof Error ? e.message : undefined })
+      toast.error(`Run failed: ${name}`, { description: friendlyError(e).message })
     } finally {
       setBusy(false)
     }

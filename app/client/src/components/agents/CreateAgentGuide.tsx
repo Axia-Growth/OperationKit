@@ -1,11 +1,12 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useId, useState } from 'react'
+import { ChevronDown } from 'lucide-react'
 import { Link } from 'react-router-dom'
 import { api } from '../../lib/api'
 import { CopyButton, cn } from '../ui'
 import { agentsTabRoute } from '../../lib/routes'
 
 /**
- * "Make a new bot, agent or skill" (obj 900672). Before this, the Agents page
+ * "Make a new bot or skill" (obj 900672; nouns per docs/glossary.md since F7). Before this, the Agents page
  * had no create path at all — only a copy-paste prompt — and three different
  * things were all called "agent". This panel names the three nouns in one line
  * each and gives three ways in, easiest first:
@@ -23,20 +24,19 @@ import { agentsTabRoute } from '../../lib/routes'
 export const DEV_BOT_SLUG = 'operation-kit-dev'
 
 export const CREATE_PROMPTS = {
-  bot: 'Help me create a new bot I can chat with. Ask me what it is for, then write the agent file for me.',
-  agent: 'Help me create a new worker agent that picks up board cards. Ask me what role it plays, then write the file and tell me how to add it.',
+  bot: 'Help me create a new bot I can chat with and assign cards to. Ask me what it is for, then write its file for me and tell me how to add it.',
   skill: 'Help me create a new skill for a task we repeat. Ask me what the task is, then write the SKILL.md and tell me how to add it.',
 } as const
 
 export const SETUP_PROMPT =
-  `Configure a new agent, skill, and (if it needs non-default scoping) an assignment on this platform, for me:\n\n` +
-  `- Agent: who does the work — a named profile with a model, effort level, and default workspace.\n` +
-  `- Skill: how-to instructions an agent follows for a kind of task.\n` +
-  `- Tool: an integration an agent can reach (see Settings → Integrations) — connect it there, then reference ` +
-  `it from the skill/agent.\n` +
-  `- Assignment (only if needed): scopes an agent or skill to one workspace, project, or user instead of ` +
+  `Configure a new bot, skill, and (if it needs non-default scoping) an assignment on this platform, for me:\n\n` +
+  `- Bot: an AI teammate people chat with and assign cards to — a named profile with a model, effort level, and default workspace.\n` +
+  `- Skill: how-to steps a bot follows for a kind of task.\n` +
+  `- Tool: an integration a bot can reach (see Settings → Integrations) — connect it there, then reference ` +
+  `it from the skill or bot.\n` +
+  `- Assignment (only if needed): scopes a bot or skill to one workspace, project, or user instead of ` +
   `applying globally.\n\n` +
-  `Ask me what the agent/skill is for, then use the platform API (docs/api/README.md, GET /api/openapi.json) ` +
+  `Ask me what the bot or skill is for, then use the platform API (docs/api/README.md, GET /api/openapi.json) ` +
   `to set it up rather than describing steps for me to click through.`
 
 export function devBotLink(kind: keyof typeof CREATE_PROMPTS): string {
@@ -44,9 +44,10 @@ export function devBotLink(kind: keyof typeof CREATE_PROMPTS): string {
 }
 
 const NOUNS: Array<{ term: string; text: string }> = [
-  { term: 'Bot', text: 'someone you chat with on the Bots page.' },
-  { term: 'Agent', text: 'a worker that picks up board cards and does the work.' },
-  { term: 'Skill', text: 'how-to steps an agent follows for one recurring task.' },
+  { term: 'Bot', text: 'an AI teammate you chat with and assign cards to.' },
+  { term: 'Skill', text: 'how-to steps a bot follows for one recurring task.' },
+  { term: 'Tool', text: 'a connection to another app or service that a skill lets a bot use.' },
+  { term: 'Outside agent', text: 'a third-party AI program that uses this board through an agent key.' },
 ]
 
 const tile = 'flex flex-col gap-2 rounded-lg border border-line bg-surface-1 p-4'
@@ -55,7 +56,23 @@ const linkBtn = cn(
   'transition-colors duration-fast hover:border-line-strong hover:text-fg-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/50',
 )
 
+/** Remembers a collapsed guide (obj 900807): it sat full-size above every tab on every visit. */
+export const GUIDE_COLLAPSED_KEY = 'ok-agents-create-guide-collapsed'
+
+function readCollapsed(): boolean {
+  try { return localStorage.getItem(GUIDE_COLLAPSED_KEY) === '1' } catch { return false }
+}
+
 export function CreateAgentGuide() {
+  const [collapsed, setCollapsed] = useState(readCollapsed)
+  const bodyId = useId()
+  const toggle = () => {
+    setCollapsed(c => {
+      const next = !c
+      try { if (next) localStorage.setItem(GUIDE_COLLAPSED_KEY, '1'); else localStorage.removeItem(GUIDE_COLLAPSED_KEY) } catch { /* private mode */ }
+      return next
+    })
+  }
   // null = still checking; the Dev bot tile waits rather than flashing the fallback.
   const [hasDevBot, setHasDevBot] = useState<boolean | null>(null)
   // Its name comes from the live bot list, never a literal: an install can
@@ -77,8 +94,22 @@ export function CreateAgentGuide() {
   }, [])
 
   return (
-    <section aria-labelledby="create-agent-guide" className="mb-6 rounded-xl border border-line bg-surface-0 p-4 sm:p-5">
-      <h2 id="create-agent-guide" className="font-display text-lg font-semibold text-fg-0">Make a new bot, agent or skill</h2>
+    <section aria-labelledby="create-agent-guide" className={cn('mb-6 rounded-xl border border-line bg-surface-0', collapsed ? 'px-4 py-2.5 sm:px-5' : 'p-4 sm:p-5')}>
+      <div className="flex items-center justify-between gap-3">
+        <h2 id="create-agent-guide" className="font-display text-lg font-semibold text-fg-0">Make a new bot or skill</h2>
+        <button
+          type="button"
+          onClick={toggle}
+          aria-expanded={!collapsed}
+          aria-controls={bodyId}
+          data-testid="create-guide-toggle"
+          className="inline-flex min-h-[32px] shrink-0 items-center gap-1 rounded-md px-2 text-sm font-medium text-fg-2 transition-colors duration-fast hover:bg-surface-3 hover:text-fg-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/50"
+        >
+          {collapsed ? 'Show' : 'Hide'}
+          <ChevronDown className={cn('h-4 w-4 transition-transform duration-fast', !collapsed && 'rotate-180')} aria-hidden="true" />
+        </button>
+      </div>
+      {!collapsed && <div id={bodyId}>
       <ul className="mt-2 space-y-0.5 text-sm leading-relaxed text-fg-2">
         {NOUNS.map(n => (
           <li key={n.term}><span className="font-medium text-fg-0">{n.term}</span> — {n.text}</li>
@@ -104,7 +135,6 @@ export function CreateAgentGuide() {
               </p>
               <div className="flex flex-wrap gap-2" aria-busy={hasDevBot === null}>
                 <Link to={devBotLink('bot')} className={linkBtn}>Create a bot</Link>
-                <Link to={devBotLink('agent')} className={linkBtn}>Create an agent</Link>
                 <Link to={devBotLink('skill')} className={linkBtn}>Create a skill</Link>
               </div>
             </>
@@ -129,6 +159,7 @@ export function CreateAgentGuide() {
           <CopyButton value={SETUP_PROMPT} label="Copy setup prompt" />
         </div>
       )}
+      </div>}
     </section>
   )
 }

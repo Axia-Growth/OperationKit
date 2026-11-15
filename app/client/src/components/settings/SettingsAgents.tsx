@@ -1,61 +1,49 @@
 /**
- * Body of the Registry tab on the Agents & Skills page (/agents). Despite the
- * file name it is no longer rendered under Settings (obj 900684).
+ * Body of the Agents & skills and Assignments tabs on the Agents & Skills page
+ * (/agents). Despite the file name it is no longer rendered under Settings
+ * (obj 900684). obj 900807 removed its inner Roster / Assignments / Skill Graph
+ * tab group: those are top-level tabs of the page now, so this renders ONE view.
  */
-import { useState } from 'react'
-import { Card, Tabs, CopyButton } from '../ui'
-import type { TabItem } from '../ui'
-import { SkillGraphTab } from '../SkillGraph'
+import { CopyButton } from '../ui'
 import { AgentsSkillsTab } from '../config/AgentsSkillsTab'
 import { AssignmentsTab } from '../config/AssignmentsTab'
 import { SETUP_PROMPT } from '../agents/CreateAgentGuide'
 
-const TABS: TabItem[] = [
-  { key: 'roster', label: 'Roster' },
-  { key: 'assignments', label: 'Assignments' },
-  { key: 'graph', label: 'Skill Graph' },
-]
-
 // The setup prompt now lives with the Agents page's create guide (obj 900672).
 
+export type RegistryView = 'roster' | 'assignments'
+
 /** `showSetupPrompt` is off inside the Agents page, whose create guide already offers it (obj 900672). */
-export function SettingsAgents({ showSetupPrompt = true }: { showSetupPrompt?: boolean } = {}) {
-  const [tab, setTab] = useState('roster')
+export function SettingsAgents({ showSetupPrompt = true, view = 'roster' }: { showSetupPrompt?: boolean; view?: RegistryView } = {}) {
   return (
     <div>
-      <div className="mb-4 space-y-2">
-        <p className="max-w-prose text-sm leading-relaxed text-fg-2">
-          <span className="font-medium text-fg-1">Agents</span> are who does the work.{' '}
-          <span className="font-medium text-fg-1">Skills</span> are how-to instructions an agent follows.{' '}
-          <span className="font-medium text-fg-1">Tools</span> are the integrations and MCP connections an agent
-          can reach — manage those in{' '}
-          <a
-            href="/settings/integrations"
-            className="text-accent-hover underline-offset-2 hover:text-accent hover:underline"
-          >
-            Settings → Integrations
-          </a>
-          . <span className="font-medium text-fg-1">Assignments</span> (below) narrow an agent or skill to one
-          workspace, project, or user instead of it applying everywhere.
-        </p>
-        {showSetupPrompt && (
-          <div className="flex items-start justify-between gap-3 rounded-md border border-line bg-surface-1 p-3">
-            <p className="max-w-prose text-xs leading-relaxed text-fg-3">
-              Prefer to set this up by talking to an assistant instead of clicking through forms? Copy this prompt.
-            </p>
-            <CopyButton value={SETUP_PROMPT} label="Copy setup prompt" />
-          </div>
-        )}
-      </div>
-      <Tabs items={TABS} value={tab} onChange={setTab} label="Agent registry views" panelClassName="mt-4">
-        {tab === 'roster' && <AgentsSkillsTab />}
-        {tab === 'assignments' && <AssignmentsTab />}
-        {tab === 'graph' && (
-          <Card inset className="h-[70vh] overflow-hidden">
-            <SkillGraphTab />
-          </Card>
-        )}
-      </Tabs>
+      {view === 'roster' && (
+        <div className="mb-4 space-y-2">
+          <p className="max-w-prose text-sm leading-relaxed text-fg-2">
+            <span className="font-medium text-fg-1">Bots</span> are who does the work.{' '}
+            <span className="font-medium text-fg-1">Skills</span> are how-to instructions a bot follows.{' '}
+            <span className="font-medium text-fg-1">Tools</span> are the integrations and MCP connections a bot
+            can reach — manage those in{' '}
+            <a
+              href="/settings/integrations"
+              className="text-accent underline-offset-2 hover:text-accent-hover hover:underline"
+            >
+              Settings → Integrations
+            </a>
+            . <span className="font-medium text-fg-1">Assignments</span> (the next tab) narrow a bot or skill to one
+            workspace, project, or user instead of it applying everywhere.
+          </p>
+          {showSetupPrompt && (
+            <div className="flex items-start justify-between gap-3 rounded-md border border-line bg-surface-1 p-3">
+              <p className="max-w-prose text-xs leading-relaxed text-fg-3">
+                Prefer to set this up by talking to an assistant instead of clicking through forms? Copy this prompt.
+              </p>
+              <CopyButton value={SETUP_PROMPT} label="Copy setup prompt" />
+            </div>
+          )}
+        </div>
+      )}
+      {view === 'roster' ? <AgentsSkillsTab /> : <AssignmentsTab />}
     </div>
   )
 }

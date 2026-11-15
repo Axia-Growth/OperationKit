@@ -97,6 +97,22 @@ parse_common_args() {
   fi
 }
 
+# refuse_on_operationkit_install — called by install-backup-timer.sh. cc-backup.sh and its timer back up the OLD
+# Command Center layout (/home/operator/data/command-center, a LiteLLM Postgres, the
+# vault in operator's home). A server running an Operation Kit install (install.sh)
+# is backed up by install/backup.sh instead; a second, wrong-layout nightly job
+# there would back up the wrong paths and fight the real one for the restic lock.
+# Only the INSTALLER refuses: an already-scheduled cc-backup.sh is left exactly as
+# it is, so code updates never change a running backup behind the operator's back.
+# OK_INSTALL_MARKERS: space-separated paths, a test hook.
+refuse_on_operationkit_install() {
+  local m
+  for m in ${OK_INSTALL_MARKERS:-/etc/cron.d/operationkit-backup /opt/operationkit/state}; do
+    [ -e "$m" ] || continue
+    die "this server runs an Operation Kit install ($m exists): it is backed up by install/backup.sh, not cc-backup.sh. See INSTALL.md, 'Switching from a hand-made backup'."
+  done
+}
+
 require_src() {
   [ -n "$SRC_HOST" ] || die "source host required: --src operator@<do-droplet-ip> (or SRC_HOST=...)"
 }

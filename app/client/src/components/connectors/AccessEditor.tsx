@@ -4,7 +4,7 @@
  */
 import { useEffect, useState } from 'react'
 import type { ConnectorAccess } from '@operationkit/shared'
-import { Button, cn } from '../ui'
+import { Button, Checkbox, cn } from '../ui'
 
 interface Option {
   value: string
@@ -71,7 +71,7 @@ function ListPicker({
         })}
       </div>
       {value !== null && value.length === 0 && (
-        <p className="mt-2 text-xs text-signal-amber">None selected — no session will get this connection.</p>
+        <p className="mt-2 text-xs text-warning">None selected — no session will get this connection.</p>
       )}
     </fieldset>
   )
@@ -130,24 +130,17 @@ export function AccessEditor({
           outside accounts unless you say so. Off by default. */}
       <fieldset>
         <legend className="text-sm font-medium text-fg-1">Work assigned by others</legend>
-        <label className="mt-1.5 flex cursor-pointer items-start gap-2.5 text-sm text-fg-1">
-          <input
-            type="checkbox"
-            checked={!!draft.allow_delegated}
-            disabled={saving}
-            onChange={e => {
-              const on = e.target.checked
-              setDraft(d => ({ ...d, allow_delegated: on }))
-            }}
-            className="mt-0.5 h-4 w-4 shrink-0 accent-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/50"
-          />
-          <span>
-            Let cards someone else assigned to me use this connection.
-            <span className="block text-xs text-fg-3">
-              Off means those cards still run as me, but with this connection marked absent.
-            </span>
-          </span>
-        </label>
+        <Checkbox
+          className="mt-1.5"
+          checked={!!draft.allow_delegated}
+          disabled={saving}
+          onChange={e => {
+            const on = e.target.checked
+            setDraft(d => ({ ...d, allow_delegated: on }))
+          }}
+          label="Let cards someone else assigned to me use this connection."
+          description="Off means those cards still run as me, but with this connection marked absent."
+        />
       </fieldset>
       {dirty && (
         <div className="flex flex-wrap gap-2">

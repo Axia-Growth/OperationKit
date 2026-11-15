@@ -348,6 +348,8 @@ export interface WorkspaceGraphResponse {
   /** unresolved: links written on a page that match no page (obj 900815; listed by GET /api/kb-wiki/graph/unresolved). */
   counts: { pages: number; links: number; isolated: number; unresolved?: number; by_kind: Record<string, number> }
   truncated: boolean
+  /** obj 900867: the server's layout of the default view (every page and link): [x0, y0, x1, y1, …] in `nodes` order. Absent when it was not ready in time. */
+  layout?: { sig: string; pos: number[] }
 }
 
 /** The part of the graph to draw: pages of a hidden kind (and, optionally, unconnected pages) left out. */

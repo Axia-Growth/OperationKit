@@ -23,9 +23,13 @@
 import { spawn } from 'child_process'
 import fs from 'fs'
 import type { Database } from 'better-sqlite3'
+import { resolveHarnessRepo } from '../lib/install-defaults.js'
 
-/** The only repo we can self-deploy (the command-center itself). Env-overridable. */
-export const SELF_REPO = process.env.HARNESS_REPO || 'your-org/operationkit'
+/** The only repo we can self-deploy (this install's own source): HARNESS_REPO env →
+ * settings → '' (obj 900803 — unset means no merge event ever self-deploys). */
+export function selfRepo(): string {
+  return resolveHarnessRepo()
+}
 const REPO_DIR = process.env.CC_REPO_DIR || '/home/operator/projects/operationkit'
 const SELF_DEPLOY_SH = `${REPO_DIR}/scripts/self-deploy.sh`
 const LOCK = '/tmp/cc-auto-deploy.lock'
@@ -48,7 +52,8 @@ export function isAutoDeployEnabled(db: Database, env: NodeJS.ProcessEnv = proce
 
 /** Pure predicate: does this merged-PR event target the self-deploy path? */
 export function shouldAutoDeploy(input: { repo?: string | null; baseRef?: string | null }): boolean {
-  return input.repo === SELF_REPO && input.baseRef === 'main'
+  const self = selfRepo()
+  return !!self && input.repo === self && input.baseRef === 'main'
 }
 
 /** Fire a detached, health-gated self-deploy. Debounced (skips if a deploy ran within

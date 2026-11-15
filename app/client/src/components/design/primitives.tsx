@@ -1,3 +1,4 @@
+import { Check, KeyRound } from 'lucide-react'
 import { DELEGATION_ACTION_LABELS, type ObjectiveStatus, type AgentRow, type MessageSender } from '@operationkit/shared'
 
 /* ─────────────────────────────────────────────────────────
@@ -85,7 +86,7 @@ export function AgentMonogram({ agent, size = 'sm' }: { agent: string | null | u
   const cls = size === 'md' ? 'h-6 w-6 text-xs' : 'h-5 w-5 text-xs'
   return (
     <span
-      className={`${cls} inline-flex shrink-0 items-center justify-center rounded-sm font-mono font-semibold tracking-tight text-surface-0`}
+      className={`${cls} inline-flex shrink-0 items-center justify-center rounded-sm font-sans font-medium tracking-tight text-surface-0`}
       style={{ background: meta.hex }}
       aria-label={`agent ${agent || 'general'}`}
     >
@@ -201,7 +202,7 @@ export function NeedsSecretFlag({ names }: { names: string[] }) {
       className="inline-flex max-w-full items-center gap-1 rounded-sm border border-status-human/40 bg-status-human/10 px-1.5 py-0.5 font-mono text-xs font-medium text-status-human"
       title={`Needs a secret from the owner: ${names.join(', ')}`}
     >
-      <span aria-hidden="true">⚿</span>
+      <KeyRound aria-hidden="true" className="h-3 w-3 shrink-0" />
       <span className="sr-only">Needs secret: </span>
       <span className="truncate">{label}</span>
     </span>
@@ -228,11 +229,11 @@ export function SenderTag({ sender }: { sender: MessageSender }) {
     <span
       className={
         verifiedOwner
-          ? 'inline-flex items-center gap-1 font-mono text-xs text-signal-verify'
+          ? 'inline-flex items-center gap-1 font-mono text-xs text-success'
           : 'inline-flex items-center gap-1 font-mono text-xs text-fg-2'
       }
     >
-      {verifiedOwner && <span aria-hidden="true">✓</span>}
+      {verifiedOwner && <Check aria-hidden="true" className="h-3 w-3 shrink-0" />}
       {text}
     </span>
   )

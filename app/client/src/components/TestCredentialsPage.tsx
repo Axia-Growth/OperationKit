@@ -15,13 +15,15 @@ import { useEffect, useMemo, useState, type FormEvent } from 'react'
 import { useAuth } from '../context/AuthContext'
 import { useWorkspaces } from '../hooks/useWorkspaces'
 import { api, ApiError } from '../lib/api'
-import { Modal, Skeleton, useConfirm } from './ui'
+import { Eye, EyeOff, KeyRound, Plus, X } from 'lucide-react'
+import { Alert, Button, DataTable, Field, IconButton, Input, Modal, RowActions, Textarea, useConfirm, type Column } from './ui'
 import type {
   CreateTestCredentialRequest,
   TestCredential,
   UpdateTestCredentialRequest,
 } from '@operationkit/shared'
 import { Select } from './ui/Select'
+import { formatDateTime } from '../lib/format'
 
 type FieldRow = { key: string; value: string; revealed: boolean }
 
@@ -102,6 +104,24 @@ export function TestCredentialsPage({ embedded = false }: { embedded?: boolean }
     }
   }
 
+  const columns: Column<TestCredential>[] = [
+    { key: 'slug', header: 'Slug', mono: true, cell: c => <span className="text-fg-1">{c.slug}</span> },
+    { key: 'label', header: 'Label', cell: c => c.label },
+    { key: 'workspace', header: 'Workspace', cell: c => <span className="text-fg-2">{c.workspace}</span> },
+    { key: 'project', header: 'Project', cell: c => <span className="text-fg-2">{c.project || '—'}</span> },
+    {
+      key: 'login',
+      header: 'Login URL',
+      className: 'max-w-[260px] truncate',
+      cell: c => (
+        <a href={c.login_url} target="_blank" rel="noopener noreferrer" className="truncate text-status-working/80 hover:text-status-working">
+          {c.login_url}
+        </a>
+      ),
+    },
+    { key: 'updated', header: 'Updated', className: 'whitespace-nowrap', cell: c => <span title={formatDateTime(c.updated_at).title}>{formatDateTime(c.updated_at).label}</span> },
+  ]
+
   if (adminWorkspaces.length === 0) {
     return (
       <div className="flex h-full items-center justify-center text-fg-3 text-base">
@@ -113,95 +133,49 @@ export function TestCredentialsPage({ embedded = false }: { embedded?: boolean }
   return (
     <div className={embedded ? '' : 'h-full overflow-y-auto p-6'}>
       <div className={embedded ? '' : 'max-w-5xl mx-auto'}>
-        <div className={embedded ? 'mb-4 flex items-center justify-between' : 'mb-5 flex items-center justify-between'}>
+        <div className={embedded ? 'mb-4 flex items-center justify-between gap-4' : 'mb-5 flex items-center justify-between gap-4'}>
           <div>
-            {!embedded && <h1 className="text-xl font-semibold text-fg-0">Test Credentials</h1>}
+            {!embedded && <h1 className="text-xl font-semibold text-fg-0">Test credentials</h1>}
             <p className={embedded ? 'text-xs text-fg-3' : 'mt-1 text-xs text-fg-3'}>
               Encrypted at rest. Used by the AI Reviewer to log into deliverables during automated QA.
             </p>
           </div>
-          <button
+          <Button
+            variant="primary"
             onClick={openCreate}
-            className="rounded-md bg-accent px-3 py-1.5 text-base font-medium text-accent-fg transition-colors duration-fast ease-out hover:bg-accent-hover"
+            leftIcon={<Plus className="h-4 w-4" aria-hidden />}
+            className="shrink-0"
           >
-            + New
-          </button>
+            New test credential
+          </Button>
         </div>
 
-        {error && (
-          <div className="mb-4 rounded bg-signal-alarm/10 px-3 py-2 text-base text-signal-alarm">{error}</div>
-        )}
+        {error && <Alert tone="alarm" title={error} className="mb-4" />}
 
-        {loading ? (
-          <div className="overflow-x-auto rounded-lg border border-border bg-surface-raised">
-            <table className="w-full text-base">
-              <thead className="bg-surface border-b border-border">
-                <tr className="text-left text-xs text-fg-2">
-                  <th className="px-3 py-2 font-medium">Slug</th>
-                  <th className="px-3 py-2 font-medium">Label</th>
-                  <th className="px-3 py-2 font-medium">Workspace</th>
-                  <th className="px-3 py-2 font-medium">Project</th>
-                  <th className="px-3 py-2 font-medium">Login URL</th>
-                  <th className="px-3 py-2 font-medium">Updated</th>
-                  <th className="px-3 py-2 font-medium text-right">Actions</th>
-                </tr>
-              </thead>
-              <tbody>
-                {Array.from({ length: 4 }).map((_, i) => (
-                  <tr key={i} className="border-b border-border last:border-b-0">
-                    <td className="px-3 py-2"><Skeleton className="h-4 w-28" /></td>
-                    <td className="px-3 py-2"><Skeleton className="h-4 w-24" /></td>
-                    <td className="px-3 py-2"><Skeleton className="h-4 w-20" /></td>
-                    <td className="px-3 py-2"><Skeleton className="h-4 w-16" /></td>
-                    <td className="px-3 py-2"><Skeleton className="h-4 w-40" /></td>
-                    <td className="px-3 py-2"><Skeleton className="h-4 w-24" /></td>
-                    <td className="px-3 py-2"><div className="flex justify-end gap-2"><Skeleton className="h-4 w-8" /><Skeleton className="h-4 w-10" /></div></td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        ) : creds.length === 0 ? (
-          <div className="rounded-lg border border-dashed border-border p-8 text-center text-base text-fg-3">
-            No test credentials yet. Click "New" to add one.
-          </div>
-        ) : (
-          <div className="overflow-x-auto rounded-lg border border-border bg-surface-raised">
-            <table className="w-full text-base">
-              <thead className="bg-surface border-b border-border">
-                <tr className="text-left text-xs text-fg-2">
-                  <th className="px-3 py-2 font-medium">Slug</th>
-                  <th className="px-3 py-2 font-medium">Label</th>
-                  <th className="px-3 py-2 font-medium">Workspace</th>
-                  <th className="px-3 py-2 font-medium">Project</th>
-                  <th className="px-3 py-2 font-medium">Login URL</th>
-                  <th className="px-3 py-2 font-medium">Updated</th>
-                  <th className="px-3 py-2 font-medium text-right">Actions</th>
-                </tr>
-              </thead>
-              <tbody>
-                {creds.map(c => (
-                  <tr key={c.slug} className="border-b border-border last:border-b-0 hover:bg-surface-overlay/40">
-                    <td className="px-3 py-2 font-mono text-xs text-fg-1">{c.slug}</td>
-                    <td className="px-3 py-2 text-fg-1">{c.label}</td>
-                    <td className="px-3 py-2 text-fg-2">{c.workspace}</td>
-                    <td className="px-3 py-2 text-fg-2">{c.project || '—'}</td>
-                    <td className="px-3 py-2 text-fg-2 truncate max-w-[260px]">
-                      <a href={c.login_url} target="_blank" rel="noopener noreferrer" className="text-status-working/80 hover:text-status-working truncate">
-                        {c.login_url}
-                      </a>
-                    </td>
-                    <td className="px-3 py-2 text-fg-3 text-xs">{c.updated_at?.slice(0, 16).replace('T', ' ')}</td>
-                    <td className="px-3 py-2 text-right space-x-2">
-                      <button onClick={() => openEdit(c.slug)} className="text-xs text-accent hover:underline">Edit</button>
-                      <button onClick={() => handleDelete(c.slug)} className="text-xs text-signal-alarm hover:underline">Delete</button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
+        <DataTable
+          aria-label="Test credentials"
+          columns={columns}
+          rows={creds}
+          rowKey={c => c.slug}
+          loading={loading}
+          loadingRows={4}
+          rowActionsAlways
+          rowActions={c => (
+            <RowActions
+              label={`Actions for ${c.slug}`}
+              actions={[
+                { label: 'Edit', onSelect: () => void openEdit(c.slug) },
+                { label: 'Delete', onSelect: () => void handleDelete(c.slug), danger: true },
+              ]}
+            />
+          )}
+          empty={{
+            icon: <KeyRound className="h-5 w-5" aria-hidden="true" />,
+            title: 'No test credentials yet',
+            description: 'Add a non-production login so the AI Reviewer can sign in to a deliverable and check it.',
+            action: <Button variant="secondary" onClick={openCreate}>Add test credential</Button>,
+          }}
+        />
       </div>
 
       {modalOpen && (
@@ -300,163 +274,138 @@ function TestCredentialModal({ existing, adminWorkspaces, onClose, onSaved }: Mo
   }
 
   return (
-    <Modal open onClose={onClose} variant="center" labelledBy="test-cred-title" panelClassName="max-w-xl bg-surface-raised">
+    <Modal open onClose={onClose} variant="center" labelledBy="test-cred-title" panelClassName="max-w-xl bg-surface-1">
       <div className="p-6">
         <div className="mb-4 flex items-center justify-between">
           <h2 id="test-cred-title" className="text-lg font-semibold text-fg-0">
-            {isEdit ? 'Edit Test Credential' : 'New Test Credential'}
+            {isEdit ? 'Edit test credential' : 'New test credential'}
           </h2>
-          <button onClick={onClose} className="text-fg-3 hover:text-fg-1" type="button">
-            <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
-            </svg>
-          </button>
+          <IconButton label="Close" onClick={onClose} className="-mr-2 text-fg-3">
+            <X className="h-5 w-5" aria-hidden />
+          </IconButton>
         </div>
 
-        {error && (
-          <div className="mb-3 rounded bg-signal-alarm/10 px-3 py-2 text-base text-signal-alarm">{error}</div>
-        )}
+        {error && <Alert tone="alarm" title={error} className="mb-3" />}
 
-        <form onSubmit={handleSubmit} className="space-y-3">
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="mb-1 block text-xs text-fg-2">Slug {isEdit && <span className="text-fg-3">(locked)</span>}</label>
-              <input
-                type="text"
+        <form onSubmit={handleSubmit} className="space-y-4">
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+            <Field
+              id="test-cred-slug"
+              required
+              label={<>Slug{isEdit && <span className="ml-1.5 font-normal text-fg-3">(locked)</span>}</>}
+            >
+              <Input
                 value={slug}
                 onChange={e => setSlug(e.target.value)}
                 disabled={isEdit}
                 placeholder="e.g. staging-admin"
-                className="w-full rounded border border-border bg-surface px-2 py-1.5 text-base text-fg-0 outline-none focus:border-accent disabled:opacity-50"
-                required
+                className="font-mono"
               />
-            </div>
-            <div>
-              <label className="mb-1 block text-xs text-fg-2">Workspace</label>
+            </Field>
+            <Field id="test-cred-workspace" label="Workspace" required>
               <Select
                 className="w-full"
-                aria-label="Workspace"
                 value={workspace}
                 onChange={v => setWorkspace(v)}
-                required
               >
                 {adminWorkspaces.map(ws => (
                   <option key={ws} value={ws}>{ws}</option>
                 ))}
               </Select>
-            </div>
+            </Field>
           </div>
 
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="mb-1 block text-xs text-fg-2">Label</label>
-              <input
-                type="text"
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+            <Field id="test-cred-label" label="Label" hint="Human-readable name" required>
+              <Input
                 value={label}
                 onChange={e => setLabel(e.target.value)}
-                placeholder="Human-readable name"
-                className="w-full rounded border border-border bg-surface px-2 py-1.5 text-base text-fg-0 outline-none focus:border-accent"
-                required
               />
-            </div>
-            <div>
-              <label className="mb-1 block text-xs text-fg-2">Project (optional)</label>
-              <input
-                type="text"
+            </Field>
+            <Field id="test-cred-project" label="Project" optional hint="Project slug, or blank">
+              <Input
                 value={project}
                 onChange={e => setProject(e.target.value)}
-                placeholder="project slug or blank"
-                className="w-full rounded border border-border bg-surface px-2 py-1.5 text-base text-fg-0 outline-none focus:border-accent"
               />
-            </div>
+            </Field>
           </div>
 
-          <div>
-            <label className="mb-1 block text-xs text-fg-2">Login URL</label>
-            <input
+          <Field id="test-cred-login-url" label="Login URL" required>
+            <Input
               type="url"
               value={loginUrl}
               onChange={e => setLoginUrl(e.target.value)}
               placeholder="https://staging.example.com/login"
-              className="w-full rounded border border-border bg-surface px-2 py-1.5 text-base text-fg-0 outline-none focus:border-accent"
-              required
             />
-          </div>
+          </Field>
 
-          <div>
-            <div className="mb-1 flex items-center justify-between">
-              <label className="text-xs text-fg-2">Fields</label>
-              <button
+          <div role="group" aria-labelledby="test-cred-fields-label">
+            <div className="mb-1.5 flex items-center justify-between">
+              <p id="test-cred-fields-label" className="text-sm font-medium text-fg-1">Fields</p>
+              <Button
                 type="button"
+                variant="ghost"
+                size="xs"
                 onClick={addField}
-                className="text-xs text-accent hover:underline"
+                leftIcon={<Plus className="h-3.5 w-3.5" aria-hidden />}
               >
-                + Add field
-              </button>
+                Add field
+              </Button>
             </div>
             <div className="space-y-1.5">
               {fieldRows.map((row, i) => (
                 <div key={i} className="flex items-center gap-1.5">
-                  <input
-                    type="text"
+                  <Input
                     value={row.key}
                     onChange={e => updateField(i, { key: e.target.value })}
-                    placeholder="name (e.g. username)"
-                    className="flex-1 rounded border border-border bg-surface px-2 py-1 text-xs text-fg-0 outline-none focus:border-accent"
+                    aria-label={`Field ${i + 1} name`}
+                    placeholder="e.g. username"
+                    className="flex-1"
                   />
-                  <input
+                  <Input
                     type={row.revealed ? 'text' : 'password'}
                     value={row.value}
                     onChange={e => updateField(i, { value: e.target.value })}
-                    placeholder="value"
-                    className="flex-[2] rounded border border-border bg-surface px-2 py-1 text-xs text-fg-0 outline-none focus:border-accent"
+                    aria-label={`Field ${i + 1} value`}
+                    className="flex-[2] font-mono"
                   />
-                  <button
-                    type="button"
+                  <IconButton
+                    size="sm"
+                    label={row.revealed ? 'Hide value' : 'Reveal value'}
                     onClick={() => updateField(i, { revealed: !row.revealed })}
-                    className="text-xs text-fg-3 hover:text-fg-1 px-1"
-                    title={row.revealed ? 'Hide' : 'Reveal'}
+                    className="text-fg-3"
                   >
-                    {row.revealed ? '⯇' : '⯈'}
-                  </button>
-                  <button
-                    type="button"
+                    {row.revealed ? <EyeOff className="h-4 w-4" aria-hidden /> : <Eye className="h-4 w-4" aria-hidden />}
+                  </IconButton>
+                  <IconButton
+                    size="sm"
+                    label={`Remove field ${i + 1}`}
                     onClick={() => removeField(i)}
-                    className="text-xs text-signal-alarm hover:text-signal-alarm px-1"
+                    className="text-fg-3 hover:text-danger"
                   >
-                    &times;
-                  </button>
+                    <X className="h-4 w-4" aria-hidden />
+                  </IconButton>
                 </div>
               ))}
             </div>
           </div>
 
-          <div>
-            <label className="mb-1 block text-xs text-fg-2">Notes</label>
-            <textarea
+          <Field id="test-cred-notes" label="Notes" optional hint="Context for future operators">
+            <Textarea
               value={notes}
               onChange={e => setNotes(e.target.value)}
               rows={2}
-              placeholder="optional context for future operators"
-              className="w-full resize-none rounded border border-border bg-surface px-2 py-1.5 text-base text-fg-0 outline-none focus:border-accent"
+              className="resize-none"
             />
-          </div>
+          </Field>
 
           <div className="flex justify-end gap-2 pt-2">
-            <button
-              type="button"
-              onClick={onClose}
-              className="rounded px-3 py-1.5 text-base text-fg-2 hover:bg-surface-overlay"
-            >
+            <Button type="button" variant="ghost" onClick={onClose}>
               Cancel
-            </button>
-            <button
-              type="submit"
-              disabled={saving}
-              className="rounded bg-accent px-3 py-1.5 text-base font-medium text-accent-fg hover:bg-accent-hover disabled:opacity-50"
-            >
+            </Button>
+            <Button type="submit" variant="primary" disabled={saving}>
               {saving ? 'Saving...' : isEdit ? 'Update' : 'Create'}
-            </button>
+            </Button>
           </div>
         </form>
       </div>

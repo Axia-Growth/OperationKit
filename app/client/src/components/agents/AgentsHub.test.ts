@@ -12,6 +12,10 @@ describe('one Agents page — tab resolution (obj 900495)', () => {
   it('old /agents?project=… links keep landing on the board-layer view', () => {
     expect(resolveAgentsTab(new URLSearchParams('project=12'))).toBe('board')
   })
+  it('the old inner registry tabs are top-level tabs now (obj 900807)', () => {
+    expect(resolveAgentsTab(new URLSearchParams('tab=assignments'))).toBe('assignments')
+    expect(resolveAgentsTab(new URLSearchParams('tab=graph'))).toBe('graph')
+  })
   it('ignores an unknown tab', () => {
     expect(resolveAgentsTab(new URLSearchParams('tab=nope'))).toBe('registry')
   })

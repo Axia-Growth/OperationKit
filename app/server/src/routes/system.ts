@@ -10,6 +10,7 @@ import { requireAuth } from '../middleware/auth.js'
 import { readDiskStateNow, type DiskWatchdogState } from '../services/disk-watchdog.js'
 import { freePct, type DiskAction } from '../lib/host-disk.js'
 import { getPreviewHealthState, type PreviewHealthState } from '../services/preview-health-watchdog.js'
+import { previewHostFor } from '../lib/preview-health.js'
 
 export interface SystemDiskResponse {
   usedPct: number | null
@@ -48,7 +49,7 @@ export function toSystemPreviewHealthResponse(state: PreviewHealthState | null):
   return {
     status: state.status,
     prNumber: state.canary?.prNumber ?? null,
-    previewUrl: state.canary ? `https://pr-${state.canary.prNumber}.cc.example.com` : null,
+    previewUrl: state.canary && previewHostFor(state.canary.prNumber) ? `https://${previewHostFor(state.canary.prNumber)}` : null,
     httpCode: state.probe?.httpCode ?? null,
     error: state.probe?.error ?? null,
     checkedAt: state.checkedAt,
