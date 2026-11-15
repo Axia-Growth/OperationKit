@@ -20,16 +20,19 @@ import crypto from 'crypto'
 import fs from 'fs'
 import path from 'path'
 import { getDb } from '../../db/index.js'
+import { getDefaultModelId } from '../model-registry.js'
+import { agentExists } from '../agent-registry.js'
+import { cardModelForBot } from './bot-card-model.js'
 import { depthForParent } from '../../lib/objective-depth.js'
-import { defaultAgentForWorkspace } from '../../routes/objectives-helpers.js'
+import { checkAgentInWorkspacePool, defaultAgentForWorkspace } from '../../routes/objectives-helpers.js'
 import { broadcast } from '../../ws/index.js'
-import { getInitialStatus, type Objective } from '@operationkit/shared'
+import { getInitialStatus, validateOwnerBot, type Objective } from '@operationkit/shared'
 import type { ChatAgent } from './agent-defs.js'
 import { createDraft, type Connectors, type EmailDraft, type EventDraft } from './connectors.js'
 import { workspaceKbRoot } from '../doc-ingest/kb-paths.js'
 import { ingestEnabled } from '../doc-ingest/service.js'
 import { fileAnswer } from '../kb-wiki/answers.js'
-import { botForAgentSlug } from '../bots/bot-registry.js'
+import { botForAgentSlug, resolveBot } from '../bots/bot-registry.js'
 import { createBotJob } from '../bots/bot-jobs.js'
 import { buildAttention, oneLine, visibilityClause, type ControlUser } from '../../lib/agent-control.js'
 import { ALL_TOOLS_GRANT, EXPLICIT_ONLY_TOOLS, KNOWN_TOOL_NAMES, listsAllTools } from './tool-names.js'
@@ -37,7 +40,8 @@ import { callerForChat, executeHttp, listForCaller, recordBrokerUse } from '../s
 import { rateLimit } from '../file-access.js'
 import { userHasWorkspace } from '../../middleware/workspace.js'
 import { webFetch, webSearch, WebToolError, MAX_SEARCH_RESULTS, DEFAULT_SEARCH_RESULTS, type WebToolDeps } from './web-tools.js'
-import { botWorkspaceAllowlist } from './bot-workspaces.js'
+import { botMayUseWorkspace, botWorkspaceAllowlist } from './bot-workspaces.js'
+import { withResolvedKnowledgeFolders } from './knowledge-folders.js'
 import { containedIn, realpathOrNull, workspaceScopeRoots } from '../../lib/kb-workspace-scope.js'
 import { searchKnowledgeBase } from '../kb-semantic/search.js'
 import { noteKbWrite } from '../kb-semantic/service.js'
@@ -268,13 +272,23 @@ function inside(child: string, parent: string): boolean {
 }
 
 /** Resolve a model-supplied path; throws unless it is inside an allowed folder. */
-export function resolveKnowledgePath(ctx: Pick<ToolContext, 'kbRoot' | 'agent'> & { userId?: number }, raw: string): { abs: string; rel: string } {
+export function resolveKnowledgePath(ctx: Pick<ToolContext, 'kbRoot' | 'agent'> & { userId?: number; workspace?: string }, raw: string): { abs: string; rel: string } {
   if (ctx.agent.knowledge_folders.length === 0) throw new ToolUseError('This agent has no knowledge folders.')
   const cleaned = String(raw ?? '').trim().replace(/\\/g, '/').replace(/^\/+/, '')
   if (!cleaned) throw new ToolUseError('A path is required.')
   const root = realOrParent(path.resolve(ctx.kbRoot))
-  const abs = realOrParent(path.resolve(root, cleaned))
-  const allowed = ctx.agent.knowledge_folders.some(f => inside(abs, realOrParent(path.resolve(root, f))))
+  const allowedAt = (p: string) => ctx.agent.knowledge_folders.some(f => inside(p, realOrParent(path.resolve(root, f))))
+  let abs = realOrParent(path.resolve(root, cleaned))
+  // obj 900948: on a workspaces/<ws>/ knowledge base a bot's folders resolve to
+  // `workspaces/<ws>/business` etc. (knowledge-folders.ts), while its own
+  // instructions still say `business/profile.md`. A short path that is not
+  // itself allowed is read as the same path inside THIS chat's workspace folder.
+  // Still subject to the folder check below and the workspace wall.
+  if (!allowedAt(abs) && ctx.workspace && !cleaned.startsWith('workspaces/')) {
+    const aliased = realOrParent(path.resolve(root, 'workspaces', ctx.workspace, cleaned))
+    if (inside(aliased, root) && allowedAt(aliased)) abs = aliased
+  }
+  const allowed = allowedAt(abs)
   if (!inside(abs, root) || !allowed) {
     throw new ToolUseError(`"${cleaned}" is outside this agent's knowledge folders (${ctx.agent.knowledge_folders.join(', ')}).`)
   }
@@ -291,17 +305,21 @@ export function resolveKnowledgePath(ctx: Pick<ToolContext, 'kbRoot' | 'agent'> 
  * the same roots lib/kb-workspace-scope.ts uses). A path inside a workspace the
  * bot is not granted is refused, whatever its knowledge_folders say. A path in
  * no workspace (shared notes) is governed by knowledge_folders alone, as
- * before. An unrestricted bot (predates access lists) is not walled.
+ * before.
  *
- * Given the person (`userId`), a granted workspace counts only if the person
- * may reach it too — the same person ∩ bot rule as the board. Admins reach
- * every workspace.
+ * Given the person (`userId`), a workspace counts only if the person may reach
+ * it too — the same person ∩ bot rule as the board. Admins reach every
+ * workspace. That holds for an UNRESTRICTED bot as well (review of PR 797): its
+ * own list is "every workspace", so the wall is the person's memberships — a
+ * member of workspace A never reads or writes workspace B's notes through a
+ * bot nobody has restricted yet. Only with no person at all (a caller that
+ * passes no userId) is an unrestricted bot left unwalled, as before.
  */
 export function kbWorkspaceGuard(ctx: Pick<ToolContext, 'kbRoot' | 'agent'> & { userId?: number }): { deniedWorkspace: (abs: string) => string | null } {
   const botAllow = botWorkspaceAllowlist(ctx.agent.slug)
-  if (botAllow === null) return { deniedWorkspace: () => null }
+  if (botAllow === null && ctx.userId === undefined) return { deniedWorkspace: () => null }
   const db = getDb()
-  let allow = botAllow
+  let allow = botAllow ?? []
   if (ctx.userId !== undefined) {
     const user = boardUser({ userId: ctx.userId, agent: ctx.agent })
     allow = user ? visibleWorkspaces(user) : []
@@ -509,9 +527,66 @@ function cardWorkspace(ctx: ToolContext, raw: unknown): string {
   return wanted
 }
 
+/**
+ * Who works a chat-filed card (obj 900948). The filing bot itself — agent_context
+ * = its slug — when it may work in that workspace (it is allowed there AND its
+ * slug passes the same workspace agent-pool gate card create/update apply, which
+ * a granted bot does). Otherwise the workspace's default agent, as before, so a
+ * card is never filed with an agent the board would refuse on its next edit.
+ *
+ * A bot whose slug is ALSO a worker persona (a chat bot called `cfo`) never
+ * owns a card this way: agent_context = 'cfo' means the persona, so the card
+ * would silently become the persona's. It gets the workspace default, as before.
+ */
+export function chatCardAgent(agent: Pick<ChatAgent, 'slug'>, workspace: string): { agentContext: string; ownedByBot: boolean } {
+  if (!isWorkerPersona(agent.slug) && botMayUseWorkspace(agent.slug, workspace) && checkAgentInWorkspacePool(workspace, agent.slug) === null) {
+    return { agentContext: agent.slug, ownedByBot: true }
+  }
+  return { agentContext: defaultAgentForWorkspace(workspace), ownedByBot: false }
+}
+
+/**
+ * The model a chat-filed card runs on (obj 900948): the filing bot's own model
+ * when it is an enabled board model (cardModelForBot, the same rule High Agency
+ * wakes use), else the registry default. Never left to the objectives.model
+ * column default, which is a stale literal on old installs.
+ */
+export function chatCardModel(agent: Pick<ChatAgent, 'model'>): string {
+  return cardModelForBot(agent) ?? getDefaultModelId()
+}
+
+/** Fail-safe: an unreadable registry counts as "is a persona" (no bot exception). */
+function isWorkerPersona(slug: string): boolean {
+  try {
+    return agentExists(slug)
+  } catch {
+    return true
+  }
+}
+
+/**
+ * The owner_bot a chat bot OUTSIDE the bot registry puts on its card: its name,
+ * else its slug — but never a value the bot registry resolves to a registered
+ * bot. owner_bot is matched against the registry by id, name and alias when a
+ * bot asks to close a reviewed card, so a registered bot that merely shares
+ * this chat bot's display name would otherwise own (and could close) its cards
+ * (review of PR 797). With both taken the card is filed unowned; the slug in
+ * agent_context still says who works it.
+ */
+export function chatOwnerBotName(agent: Pick<ChatAgent, 'slug' | 'name'>, db: ReturnType<typeof getDb> = getDb()): string | null {
+  for (const candidate of [agent.name, agent.slug]) {
+    const v = validateOwnerBot(candidate)
+    if (!v.ok || typeof v.value !== 'string') continue
+    if (resolveBot(v.value, db).ok) continue
+    return v.value
+  }
+  return null
+}
+
 function createCard(ctx: ToolContext, title: string, description: string, workspaceRaw?: unknown): { id: number; status: string; note?: string; workspace: string } {
   const db = getDb()
   const workspace = cardWorkspace(ctx, workspaceRaw)
+  const worker = chatCardAgent(ctx.agent, workspace)
   const bot = botForAgentSlug(ctx.agent.slug, db)
   if (bot) {
     const r = createBotJob(db, {
@@ -522,7 +597,8 @@ function createCard(ctx: ToolContext, title: string, description: string, worksp
       title,
       description,
       idempotencyKey: botJobIdempotencyKey(title, description),
-      agentContext: defaultAgentForWorkspace(workspace),
+      agentContext: worker.agentContext,
+      model: chatCardModel(ctx.agent),
     })
     if (!r.ok) throw new ToolUseError(r.error)
     const row = db.prepare('SELECT * FROM objectives WHERE id = ?').get(r.objectiveId) as Objective
@@ -543,7 +619,11 @@ function createCard(ctx: ToolContext, title: string, description: string, worksp
     }
   }
 
-  const agentCtx = defaultAgentForWorkspace(workspace)
+  // obj 900948: a bot that owns the card is named as its owner_bot (its name);
+  // a card handed to the workspace default agent stays unowned, as before.
+  // The name goes through the same shape check every owner_bot write uses; a
+  // name it refuses falls back to the slug (always a safe shape), never to unowned.
+  const ownerBot = worker.ownedByBot ? chatOwnerBotName(ctx.agent, db) : null
   const body = [
     description.trim(),
     '',
@@ -551,10 +631,10 @@ function createCard(ctx: ToolContext, title: string, description: string, worksp
   ].join('\n')
   const info = db
     .prepare(
-      `INSERT INTO objectives (title, description, agent_context, workspace, category, depth, assigned_user_id, created_by, type, status, origin)
-       VALUES (?, ?, ?, ?, 'general', ?, ?, ?, 'task', ?, 'agent_chat')`,
+      `INSERT INTO objectives (title, description, agent_context, workspace, category, depth, assigned_user_id, created_by, type, status, origin, owner_bot, model)
+       VALUES (?, ?, ?, ?, 'general', ?, ?, ?, 'task', ?, 'agent_chat', ?, ?)`,
     )
-    .run(title.trim().slice(0, 200), body, agentCtx, workspace, depthForParent(db, null), ctx.userId, ctx.userId, getInitialStatus('task'))
+    .run(title.trim().slice(0, 200), body, worker.agentContext, workspace, depthForParent(db, null), ctx.userId, ctx.userId, getInitialStatus('task'), ownerBot, chatCardModel(ctx.agent))
   const id = Number(info.lastInsertRowid)
   db.prepare('INSERT INTO agent_chat_cards (objective_id, user_id, agent_slug) VALUES (?, ?, ?)').run(id, ctx.userId, ctx.agent.slug)
   const row = db.prepare('SELECT * FROM objectives WHERE id = ?').get(id) as Objective
@@ -624,6 +704,18 @@ export function botWorkspacesForPerson(userId: number, agentSlug: string): strin
   if (!user) return []
   if (!user.allowWorkspaces) return null
   return visibleWorkspaces(user)
+}
+
+/**
+ * The workspaces a bot's knowledge folders may be remapped into for THIS person
+ * (knowledge-folders.ts): the bot's granted workspaces — every workspace for an
+ * unrestricted bot — ∩ the workspaces the person may reach (admins: all). No
+ * such user = none. Re-read per call, so a removed membership applies at once.
+ */
+export function kbWorkspacesForChat(userId: number | undefined, agentSlug: string): string[] {
+  if (userId === undefined) return []
+  const user = boardUser({ userId, agent: { slug: agentSlug } })
+  return user ? visibleWorkspaces(user) : []
 }
 
 /** Validate an optional workspace argument against what the person — and this bot — may read. */
@@ -837,7 +929,9 @@ function s(args: Record<string, unknown>, key: string, required = false): string
  * tools are network calls and therefore async; everything else is the
  * synchronous runTool below, unchanged.
  */
-export async function runChatTool(ctx: ToolContext, fnName: string, args: Record<string, unknown>): Promise<ToolOutcome> {
+export async function runChatTool(ctxIn: ToolContext, fnName: string, args: Record<string, unknown>): Promise<ToolOutcome> {
+  // obj 900948: knowledge folders resolved for this KB's layout (workspaces/<ws>/…).
+  const ctx = withKbFolders(ctxIn)
   if (BOT_MESSAGE_FNS.has(fnName)) return runBotMessageTool(ctx, fnName, args)
   if (fnName === 'secrets_list' || fnName === 'secret_http') return runSecretTool(ctx, fnName, args)
   if (fnName === 'search' && args.mode !== 'keyword' && agentHasTool(ctx.agent, 'search')) {
@@ -1034,7 +1128,18 @@ async function runSecretTool(ctx: ToolContext, fnName: 'secrets_list' | 'secret_
   }
 }
 
-export function runTool(ctx: ToolContext, fnName: string, args: Record<string, unknown>): ToolOutcome {
+/**
+ * obj 900948: the context with the agent's knowledge folders resolved for this
+ * knowledge base (a built-in bot's `business` → `workspaces/<ws>/business` on a
+ * per-workspace KB; see knowledge-folders.ts). Idempotent.
+ */
+function withKbFolders(ctx: ToolContext): ToolContext {
+  const agent = withResolvedKnowledgeFolders(ctx.agent, ctx.kbRoot, kbWorkspacesForChat(ctx.userId, ctx.agent.slug))
+  return agent === ctx.agent ? ctx : { ...ctx, agent }
+}
+
+export function runTool(ctxIn: ToolContext, fnName: string, args: Record<string, unknown>): ToolOutcome {
+  const ctx = withKbFolders(ctxIn)
   const tool = owningTool(fnName)
   if (!tool || !effectiveTools(ctx.agent).includes(tool)) throw new ToolUseError(`Tool "${fnName}" is not allowed for this agent.`)
   const now = ctx.now ?? (() => new Date())

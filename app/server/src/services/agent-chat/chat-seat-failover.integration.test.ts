@@ -128,6 +128,7 @@ const cookieParser = (await import('cookie-parser')).default
 const jwt = (await import('jsonwebtoken')).default
 const { initDb, getDb } = await import('../../db/index.js')
 const seatRouter = await import('../account-router.js')
+const { whenLaneIdle } = await import('./engine.js')
 const creds = await import('../seat-credentials.js')
 const { default: chatRouter } = await import('../../routes/agent-chat.js')
 
@@ -194,6 +195,7 @@ beforeAll(async () => {
 })
 
 afterAll(async () => {
+  for (const slug of BOTS) await whenLaneIdle(OWNER, slug)
   await new Promise<void>(r => server.close(() => r()))
   try { getDb().close() } catch { /* closed */ }
   vi.restoreAllMocks()
@@ -201,7 +203,10 @@ afterAll(async () => {
   for (const d of EXTRA_DIRS) fs.rmSync(d, { recursive: true, force: true })
 })
 
-beforeEach(() => {
+beforeEach(async () => {
+  // obj 900949: a message queued behind a running turn is delivered by a
+  // background drain; let it finish before the next case reads the seats.
+  for (const slug of BOTS) await whenLaneIdle(OWNER, slug)
   behave()
   // Every seat is busy with card sessions, as on the trial install.
   for (const s of seatRouter.listSeatRecords()) {
@@ -221,9 +226,9 @@ describe('agent chat on the seat pool while card sessions run (obj 900624)', () 
     // Three bots, two rounds, all in flight at the same time.
     const turns = await Promise.all(BOTS.flatMap(slug => [say(slug, 'status?'), say(slug, 'status?').catch(e => e)]))
     const ok = turns.filter(t => t.status === 200)
-    // A second message to the same bot while the first is running is refused
-    // as busy (409) by design — but nothing may come back "Not logged in".
-    for (const t of turns) expect([200, 409]).toContain(t.status)
+    // A second message to the same bot while the first is running
+    // is queued (202, obj 900949) — but nothing may come back "Not logged in".
+    for (const t of turns) expect([200, 202]).toContain(t.status)
     expect(ok.length).toBeGreaterThanOrEqual(BOTS.length)
     for (const t of ok) {
       const roles = t.json.messages.map((m: any) => m.role)

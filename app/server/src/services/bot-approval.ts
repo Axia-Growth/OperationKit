@@ -43,7 +43,7 @@ import {
 } from '@operationkit/shared'
 import { isMoneyPath } from './merge-lane.js'
 import { findActiveGrant } from './delegated-approvals.js'
-import { resolveBot } from './bots/bot-registry.js'
+import { botForAgentSlug, resolveBot } from './bots/bot-registry.js'
 
 /** The card fields eligibility reads. */
 export type ApprovalCard = Pick<
@@ -82,6 +82,22 @@ function needsSecretCount(raw: unknown): number {
     }
   }
   return 0
+}
+
+/**
+ * The chat bot slug that filed this card AND works it (agent_context = that
+ * slug), or null. A chat-filed card handed to a worker persona is not the chat
+ * bot's own work and is left to the ordinary owner_bot rule.
+ */
+function chatBotOwnerSlug(db: Database, card: Pick<Objective, 'id' | 'agent_context'>): string | null {
+  const slug = String(card.agent_context ?? '').trim().toLowerCase()
+  if (!slug || slug === DEFAULT_AGENT_CONTEXT) return null
+  try {
+    const row = db.prepare('SELECT agent_slug FROM agent_chat_cards WHERE objective_id = ?').get(card.id) as { agent_slug: string } | undefined
+    return row && row.agent_slug.toLowerCase() === slug ? row.agent_slug : null
+  } catch {
+    return null
+  }
 }
 
 export interface EligibilityInput {
@@ -156,7 +172,13 @@ export function botApprovalEligibility(db: Database, input: EligibilityInput): B
   const ownedBySlug = !ownerBot && slug && slug !== DEFAULT_AGENT_CONTEXT
     ? resolved.bot.agent_slugs.some(s => s.toLowerCase() === String(card.agent_context).toLowerCase())
     : false
-  const isOwn = (owned?.ok && owned.bot.id === bot) || ownedBySlug
+  let isOwn = (owned?.ok && owned.bot.id === bot) || ownedBySlug
+  // A card a CHAT BOT filed and works under its own slug is that chat bot's
+  // work. owner_bot is free text matched by id, name or alias, so a registered
+  // bot that only shares the chat bot's display name must not pass as its owner
+  // (review of PR 797): the closing bot has to be the one the chat SLUG belongs to.
+  const chatSlug = chatBotOwnerSlug(db, card)
+  if (isOwn && chatSlug && botForAgentSlug(chatSlug, db)?.id !== bot) isOwn = false
   if (!isOwn) {
     return no('not_bot_owned', `Card #${card.id} is not ${bot}'s own work, and ${bot} holds no grant that covers it. A person approves it.`, bot)
   }

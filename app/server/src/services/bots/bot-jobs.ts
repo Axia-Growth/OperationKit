@@ -33,6 +33,7 @@ import { depthForParent } from '../../lib/objective-depth.js'
 import { findOpenDuplicate, isDuplicateGuardEnabled, recordDedupe } from '../../lib/objective-dedupe.js'
 import { authorizeBotJob, type AuthorizeRefusal, type BotJobPrincipal } from './bot-authorization.js'
 import { claimBotJobSession, decideBotJobStart, type StartDecision } from './bot-job-start.js'
+import { defaultModelIdIn } from '../model-registry.js'
 
 /** The only job mode the MVP supports. Read-only is the whole security story. */
 export const MVP_JOB_MODE = 'read_only' as const
@@ -61,6 +62,8 @@ export interface CreateBotJobInput {
   idempotencyKey: string
   /** Who filled the card in (defaults to the requesting person). */
   agentContext?: string
+  /** Model the card runs on (obj 900948). Omitted → the registry default, never the column default. */
+  model?: string | null
   /** Skip the title duplicate guard (never skips idempotency). */
   force?: boolean
   now?: Date
@@ -156,8 +159,8 @@ export function createBotJob(db: Database, input: CreateBotJobInput): CreateBotJ
     const status = getInitialStatus('task')
     const info = db
       .prepare(
-        `INSERT INTO objectives (title, description, agent_context, workspace, category, depth, assigned_user_id, created_by, type, status, origin, owner_bot)
-         VALUES (?, ?, ?, ?, 'general', ?, ?, ?, 'task', ?, 'agent_chat', ?)`,
+        `INSERT INTO objectives (title, description, agent_context, workspace, category, depth, assigned_user_id, created_by, type, status, origin, owner_bot, model)
+         VALUES (?, ?, ?, ?, 'general', ?, ?, ?, 'task', ?, 'agent_chat', ?, ?)`,
       )
       .run(
         title,
@@ -169,6 +172,7 @@ export function createBotJob(db: Database, input: CreateBotJobInput): CreateBotJ
         principal.userId,
         status,
         principal.bot.id,
+        (input.model && input.model.trim()) || defaultModelIdIn(db),
       )
     const id = Number(info.lastInsertRowid)
     // The thread linkage the existing chat UI already reads.

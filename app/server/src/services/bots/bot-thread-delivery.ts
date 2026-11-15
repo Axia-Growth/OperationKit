@@ -33,6 +33,7 @@
 import type { Database } from 'better-sqlite3'
 import { redactLive } from '../live-redaction.js'
 import { notifyBotMessage } from '../agent-chat/sidebar-live.js'
+import { isHighAgencyActivityCard } from '../agent-chat/high-agency-cards.js'
 
 const CURSOR_SETTING = 'bot_thread_delivery_cursor'
 const BATCH = 200
@@ -159,6 +160,11 @@ export function enqueueBotThreadDeliveries(db: Database): number {
     for (const row of rows) {
       const kind = classifyThreadEvent(row)
       if (!kind) continue
+      // obj 900947 — High Agency activity (a wake, or a card a wake filed) stays
+      // out of the main chat: a finish goes to the bot's Activity feed, and a
+      // card that needs the person is posted by bot-attention.ts, with Approve
+      // and Reply. One routing rule, one poster, no duplicate messages.
+      if (isHighAgencyActivityCard(db, row.objective_id)) continue
       queued += insert.run(threadDeliveryId(kind, row.objective_id), row.objective_id, row.thread_user_id, row.thread_agent_slug, kind, buildThreadBody(kind, row)).changes
     }
     writeCursor(db, rows.length ? rows[rows.length - 1].id : head)

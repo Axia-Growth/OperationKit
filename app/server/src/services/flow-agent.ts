@@ -34,6 +34,7 @@
 import type Database from 'better-sqlite3'
 import { depthForParent } from '../lib/objective-depth.js'
 import { getSpend, setObjectiveCeiling } from './job-accounting.js'
+import { defaultModelIdIn } from './model-registry.js'
 
 export interface FlowAgentCardRequest {
   runId: number
@@ -110,9 +111,9 @@ export function createFlowAgentCard(db: Database.Database, req: FlowAgentCardReq
     }
   }
   const r = db.prepare(
-    `INSERT INTO objectives (title, description, agent_context, workspace, category, type, status, origin, parent_id, depth, created_by)
-     VALUES (?, ?, ?, ?, 'general', 'task', 'queue', 'workflow', ?, ?, ?)`,
-  ).run(
+    `INSERT INTO objectives (model, title, description, agent_context, workspace, category, type, status, origin, parent_id, depth, created_by)
+     VALUES (?, ?, ?, ?, ?, 'general', 'task', 'queue', 'workflow', ?, ?, ?)`,
+  ).run(defaultModelIdIn(db), 
     flowAgentCardTitle(req),
     flowAgentCardDescription(req),
     req.agent || 'general',

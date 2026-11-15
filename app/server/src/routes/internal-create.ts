@@ -7,7 +7,7 @@ import { getDb, resolveStrategyId } from '../db/index.js'
 import { broadcast } from '../ws/index.js'
 import { logActivity } from './feed.js'
 import { getWorkspace, resolveWriteWorkspace } from '../services/workspaces.js'
-import { defaultAgentForWorkspace } from './objectives-helpers.js'
+import { checkAgentInWorkspacePool, defaultAgentForWorkspace } from './objectives-helpers.js'
 import { resolveObjectiveModel } from '../services/model-registry.js'
 import type { Objective } from '@operationkit/shared'
 import { hasValidObjectivesToken } from '../middleware/objectives-token.js'
@@ -195,7 +195,11 @@ router.post('/objectives', async (req, res) => {
     // human route uses (workspace pool[0], else 'general'), reconciling the
     // old 'general' vs 'cto' divergence. Explicit agent_context is unchanged.
     const agent = item.agent_context || defaultAgentForWorkspace(resolveWriteWorkspace(item.workspace))
-    if (!pool.includes(agent)) {
+    // obj 900948: a chat bot granted this workspace passes (a High Agency wake
+    // files cards it owns, agent_context = its slug). It goes through the SAME
+    // gate as the human route, so the project-grain agent restriction and the
+    // bot-vs-persona name rule apply to it here too.
+    if (!pool.includes(agent) && checkAgentInWorkspacePool(ws.slug, agent, item.project ?? null) !== null) {
       res.status(400).json({
         error: `Item ${i} ('${item.title.trim()}'): agent '${agent}' not in workspace '${ws.slug}' pool (allowed: ${pool.join(', ')})`,
       })

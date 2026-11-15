@@ -34,6 +34,7 @@ import { resolveFollowUpSessionId } from './objective-sessions.js'
 import { checkCiFollowupCap, recordCiFollowup, noteCiFollowupCapExhausted } from './ci-followup-cap.js'
 import { noteStartReason } from './session-start-reasons.js'
 import { resolveHarnessRepo } from '../lib/install-defaults.js'
+import { defaultModelIdIn } from './model-registry.js'
 
 // obj 900803: HARNESS_REPO env → settings → '' (no built-in repo).
 const defaultHarnessRepo = (): string => resolveHarnessRepo()
@@ -360,10 +361,10 @@ function createTrunkFailureObjective(
   try {
     const result = deps.db
       .prepare(
-        `INSERT INTO objectives (title, description, agent_context, workspace, category, status, origin, dedupe_key)
-         VALUES (?, ?, 'cto', ?, 'general', 'queue', 'trunk-failure', ?)`,
+        `INSERT INTO objectives (model, title, description, agent_context, workspace, category, status, origin, dedupe_key)
+         VALUES (?, ?, ?, 'cto', ?, 'general', 'queue', 'trunk-failure', ?)`,
       )
-      .run(title, description, workspace, trunkDedupeKey(classified.repoFullName, branch, classified.checkName))
+      .run(defaultModelIdIn(deps.db), title, description, workspace, trunkDedupeKey(classified.repoFullName, branch, classified.checkName))
     const id = Number(result.lastInsertRowid)
     try {
       const obj = deps.db.prepare('SELECT * FROM objectives WHERE id = ?').get(id) as Objective | undefined
@@ -1182,10 +1183,10 @@ function createMaintenanceObjective(deps: RemediationDeps, repo: string, kind: U
   try {
     const result = deps.db
       .prepare(
-        `INSERT INTO objectives (title, description, agent_context, workspace, category, status, origin)
-         VALUES (?, ?, 'cto', ?, 'general', 'queue', ?)`,
+        `INSERT INTO objectives (model, title, description, agent_context, workspace, category, status, origin)
+         VALUES (?, ?, ?, 'cto', ?, 'general', 'queue', ?)`,
       )
-      .run(title, description, workspace, kind)
+      .run(defaultModelIdIn(deps.db), title, description, workspace, kind)
     const obj = deps.db.prepare('SELECT * FROM objectives WHERE id = ?').get(Number(result.lastInsertRowid)) as Objective | undefined
     if (obj) {
       try { deps.broadcast({ type: 'objective_updated', payload: obj }) } catch { /* best-effort */ }
@@ -1267,10 +1268,10 @@ function handleOrphanedObjective(
   try {
     const result = deps.db
       .prepare(
-        `INSERT INTO objectives (title, description, agent_context, workspace, category, status, origin, pr_number, pr_url, branch_name)
-         VALUES (?, ?, 'cto', ?, 'general', 'queue', 'ci-orphan-inherit', ?, ?, ?)`,
+        `INSERT INTO objectives (model, title, description, agent_context, workspace, category, status, origin, pr_number, pr_url, branch_name)
+         VALUES (?, ?, ?, 'cto', ?, 'general', 'queue', 'ci-orphan-inherit', ?, ?, ?)`,
       )
-      .run(title, description, doneOwner.workspace || workspaceForRepo(deps.db, repo), prNumber > 0 ? prNumber : null, prUrl, branch)
+      .run(defaultModelIdIn(deps.db), title, description, doneOwner.workspace || workspaceForRepo(deps.db, repo), prNumber > 0 ? prNumber : null, prUrl, branch)
     const heirId = Number(result.lastInsertRowid)
     try {
       deps.db.prepare('UPDATE external_check_remediations SET objective_id = ? WHERE repo = ? AND pr_number = ? AND check_name = ?')

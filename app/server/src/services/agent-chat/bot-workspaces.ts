@@ -44,6 +44,7 @@
 // This module only touches the DB, so the routine scheduler can import it
 // without pulling the chat engine in.
 import { getDb } from '../../db/index.js'
+import { agentExists } from '../agent-registry.js'
 
 export const WORKSPACE_SLUG_RE = /^[a-z0-9][a-z0-9_-]{0,63}$/i
 
@@ -146,6 +147,42 @@ export function botMayUseWorkspace(slug: string, workspace: string | null | unde
   const allow = botWorkspaceAllowlist(slug)
   if (allow === null) return true
   return allow.includes(workspace)
+}
+
+/**
+ * Has an admin EXPLICITLY granted this bot `workspace` (obj 900948)? Only a
+ * restricted bot with that workspace on its list counts — an unrestricted bot
+ * (predates access lists, nothing granted) and a slug with no row do not. This
+ * is what lets a chat bot's slug pass the workspace agent-pool gate on card
+ * create / update / internal-create, so a High Agency bot can file and own
+ * cards in the workspaces it was granted. Fails closed on a read error.
+ */
+export function botGrantedWorkspace(slug: string | null | undefined, workspace: string | null | undefined): boolean {
+  if (!slug || !workspace) return false
+  try {
+    const a = getBotWorkspaceAccess(slug)
+    return a.mode === 'restricted' && a.workspaces.includes(workspace)
+  } catch {
+    return false
+  }
+}
+
+/**
+ * May a card name this chat bot's slug as its agent in `workspace` although the
+ * slug is not in the workspace agent pool (obj 900948)? Yes only when the bot is
+ * explicitly granted the workspace AND the slug is not also a WORKER PERSONA in
+ * the agent registry. The persona owns a shared name: a chat bot called `cfo`
+ * granted a workspace must not let anyone assign the `cfo` worker persona
+ * there when the pool leaves it out (review of PR 797). Such a bot gets no pool
+ * exception at all; the pool decides, exactly as for the persona.
+ */
+export function botSlugPassesAgentPool(slug: string | null | undefined, workspace: string | null | undefined): boolean {
+  if (!slug || !botGrantedWorkspace(slug, workspace)) return false
+  try {
+    return !agentExists(slug)
+  } catch {
+    return false
+  }
 }
 
 /** Narrow a list of workspaces the person can reach to the ones this bot may use, keeping order. */

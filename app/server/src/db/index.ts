@@ -3,6 +3,7 @@ import fs from 'fs'
 import path from 'path'
 import { fileURLToPath } from 'url'
 import { backfillAllDepths } from '../lib/objective-depth.js'
+import { SEED_DEFAULT_MODEL_ID } from '../lib/claude-model-catalog.js'
 import { initDevelopmentSchema, seedDevelopmentRegistry } from './schema/development.js'
 import { initCoreSchema } from './schema/core.js'
 import { initAgentsSchema } from './schema/agents.js'
@@ -44,6 +45,7 @@ import { initFlowSchema, enableFlowsOnce } from './schema/flow.js'
 import { initRoutineRunsSchema } from './schema/routine-runs.js'
 import { initKbEmbeddingsSchema } from './schema/kb-embeddings.js'
 import { initDelegationGrantsSchema } from './schema/delegation-grants.js'
+import { initBotAttentionSchema } from './schema/bot-attention.js'
 import { initBoardTriageSchema } from './schema/board-triage.js'
 import { installWriteScrubber } from './write-scrubber.js'
 import { redactForStorage } from '../services/secret-redaction.js'
@@ -240,7 +242,10 @@ export function initDb(): Database.Database {
     db.exec("ALTER TABLE objectives ADD COLUMN effort TEXT NOT NULL DEFAULT 'normal'")
   }
   if (!colNames.has('model')) {
-    db.exec("ALTER TABLE objectives ADD COLUMN model TEXT NOT NULL DEFAULT 'claude-opus-4-8'")
+    // Only a brand-new DB reaches this (an existing column is never altered, so
+    // no card's model is rewritten). Insert paths resolve the registry default
+    // themselves (obj 900948); this default is just the floor for one that doesn't.
+    db.exec(`ALTER TABLE objectives ADD COLUMN model TEXT NOT NULL DEFAULT '${SEED_DEFAULT_MODEL_ID}'`)
   }
 
   // Objective type — drives workflow routing (planning step + review gates).
@@ -906,7 +911,6 @@ export function initDb(): Database.Database {
         completion_goal: 'Briefing file exists at /home/operator/ai-workspace/briefings/<today>.md covering board state, stale items, and account/budget status.',
         workflow_hint: null,
         effort: 'normal',
-        model: 'claude-opus-4-8',
         type: 'task',
       },
     },
@@ -966,7 +970,6 @@ export function initDb(): Database.Database {
         completion_goal: 'hygiene-latest.md is overwritten with a current digest of stale queue items, unattended reviews, and dead working sessions.',
         workflow_hint: null,
         effort: 'normal',
-        model: 'claude-opus-4-8',
         type: 'task',
       },
     },
@@ -1135,6 +1138,9 @@ export function initDb(): Database.Database {
   initDelegationGrantsSchema(db)
   // Needs You bulk triage audit (obj 900869): one batch row + one row per card.
   initBoardTriageSchema(db)
+  // Bot visibility (obj 900947): one row per (card, reason) a bot told a person
+  // about in its main chat — the dedupe for "needs you" posts. Additive table only.
+  initBotAttentionSchema(db)
   // ── Secret scrubbing on persistence (obj 715532) ──────────────────────────
   // Installed LAST so migrations above run unwrapped. From here on, writes to
   // activity_log / objectives / session_events / … have known secret values and

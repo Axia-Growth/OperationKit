@@ -104,6 +104,20 @@ export function PreviewBoard({ workspaces }: PreviewBoardProps) {
 
   const selectedAssignees = useMemo(() => new Set(assigneeSel), [assigneeSel])
 
+  // obj 900947: /?owner=<token> (a bot's Work tab → "Open on board") narrows the
+  // owner filter to exactly that owner, saved like a click would save it, then
+  // drops the param so a reload keeps the person's own choice.
+  // Read from the location directly so the board never needs a Router around it.
+  const ownerParam = typeof window === 'undefined' ? null : new URLSearchParams(window.location.search).get('owner')
+  useEffect(() => {
+    if (!ownerParam) return
+    saveAssigneeSelection(wsKey || 'all', [ownerParam])
+    setAssigneeSel([ownerParam])
+    const url = new URL(window.location.href)
+    url.searchParams.delete('owner')
+    window.history.replaceState(window.history.state, '', `${url.pathname}${url.search}${url.hash}`)
+  }, [ownerParam, wsKey])
+
   // ── Project (organization subfolder) filter — obj 708826 ─────────────────
   // A project belongs to exactly ONE organization, so the picker only appears
   // in a single-org view. The selection is stored under the workspace key,

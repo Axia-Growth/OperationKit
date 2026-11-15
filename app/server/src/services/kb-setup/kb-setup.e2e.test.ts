@@ -55,7 +55,7 @@ const stubLlm = async (system: string, prompt: string): Promise<string> => {
 function makeDb(): Database.Database {
   const db = new Database(':memory:')
   db.exec(`CREATE TABLE objectives (id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT NOT NULL, description TEXT NOT NULL DEFAULT '',
-    status TEXT NOT NULL DEFAULT 'queue', agent_context TEXT NOT NULL DEFAULT 'general', workspace TEXT, category TEXT, origin TEXT,
+    status TEXT NOT NULL DEFAULT 'queue', agent_context TEXT NOT NULL DEFAULT 'general', workspace TEXT, category TEXT, origin TEXT, model TEXT NOT NULL DEFAULT 'column-default',
     created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT NOT NULL DEFAULT (datetime('now')));
     CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT);`)
   return db
