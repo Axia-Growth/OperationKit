@@ -3,13 +3,17 @@ import { requireAuth, type AuthRequest } from '../middleware/auth.js'
 import {
   ChatBusyError,
   ChatUnavailableError,
+  CLIENT_MSG_ID_RE,
   clearChat,
   findAgent,
   installDefaultProvider,
   isDemoOn,
   listAgents,
   listMessages,
-  runTurn,
+  drainLaneQueue,
+  laneTurnState,
+  stopTurn,
+  submitMessage,
   seedDemoKnowledge,
   setSetting,
   type ChatMessageRow,
@@ -72,6 +76,9 @@ import { BotDeleteRefused, deleteBotFolder } from '../services/agent-chat/bot-de
 import sidebarRouter from './agent-chat-sidebar.js'
 import delegationsRouter from './agent-chat-delegations.js'
 import botMessagesRouter from './agent-chat-bot-messages.js'
+import botWorkRouter from './agent-chat-bot-work.js'
+import { markFeedMessage } from '../services/agent-chat/bot-attention.js'
+import { isHighAgencyActivityCard } from '../services/agent-chat/high-agency-cards.js'
 
 /**
  * Built-in agent chat (obj 719987) — /api/agent-chat
@@ -143,6 +150,8 @@ router.use('/sidebar', sidebarRouter)
 router.use(delegationsRouter)
 // obj 900859: bot-to-bot threads, read-only for people — see the file.
 router.use(botMessagesRouter)
+// obj 900947: per-bot Work tab, High Agency Activity feed, sidebar live line — read-only.
+router.use(botWorkRouter)
 
 /** What the bot list shows about a bot's workspace access; workspace names only where the caller may see them. */
 interface WorkspaceAccessSummary { mode: 'restricted' | 'unrestricted'; workspaces: string[]; count: number }
@@ -243,6 +252,27 @@ function adminSessionOr403(req: AuthRequest, res: Response): boolean {
     return false
   }
   return true
+}
+
+/**
+ * obj 900947: High Agency activity moved to the bot's Activity feed. Messages
+ * already in a chat are NEVER rewritten or deleted; at read time a message about
+ * High Agency activity (not a needs-you post) is flagged `activity_feed` so the
+ * UI collapses it. The stored row is untouched.
+ */
+function markActivityMessages(messages: ChatMessageRow[]): ChatMessageRow[] {
+  const db = getDb()
+  const memo = new Map<number, boolean>()
+  const isHa = (id: number) => {
+    if (!memo.has(id)) memo.set(id, isHighAgencyActivityCard(db, id))
+    return memo.get(id)!
+  }
+  return messages.map(m => {
+    if (m.role !== 'assistant') return m
+    const meta = (m.meta ?? null) as Record<string, unknown> | null
+    if (!markFeedMessage(meta, m.content ?? '', isHa)) return m
+    return { ...m, meta: { ...(meta ?? {}), activity_feed: true } } as ChatMessageRow
+  })
 }
 
 /** Drafts + card statuses referenced by these messages, so the UI can render them. */
@@ -548,8 +578,29 @@ router.get('/agents/:slug/messages', (req: AuthRequest, res) => {
   const lane = laneOr404(req, res, a.slug, req.query.thread_id)
   if (!lane) return
   const after = Number(req.query.after) || 0
-  const messages = listMessages(req.user!.id, a.slug, { afterId: after, lane })
-  res.json({ messages, ...attachments(req.user!.id, a.slug, messages) })
+  // obj 900949: a queue left behind (a restart mid-turn) is picked up the next
+  // time the person looks at the lane, so a queued message never waits forever.
+  drainLaneQueue({ userId: req.user!.id, username: req.user!.username, agent: a, lane })
+  const messages = markActivityMessages(listMessages(req.user!.id, a.slug, { afterId: after, lane }))
+  res.json({ messages, ...attachments(req.user!.id, a.slug, messages), turn: laneTurnState(req.user!.id, a.slug, lane) })
+})
+
+/**
+ * Stop the turn running in this lane (obj 900949). Messages already queued are
+ * kept and delivered next; `drop_queued: true` discards them as well, and the
+ * client only sends it after the person confirmed.
+ */
+router.post('/agents/:slug/stop', (req: AuthRequest, res) => {
+  if (req.authVia === 'agent_api_key') {
+    res.status(403).json({ error: 'Use the MCP tools to work with agents from another AI client' })
+    return
+  }
+  const a = agentOr404(req, res)
+  if (!a) return
+  const lane = laneOr404(req, res, a.slug, req.body?.thread_id)
+  if (!lane) return
+  const r = stopTurn(req.user!.id, a.slug, lane, { dropQueued: req.body?.drop_queued === true })
+  res.json({ stopped: r.stopped, dropped: r.dropped, turn: { running: r.running, queued: r.queued } })
 })
 
 // ── side threads / concurrent task lanes (obj 900370) ──
@@ -639,11 +690,28 @@ router.post('/agents/:slug/messages', async (req: AuthRequest, res) => {
     res.status(400).json({ error: 'Message is too long (8,000 characters max)' })
     return
   }
+  // obj 900977: the client's idempotency key. Optional (older clients, scripts);
+  // a malformed one is refused rather than stored.
+  const rawId = req.body?.client_msg_id
+  if (rawId !== undefined && rawId !== null && (typeof rawId !== 'string' || !CLIENT_MSG_ID_RE.test(rawId))) {
+    res.status(400).json({ error: 'client_msg_id must be 8-64 letters, digits, "-" or "_"' })
+    return
+  }
+  const clientMsgId = typeof rawId === 'string' ? rawId : undefined
   const ac = new AbortController()
   res.on('close', () => { if (!res.writableEnded) ac.abort() })
   try {
-    const { messages } = await runTurn({ userId: req.user!.id, username: req.user!.username, agent: a, text, images, lane, signal: ac.signal })
-    res.json({ messages, ...attachments(req.user!.id, a.slug, messages) })
+    // obj 900949: a lane that is busy QUEUES the message (202) instead of
+    // refusing it; the turn that follows the running one delivers it, in order.
+    const r = await submitMessage({ userId: req.user!.id, username: req.user!.username, agent: a, text, images, lane, signal: ac.signal, clientMsgId })
+    res.status(r.queued ? 202 : 200).json({
+      messages: r.messages,
+      ...attachments(req.user!.id, a.slug, r.messages),
+      queued: r.queued,
+      // obj 900977: true when this client_msg_id was already stored — nothing new was added or run.
+      ...(r.duplicate ? { duplicate: true } : {}),
+      turn: laneTurnState(req.user!.id, a.slug, lane),
+    })
   } catch (err) {
     if (err instanceof ChatBusyError) {
       res.status(409).json({ error: err.message })

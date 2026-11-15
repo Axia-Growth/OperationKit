@@ -1,6 +1,8 @@
 import { Bot, User as UserIcon, UserX } from 'lucide-react'
 import { cardOwner, type CardOwner, type Objective } from '@operationkit/shared'
 import { Badge } from './ui'
+import { BotAvatarMini } from './BotAvatarMini'
+import { avatarFor, useBotAvatars } from '../lib/botAvatars'
 
 /**
  * Owner tag (obj 900869) — who a card belongs to right now: a bot while it
@@ -50,7 +52,12 @@ export function OwnerTag({
   showHandoff?: boolean
 }) {
   const owner = given ?? (objective ? ownerOf(objective) : null)
+  // obj 900947: a bot owner shows the bot's own avatar (falls back to the bot icon).
+  const avatars = useBotAvatars()
   if (!owner) return null
+  const avatar = owner.kind === 'bot'
+    ? avatarFor(avatars, { bot_owner: owner.bot, bot_owner_name: owner.label, agent_context: objective?.agent_context })
+    : null
   const sentence = ownerSentence(owner)
   const Icon = owner.kind === 'bot' ? Bot : owner.kind === 'human' ? UserIcon : UserX
   const tone = owner.kind === 'bot' ? 'info' : 'neutral'
@@ -66,7 +73,7 @@ export function OwnerTag({
       data-needs-human={owner.needs_human ? '1' : '0'}
     >
       <Badge tone={tone} className={className}>
-        <Icon className="h-3 w-3 shrink-0" aria-hidden="true" />
+        {avatar ? <BotAvatarMini info={avatar} className="-ml-0.5" /> : <Icon className="h-3 w-3 shrink-0" aria-hidden="true" />}
         <span className="sr-only">{sentence}</span>
         <span aria-hidden="true" className="max-w-[10rem] truncate">{owner.label}</span>
       </Badge>

@@ -9,9 +9,8 @@
 import { getDb } from '../db/index.js'
 import type { ModelRow, ModelEngine } from '@operationkit/shared'
 
-// Safety floor used only if the registry has no default row (should never
-// happen — the seed guarantees one). Opus 4.8 is the strongest live model.
-const FALLBACK_DEFAULT = 'claude-opus-4-8'
+import type Database from 'better-sqlite3'
+import { SEED_DEFAULT_MODEL_ID } from '../lib/claude-model-catalog.js'
 
 interface ModelDbRow {
   id: string
@@ -53,8 +52,28 @@ export function listEnabledModels(): ModelRow[] {
 
 /** Model id for new objectives when the caller didn't specify one. */
 export function getDefaultModelId(): string {
-  const row = getDb().prepare('SELECT id FROM models WHERE is_default = 1 LIMIT 1').get() as { id: string } | undefined
-  return row?.id ?? FALLBACK_DEFAULT
+  return defaultModelIdIn(getDb())
+}
+
+/**
+ * The registry default read from a given DB handle (obj 900948) — for insert
+ * paths that are handed their own `db`. Order: the `is_default` row → the first
+ * enabled Claude row (should never be needed: the seed guarantees a default) →
+ * the seed's default id when there is no registry at all (very old DB / bare
+ * test DB). No retired model id is hard-coded here: the old floor was a
+ * literal 'claude-opus-4-8', which is how chat-filed cards ended up on Opus 4.8
+ * long after Opus 5.5 became the default.
+ */
+export function defaultModelIdIn(db: Database.Database): string {
+  try {
+    const row = db.prepare('SELECT id FROM models WHERE is_default = 1 LIMIT 1').get() as { id: string } | undefined
+    if (row) return row.id
+    const first = db.prepare("SELECT id FROM models WHERE enabled = 1 AND engine = 'claude' ORDER BY sort_order, id LIMIT 1").get() as { id: string } | undefined
+    if (first) return first.id
+  } catch {
+    /* no models table */
+  }
+  return SEED_DEFAULT_MODEL_ID
 }
 
 /** Cheaper model for grunt workers (tasks/bugs without a PR, not delegators). */

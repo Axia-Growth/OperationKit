@@ -1,6 +1,8 @@
 import { Bot, User as UserIcon } from 'lucide-react'
 import { UNASSIGNED_TOKEN, type BotRosterEntry } from '../lib/assigneeFilter'
 import { FilterDropdown, DropdownOption } from './FilterDropdown'
+import { BotAvatarMini } from './BotAvatarMini'
+import { avatarFor, useBotAvatars } from '../lib/botAvatars'
 
 interface OwnerFilterSelectProps {
   /** Usernames that own something on this board (plus the current user). */
@@ -30,6 +32,8 @@ export function OwnerFilterSelect({
   options, bots = [], selected, everyoneSelected, currentUser, onToggle, onEveryone,
 }: OwnerFilterSelectProps) {
   const botName = new Map(bots.map(b => [b.token, b.name]))
+  // obj 900947: each bot row carries the bot's avatar, as on its cards.
+  const avatars = useBotAvatars()
   const name = (token: string) =>
     token === UNASSIGNED_TOKEN ? 'Unassigned' : token === currentUser ? `${token} (me)` : botName.get(token) ?? token
   const short = (t: string) =>
@@ -94,7 +98,10 @@ export function OwnerFilterSelect({
                   data-owner={b.token}
                 >
                   <span className="inline-flex items-center gap-1.5">
-                    <Bot className="h-3.5 w-3.5 text-fg-3" aria-hidden="true" />
+                    {(() => {
+                      const info = avatarFor(avatars, { bot_owner: b.id, bot_owner_name: b.name })
+                      return info ? <BotAvatarMini info={info} /> : <Bot className="h-3.5 w-3.5 text-fg-3" aria-hidden="true" />
+                    })()}
                     {b.name}
                   </span>
                 </DropdownOption>

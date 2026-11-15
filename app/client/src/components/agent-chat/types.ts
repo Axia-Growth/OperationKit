@@ -212,8 +212,21 @@ export interface ChatMessage {
     /** A bot-to-bot thread this row started, used or relays (obj 900859). */
     bot_conversation_id?: number
     bot_message_id?: number
-    /** 'bot_reply' / 'bot_message_failed' = a line the server relayed from a bot thread. */
+    /** 'bot_reply' / 'bot_message_failed' = a line the server relayed from a bot thread; 'stopped' = the person pressed Stop (obj 900949). */
     kind?: string
+    /** obj 900947: a 'bot_needs_you' post — why the bot needs the person, and the card. */
+    reason?: string
+    title?: string
+    spent_usd?: number
+    ceiling_usd?: number
+    action?: string | null
+    /** obj 900947: an older High Agency update the UI folds away ("now in Activity"). */
+    activity_feed?: boolean
+    bot_job?: number
+    /** obj 900949: sent while the bot was working; it has not been delivered to the bot yet. */
+    queued?: boolean
+    /** obj 900977: the id this client gave the message when it sent it; the server stores it and never stores the same id twice in a lane. */
+    client_msg_id?: string
   } | null
   images?: ChatImage[]
   created_at: string
@@ -249,6 +262,19 @@ export interface ThreadResponse {
   messages: ChatMessage[]
   drafts: ChatDraft[]
   cards: ChatCard[]
+  /**
+   * obj 900949: the lane's turn state — is the bot working, and how many of the
+   * person's messages wait for it. Absent on an older server (treated as idle).
+   */
+  turn?: LaneTurn
+  /** obj 900949: set on a POST answered 202 — the message was queued, not run. */
+  queued?: boolean
+}
+
+/** obj 900949: what the composer needs to know about one lane. */
+export interface LaneTurn {
+  running: boolean
+  queued: number
 }
 
 /**

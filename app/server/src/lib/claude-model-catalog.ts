@@ -41,6 +41,14 @@ export interface ClaudeCatalogEntry {
   released?: string
 }
 
+/**
+ * The model the seed migrations make the board default (db/schema/models.ts,
+ * the Opus 5.5 promotion). Used ONLY where there is no registry to ask — the
+ * objectives.model column DDL on a brand-new DB and the last-resort floor in
+ * model-registry.defaultModelIdIn. Everywhere else asks the registry.
+ */
+export const SEED_DEFAULT_MODEL_ID = 'claude-opus-5-5'
+
 export const CLAUDE_MODEL_CATALOG: readonly ClaudeCatalogEntry[] = [
   {
     id: 'claude-fable-5-2',

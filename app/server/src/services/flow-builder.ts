@@ -30,6 +30,7 @@ import type Database from 'better-sqlite3'
 import { initFlowSchema } from '../db/schema/flow.js'
 import { FLOW_ID_RE, LLM_MAX_ITERATIONS_CAP, LOOP_MAX_CONCURRENCY } from '../../../shared/flow/types.js'
 import { flowsEnabled, listRegisteredFlowTools } from './flow-engine.js'
+import { defaultModelIdIn } from './model-registry.js'
 
 /** §5.1: "up to builder.max_iterations (default 6)". */
 export const DEFAULT_BUILDER_MAX_ITERATIONS = 6
@@ -407,9 +408,9 @@ export async function createWorkflowFromGoal(db: Database.Database, input: Creat
       maxIterations, tools, okit, connectors, flowsEnabled: enabled,
     })
     const o = db.prepare(
-      `INSERT INTO objectives (title, description, completion_goal, agent_context, workspace, category, type, status, origin, created_by, queue_hold)
-       VALUES (?, ?, ?, 'general', ?, 'general', 'task', 'queue', 'workflow', ?, ?)`,
-    ).run(
+      `INSERT INTO objectives (model, title, description, completion_goal, agent_context, workspace, category, type, status, origin, created_by, queue_hold)
+       VALUES (?, ?, ?, ?, 'general', ?, 'general', 'task', 'queue', 'workflow', ?, ?)`,
+    ).run(defaultModelIdIn(db), 
       `Build workflow: ${name}`, description, BUILDER_COMPLETION_GOAL, input.workspace,
       input.createdByUserId && input.createdByUserId > 0 ? input.createdByUserId : null, queueHold,
     )

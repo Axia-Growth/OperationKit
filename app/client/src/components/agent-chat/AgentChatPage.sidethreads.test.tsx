@@ -121,12 +121,12 @@ describe('the lane strip', () => {
   it('opens on the main conversation and lists every open side thread beside it', async () => {
     await mount()
     await settle()
-    const tabs = [...host.querySelectorAll('[role="tab"]')].map(t => (t.textContent ?? '').trim())
+    const tabs = [...host.querySelectorAll('[role="tablist"][aria-label="Conversations with this bot"] [role="tab"]')].map(t => (t.textContent ?? '').trim())
     expect(tabs[0]).toBe('Main')
     expect(tabs.join(' | ')).toContain('Quarterly numbers')
     expect(tabs.join(' | ')).toContain('Supplier audit')
     // Main is the lane in view, and its history — only its history — is on screen.
-    expect(host.querySelector('[role="tab"][aria-selected="true"]')?.textContent).toContain('Main')
+    expect(host.querySelector('[role="tablist"][aria-label="Conversations with this bot"] [role="tab"][aria-selected="true"]')?.textContent).toContain('Main')
     expect(host.textContent).toContain('main-only-text')
     expect(host.textContent).not.toContain('lane-seven-text')
     // And the main conversation is read with NO thread_id, exactly as before.
@@ -168,7 +168,7 @@ describe('the lane strip', () => {
     const post = calls.find(c => c.method === 'POST' && c.url.endsWith('/threads'))
     expect(post).toBeDefined()
     expect(urls()).toContain('/api/agent-chat/agents/librarian/messages?thread_id=9')
-    expect(host.querySelector('[role="tab"][aria-selected="true"]')?.textContent).toContain('Side thread 3')
+    expect(host.querySelector('[role="tablist"][aria-label="Conversations with this bot"] [role="tab"][aria-selected="true"]')?.textContent).toContain('Side thread 3')
   })
 
   it('never offers a control that claims to create a bot', async () => {
@@ -229,9 +229,9 @@ describe('clearing and closing never reach across to the main conversation', () 
     expect(JSON.parse(patch.body!)).toEqual({ archived: true })
     // Closing DELETEs nothing at all, and the main conversation is what we land on.
     expect(calls.filter(c => c.method === 'DELETE')).toHaveLength(0)
-    expect(host.querySelector('[role="tab"][aria-selected="true"]')?.textContent).toContain('Main')
+    expect(host.querySelector('[role="tablist"][aria-label="Conversations with this bot"] [role="tab"][aria-selected="true"]')?.textContent).toContain('Main')
     expect(host.textContent).toContain('main-only-text')
-    expect([...host.querySelectorAll('[role="tab"]')].map(t => t.textContent).join(' ')).not.toContain('Supplier audit')
+    expect([...host.querySelectorAll('[role="tablist"][aria-label="Conversations with this bot"] [role="tab"]')].map(t => t.textContent).join(' ')).not.toContain('Supplier audit')
   })
 
   it('renames a lane in place, without touching any message', async () => {
@@ -253,7 +253,7 @@ describe('clearing and closing never reach across to the main conversation', () 
     const patch = calls.find(c => c.method === 'PATCH')!
     expect(JSON.parse(patch.body!)).toEqual({ title: 'Q4 numbers' })
     expect(calls.filter(c => c.method === 'DELETE')).toHaveLength(0)
-    expect([...host.querySelectorAll('[role="tab"]')].map(t => t.textContent).join(' ')).toContain('Q4 numbers')
+    expect([...host.querySelectorAll('[role="tablist"][aria-label="Conversations with this bot"] [role="tab"]')].map(t => t.textContent).join(' ')).toContain('Q4 numbers')
   })
 })
 
@@ -271,7 +271,7 @@ describe('the strip is additive', () => {
     await mount()
     await settle()
     expect(host.textContent).toContain('main-only-text')
-    expect(host.querySelector('[role="tab"][aria-selected="true"]')?.textContent).toContain('Main')
+    expect(host.querySelector('[role="tablist"][aria-label="Conversations with this bot"] [role="tab"][aria-selected="true"]')?.textContent).toContain('Main')
   })
 })
 
@@ -280,7 +280,7 @@ describe('the lane strip keyboard (UI SDK tabs)', () => {
   it('is a named tablist with one tab stop; ArrowRight moves to and opens the next lane; + Side thread sits outside it', async () => {
     await mount()
     await settle()
-    const list = host.querySelector('[role="tablist"]') as HTMLElement
+    const list = host.querySelector('[role="tablist"][aria-label="Conversations with this bot"]') as HTMLElement
     expect(list.getAttribute('aria-label')).toBe('Conversations with this bot')
     const tabs = [...list.querySelectorAll<HTMLElement>('[role="tab"]')]
     expect(tabs.filter(t => t.tabIndex === 0)).toHaveLength(1)
@@ -293,6 +293,6 @@ describe('the lane strip keyboard (UI SDK tabs)', () => {
     expect(urls()).toContain('/api/agent-chat/agents/librarian/messages?thread_id=7')
     tabs[1].dispatchEvent(new KeyboardEvent('keydown', { key: 'Home', bubbles: true, cancelable: true }))
     await settle()
-    expect(host.querySelector('[role="tab"][aria-selected="true"]')?.textContent).toBe('Main')
+    expect(host.querySelector('[role="tablist"][aria-label="Conversations with this bot"] [role="tab"][aria-selected="true"]')?.textContent).toBe('Main')
   })
 })

@@ -8,7 +8,9 @@ import fs from 'fs'
 import path from 'path'
 import type { Objective } from '@operationkit/shared'
 import { getDb } from '../db/index.js'
-import { resolveAgentWorkdir } from './agent-registry.js'
+import { agentExists, resolveAgentWorkdir } from './agent-registry.js'
+import { builtinsEnabled, loadChatAgents } from './agent-chat/agent-defs.js'
+import { getWorkspace } from './workspaces.js'
 import { parseAgentFile, renderAgentInstructions } from './agent-file.js'
 import {
   AGENTS_DIR,
@@ -109,6 +111,52 @@ export function readAgentInstructions(agentName: string): string | null {
     return content.length > 4000 ? content.slice(0, 4000) + '\n\n[... truncated — read full file at ~/ai-workspace/agents/' + agentName + '.md]' : content
   } catch {
     return null
+  }
+}
+
+/**
+ * Who actually works a card (obj 900948, review of PR 797).
+ *
+ * `agent_context` is normally a WORKER PERSONA: a registry row with a prompt
+ * file under ~/ai-workspace/agents and a working directory. A card owned by a
+ * CHAT BOT carries the bot's slug instead (chat-filed cards, High Agency
+ * wakes), and a chat bot is neither: a built-in bot has no file there at all,
+ * so the session opened with "read <a file that does not exist>" and ran in
+ * the home folder instead of the persona's.
+ *
+ * So for a slug that is not a worker persona but IS a chat bot:
+ *   - `persona` — the workspace's default worker persona (pool[0], else
+ *     'general'), unless the bot has its own installed agent file, whose
+ *     instructions keep being inlined as before;
+ *   - `workdirPersona` — always that default persona (a chat bot has no
+ *     working directory of its own);
+ *   - `bot` — the bot, so the prompt can say whose card this is. The card's
+ *     agent_context, owner and description are untouched.
+ * Every other slug resolves to itself, exactly as before.
+ */
+export interface CardWorker {
+  persona: string
+  workdirPersona: string
+  bot: { slug: string; name: string } | null
+}
+
+export function resolveCardWorker(objective: Pick<Objective, 'agent_context' | 'workspace'>): CardWorker {
+  const slug = String(objective.agent_context ?? '').trim()
+  const self: CardWorker = { persona: slug, workdirPersona: slug, bot: null }
+  if (!slug) return self
+  try {
+    if (agentExists(slug)) return self
+    const bot = loadChatAgents({ includeBuiltins: builtinsEnabled(), includeDemo: false }).agents.find(a => a.slug === slug)
+    if (!bot) return self
+    const pool = objective.workspace ? getWorkspace(objective.workspace)?.default_agent_pool : null
+    const fallback = pool && pool.length > 0 ? pool[0] : 'general'
+    return {
+      persona: readAgentFileInstructions(slug) ? slug : fallback,
+      workdirPersona: fallback,
+      bot: { slug, name: bot.name || slug },
+    }
+  } catch {
+    return self
   }
 }
 
@@ -221,6 +269,6 @@ export function resolveWorkdir(
     )
   }
   // Non-project objective → agent-based workdir (unchanged).
-  return resolveAgentWorkdir(objective.agent_context)
+  return resolveAgentWorkdir(resolveCardWorker(objective).workdirPersona)
 }
 

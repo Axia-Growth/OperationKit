@@ -33,6 +33,8 @@ import { DEV_BOT_SLUG, devBotLink } from '../agents/CreateAgentGuide'
 import { agentsTabRoute } from '../../lib/routes'
 import type { BotSidebarApi } from './useBotSidebar'
 import type { AgentsResponse, ChatAgentInfo, SidebarBot, SidebarSection } from './types'
+import type { BotStatusEntry, BotStatusResponse } from '@operationkit/shared'
+import { BotLiveLine } from './BotLiveStatus'
 
 /* The Bots sidebar (obj 900798).
 
@@ -139,12 +141,15 @@ function previewFor(a: ChatAgentInfo, b: SidebarBot): string {
 function BotRow({
   agent,
   entry,
+  live,
   active,
   onPick,
   onMenu,
 }: {
   agent: ChatAgentInfo
   entry: SidebarBot
+  /** obj 900947: what the bot is doing now (dot + live line). Absent = the row reads as before. */
+  live?: BotStatusEntry
   active: boolean
   onPick: () => void
   onMenu: (anchor: MenuAnchor, trigger: HTMLElement) => void
@@ -195,6 +200,7 @@ function BotRow({
             <span className={cn('min-w-0 flex-1 truncate text-sm', entry.unread ? 'text-fg-1' : 'text-fg-2')}>{previewFor(agent, entry)}</span>
             <PendingBadge entry={entry} />
           </span>
+          {live && <BotLiveLine entry={live} className="mt-0.5" />}
         </span>
       </button>
       <button
@@ -435,6 +441,8 @@ export function BotSidebar({
   sidebar,
   onAgentChanged,
   onAgentDeleted,
+  liveStatus = null,
+  onNeedsYou,
 }: {
   data: AgentsResponse
   active: string | null
@@ -453,6 +461,10 @@ export function BotSidebar({
   onAgentChanged: (a: ChatAgentInfo) => void
   /** A bot was deleted for everyone: reload the list (and leave its page). */
   onAgentDeleted: (slug: string) => void
+  /** obj 900947: every bot's live line + the "Needs you" count across bots. Optional. */
+  liveStatus?: BotStatusResponse | null
+  /** Open the bot whose card needs the person (the header's "Needs you" link). */
+  onNeedsYou?: (slug: string) => void
 }) {
   const { state } = sidebar
   const [filter, setFilter] = useState<SidebarFilter>('all')
@@ -478,6 +490,12 @@ export function BotSidebar({
   // Replies waiting across every bot the person has not hidden.
   const waiting = useMemo(() => pendingTotal(data.agents.filter(a => !botState(state, a.slug).hidden), state), [data.agents, state])
   const devBot = data.agents.find(a => a.slug === DEV_BOT_SLUG) ?? null
+  // obj 900947: cards across every bot that need the person (each card once, server-counted).
+  const needsYou = liveStatus?.needs_you_total ?? 0
+  const firstNeeding = useMemo(
+    () => data.agents.find(a => (liveStatus?.bots[a.slug]?.counts.needs_you ?? 0) > 0)?.slug ?? null,
+    [data.agents, liveStatus],
+  )
 
   // Hook errors surface as the same toast as the menu's own messages.
   useEffect(() => {
@@ -682,6 +700,21 @@ export function BotSidebar({
               'One ongoing conversation with each bot.'
             )}
           </p>
+          {needsYou > 0 && (
+            <p className="mt-1">
+              <button
+                type="button"
+                data-testid="bots-needs-you"
+                onClick={() => firstNeeding && onNeedsYou?.(firstNeeding)}
+                aria-label={`${needsYou} card${needsYou === 1 ? '' : 's'} across your bots need${needsYou === 1 ? 's' : ''} you`}
+                className="inline-flex items-center gap-1.5 rounded-full border border-status-human/30 bg-status-human/10 px-2 py-0.5 text-xs font-medium text-status-human hover:bg-status-human/15 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/50"
+              >
+                <span className="h-1.5 w-1.5 rounded-full bg-status-human" aria-hidden="true" />
+                <span className="font-mono font-semibold tabular-nums">{needsYou > 99 ? '99+' : needsYou}</span>
+                Needs you
+              </button>
+            </p>
+          )}
         </div>
         <IconButton label="New section" onClick={() => setDialog({ kind: 'new-section' })} className="h-8 w-8">
           <FolderPlus className="h-[18px] w-[18px]" aria-hidden="true" />
@@ -813,6 +846,7 @@ export function BotSidebar({
                         key={a.slug}
                         agent={a}
                         entry={botState(state, a.slug)}
+                        live={liveStatus?.bots[a.slug]}
                         active={a.slug === active}
                         onPick={() => onPick(a.slug)}
                         onMenu={openBotMenu(a)}

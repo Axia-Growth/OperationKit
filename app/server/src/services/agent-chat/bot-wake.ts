@@ -20,6 +20,7 @@
 // Retry: no AI seat / a provider error → back to 'pending' with a backoff
 // (30s, 2m, 10m); after the last attempt → 'failed' and the sender's chat is
 // told. A reply never wakes anybody, so one message = at most one wake.
+import { withResolvedKnowledgeFolders } from './knowledge-folders.js'
 import { getDb } from '../../db/index.js'
 import { frameAndScan } from '../injection-telemetry.js'
 import { findAgent, installDefaultProvider, knowledgeRoot, runModelLoop, systemPromptFor, type LoopRecord } from './engine.js'
@@ -27,7 +28,7 @@ import { DEMO_AGENT_SLUG, type ChatAgent } from './agent-defs.js'
 import { resolveConnectors } from './connectors.js'
 import { chooseProviderId, createProvider, type ChatMessage, type ProviderDeps } from './providers.js'
 import { mcpToolSetFor, type McpToolSet } from './mcp-tools.js'
-import { toolSpecsFor, type ToolContext } from './tools.js'
+import { kbWorkspacesForChat, toolSpecsFor, type ToolContext } from './tools.js'
 import type { WebToolDeps } from './web-tools.js'
 import {
   auditBotMessage,
@@ -270,7 +271,7 @@ async function wake(msg: BotMessage, conversation: BotConversation, opts: DrainO
   try { mcpTools = mcpToolSetFor(recipient, conversation.workspace) } catch { /* no MCP tools rather than no wake */ }
   const tools = [...toolSpecsFor(recipient), ...mcpTools.specs]
   const system =
-    systemPromptFor(recipient, {
+    systemPromptFor(withResolvedKnowledgeFolders(recipient, ctx.kbRoot, kbWorkspacesForChat(ctx.userId, recipient.slug)), {
       username: person,
       now: now(),
       connectors: [connectors.mail?.label, connectors.calendar?.label].filter((x): x is string => !!x),

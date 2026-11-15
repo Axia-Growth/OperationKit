@@ -182,10 +182,12 @@ describe('resolveObjectiveModel — grunt workers get Sonnet', () => {
 })
 
 describe('model-registry: defensive fallback', () => {
-  it('falls back to Opus 4.8 when no default row exists', () => {
+  // obj 900948: the floor is no longer a retired literal (Opus 4.8) but the
+  // seed default; an empty registry is the only way to reach it.
+  it('falls back to the seed default when the registry is empty', () => {
     getDb().exec('DELETE FROM models')
-    expect(getDefaultModelId()).toBe('claude-opus-4-8')
-    expect(getPlannerModelId()).toBe('claude-opus-4-8')
+    expect(getDefaultModelId()).toBe('claude-opus-5-5')
+    expect(getPlannerModelId()).toBe('claude-opus-5-5')
   })
 })
 

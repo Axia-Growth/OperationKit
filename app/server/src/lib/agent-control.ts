@@ -21,22 +21,43 @@ export function visibilityClause(
   user: ControlUser,
   workspace?: string,
 ): { sql: string; params: unknown[] } | null {
+  return visibilityClauseFor(user, user.role === 'admin' ? [] : getUserWorkspaces(user.id), workspace)
+}
+
+/** A member's workspace membership as the visibility rule reads it. */
+export interface VisibilityMembership {
+  workspace: string
+  objective_visibility?: string | null
+}
+
+/**
+ * visibilityClause with the member's memberships passed in, for a caller that
+ * has already read them (ignored for an admin). The rule is the board list's:
+ * an 'all' membership sees the whole workspace; any other membership sees only
+ * cards the member is assigned to, created, or is an assignee on.
+ */
+export function visibilityClauseFor(
+  user: ControlUser,
+  memberships: VisibilityMembership[],
+  workspace?: string,
+): { sql: string; params: unknown[] } | null {
   const allow = user.allowWorkspaces
   if (allow) {
     if (workspace && !allow.includes(workspace)) return null
     if (allow.length === 0) return null
-    const base = baseVisibility(user, workspace)
+    const base = baseVisibility(user, memberships, workspace)
     if (!base) return null
     return {
       sql: `(${base.sql} AND o.workspace IN (${allow.map(() => '?').join(',')}))`,
       params: [...base.params, ...allow],
     }
   }
-  return baseVisibility(user, workspace)
+  return baseVisibility(user, memberships, workspace)
 }
 
 function baseVisibility(
   user: ControlUser,
+  all: VisibilityMembership[],
   workspace?: string,
 ): { sql: string; params: unknown[] } | null {
   if (user.role === 'admin') {
@@ -44,8 +65,7 @@ function baseVisibility(
       ? { sql: 'o.workspace = ?', params: [workspace] }
       : { sql: '1 = 1', params: [] }
   }
-  const memberships = getUserWorkspaces(user.id)
-    .filter(m => !workspace || m.workspace === workspace)
+  const memberships = all.filter(m => !workspace || m.workspace === workspace)
   if (memberships.length === 0) return null
   const allWs = memberships.filter(m => m.objective_visibility === 'all').map(m => m.workspace)
   const ownWs = memberships.filter(m => m.objective_visibility !== 'all').map(m => m.workspace)

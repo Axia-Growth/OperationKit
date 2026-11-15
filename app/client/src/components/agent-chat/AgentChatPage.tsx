@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ClipboardEvent, type KeyboardEvent } from 'react'
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
-import { ChevronLeft, Info, Paperclip, Pin, X } from 'lucide-react'
+import { ChevronLeft, Info, Paperclip, Pin, Square, X } from 'lucide-react'
 import { api } from '../../lib/api'
 import { useAuth } from '../../context/AuthContext'
 import { useFileDrop, filesFromClipboard } from '../../hooks/useFileDrop'
@@ -15,6 +15,13 @@ import { collectImages, humanSize, toWireImages, type PendingImage } from './att
 import { BotSettingsPanel } from './BotSettingsPanel'
 import { BotSidebar, NewBotDialog } from './BotSidebar'
 import { useBotSidebar } from './useBotSidebar'
+import { useBotStatus } from './useBotStatus'
+import { BotWorkTab } from './BotWorkTab'
+import { BotActivityFeed } from './BotActivityFeed'
+import { NeedsYouMessage, isNeedsYouMessage } from './NeedsYouMessage'
+import { foldFeedMessages } from './chat-feed-model'
+import { BotLiveLine } from './BotLiveStatus'
+import type { BotStatusEntry } from '@operationkit/shared'
 import {
   AGENTS_KEY,
   fetchAgents,
@@ -38,6 +45,7 @@ import {
   type ChatDraft,
   type ChatMessage,
   type ChatThread,
+  type LaneTurn,
   type ThreadResponse,
   type ThreadsResponse,
 } from './types'
@@ -183,8 +191,16 @@ function Conversation({
   onAgentChanged,
   onActivity,
   initialBotThread = null,
+  view = 'chat',
+  onView,
+  live,
 }: {
   agent: ChatAgentInfo
+  /** obj 900947: which of the bot's views is open — its chat, its Work, or its High Agency Activity. */
+  view?: BotView
+  onView?: (v: BotView) => void
+  /** obj 900947: the bot's live status line for the header. */
+  live?: BotStatusEntry
   onBack: () => void
   initialText?: string
   /** ?bot_thread=<id> opens that bot-to-bot thread in the Bot messages panel (obj 900859). */
@@ -217,7 +233,15 @@ function Conversation({
   // The long placeholder wrapped and was clipped in the one-line box at phone width (QA obj 900621).
   const narrow = useMediaQuery('(max-width: 639px)')
   const [images, setImages] = useState<PendingImage[]>([])
-  const [pending, setPending] = useState<{ text: string; images: PendingImage[] } | null>(null)
+  // The message whose turn this tab is waiting on (its POST runs the turn).
+  // `id` is the message's client_msg_id (obj 900977): once the server's own row
+  // for it is in the thread, that row is the message and this bubble is hidden.
+  const [pending, setPending] = useState<{ id: string; text: string; images: PendingImage[] } | null>(null)
+  // obj 900949: messages sent while the bot is working, until the server has
+  // stored them as queued. Each shows as a "Sending…" bubble below the turn.
+  const [outbox, setOutbox] = useState<{ key: number; id: string; text: string; images: PendingImage[] }[]>([])
+  const outboxSeq = useRef(0)
+  const [stopping, setStopping] = useState(false)
   const [sendError, setSendError] = useState<string | null>(null)
   // null = the main conversation; a number = that side thread (obj 900370).
   const [lane, setLane] = useState<number | null>(null)
@@ -267,6 +291,33 @@ function Conversation({
   const setThreads = (fn: (cur: ChatThread[]) => ChatThread[]) =>
     writeCache<ThreadsResponse>(threadsKey(slug), d => ({ max_open: maxOpen, ...d, threads: fn(Array.isArray(d?.threads) ? d.threads : []) }))
   const activeThread = threads.find(t => t.id === lane) ?? null
+
+  // obj 900949: the bot is working when this tab is waiting on a turn OR the
+  // server says one is running in this lane (a queue being delivered, another tab).
+  const working = !!pending || !!thread?.turn?.running
+  // Queued messages render at the bottom, after the turn they wait behind.
+  const delivered = useMemo(() => (thread?.messages ?? []).filter(m => !m.meta?.queued), [thread?.messages])
+  const queuedRows = useMemo(() => (thread?.messages ?? []).filter(m => m.meta?.queued), [thread?.messages])
+  // obj 900977: the server stores a message's row when its turn starts (or when
+  // it is queued), so any re-read of the lane mid-turn already returns it. A
+  // message is shown ONCE: the local bubble steps aside as soon as the row with
+  // the same client_msg_id is in the thread.
+  const storedIds = useMemo(() => {
+    const ids = new Set<string>()
+    for (const m of thread?.messages ?? []) if (m.meta?.client_msg_id) ids.add(m.meta.client_msg_id)
+    return ids
+  }, [thread?.messages])
+  const pendingBubble = pending && !storedIds.has(pending.id) ? pending : null
+  const outboxBubbles = useMemo(() => outbox.filter(o => !storedIds.has(o.id)), [outbox, storedIds])
+  const queuedCount = queuedRows.length + outboxBubbles.length
+  // While the server works through this lane with no request of ours open,
+  // re-read it so replies and picked-up queued messages appear.
+  const serverBusy = !pending && (!!thread?.turn?.running || queuedRows.length > 0)
+  useEffect(() => {
+    if (!serverBusy) return
+    const t = setInterval(() => void load(), TURN_POLL_MS)
+    return () => clearInterval(t)
+  }, [serverBusy, load])
 
   useEffect(() => {
     setText('')
@@ -343,7 +394,7 @@ function Conversation({
     void addFiles(files)
   }
 
-  const { isDragging, dropProps } = useFileDrop(f => void addFiles(f), !pending)
+  const { isDragging, dropProps } = useFileDrop(f => void addFiles(f), true)
 
   // Board cards keep moving after the chat ends: refresh while any is still open.
   // Board cards keep moving after the conversation ends: refresh while any is still open.
@@ -394,7 +445,7 @@ function Conversation({
       return
     }
     el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' })
-  }, [msgKey, hasThread, thread?.messages.length, pending])
+  }, [msgKey, hasThread, thread?.messages.length, pendingBubble, outboxBubbles.length])
 
   // obj 900798: what is on screen has been read. Fires when the newest message
   // in view changes (a lane loaded, a reply landed), not on every 15s refresh,
@@ -406,32 +457,92 @@ function Conversation({
     if (newestId) activity.current?.()
   }, [newestId])
 
+  // obj 900977: one draft is sent once. Two submits fired before the box has
+  // re-rendered empty (a double Enter, Enter + click) carry the very same draft;
+  // the second is dropped here. Any change to the draft clears the mark.
+  const sentDraft = useRef<{ text: string; images: PendingImage[] } | null>(null)
+  useEffect(() => { sentDraft.current = null }, [text, images, msgKey])
+
   const send = async (raw: string, attached: PendingImage[] = images) => {
     const msg = raw.trim()
     // A screenshot on its own is a message: send when there is text OR an image.
-    if ((!msg && attached.length === 0) || pending) return
+    if (!msg && attached.length === 0) return
+    if (sentDraft.current && sentDraft.current.text === raw && sentDraft.current.images === attached) return
+    sentDraft.current = { text: raw, images: attached }
     const key = msgKey
-    setPending({ text: msg, images: attached })
+    // obj 900977: the id this message is known by on both sides. The server
+    // stores it on the row and answers a repeat with that row, not a second one.
+    const id = newClientMsgId()
+    // obj 900949: Send never waits on the bot. While a turn runs, the message
+    // goes straight to the server, which queues it (202) and delivers it next.
+    const queueIt = working
+    const outKey = ++outboxSeq.current
+    if (queueIt) setOutbox(cur => [...cur, { key: outKey, id, text: msg, images: attached }])
+    else setPending({ id, text: msg, images: attached })
     setText('')
     setImages([])
     setSendError(null)
+    input.current?.focus()
     try {
       const r = await api.post<ThreadResponse>(
         `${base}/messages`,
-        { text: msg, ...(lane === null ? {} : { thread_id: lane }), ...(attached.length ? { images: toWireImages(attached) } : {}) },
+        { text: msg, client_msg_id: id, ...(lane === null ? {} : { thread_id: lane }), ...(attached.length ? { images: toWireImages(attached) } : {}) },
         { timeoutMs: 240_000 },
       )
       writeCache<ThreadResponse>(key, t => mergeThread(t ?? null, r))
       // The strip shows per-lane message counts and ordering by last activity.
       void loadThreads()
     } catch (e) {
-      setText(msg)
-      setImages(attached)
+      // Nothing typed is lost: put it back unless the person is already typing the next one.
+      setText(cur => (cur.trim() ? cur : msg))
+      setImages(cur => (cur.length ? cur : attached))
       setSendError(e instanceof Error ? e.message : 'Message not sent')
+      // Sending the restored draft again is a deliberate retry, not a double submit.
+      sentDraft.current = null
     } finally {
-      setPending(null)
-      input.current?.focus()
+      if (queueIt) setOutbox(cur => cur.filter(o => o.key !== outKey))
+      else setPending(null)
     }
+  }
+
+  /**
+   * obj 900949: cancel the reply in progress. Queued messages are kept (they go
+   * to the bot next); `dropQueued` discards them too and is only sent after the
+   * person confirmed.
+   */
+  const stop = async (dropQueued = false) => {
+    const key = msgKey
+    setStopping(true)
+    setSendError(null)
+    try {
+      const r = await api.post<{ stopped: boolean; dropped: number; turn: LaneTurn }>(`${base}/stop`, {
+        ...(lane === null ? {} : { thread_id: lane }),
+        ...(dropQueued ? { drop_queued: true } : {}),
+      })
+      updateThread(key, t => ({
+        ...t,
+        turn: r.turn,
+        messages: dropQueued ? t.messages.filter(m => !m.meta?.queued) : t.messages,
+      }))
+      if (!pending) void load()
+    } catch (e) {
+      setSendError(e instanceof Error ? e.message : 'Could not stop the reply')
+    } finally {
+      setStopping(false)
+    }
+  }
+
+  const discardQueued = async (n: number) => {
+    if (
+      !(await confirm({
+        title: `Stop and discard ${n === 1 ? 'your queued message' : `${n} queued messages`}?`,
+        message: `${n === 1 ? 'It has' : 'They have'} not reached ${agent.name} yet and will be deleted. The reply in progress is stopped too.`,
+        confirmLabel: 'Stop and discard',
+        danger: true,
+      }))
+    )
+      return
+    await stop(true)
   }
 
   const onKey = (e: KeyboardEvent<HTMLTextAreaElement>) => {
@@ -494,6 +605,7 @@ function Conversation({
             {/* Named only in a side thread: the main conversation is the unlabelled default. */}
             {activeThread && <span> · side thread <span className="text-fg-1">{activeThread.title}</span></span>}
           </p>
+          {live && <BotLiveLine entry={live} className="mt-0.5" />}
         </div>
         {/* Actions travel as one group: on a phone they wrap under the bot name
             instead of squeezing it to a single letter (obj 900750). */}
@@ -573,7 +685,7 @@ function Conversation({
               : `Clear this conversation with ${agent.name} (the bot is kept)`
           }
           onClick={() => void clear()}
-          disabled={!thread?.messages.length || !!pending}
+          disabled={!thread?.messages.length || working}
           className="min-h-[44px] sm:min-h-0"
         >
           {activeThread ? 'Clear side thread' : 'Clear conversation'}
@@ -617,6 +729,32 @@ function Conversation({
         />
       )}
 
+      <div className="flex items-center gap-2 border-b border-line bg-surface-1 px-2 py-1.5 sm:px-4" data-testid="bot-view-tabs">
+        <Tabs
+          label={`${agent.name} views`}
+          value={view}
+          onChange={k => onView?.(k as BotView)}
+          items={[
+            { key: 'chat', label: 'Chat' },
+            { key: 'work', label: 'Work', count: live ? live.counts.running + live.counts.review + live.counts.queued : undefined },
+            { key: 'activity', label: 'Activity' },
+          ]}
+        />
+        {live && live.counts.needs_you > 0 && view !== 'work' && (
+          <button
+            type="button"
+            onClick={() => onView?.('work')}
+            className="ml-auto rounded-full border border-status-human/30 bg-status-human/10 px-2 py-0.5 text-xs font-medium text-status-human hover:bg-status-human/15 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/50"
+          >
+            {live.counts.needs_you} need{live.counts.needs_you === 1 ? 's' : ''} you
+          </button>
+        )}
+      </div>
+
+      {view === 'work' && <div className="min-h-0 flex-1 overflow-y-auto"><BotWorkTab agent={agent} /></div>}
+      {view === 'activity' && <div className="min-h-0 flex-1 overflow-y-auto"><BotActivityFeed agent={agent} /></div>}
+
+      {view === 'chat' && (<>
       <LaneStrip threads={threads} lane={lane} maxOpen={maxOpen} busy={laneBusy} onPick={setLane} onOpen={() => void openLane()} />
 
       {/* While Bot settings is open the panel takes the pane and scrolls itself
@@ -667,38 +805,53 @@ function Conversation({
               {agent.source === 'demo' && <p className="text-xs text-fg-2">Demo bot: the inbox, calendar and notes are made-up sample data.</p>}
             </div>
           )}
-          {thread?.messages.map(m => (
-            <MessageRow
-              key={m.id}
-              m={m}
-              agent={agent}
-              draft={m.meta?.draft_id ? drafts.get(m.meta.draft_id) : undefined}
-              card={m.tool_name === 'create_objective' && m.meta?.objective_id ? cards.get(m.meta.objective_id) : undefined}
-              onSend={d => draftAction(`/agent-chat/drafts/${d.id}/send`)}
-              onDiscard={d => draftAction(`/agent-chat/drafts/${d.id}/discard`)}
-              onSave={(d, patch) => draftAction(`/agent-chat/drafts/${d.id}`, patch, 'put')}
-              onOpenBotThread={openBotThread}
+          {foldFeedMessages(delivered).map(item => {
+            if (item.kind === 'feed') {
+              return <FoldedActivity key={item.key} messages={item.messages} agent={agent} onOpenActivity={() => onView?.('activity')} />
+            }
+            const m = item.m
+            if (isNeedsYouMessage(m)) return <NeedsYouMessage key={m.id} m={m} agent={agent} />
+            return (
+              <MessageRow
+                key={m.id}
+                m={m}
+                agent={agent}
+                draft={m.meta?.draft_id ? drafts.get(m.meta.draft_id) : undefined}
+                card={m.tool_name === 'create_objective' && m.meta?.objective_id ? cards.get(m.meta.objective_id) : undefined}
+                onSend={d => draftAction(`/agent-chat/drafts/${d.id}/send`)}
+                onDiscard={d => draftAction(`/agent-chat/drafts/${d.id}/discard`)}
+                onSave={(d, patch) => draftAction(`/agent-chat/drafts/${d.id}`, patch, 'put')}
+                onOpenBotThread={openBotThread}
+              />
+            )
+          })}
+          {pendingBubble && (
+            <UserBubble
+              m={{ content: pendingBubble.text, created_at: new Date().toISOString(), images: pendingBubble.images.map((i, n) => ({ id: -1 - n, name: i.name, media_type: i.media_type, size: i.size, url: i.dataUrl })) }}
+            />
+          )}
+          {working && (
+            <div className="flex items-center gap-2.5" data-testid="bot-working">
+              <AgentAvatar agent={agent} size="sm" />
+              <ThinkingIndicator label={`${agent.name} is working…`} tone="fg-2" />
+            </div>
+          )}
+          {/* obj 900949: messages sent while the bot works wait here, in the
+              order they were sent, until the bot picks them up. */}
+          {queuedRows.map(m => <UserBubble key={m.id} m={m} queued />)}
+          {outboxBubbles.map(o => (
+            <UserBubble
+              key={`out-${o.key}`}
+              sending
+              m={{ content: o.text, created_at: '', images: o.images.map((i, n) => ({ id: -1 - n, name: i.name, media_type: i.media_type, size: i.size, url: i.dataUrl })) }}
             />
           ))}
-          {pending && (
-            <>
-              <div className="flex justify-end">
-                <div className="max-w-[85%] rounded-lg rounded-br-sm border border-line bg-surface-3 px-3.5 py-2.5 text-base text-fg-0 sm:max-w-[70%]">
-                  {pending.images.length > 0 && (
-                    <div className="mb-2 flex flex-wrap gap-1.5">
-                      {pending.images.map(i => (
-                        <img key={i.key} src={i.dataUrl} alt={i.name} className="max-h-40 rounded-md border border-line-soft" />
-                      ))}
-                    </div>
-                  )}
-                  {pending.text && <p className="whitespace-pre-wrap break-words">{pending.text}</p>}
-                </div>
-              </div>
-              <div className="flex items-center gap-2.5">
-                <AgentAvatar agent={agent} size="sm" />
-                <ThinkingIndicator label={`${agent.name} is working…`} tone="fg-2" />
-              </div>
-            </>
+          {queuedCount > 0 && (
+            <p className="self-end text-right text-xs text-fg-2" data-testid="queue-note">
+              {working
+                ? `${agent.name} is mid-task. ${queuedCount === 1 ? 'Your message goes' : `Your ${queuedCount} messages go`} to it next, in order.`
+                : `Sending ${queuedCount === 1 ? 'your queued message' : `your ${queuedCount} queued messages`}…`}
+            </p>
           )}
         </div>
       </div>
@@ -745,7 +898,7 @@ function Conversation({
                 e.target.value = ''
               }}
             />
-            <IconButton type="button" label="Attach an image" onClick={() => filePicker.current?.click()} disabled={!!pending}>
+            <IconButton type="button" label="Attach an image" onClick={() => filePicker.current?.click()}>
               <Paperclip aria-hidden="true" className="h-5 w-5" />
             </IconButton>
             <label htmlFor="agent-chat-input" className="sr-only">Message {agent.name}</label>
@@ -758,16 +911,43 @@ function Conversation({
               onKeyDown={onKey}
               onPaste={onPaste}
               placeholder={narrow ? 'Write a message…' : activeThread ? `Write a message in "${activeThread.title}"` : 'Write a message, or paste a screenshot'}
-              disabled={!!pending}
               className="max-h-60 min-h-[44px] flex-1 resize-none rounded-lg border border-line bg-surface-0 px-3.5 py-2.5 text-lg text-fg-0 placeholder:text-fg-3 transition-colors duration-fast hover:border-line-strong focus:border-accent focus:outline-none focus:ring-2 focus:ring-accent/30 disabled:opacity-60 sm:text-base"
             />
-            <Button type="submit" variant="primary" loading={!!pending} disabled={!text.trim() && images.length === 0} className="min-h-[44px] sm:min-h-[44px]">
+            {/* obj 900949: Stop is its own small control, shown only while the
+                bot works. Send below never turns into a spinner or locks. */}
+            {working && (
+              <Button
+                type="button"
+                variant="secondary"
+                onClick={() => void stop()}
+                loading={stopping}
+                aria-label={queuedCount > 0 ? `Stop ${agent.name}'s reply (your queued messages are kept)` : `Stop ${agent.name}'s reply`}
+                leftIcon={<Square aria-hidden="true" className="h-3.5 w-3.5 fill-current" />}
+                className="min-h-[44px] sm:min-h-[44px]"
+              >
+                Stop
+              </Button>
+            )}
+            <Button type="submit" variant="primary" disabled={!text.trim() && images.length === 0} className="min-h-[44px] sm:min-h-[44px]">
               Send
             </Button>
           </div>
+          {working && queuedCount > 0 && queuedRows.length > 0 && (
+            <p className="mt-1.5 text-xs text-fg-2">
+              Stop keeps your queued {queuedRows.length === 1 ? 'message' : 'messages'}.{' '}
+              <button
+                type="button"
+                onClick={() => void discardQueued(queuedRows.length)}
+                className="text-accent underline-offset-2 hover:text-accent-hover hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/50"
+              >
+                Stop and discard queued
+              </button>
+            </p>
+          )}
           <p className="mt-1.5 hidden text-xs text-fg-2 sm:block">Enter to send · Shift+Enter for a new line · paste, drop or attach a screenshot · Email and calendar are always drafts until you press Send.</p>
         </div>
       </form>
+      </>)}
       {confirmDialog}
     </section>
   )
@@ -809,6 +989,8 @@ function ConversationSkeleton() {
 const COMPOSER_MAX_PX = 240
 /** While a bot-to-bot reply is awaited: re-read the lane this often, at most this many times (~5 min). */
 const BOT_REPLY_POLL_MS = 5000
+/** obj 900949: while the bot works through a lane on its own (a queue), re-read the lane this often. */
+const TURN_POLL_MS = 2000
 const BOT_REPLY_MAX_POLLS = 60
 const BOT_REPLY_WINDOW_MS = 15 * 60_000
 
@@ -818,10 +1000,24 @@ function sentAt(iso: string): number {
   return Number.isNaN(t) ? 0 : t
 }
 
-function mergeThread(t: ThreadResponse | null, r: ThreadResponse): ThreadResponse {
+/** A fresh client_msg_id: 8-64 of [A-Za-z0-9_-], the shape the server accepts. */
+function newClientMsgId(): string {
+  const c = globalThis.crypto
+  if (c && typeof c.randomUUID === 'function') return c.randomUUID()
+  return `m-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 12)}`
+}
+
+export function mergeThread(t: ThreadResponse | null, r: ThreadResponse): ThreadResponse {
   const prev = t ?? { messages: [], drafts: [], cards: [] }
   const byId = <T extends { id: number }>(a: T[], b: T[]) => [...new Map([...a, ...b].map(x => [x.id, x])).values()]
-  return { messages: byId(prev.messages, r.messages), drafts: byId(prev.drafts, r.drafts), cards: byId(prev.cards, r.cards) }
+  // obj 900977: a queued message is re-filed under a NEW row id when the bot
+  // picks it up. A POST answer that lands after a re-read already showed the
+  // delivered row must not add the old queued row back beside it.
+  const delivered = new Set(prev.messages.filter(m => m.meta?.client_msg_id && !m.meta.queued).map(m => m.meta!.client_msg_id!))
+  const incoming = r.messages.filter(m => !(m.meta?.queued && m.meta.client_msg_id && delivered.has(m.meta.client_msg_id)))
+  r = { ...r, messages: incoming }
+  // obj 900949: the newest answer carries the lane's turn state (running, queued count).
+  return { messages: byId(prev.messages, r.messages), drafts: byId(prev.drafts ?? [], r.drafts ?? []), cards: byId(prev.cards ?? [], r.cards ?? []), turn: r.turn ?? prev.turn }
 }
 
 function MessageRow({
@@ -854,6 +1050,47 @@ function MessageRow({
       {draft && <DraftCard draft={draft} onSend={onSend} onDiscard={onDiscard} onSave={onSave} />}
       {card && <CardChip card={card} />}
     </>
+  )
+}
+
+/** obj 900947: the three views on a bot's page. */
+export type BotView = 'chat' | 'work' | 'activity'
+const BOT_VIEWS: BotView[] = ['chat', 'work', 'activity']
+
+/**
+ * Older High Agency updates in this chat, folded into one row (obj 900947).
+ * Nothing is deleted: "Show" expands them in place, and the Activity tab is
+ * where new ones go.
+ */
+export function FoldedActivity({ messages, agent, onOpenActivity }: { messages: ChatMessage[]; agent: ChatAgentInfo; onOpenActivity: () => void }) {
+  const [open, setOpen] = useState(false)
+  const n = messages.length
+  return (
+    <div className="rounded-lg border border-dashed border-line bg-surface-1/60 px-3 py-2" data-testid="folded-activity">
+      <div className="flex flex-wrap items-center gap-2 text-sm text-fg-2">
+        <span>{n} High Agency update{n === 1 ? '' : 's'} — now in Activity</span>
+        <button
+          type="button"
+          aria-expanded={open}
+          onClick={() => setOpen(o => !o)}
+          className="text-accent hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/50"
+        >
+          {open ? 'Hide' : 'Show'}
+        </button>
+        <button
+          type="button"
+          onClick={onOpenActivity}
+          className="text-accent hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/50"
+        >
+          Open Activity
+        </button>
+      </div>
+      {open && (
+        <div className="mt-2 flex flex-col gap-3">
+          {messages.map(m => <AssistantBubble key={m.id} m={m} agent={agent} />)}
+        </div>
+      )}
+    </div>
   )
 }
 
@@ -895,6 +1132,18 @@ export function AgentChatPage() {
   const [newBotOpen, setNewBotOpen] = useState(false)
   // obj 900798: the person's pins, sections, hidden bots and unread state.
   const sidebar = useBotSidebar()
+  // obj 900947: every bot's live line + "Needs you" across bots, and which view of the open bot is showing.
+  const { status: liveStatus } = useBotStatus()
+  const viewParam = params.get('view')
+  const view: BotView = BOT_VIEWS.includes(viewParam as BotView) ? (viewParam as BotView) : 'chat'
+  const setView = useCallback((v: BotView) => {
+    setParams(p => {
+      const next = new URLSearchParams(p)
+      if (v === 'chat') next.delete('view')
+      else next.set('view', v)
+      return next
+    }, { replace: true })
+  }, [setParams])
 
   const setDemo = async (on: boolean) => {
     setDemoBusy(true)
@@ -1012,6 +1261,8 @@ export function AgentChatPage() {
           onDemo={on => void setDemo(on)}
           demoBusy={demoBusy}
           sidebar={sidebar}
+          liveStatus={liveStatus}
+          onNeedsYou={s => navigate(`/chat/${s}?view=work`)}
           onAgentChanged={mergeAgent}
           onAgentDeleted={gone => {
             if (gone === active?.slug) navigate('/chat')
@@ -1031,6 +1282,9 @@ export function AgentChatPage() {
             onAgentChanged={mergeAgent}
             onActivity={() => void markRead(active.slug)}
             initialBotThread={botThreadParam}
+            view={view}
+            onView={setView}
+            live={liveStatus?.bots[active.slug]}
           />
         ) : (
           <div className="flex h-full items-center justify-center px-6">

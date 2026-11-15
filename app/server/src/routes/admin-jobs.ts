@@ -30,6 +30,7 @@ import type { JobExecutionsResponse } from '../../../shared/job-executions.js'
 import { ASSISTANT_DIR, AI_WORKSPACE_DIR, SECOND_BRAIN_DIR, SKILLS_DIR } from '../config.js'
 import { resolveAssistantPersona } from '../services/assistant-persona.js'
 import { getSkillGraph } from '../services/skill-graph.js'
+import { defaultModelIdIn } from '../services/model-registry.js'
 
 const router = Router()
 
@@ -461,10 +462,10 @@ router.post('/strategy-jobs', (req: AuthRequest, res) => {
         // autonomy.
         const r = db.prepare(
           `INSERT INTO objectives
-             (title, description, agent_context, workspace, category, type,
+             (model, title, description, agent_context, workspace, category, type,
               delegate_mode, depth, status)
-           VALUES (?, ?, ?, ?, 'strategy', 'project', 1, 0, 'review')`
-        ).run(
+           VALUES (?, ?, ?, ?, ?, 'strategy', 'project', 1, 0, 'review')`
+        ).run(defaultModelIdIn(db),
           b.strategy_title.trim(),
           (b.strategy_description || '').trim(),
           agentContext,

@@ -2,6 +2,7 @@ import crypto from 'crypto'
 import type Database from 'better-sqlite3'
 import { ENTITY_TYPES, slugify, sameOrganization, type EntityIndexEntry, type EntityType } from '../doc-ingest/notes.js'
 import { createReviewItem, withdrawReviewItem, decideReviewItem, getReviewItem, type ReviewItemKind } from '../review-items.js'
+import { defaultModelIdIn } from '../model-registry.js'
 
 /**
  * Open questions from Knowledge Base Setup (obj 900556).
@@ -178,9 +179,9 @@ export function ensureAnchorCard(deps: AnchorDeps, openCount: number): number {
     }
   }
   const info = db.prepare(
-    `INSERT INTO objectives (title, description, agent_context, workspace, category, status, origin)
-     VALUES (?, ?, 'general', ?, 'general', 'queue', 'kb-setup')`,
-  ).run(title, description, workspace)
+    `INSERT INTO objectives (model, title, description, agent_context, workspace, category, status, origin)
+     VALUES (?, ?, ?, 'general', ?, 'general', 'queue', 'kb-setup')`,
+  ).run(defaultModelIdIn(db), title, description, workspace)
   return Number(info.lastInsertRowid)
 }
 

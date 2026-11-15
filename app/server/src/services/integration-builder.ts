@@ -23,6 +23,7 @@
  */
 import type Database from 'better-sqlite3'
 import type { IntegrationBuildKind, IntegrationBuildSummary } from '@operationkit/shared'
+import { defaultModelIdIn } from './model-registry.js'
 
 export const BUILDER_TARGET_MAX = 200
 export const BUILDER_DOCS_MAX = 8000
@@ -312,9 +313,9 @@ export function createIntegrationBuilderCard(db: Database.Database, input: Creat
   const docs = input.docs?.trim().slice(0, BUILDER_DOCS_MAX) || null
   return db.transaction(() => {
     const r = db.prepare(
-      `INSERT INTO objectives (title, description, completion_goal, agent_context, workspace, category, type, status, created_by)
-       VALUES (?, ?, ?, 'general', ?, 'general', 'task', 'queue', ?)`,
-    ).run(
+      `INSERT INTO objectives (model, title, description, completion_goal, agent_context, workspace, category, type, status, created_by)
+       VALUES (?, ?, ?, ?, 'general', ?, 'general', 'task', 'queue', ?)`,
+    ).run(defaultModelIdIn(db), 
       builderTitle(target), 'pending', INTEGRATION_BUILDER_COMPLETION_GOAL, input.workspace,
       input.createdByUserId && input.createdByUserId > 0 ? input.createdByUserId : null,
     )

@@ -19,6 +19,7 @@ import {
   type DevPrState,
   type DevSubmittedVia,
 } from './dev-items-schema.js'
+import { defaultModelIdIn } from './model-registry.js'
 
 // ── Writes ──────────────────────────────────────────────────────────────────
 
@@ -283,10 +284,10 @@ export function promoteDevItem(id: number, input: PromoteInput, agentContext = '
   const tx = db().transaction(() => {
     const info = db()
       .prepare(
-        `INSERT INTO objectives (title, description, agent_context, workspace, project, category, completion_goal, type, origin)
-         VALUES (?, ?, ?, ?, ?, 'development', ?, ?, 'manual')`,
+        `INSERT INTO objectives (model, title, description, agent_context, workspace, project, category, completion_goal, type, origin)
+         VALUES (?, ?, ?, ?, ?, ?, 'development', ?, ?, 'manual')`,
       )
-      .run(title, parts.join('\n\n'), agentContext, item.workspace, project, completionGoal, type)
+      .run(defaultModelIdIn(db()), title, parts.join('\n\n'), agentContext, item.workspace, project, completionGoal, type)
     const objectiveId = Number(info.lastInsertRowid)
     db()
       .prepare(

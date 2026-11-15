@@ -24,6 +24,7 @@ import {
 } from './flow-engine.js'
 import { validateCronExpr } from './routine-scheduler.js'
 import { isDefinitionRot } from '../../../shared/flow/repair.js'
+import { defaultModelIdIn } from './model-registry.js'
 
 export interface FlowRow {
   id: number
@@ -114,9 +115,9 @@ export function ensureFlowHomeCard(db: Database.Database, flowId: number, create
     if (exists) return exists.id
   }
   const r = db.prepare(
-    `INSERT INTO objectives (title, description, agent_context, workspace, category, type, status, origin, created_by)
-     VALUES (?, ?, 'general', ?, 'general', 'task', 'done', 'workflow', ?)`,
-  ).run(`Workflow: ${flow.name}`, homeCardDescription(flow), flow.workspace, createdByUserId && createdByUserId > 0 ? createdByUserId : null)
+    `INSERT INTO objectives (model, title, description, agent_context, workspace, category, type, status, origin, created_by)
+     VALUES (?, ?, ?, 'general', ?, 'general', 'task', 'done', 'workflow', ?)`,
+  ).run(defaultModelIdIn(db), `Workflow: ${flow.name}`, homeCardDescription(flow), flow.workspace, createdByUserId && createdByUserId > 0 ? createdByUserId : null)
   const objectiveId = Number(r.lastInsertRowid)
   db.prepare("UPDATE flow_definitions SET objective_id = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id = ?")
     .run(objectiveId, flowId)

@@ -2,6 +2,7 @@
  * Shared objective access/mapping helpers — extracted from objectives.ts
  * (behavior frozen). Used by CRUD and the remaining facade routes.
  */
+import { botSlugPassesAgentPool } from '../services/agent-chat/bot-workspaces.js'
 import { getDb } from '../db/index.js'
 import { type AuthRequest } from '../middleware/auth.js'
 import { getUserWorkspaces } from '../middleware/workspace.js'
@@ -9,6 +10,8 @@ import { getWorkspace } from '../services/workspaces.js'
 import { resolveAvailable } from '../services/resource-assignments.js'
 import { DEFAULT_AGENT_CONTEXT, cardOwner, type NeedsSecretItem, type Objective } from '@operationkit/shared'
 import { listBots, registryKey, type BotDefinition } from '../services/bots/bot-registry.js'
+import { loadChatAgents, builtinsEnabled } from '../services/agent-chat/agent-defs.js'
+import { allBotConfigs, applyBotConfig } from '../services/agent-chat/bot-config.js'
 
 /**
  * Lightweight card projection for the board LIST (obj 700512). This is EVERY
@@ -152,16 +155,50 @@ function cachedBots(): BotDefinition[] {
   return botCache.bots
 }
 
+/**
+ * obj 900947: installed chat bots (slug → display name). A chat bot that was
+ * never added to the bot registry still owns the cards filed with
+ * agent_context = its slug (the High Agency rule), so the board resolves it to
+ * the bot's display name — the same id its Work tab's "Open on board" link uses
+ * (bot-work.ts botIdentity: registry id, else the bot's name).
+ */
+let chatBotCache: { at: number; bots: Array<{ slug: string; name: string }> } | null = null
+
+function cachedChatBots(): Array<{ slug: string; name: string }> {
+  const now = Date.now()
+  if (!chatBotCache || now - chatBotCache.at > BOT_CACHE_MS) {
+    let bots: Array<{ slug: string; name: string }> = []
+    try {
+      const loaded = loadChatAgents({ env: process.env, includeDemo: false, includeBuiltins: builtinsEnabled(process.env) })
+      let configs: ReturnType<typeof allBotConfigs> = new Map()
+      try { configs = allBotConfigs() } catch { /* no table yet → every bot is its file */ }
+      bots = loaded.agents.map(a => applyBotConfig(a, configs.get(a.slug))).map(a => ({ slug: a.slug, name: a.name }))
+    } catch {
+      bots = []
+    }
+    chatBotCache = { at: now, bots }
+  }
+  return chatBotCache.bots
+}
+
+function matchChatBot(raw: string | null | undefined): { slug: string; name: string } | null {
+  const key = raw ? registryKey(raw) : ''
+  if (!key) return null
+  return cachedChatBots().find(c => registryKey(c.slug) === key || registryKey(c.name) === key) ?? null
+}
+
 /** Test seam: forget the cached registry (a test that edits settings.bot_registry). */
 export function clearBotOwnerCache(): void {
   botCache = null
+  chatBotCache = null
 }
 
 /**
  * The registry bot behind a card: its explicit `owner_bot`, else the bot that
  * owns the card's `agent_context` chat slug (a High Agency wake card is filed
  * with agent_context = the bot's slug). Null when neither names a known bot. An
- * `owner_bot` the registry does not know is still shown as itself — it was
+ * `owner_bot` the registry does not know resolves to an installed chat bot when
+ * it names one (obj 900947), else is still shown as itself — it was
  * written by someone, and hiding it would hide who filed the card.
  */
 export function resolveBotOwner(row: Pick<Objective, 'owner_bot' | 'agent_context'>): { id: string; name: string } | null {
@@ -179,7 +216,14 @@ export function resolveBotOwner(row: Pick<Objective, 'owner_bot' | 'agent_contex
   const explicit = (row.owner_bot ?? '').trim()
   if (explicit) {
     const b = match(explicit, true)
-    return b ? { id: b.id, name: b.name } : { id: explicit, name: explicit }
+    if (b) return { id: b.id, name: b.name }
+    // obj 900947: a chat bot's display name → its registry entry (by its slug), else the bot itself.
+    const chat = matchChatBot(explicit)
+    if (chat) {
+      const reg = match(chat.slug, true)
+      return reg ? { id: reg.id, name: reg.name } : { id: chat.name, name: chat.name }
+    }
+    return { id: explicit, name: explicit }
   }
   // 'general' is the column DEFAULT for agent_context (every card filed without
   // a persona carries it), and the built-in "General" bot also lists it as its
@@ -188,7 +232,10 @@ export function resolveBotOwner(row: Pick<Objective, 'owner_bot' | 'agent_contex
   // must say so through owner_bot (a claim or a bot filer sets it).
   if (registryKey(row.agent_context ?? '') === registryKey(DEFAULT_AGENT_CONTEXT)) return null
   const viaSlug = match(row.agent_context, true)
-  return viaSlug ? { id: viaSlug.id, name: viaSlug.name } : null
+  if (viaSlug) return { id: viaSlug.id, name: viaSlug.name }
+  // obj 900947: an installed chat bot outside the registry still owns its slug's cards.
+  const chat = matchChatBot(row.agent_context)
+  return chat ? { id: chat.name, name: chat.name } : null
 }
 
 export function mapObjective(row: Objective, userMap?: Map<number, string>): Objective {
@@ -319,6 +366,16 @@ export function userOwnsObjective(userId: number, objective: Objective): boolean
  * assignable to an objective in that workspace. Empty pool (legacy / freshly
  * created workspaces) is treated as "no restriction" so we don't break
  * pre-Phase-3 rows on upgrade. Returns null on pass, error message on fail.
+ *
+ * obj 900948: a chat bot's slug that an admin has GRANTED this workspace (the
+ * per-bot workspace access list, obj 900797) passes. The grant is the explicit
+ * admin decision that the bot may work here; without it a High Agency wake could
+ * not file or own its own cards (agent_context = its slug). Only an explicit
+ * grant counts — an ungranted workspace, or a bot that was never restricted, is
+ * still refused by the pool exactly as before, and worker personas are unchanged.
+ * The grant replaces the POOL membership only: the project-grain restriction
+ * below runs first and applies to a bot like any other agent, and a bot slug
+ * that is also a worker persona gets no exception (botSlugPassesAgentPool).
  */
 export function checkAgentInWorkspacePool(
   workspace: string,
@@ -339,6 +396,7 @@ export function checkAgentInWorkspacePool(
   const pool = ws.default_agent_pool
   if (!pool || pool.length === 0) return null // unconfigured pool = allow any
   if (pool.includes(agentContext)) return null
+  if (botSlugPassesAgentPool(agentContext, workspace)) return null
   return `Agent '${agentContext}' is not in workspace '${workspace}' pool (allowed: ${pool.join(', ')})`
 }
 

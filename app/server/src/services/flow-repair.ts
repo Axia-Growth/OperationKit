@@ -76,6 +76,7 @@ import { redactLive } from './live-redaction.js'
 import {
   flowDefinitionSha256, flowsEnabled, recordedFlowApprovals, saveFlowVersion, type FlowEngine, type FlowProblem,
 } from './flow-engine.js'
+import { defaultModelIdIn } from './model-registry.js'
 
 // ── Settings / defaults ─────────────────────────────────────────────────────
 
@@ -1045,10 +1046,10 @@ export function createRepairCard(db: Database.Database, req: RepairCardRequest):
     if (home) { parentId = home.id; createdBy = home.created_by ?? null }
   }
   const r = db.prepare(
-    `INSERT INTO objectives (title, description, completion_goal, agent_context, workspace, category, type, status, origin, parent_id, depth, created_by,
+    `INSERT INTO objectives (model, title, description, completion_goal, agent_context, workspace, category, type, status, origin, parent_id, depth, created_by,
                              job_disposition, job_review_note)
-     VALUES (?, ?, ?, 'general', ?, 'general', 'task', ?, 'workflow', ?, ?, ?, ?, ?)`,
-  ).run(req.title, req.description, req.completionGoal, req.workspace, req.status, parentId, depthForParent(db, parentId), createdBy,
+     VALUES (?, ?, ?, ?, 'general', ?, 'general', 'task', ?, 'workflow', ?, ?, ?, ?, ?)`,
+  ).run(defaultModelIdIn(db), req.title, req.description, req.completionGoal, req.workspace, req.status, parentId, depthForParent(db, parentId), createdBy,
     req.status === 'review' ? 'needs_review' : null, req.reviewNote)
   const id = Number(r.lastInsertRowid)
   if (req.ceilingUsd !== null && req.ceilingUsd > 0) {

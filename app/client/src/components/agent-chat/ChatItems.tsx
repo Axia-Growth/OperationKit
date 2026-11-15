@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { ArrowRight, BookOpen, CalendarDays, LayoutGrid, Mail, type LucideIcon } from 'lucide-react'
+import { ArrowRight, BookOpen, CalendarDays, Clock, LayoutGrid, Mail, type LucideIcon } from 'lucide-react'
 import { Badge, Button, cn } from '../ui'
 import { StatusDot } from '../design/primitives'
 import { renderMarkdown } from '../../lib/markdown'
@@ -54,11 +54,22 @@ function time(iso: string): string {
   return Number.isNaN(d.getTime()) ? '' : d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })
 }
 
-export function UserBubble({ m }: { m: ChatMessage }) {
+/**
+ * One of the person's messages. `queued` (obj 900949): sent while the bot was
+ * working and not delivered to it yet — the bubble is quieter and carries a
+ * small "Queued" chip until the bot picks it up. `sending` = not yet stored.
+ */
+export function UserBubble({ m, queued, sending }: { m: Pick<ChatMessage, 'content' | 'images' | 'created_at'>; queued?: boolean; sending?: boolean }) {
   const images = m.images ?? []
+  const waiting = queued || sending
   return (
-    <div className="flex justify-end">
-      <div className="max-w-[85%] rounded-lg rounded-br-sm border border-line bg-surface-3 px-3.5 py-2.5 text-base leading-relaxed text-fg-0 sm:max-w-[70%]">
+    <div className="flex flex-col items-end gap-1" data-testid={waiting ? 'queued-bubble' : undefined}>
+      <div
+        className={cn(
+          'max-w-[85%] rounded-lg rounded-br-sm border px-3.5 py-2.5 text-base leading-relaxed sm:max-w-[70%]',
+          waiting ? 'border-dashed border-line-strong bg-surface-2 text-fg-1' : 'border-line bg-surface-3 text-fg-0',
+        )}
+      >
         {images.length > 0 && (
           <div className="mb-2 flex flex-wrap gap-1.5">
             {images.map(img => (
@@ -69,7 +80,16 @@ export function UserBubble({ m }: { m: ChatMessage }) {
           </div>
         )}
         {m.content && <p className="whitespace-pre-wrap break-words">{m.content}</p>}
-        <p className="mt-1 text-right text-xs text-fg-2">{time(m.created_at)}</p>
+        {waiting ? (
+          <p className="mt-1 flex justify-end">
+            <Badge tone="accent">
+              <Clock aria-hidden="true" className="h-3 w-3" />
+              {sending ? 'Sending…' : 'Queued'}
+            </Badge>
+          </p>
+        ) : (
+          <p className="mt-1 text-right text-xs text-fg-2">{time(m.created_at)}</p>
+        )}
       </div>
     </div>
   )
@@ -124,6 +144,15 @@ export function AssistantBubble({ m, agent, onOpenBotThread }: { m: ChatMessage;
 }
 
 export function ErrorLine({ m }: { m: ChatMessage }) {
+  // obj 900949: the person pressed Stop. That is not a failure, so it reads as
+  // a quiet note rather than a red alert.
+  if (m.meta?.kind === 'stopped') {
+    return (
+      <p className="mx-auto max-w-[90%] text-center text-sm text-fg-2" data-testid="stopped-line">
+        {m.content || 'Stopped.'}
+      </p>
+    )
+  }
   return (
     <div role="alert" className="mx-auto max-w-[90%] rounded-md border border-danger/30 bg-danger/10 px-3 py-2 text-sm text-fg-0">
       <span className="font-medium text-danger">Couldn't answer. </span>

@@ -44,6 +44,8 @@ import { runFanoutTick } from './fanout-runtime.js'
 import { maybeRunStallWatchdog } from './stall-watchdog.js'
 import { handleAbnormalEnd, ABNORMAL_END_START_REASON } from './abnormal-end-retry.js'
 import { runBotThreadDeliveryTick } from './bots/bot-thread-delivery.js'
+import { maybeRunBotAttentionTick } from './agent-chat/bot-attention.js'
+import { listAgents as listChatAgents } from './agent-chat/engine.js'
 import { logObjectiveAudit, isClearDeadSessionEnabled } from './objective-audit.js'
 import { deriveBranchName } from './branch-scope.js'
 import {
@@ -305,6 +307,15 @@ export async function pollActiveSessions(): Promise<void> {
     runBotThreadDeliveryTick(getDb())
   } catch (err) {
     console.error('[state-poller] runBotThreadDeliveryTick failed:', err)
+  }
+
+  // obj 900947 — a High Agency bot posts to its main chat ONLY when it needs the
+  // person (approval beyond its grant, over its ceiling, a decision, a blocker).
+  // Everything else it does is read off the board into its Activity feed.
+  try {
+    maybeRunBotAttentionTick(getDb(), () => listChatAgents().agents.map(a => ({ slug: a.slug, name: a.name })))
+  } catch (err) {
+    console.error('[state-poller] runBotAttentionTick failed:', err)
   }
 
   // Safety net: revive dormant delegators with workers awaiting processing.

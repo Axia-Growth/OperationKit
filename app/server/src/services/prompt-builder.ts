@@ -21,6 +21,7 @@ import { SOURCING_AUTHORITY, needsSourcingAuthority } from '../lib/sourcing-auth
 import { buildKbAccessBlock, buildVaultCaptureBlock } from './kb-access-prompt.js'
 import {
   readAgentInstructions,
+  resolveCardWorker,
   resolveOnBehalfUser,
   resolveWorkdir,
 } from './prompt-builder-workdir.js'
@@ -135,7 +136,9 @@ export function buildPrompt(objective: Objective): string {
   const shellSafeBrand = brand.replace(/["`$\\]/g, '')
   // Registry lookup, with the slug itself as the fallback so a persona that was
   // archived mid-flight never renders as "You are the undefined agent".
-  const agent = resolveAgentPromptFile(objective.agent_context)
+  // A card owned by a chat bot is worked by a worker persona (resolveCardWorker).
+  const worker = resolveCardWorker(objective)
+  const agent = resolveAgentPromptFile(worker.persona)
   const context = buildContext(objective)
   const workspace = resolveWriteWorkspace(objective.workspace)
   const onBehalf = resolveOnBehalfUser(objective)
@@ -151,6 +154,12 @@ export function buildPrompt(objective: Objective): string {
     )
   } else {
     parts.push(`You are the ${agent} agent. Read ~/ai-workspace/agents/${agent}.md for your instructions.`)
+  }
+  if (worker.bot && worker.persona !== worker.bot.slug) {
+    parts.push(
+      '',
+      `This card is owned by the ${worker.bot.name} bot (${worker.bot.slug}). You are working it as the ${agent} agent; the card text below is your brief. Report back on the card as usual.`,
+    )
   }
 
   // Delegator MODE — additive on top of the agent persona above. The owning

@@ -186,7 +186,6 @@ export function routineTemplate(owner: ContentOwner): string {
       `granola_processed_meetings or granola_action_items.`,
     workflow_hint: null,
     effort: 'normal',
-    model: 'claude-opus-4-8',
     type: 'task',
     // The owner must be able to SEE and start their own nightly run. Members in an
     // `own`-visibility workspace only list objectives where they are the assignee or

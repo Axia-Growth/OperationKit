@@ -56,6 +56,7 @@ import {
 import type { Canary } from './canary-harness.js'
 import { pickAccount } from './account-router.js'
 import { spawnInTmux } from './session-manager.js'
+import { getDefaultModelId } from './model-registry.js'
 
 // ── Verdict taxonomy ──────────────────────────────────────────────────────────
 export type UatVerdict = 'PASS' | 'PRODUCT_FAIL' | 'UAT_SPEC_FAIL' | 'EVAL_CHEAT_FAIL'
@@ -339,7 +340,7 @@ export const defaultBlindSpawn: BlindSpawnFn = (ctx) => {
       logPath,
       env,
       effort: 'low',
-      model: ctx.model ?? 'claude-opus-4-8',
+      model: ctx.model ?? getDefaultModelId(),
       worktreeRoot: ctx.worktreeDir,
     })
     return sessionId
