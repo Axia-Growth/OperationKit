@@ -10,7 +10,8 @@ import fs from 'fs'
 import { redactForStorage } from './secret-redaction.js'
 import path from 'path'
 import type { MessageSender, Objective } from '@operationkit/shared'
-import { stampForSession, systemSender } from '../lib/message-provenance.js'
+import { systemSender } from '../lib/message-provenance.js'
+import { stampAndFrameForSession } from '../lib/relay-framing.js'
 import { verifiedSenderStampsEnabled } from '../lib/session-trust.js'
 import { getDb } from '../db/index.js'
 import {
@@ -42,6 +43,8 @@ import {
   type ResumeCapDecision,
 } from './resume-cap.js'
 import { logActivity } from '../routes/feed.js'
+import { assertSpawnWithinCeiling } from './spend-guard.js'
+import { computeLiveObjectiveSpend } from './session-usage.js'
 import { isSessionActive } from './session-control.js'
 import { deriveBranchName, deriveWorktreeBranchName } from './branch-scope.js'
 import { invalidateSessionLivenessCache, spawnInTmux } from './session-tmux.js'
@@ -194,10 +197,14 @@ const WORKER_SESSION_ID = /^cc-\d+-\d+$/
  * settings.verified_sender_stamps on: server stamp on line 1, body neutralised;
  * a caller that passed no sender reads as SYSTEM, never as the owner. Off: the
  * message unchanged.
+ *
+ * obj 900910: with stamps on, an AGENT / API / DELEGATED body is additionally
+ * wrapped in an untrusted frame (lib/relay-framing.ts); owner/member/system text
+ * is unchanged. Stamps off stays the documented kill switch: message unchanged.
  */
 export function followUpSessionText(message: string, sender?: MessageSender): string {
   return verifiedSenderStampsEnabled()
-    ? stampForSession(sender ?? systemSender('Command Center (unattributed)'), message)
+    ? stampAndFrameForSession(sender ?? systemSender('Command Center (unattributed)'), message)
     : message
 }
 
@@ -246,6 +253,11 @@ export function sendFollowUp(
   const logPath = session?.logPath || path.join(TRANSCRIPT_DIR, `${sessionId}.log`)
   const jsonlPath = session?.jsonlPath || path.join(TRANSCRIPT_DIR, `${sessionId}.jsonl`)
   const isPlannerSession = sessionId.startsWith('cc-plan-')
+
+  // obj 900909 — a respawn spends money too, so it is checked against the card's
+  // cost ceiling (explicit, or the per-effort default) before any side effect.
+  // The dead session's transcript is final, so it is measured directly.
+  assertSpawnWithinCeiling(getDb(), objective, 'respawn', () => computeLiveObjectiveSpend(objective.id, [sessionId]))
 
   // obj 715699 — one live session per card. The respawn path used to take no lease,
   // so a follow-up addressed to an older worker session id while a NEWER session of
@@ -516,6 +528,9 @@ export async function reopenObjective(objective: Objective): Promise<string> {
   }
 
   const sessionId = prior.session_id
+
+  // obj 900909 — reopening respawns the last thread; check the cost ceiling first.
+  assertSpawnWithinCeiling(db, objective, 'respawn', () => computeLiveObjectiveSpend(objective.id, [sessionId]))
 
   // Branch-lease guard on the RESUME path too (obj 994). The done-PATCH released
   // this objective's lease, so reopening must re-acquire before respawning —

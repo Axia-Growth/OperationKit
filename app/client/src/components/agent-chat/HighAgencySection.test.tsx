@@ -126,7 +126,7 @@ describe('HighAgencySection', () => {
     expect(preview()).toContain(wakeTimes('acme-cto', 4).join(', '))
   })
 
-  it('switching on at a level PUTs exactly what was picked', async () => {
+  it('switching on at a level PUTs exactly what was changed, and says what was saved', async () => {
     await render(true)
     await click(sw())
     await slide(7)
@@ -137,8 +137,9 @@ describe('HighAgencySection', () => {
     await click(button('Save High Agency')!)
     const put = requests.find(r => r.method === 'PUT')!
     expect(put.url).toBe('/api/agent-chat/agents/acme-cto/high-agency')
-    expect(put.body).toEqual({ enabled: true, level: 7, workspace: 'sales', allow_cards: true, allow_workflows: false })
-    expect(host.textContent).toContain('Saved. High Agency is on.')
+    // obj 900914: only the fields the admin changed (allow_cards was left alone).
+    expect(put.body).toEqual({ enabled: true, level: 7, workspace: 'sales', allow_workflows: false })
+    expect(host.textContent).toContain('Saved High Agency: turn on, level 1 → 7 (16 wakes a day), wake cards go to sales, may not propose workflows. On at level 7 (16 wakes a day). Nothing else on this page changed.')
     expect(host.textContent).toContain('On · level 7')
   })
 

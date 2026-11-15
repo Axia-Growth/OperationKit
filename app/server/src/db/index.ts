@@ -19,6 +19,7 @@ import { initGatesSchema } from './schema/gates.js'
 import { initRuntimeSchema } from './schema/runtime.js'
 import { initLeasesSchema } from './schema/leases.js'
 import { initJobAccountingSchema } from './schema/job-accounting.js'
+import { initSpendGuardSchema } from './schema/spend-guard.js'
 import { initLiveProgressSchema } from './schema/live-progress.js'
 import { initFollowUpQueueSchema } from './schema/followup-queue.js'
 import { initModelsSchema } from './schema/models.js'
@@ -877,6 +878,8 @@ export function initDb(): Database.Database {
   initLeasesSchema(db)
   // obj 900322 — durable retry/attempt budgets, finite job ceilings, teardown ledger.
   initJobAccountingSchema(db)
+  // obj 900909 — per-effort default ceilings + projected-cost guard state (additive).
+  initSpendGuardSchema(db)
   initLiveProgressSchema(db)
   // obj 900412 — follow-ups sent mid-turn wait for the turn instead of killing it.
   initFollowUpQueueSchema(db)

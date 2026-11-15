@@ -18,24 +18,38 @@ import {
   PinOff,
   Plus,
   Trash2,
+  Bot as BotIcon,
+  ClipboardPaste,
+  LayoutTemplate,
 } from 'lucide-react'
+import { Link } from 'react-router-dom'
 import { api } from '../../lib/api'
 import { Button, IconButton, Modal, SearchInput, Toast, cn, useConfirm } from '../ui'
 import { copyText } from '../ui/CopyButton'
 import { AgentAvatar } from './ChatItems'
 import { ContextMenu, type MenuAnchor, type MenuItem } from './ContextMenu'
-import { botState, buildSidebarView, shortTime, type SidebarFilter } from './sidebar-model'
+import { botState, buildSidebarView, pendingBadge, pendingTotal, shortTime, type SidebarFilter } from './sidebar-model'
+import { DEV_BOT_SLUG, devBotLink } from '../agents/CreateAgentGuide'
+import { agentsTabRoute } from '../../lib/routes'
 import type { BotSidebarApi } from './useBotSidebar'
 import type { AgentsResponse, ChatAgentInfo, SidebarBot, SidebarSection } from './types'
 
 /* The Bots sidebar (obj 900798).
 
    Layout, top to bottom:
-     header       "Bots" + New section
+     header       "Bots" + New section + New bot (admins; obj 900866)
      filter       search box + chips (All · Unread · Pinned · <sections> · Hidden)
      pinned rail  large avatars for the bots you pinned, one click away
      sections     your named groups, in your order, then "Other bots"
-     rows         avatar · name · time · last-message preview · unread dot
+     rows         avatar · name · time · last-message preview · pending badge
+
+   PENDING BADGE (obj 900866). A bot "needs you" when it has a reply you have
+   not opened or answered (the server's unread rule, sidebar.ts), or you marked
+   it unread. The badge is a filled accent pill holding the number of waiting
+   replies (no number for a plain "Mark as unread"); it sits on the row, on
+   the pinned tile and on a collapsed section, and the header says how many
+   replies are waiting in total. It arrives live (a WebSocket ping, see
+   useBotSidebar) and clears the moment the bot is opened.
 
    Every arrangement here (pins, sections, hidden, read state) is the
    person's OWN and is stored server-side per person (useBotSidebar). Only the
@@ -51,6 +65,7 @@ type MenuState =
   | { kind: 'section'; section: SidebarSection; anchor: MenuAnchor; trigger: HTMLElement | null }
 
 type DialogState =
+  | { kind: 'new-bot' }
   | { kind: 'new-section'; thenMove?: string }
   | { kind: 'rename-section'; section: SidebarSection }
   | { kind: 'rename-bot'; agent: ChatAgentInfo }
@@ -91,9 +106,24 @@ function useLongPress(open: (anchor: MenuAnchor, el: HTMLElement) => void) {
   }
 }
 
-function UnreadDot({ className, label }: { className?: string; label: string }) {
+/** The pending badge: a filled accent pill with the waiting-reply count (obj 900866). */
+export function PendingBadge({ entry, className }: { entry: SidebarBot; className?: string }) {
+  const b = pendingBadge(entry)
+  if (!b) return null
   return (
-    <span className={cn('inline-block h-2 w-2 shrink-0 rounded-full bg-accent', className)} role="img" aria-label={label} />
+    <span
+      role="status"
+      aria-label={b.label}
+      title={b.label}
+      data-pending-badge=""
+      className={cn(
+        'inline-flex h-5 min-w-[20px] shrink-0 items-center justify-center rounded-full bg-accent px-1.5 text-xs font-semibold leading-none tabular-nums text-accent-fg',
+        !b.text && 'h-2.5 min-w-0 w-2.5 px-0',
+        className,
+      )}
+    >
+      {b.text}
+    </span>
   )
 }
 
@@ -163,11 +193,7 @@ function BotRow({
           </span>
           <span className="mt-0.5 flex items-center gap-2">
             <span className={cn('min-w-0 flex-1 truncate text-sm', entry.unread ? 'text-fg-1' : 'text-fg-2')}>{previewFor(agent, entry)}</span>
-            {entry.unread && (
-              <UnreadDot
-                label={entry.unread_count > 0 ? `${entry.unread_count} unread` : 'Marked unread'}
-              />
-            )}
+            <PendingBadge entry={entry} />
           </span>
         </span>
       </button>
@@ -219,7 +245,7 @@ function PinnedTile({
         onPointerLeave={press.onPointerLeave}
         onPointerCancel={press.onPointerCancel}
         aria-current={active ? 'page' : undefined}
-        aria-label={`${agent.name}${entry.unread ? ' (unread)' : ''} — pinned`}
+        aria-label={`${agent.name}${entry.unread ? ` (${pendingBadge(entry)?.label ?? 'unread'})` : ''} — pinned`}
         title={agent.name}
         className="group flex w-full flex-col items-center gap-1.5 rounded-xl px-1 pb-1.5 pt-1 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/50"
       >
@@ -232,7 +258,7 @@ function PinnedTile({
               active && 'ring-2 ring-accent ring-offset-2 ring-offset-surface-1',
             )}
           />
-          {entry.unread && <UnreadDot label="unread" className="absolute -right-0.5 -top-0.5 h-2.5 w-2.5 ring-2 ring-surface-1" />}
+          <PendingBadge entry={entry} className="absolute -right-1.5 -top-1 ring-2 ring-surface-1" />
         </span>
         <span className={cn('block w-full truncate text-center text-xs', active || entry.unread ? 'text-fg-0' : 'text-fg-2', entry.unread && 'font-semibold')}>
           {agent.name}
@@ -324,6 +350,78 @@ function NameDialog({
   )
 }
 
+// ── New bot (obj 900866) ──
+
+const choice = cn(
+  'flex w-full items-start gap-3 rounded-lg border border-line bg-surface-1 p-3 text-left transition-colors duration-fast',
+  'hover:border-line-strong hover:bg-surface-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/50',
+)
+
+/**
+ * The New bot button opens the EXISTING create-bot flow (obj 900672's
+ * CreateAgentGuide), not a second one: ask the Dev bot (its conversation opens
+ * with the request typed, never sent), start from a template, or paste a bot
+ * file. The Dev bot path is existence-gated on the live bot list, like the
+ * guide; without it the template and paste paths remain.
+ */
+export function NewBotDialog({ devBotName, onClose }: { devBotName: string | null; onClose: () => void }) {
+  const items = [
+    ...(devBotName
+      ? [
+          {
+            key: 'dev',
+            to: devBotLink('bot'),
+            icon: <BotIcon className="h-5 w-5" aria-hidden="true" />,
+            title: `Ask ${devBotName}`,
+            text: 'It asks what the bot is for, writes the bot file for you, and tells you where it goes. Nothing is sent until you press Send.',
+          },
+        ]
+      : []),
+    {
+      key: 'template',
+      to: agentsTabRoute('templates'),
+      icon: <LayoutTemplate className="h-5 w-5" aria-hidden="true" />,
+      title: 'Start from a template',
+      text: 'Add a ready-made bot, then change its instructions to fit.',
+    },
+    {
+      key: 'paste',
+      to: `${agentsTabRoute('templates')}&paste=1`,
+      icon: <ClipboardPaste className="h-5 w-5" aria-hidden="true" />,
+      title: 'Paste a bot file',
+      text: 'Already have one? Paste or upload it. It is checked before it is added.',
+    },
+  ]
+  return (
+    <Modal open onClose={onClose} labelledBy="new-bot-dialog-title" panelClassName="w-full max-w-md">
+      <div className="p-5">
+        <h2 id="new-bot-dialog-title" className="font-display text-lg font-semibold tracking-tight text-fg-0">
+          New bot
+        </h2>
+        <p className="mt-1 text-sm leading-relaxed text-fg-2">A bot is someone you chat with here. Pick how to make one.</p>
+        <ul className="mt-4 space-y-2">
+          {items.map((it, i) => (
+            <li key={it.key}>
+              <Link to={it.to} onClick={onClose} className={choice} data-autofocus={i === 0 ? '' : undefined} data-new-bot={it.key}>
+                <span className="mt-0.5 shrink-0 text-fg-2">{it.icon}</span>
+                <span className="min-w-0">
+                  <span className="block text-base font-medium text-fg-0">{it.title}</span>
+                  <span className="mt-0.5 block text-sm leading-relaxed text-fg-2">{it.text}</span>
+                </span>
+              </Link>
+            </li>
+          ))}
+        </ul>
+        <div className="mt-4 flex justify-end">
+          <Button type="button" variant="ghost" size="sm" onClick={onClose}>
+            Cancel
+          </Button>
+        </div>
+      </div>
+    </Modal>
+  )
+}
+
 // ── the sidebar ──
 
 export function BotSidebar({
@@ -377,6 +475,9 @@ export function BotSidebar({
     if (slug && slug !== active) onPrefetch(slug)
   }
   const view = useMemo(() => buildSidebarView(data.agents, state, filter, query), [data.agents, state, filter, query])
+  // Replies waiting across every bot the person has not hidden.
+  const waiting = useMemo(() => pendingTotal(data.agents.filter(a => !botState(state, a.slug).hidden), state), [data.agents, state])
+  const devBot = data.agents.find(a => a.slug === DEV_BOT_SLUG) ?? null
 
   // Hook errors surface as the same toast as the menu's own messages.
   useEffect(() => {
@@ -565,14 +666,31 @@ export function BotSidebar({
 
   return (
     <div className="flex h-full flex-col">
-      <div className="flex items-start gap-2 px-4 pb-1 pt-4">
+      <div className="flex items-start gap-1.5 px-4 pb-1 pt-4">
         <div className="min-w-0 flex-1">
           <h1 className="text-lg font-semibold tracking-tight text-fg-0">Bots</h1>
-          <p className="mt-0.5 text-sm text-fg-2">One ongoing conversation with each bot.</p>
+          <p className="mt-0.5 text-sm text-fg-2" aria-live="polite">
+            {waiting > 0 ? (
+              <button
+                type="button"
+                onClick={() => setFilter('unread')}
+                className="rounded text-left font-medium text-accent hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/50"
+              >
+                {waiting === 1 ? '1 reply waiting on you' : `${waiting > 99 ? '99+' : waiting} replies waiting on you`}
+              </button>
+            ) : (
+              'One ongoing conversation with each bot.'
+            )}
+          </p>
         </div>
         <IconButton label="New section" onClick={() => setDialog({ kind: 'new-section' })} className="h-8 w-8">
           <FolderPlus className="h-[18px] w-[18px]" aria-hidden="true" />
         </IconButton>
+        {isAdmin && (
+          <Button variant="primary" size="sm" leftIcon={<Plus className="h-4 w-4" aria-hidden="true" />} onClick={() => setDialog({ kind: 'new-bot' })}>
+            New bot
+          </Button>
+        )}
       </div>
 
       <div role="search" aria-label="Filter bots" className="space-y-2 px-3 pb-2 pt-1">
@@ -638,7 +756,7 @@ export function BotSidebar({
 
         {view.groups.map(g => {
           const collapsed = !!g.section?.collapsed && filter === 'all' && !query.trim()
-          const unreadIn = g.agents.filter(a => botState(state, a.slug).unread).length
+          const unreadIn = pendingTotal(g.agents, state)
           return (
             <section key={g.key} aria-label={g.title ?? 'Bots'} className={cn(g.title && 'mt-2 first:mt-0')}>
               {g.title && (
@@ -659,7 +777,15 @@ export function BotSidebar({
                         aria-hidden="true"
                       />
                       <span className="truncate text-xs font-semibold uppercase tracking-eyebrow text-fg-2">{g.title}</span>
-                      {collapsed && unreadIn > 0 && <UnreadDot label={`${unreadIn} unread in this section`} className="h-1.5 w-1.5" />}
+                      {collapsed && unreadIn > 0 && (
+                        <span
+                          role="status"
+                          aria-label={`${unreadIn} unread in this section`}
+                          className="inline-flex h-5 min-w-[20px] items-center justify-center rounded-full bg-accent px-1.5 text-xs font-semibold leading-none tabular-nums text-accent-fg"
+                        >
+                          {unreadIn > 99 ? '99+' : unreadIn}
+                        </span>
+                      )}
                     </button>
                   ) : (
                     <h2 className="flex min-h-[28px] min-w-0 flex-1 items-center px-1 text-xs font-semibold uppercase tracking-eyebrow text-fg-2">
@@ -722,6 +848,7 @@ export function BotSidebar({
         <ContextMenu label={`Actions for the section ${menu.section.name}`} items={sectionMenuItems(menu.section)} anchor={menu.anchor} onClose={closeMenu} />
       )}
 
+      {dialog?.kind === 'new-bot' && <NewBotDialog devBotName={devBot?.name ?? null} onClose={() => setDialog(null)} />}
       {dialog?.kind === 'new-section' && (
         <NameDialog
           title="New section"

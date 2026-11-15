@@ -21,6 +21,7 @@
  * 5xx: the create succeeded, and a 5xx would invite a retry that duplicates the
  * card (and would not be stored under the Idempotency-Key).
  */
+import { SpendCeilingRefusedError } from '../services/spend-guard.js'
 import type Database from 'better-sqlite3'
 import type { Objective } from '@operationkit/shared'
 import {
@@ -34,7 +35,7 @@ import { mapObjective } from './objectives-helpers.js'
 import { sessionCapReached, SESSION_CAP_ERROR } from '../lib/session-cap.js'
 import { markAutoStartRequested } from '../lib/queue-autostart.js'
 
-export type StartReason = 'session_cap' | 'lease_conflict' | 'not_startable' | 'start_failed'
+export type StartReason = 'session_cap' | 'lease_conflict' | 'not_startable' | 'start_failed' | 'spend_ceiling_refused'
 
 export interface StartOutcome {
   httpStatus: number
@@ -95,6 +96,9 @@ export async function startCreatedObjective(db: Database.Database, id: number): 
   } catch (err) {
     if (err instanceof BranchLeaseConflictError || err instanceof SessionLeaseConflictError) {
       return notStarted(409, 'lease_conflict', err.message, `${err.message} — card #${id} created but left in queue`)
+    }
+    if (err instanceof SpendCeilingRefusedError) {
+      return notStarted(409, 'spend_ceiling_refused', err.message, `${err.message} — card #${id} created but left in queue`)
     }
     const message = err instanceof Error ? err.message : 'Session start failed'
     console.error(`[objectives] create+start: session start failed for #${id}:`, message)

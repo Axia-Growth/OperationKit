@@ -186,7 +186,9 @@ describe('GET /objectives/:id/siblings — FINAL fields only, no scratch (P2.3)'
     expect(w2.title).toBe('w2')
     expect(w2.status).toBe('done')
     expect(w2.ai_review_verdict).toBe('pass')
-    expect(w2.last_session_summary).toBe('FINAL summary for w2')
+    // obj 900910: a sibling's summary is another session's words — delivered inside an untrusted frame.
+    expect(w2.last_session_summary.startsWith('<<<UNTRUSTED-CONTENT source="card-summary"')).toBe(true)
+    expect(w2.last_session_summary).toContain('\nFINAL summary for w2\nEND-UNTRUSTED-CONTENT>>>')
     expect(typeof w2.updated_at).toBe('string')
   })
 

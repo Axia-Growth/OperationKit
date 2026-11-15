@@ -71,9 +71,18 @@ const WS_SLUG = /^[a-z0-9][a-z0-9_-]{0,63}$/
 
 export class HighAgencyError extends Error {
   readonly status: number
-  constructor(message: string, status = 400) {
+  /**
+   * Machine-readable reason, so the panel can offer the fix in place
+   * (obj 900914): 'no_wake_workspace' / 'workspace_not_granted'.
+   */
+  readonly code?: string
+  /** Workspaces the admin may grant this bot right there to clear the refusal. */
+  readonly grantOptions?: string[]
+  constructor(message: string, status = 400, extra: { code?: string; grantOptions?: string[] } = {}) {
     super(message)
     this.status = status
+    this.code = extra.code
+    this.grantOptions = extra.grantOptions
   }
 }
 
@@ -484,11 +493,27 @@ export function workspaceOptions(userId: number, botSlug?: string): string[] {
   return narrowed.length ? narrowed : allow.filter(w => all.includes(w))
 }
 
-/** The refusal for a wake workspace this bot may not use (obj 900797). */
-function notGranted(agent: Pick<ChatAgent, 'name'>, ws: string | null): HighAgencyError {
-  return ws
-    ? new HighAgencyError(`${agent.name} is not granted workspace "${ws}". Grant it under Workspace access first.`, 403)
-    : new HighAgencyError(`${agent.name} has no workspace it may wake in. Grant one under Workspace access first.`, 409)
+/**
+ * The refusal for a wake workspace this bot may not use (obj 900797). Since obj
+ * 900914 it says WHERE access is granted and carries the workspaces the admin
+ * can grant on the spot, so the panel offers "Grant access to <ws> and save"
+ * inline instead of a dead end.
+ */
+function notGranted(agent: Pick<ChatAgent, 'name'>, ws: string | null, actorId: number): HighAgencyError {
+  if (ws) {
+    return new HighAgencyError(
+      `${agent.name} is not granted workspace "${ws}". Grant it access to ${ws} under Workspace access on this settings page, then save High Agency again.`,
+      403,
+      { code: 'workspace_not_granted', grantOptions: [ws] },
+    )
+  }
+  let options: string[] = []
+  try { options = workspaceOptions(actorId) } catch { options = [] }
+  return new HighAgencyError(
+    `${agent.name} has no workspace it may wake in. Grant it one under Workspace access on this settings page, then save High Agency again.`,
+    409,
+    { code: 'no_wake_workspace', grantOptions: options },
+  )
 }
 
 export function setHighAgency(
@@ -516,7 +541,7 @@ export function setHighAgency(
     else if (typeof w !== 'string' || !WS_SLUG.test(w)) throw new HighAgencyError('workspace must be a workspace slug')
     else {
       // obj 900797: granted-to-the-bot first, then the same option list the panel's picker shows.
-      if (!botMayUseWorkspace(agent.slug, w)) throw notGranted(agent, w)
+      if (!botMayUseWorkspace(agent.slug, w)) throw notGranted(agent, w, actor.id)
       const options = workspaceOptions(actor.id, agent.slug)
       if (options.length && !options.includes(w)) throw new HighAgencyError(`You are not a member of workspace "${w}"`, 403)
       next.workspace = w
@@ -527,7 +552,7 @@ export function setHighAgency(
   if (next.enabled) {
     if (!next.workspace) next.workspace = workspaceOptions(actor.id, agent.slug)[0] ?? null
     // obj 900797: a bot only wakes in a workspace it is granted.
-    if (!botMayUseWorkspace(agent.slug, next.workspace)) throw notGranted(agent, next.workspace)
+    if (!botMayUseWorkspace(agent.slug, next.workspace)) throw notGranted(agent, next.workspace, actor.id)
     next.run_as_user_id = actor.id
   }
   next.updated_by = actor.username
@@ -644,7 +669,7 @@ export async function wakeNow(agent: ChatAgent, actor: { id: number; username: s
       .run(agent.slug, s.workspace ?? workspaceOptions(actor.id, agent.slug)[0] ?? null, actor.id, actor.username)
   }
   const ws = getHighAgency(agent.slug).workspace
-  if (!botMayUseWorkspace(agent.slug, ws)) throw notGranted(agent, ws)
+  if (!botMayUseWorkspace(agent.slug, ws)) throw notGranted(agent, ws, actor.id)
   const routine = syncHighAgencyRoutine(agent, getHighAgency(agent.slug), { create: true })
   if (!routine) throw new HighAgencyError('Could not set up the wake', 500)
   return fireRoutine(routine, 'run-now')

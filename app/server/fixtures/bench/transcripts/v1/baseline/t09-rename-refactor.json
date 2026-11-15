@@ -1,0 +1,89 @@
+{
+  "schema": "cc-bench-transcript/1",
+  "arm": "baseline",
+  "task_id": "t09-rename-refactor",
+  "provenance": "synthetic",
+  "model": "claude-sonnet-5-5",
+  "recorded_at": "2026-11-15T00:00:00.000Z",
+  "rounds": [
+    {
+      "role": "worker",
+      "cwd": "/tmp/cc-bench-synthetic",
+      "events": [
+        {
+          "type": "system",
+          "subtype": "init",
+          "model": "claude-sonnet-5-5",
+          "cwd": "/tmp/cc-bench-synthetic",
+          "tools": [
+            "Read",
+            "Write",
+            "Edit",
+            "MultiEdit",
+            "Bash"
+          ]
+        },
+        {
+          "type": "assistant",
+          "message": {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "tool_use",
+                "id": "toolu_synthetic_0",
+                "name": "MultiEdit",
+                "input": {
+                  "file_path": "/tmp/cc-bench-synthetic/src/pricing.js",
+                  "edits": [
+                    {
+                      "old_string": "calc",
+                      "new_string": "computeTotal",
+                      "replace_all": true
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        },
+        {
+          "type": "assistant",
+          "message": {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "tool_use",
+                "id": "toolu_synthetic_1",
+                "name": "MultiEdit",
+                "input": {
+                  "file_path": "/tmp/cc-bench-synthetic/src/cart.js",
+                  "edits": [
+                    {
+                      "old_string": "calc",
+                      "new_string": "computeTotal",
+                      "replace_all": true
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        },
+        {
+          "type": "result",
+          "subtype": "success",
+          "is_error": false,
+          "duration_ms": 102915,
+          "num_turns": 12,
+          "total_cost_usd": 0.189736,
+          "usage": {
+            "input_tokens": 9821,
+            "output_tokens": 3228,
+            "cache_read_input_tokens": 127319,
+            "cache_creation_input_tokens": 19642
+          }
+        }
+      ]
+    }
+  ]
+}

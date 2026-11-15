@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type {
   FlowApprovalDecision, FlowDetailResponse, FlowListResponse, FlowLiveEvent, FlowNodeInspectResponse, FlowRunDetailResponse,
-  FlowRunSummary, FlowRunsResponse, FlowSelfTest, FlowSummary, FlowUnknownOutcomeDecision,
+  FlowRunSummary, FlowRunsResponse, FlowSelfTest, FlowSummary, FlowToolsResponse, FlowUnknownOutcomeDecision,
 } from '../../../shared/flow/api'
 import { subscribeServerMessages } from './useWebSocket'
 import type { FlowApprovals } from '../../../shared/flow/types'
@@ -264,6 +264,43 @@ export async function updateFlowDetails(
     const json = (await r.json().catch(() => ({}))) as { flow?: FlowSummary; error?: string }
     if (!r.ok || !json.flow) return { ok: false, error: json.error || `HTTP ${r.status}` }
     return { ok: true, flow: json.flow }
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : 'Request failed' }
+  }
+}
+
+/**
+ * GET /api/flows/tools?workspace= — the Tools a workflow `tool` step can call
+ * (obj 900911): every okit Tool registered with the engine, and whether this
+ * workspace has switched it on. Tolerates a malformed body (returns an error).
+ */
+export async function fetchFlowTools(workspace: string): Promise<{ ok: true; data: FlowToolsResponse } | { ok: false; error: string }> {
+  try {
+    const r = await fetch(`/api/flows/tools?workspace=${encodeURIComponent(workspace)}`, { credentials: 'include' })
+    const json = (await r.json().catch(() => ({}))) as Partial<FlowToolsResponse> & { error?: string }
+    if (!r.ok || !Array.isArray(json.tools)) return { ok: false, error: json.error || `HTTP ${r.status}` }
+    return { ok: true, data: json as FlowToolsResponse }
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : 'Request failed' }
+  }
+}
+
+/** PUT /api/flows/tools/:slug/enabled — owner/admin switches a Tool on or off for one workspace. */
+export async function setFlowToolEnabled(
+  workspace: string,
+  slug: string,
+  enabled: boolean,
+): Promise<{ ok: true; data: FlowToolsResponse } | { ok: false; error: string }> {
+  try {
+    const r = await fetch(`/api/flows/tools/${encodeURIComponent(slug)}/enabled`, {
+      method: 'PUT',
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ workspace, enabled }),
+    })
+    const json = (await r.json().catch(() => ({}))) as Partial<FlowToolsResponse> & { error?: string }
+    if (!r.ok || !Array.isArray(json.tools)) return { ok: false, error: json.error || `HTTP ${r.status}` }
+    return { ok: true, data: json as FlowToolsResponse }
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : 'Request failed' }
   }

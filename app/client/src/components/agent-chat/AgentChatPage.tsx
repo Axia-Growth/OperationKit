@@ -13,7 +13,7 @@ import { BotMessagesPanel } from './BotMessagesPanel'
 import { AgentInfoPanel } from './AgentInfoPanel'
 import { collectImages, humanSize, toWireImages, type PendingImage } from './attachments'
 import { BotSettingsPanel } from './BotSettingsPanel'
-import { BotSidebar } from './BotSidebar'
+import { BotSidebar, NewBotDialog } from './BotSidebar'
 import { useBotSidebar } from './useBotSidebar'
 import {
   AGENTS_KEY,
@@ -60,7 +60,9 @@ import {
        history, its own context, and it runs CONCURRENTLY — you can set one off
        and keep talking in the main conversation while it works. Closing a side
        thread archives that lane and leaves the main conversation untouched.
-   So this page still has no "New bot" control, because it creates no bots. The
+   The Bots sidebar's "New bot" button (obj 900866) does not create a bot here
+   either: it opens the existing create flow (ask the Dev bot, a template, or
+   paste a bot file), which writes the agent file on the server. The
    identifiers below (agent*, ChatAgentInfo, /agent-chat, the agent_chat_*
    tables, the agents/ folder) are the UNCHANGED technical names - only what a
    person reads was renamed. */
@@ -890,6 +892,7 @@ export function AgentChatPage() {
   const [actionError, setError] = useState<string | null>(null)
   const error = actionError ?? bots.error
   const [demoBusy, setDemoBusy] = useState(false)
+  const [newBotOpen, setNewBotOpen] = useState(false)
   // obj 900798: the person's pins, sections, hidden bots and unread state.
   const sidebar = useBotSidebar()
 
@@ -913,12 +916,14 @@ export function AgentChatPage() {
     if (active && pendingPrompt.current?.slug === active.slug) pendingPrompt.current = null
   }, [active])
   const pick = (s: string) => navigate(`/chat/${s}`)
-  // Opening a bot reads it (and clears a "Mark as unread").
-  const markRead = sidebar.markRead
+  // Opening a bot reads it (and clears a "Mark as unread"). The sidebar also
+  // keeps the open bot read while new replies land in it (obj 900866).
+  const { markRead, setActive } = sidebar
   const activeSlug = active?.slug ?? null
   useEffect(() => {
-    if (activeSlug) void markRead(activeSlug)
-  }, [activeSlug, markRead])
+    setActive(activeSlug)
+    return () => setActive(null)
+  }, [activeSlug, setActive])
   const mergeAgent = (a: ChatAgentInfo) => {
     const d = readCache<AgentsResponse>(AGENTS_KEY)
     if (d) writeCache<AgentsResponse>(AGENTS_KEY, { ...d, agents: d.agents.map(x => (x.slug === a.slug ? { ...x, ...a } : x)) })
@@ -978,11 +983,19 @@ export function AgentChatPage() {
           title="No bots yet"
           description={
             isAdmin
-              ? 'A bot is one file in the agents folder on the server — this page does not create one (see the Bots guide). Or try the demo: a personal assistant bot with a made-up inbox and calendar.'
+              ? 'A bot is one file in the agents folder on the server. New bot walks you through making one, or try the demo: a personal assistant bot with a made-up inbox and calendar.'
               : 'Your administrator has not added any bots yet.'
           }
-          action={isAdmin ? <Button variant="primary" loading={demoBusy} onClick={() => void setDemo(true)}>Turn on the demo bot</Button> : undefined}
+          action={
+            isAdmin ? (
+              <div className="flex flex-wrap justify-center gap-2">
+                <Button variant="primary" loading={demoBusy} onClick={() => void setDemo(true)}>Turn on the demo bot</Button>
+                <Button variant="secondary" onClick={() => setNewBotOpen(true)}>New bot</Button>
+              </div>
+            ) : undefined
+          }
         />
+        {newBotOpen && <NewBotDialog devBotName={null} onClose={() => setNewBotOpen(false)} />}
       </div>
     )
   }

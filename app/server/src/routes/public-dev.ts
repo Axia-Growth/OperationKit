@@ -146,7 +146,7 @@ function tokenHint(req: Request): string {
 }
 
 function logInternal(req: Request, res: Response, err: unknown): void {
-  console.error(`[public-dev] ${requestId(req, res)} ${req.method} ${req.path} caller=${tokenHint(req)}`, err)
+  console.error('[public-dev] %s %s %s caller=%s', requestId(req, res), req.method, req.path, tokenHint(req), err)
 }
 
 function rateLimit(req: Request, res: Response, key: string, limit: number): boolean {
@@ -783,7 +783,9 @@ router.get(
     const isPublic = config.feed_public === true
 
     const presented =
-      /^Bearer\s+(.+)$/i.exec((req.header('authorization') || '').trim())?.[1]?.trim() ||
+      // One `\s` then `(.+)` + trim(): same token as `\s+(.+)`, without the
+      // overlapping quantifiers CodeQL flags as polynomial (js/polynomial-redos).
+      /^Bearer\s(.+)$/i.exec((req.header('authorization') || '').trim())?.[1]?.trim() ||
       req.header('x-cc-ingest-token')?.trim() ||
       null
     const resolved = resolveIngestToken(presented)

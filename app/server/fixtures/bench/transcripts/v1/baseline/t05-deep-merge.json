@@ -1,0 +1,93 @@
+{
+  "schema": "cc-bench-transcript/1",
+  "arm": "baseline",
+  "task_id": "t05-deep-merge",
+  "provenance": "synthetic",
+  "model": "claude-sonnet-5-5",
+  "recorded_at": "2026-11-15T00:00:00.000Z",
+  "rounds": [
+    {
+      "role": "worker",
+      "cwd": "/tmp/cc-bench-synthetic",
+      "events": [
+        {
+          "type": "system",
+          "subtype": "init",
+          "model": "claude-sonnet-5-5",
+          "cwd": "/tmp/cc-bench-synthetic",
+          "tools": [
+            "Read",
+            "Write",
+            "Edit",
+            "MultiEdit",
+            "Bash"
+          ]
+        },
+        {
+          "type": "assistant",
+          "message": {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "tool_use",
+                "id": "toolu_synthetic_0",
+                "name": "Read",
+                "input": {
+                  "file_path": "/tmp/cc-bench-synthetic/src/merge.js"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "type": "assistant",
+          "message": {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "tool_use",
+                "id": "toolu_synthetic_1",
+                "name": "Write",
+                "input": {
+                  "file_path": "/tmp/cc-bench-synthetic/src/merge.js",
+                  "content": "// deepMerge(target, source): returns a NEW object; neither input is mutated.\n// Plain objects merge recursively; arrays and every other value from `source`\n// replace the value in `target`. `undefined` in source leaves target's value.\nconst isPlain = (v) => v !== null && typeof v === 'object' && !Array.isArray(v)\n\nexport function deepMerge(target, source) {\n  const out = { ...target }\n  for (const [k, v] of Object.entries(source)) {\n    if (v === undefined) continue\n    out[k] = isPlain(v) && isPlain(out[k]) ? deepMerge(out[k], v) : v\n  }\n  return out\n}\n"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "type": "assistant",
+          "message": {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "tool_use",
+                "id": "toolu_synthetic_2",
+                "name": "Bash",
+                "input": {
+                  "command": "node --test",
+                  "description": "Run tests"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "type": "result",
+          "subtype": "success",
+          "is_error": false,
+          "duration_ms": 84652,
+          "num_turns": 10,
+          "total_cost_usd": 0.156869,
+          "usage": {
+            "input_tokens": 8256,
+            "output_tokens": 2602,
+            "cache_read_input_tokens": 103838,
+            "cache_creation_input_tokens": 16512
+          }
+        }
+      ]
+    }
+  ]
+}

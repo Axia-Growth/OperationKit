@@ -1,0 +1,107 @@
+{
+  "schema": "cc-bench-transcript/1",
+  "arm": "board",
+  "task_id": "t04-roman",
+  "provenance": "synthetic",
+  "model": "claude-sonnet-5-5",
+  "recorded_at": "2026-11-15T00:00:00.000Z",
+  "overhead_ms": 49338,
+  "rounds": [
+    {
+      "role": "worker",
+      "cwd": "/tmp/cc-bench-synthetic",
+      "events": [
+        {
+          "type": "system",
+          "subtype": "init",
+          "model": "claude-sonnet-5-5",
+          "cwd": "/tmp/cc-bench-synthetic",
+          "tools": [
+            "Read",
+            "Write",
+            "Edit",
+            "MultiEdit",
+            "Bash"
+          ]
+        },
+        {
+          "type": "assistant",
+          "message": {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "tool_use",
+                "id": "toolu_synthetic_0",
+                "name": "Read",
+                "input": {
+                  "file_path": "/tmp/cc-bench-synthetic/src/roman.js"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "type": "assistant",
+          "message": {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "tool_use",
+                "id": "toolu_synthetic_1",
+                "name": "Write",
+                "input": {
+                  "file_path": "/tmp/cc-bench-synthetic/src/roman.js",
+                  "content": "const TABLE = [\n  [1000, 'M'], [900, 'CM'], [500, 'D'], [400, 'CD'], [100, 'C'], [90, 'XC'],\n  [50, 'L'], [40, 'XL'], [10, 'X'], [9, 'IX'], [5, 'V'], [4, 'IV'], [1, 'I'],\n]\n\nexport function toRoman(n) {\n  if (!Number.isInteger(n) || n < 1 || n > 3999) throw new RangeError(`out of range: ${n}`)\n  let out = ''\n  for (const [v, s] of TABLE) while (n >= v) { out += s; n -= v }\n  return out\n}\n\nexport function fromRoman(s) {\n  let i = 0\n  let n = 0\n  for (const [v, sym] of TABLE) while (s.startsWith(sym, i)) { n += v; i += sym.length }\n  if (i !== s.length) throw new RangeError(`invalid numeral: ${s}`)\n  return n\n}\n"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "type": "assistant",
+          "message": {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "tool_use",
+                "id": "toolu_synthetic_2",
+                "name": "Bash",
+                "input": {
+                  "command": "node --test",
+                  "description": "Run tests"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "type": "result",
+          "subtype": "success",
+          "is_error": false,
+          "duration_ms": 92017,
+          "num_turns": 7,
+          "total_cost_usd": 0.172831,
+          "usage": {
+            "input_tokens": 9487,
+            "output_tokens": 2675,
+            "cache_read_input_tokens": 110307,
+            "cache_creation_input_tokens": 18974
+          }
+        }
+      ]
+    },
+    {
+      "role": "reviewer",
+      "verdict": "pass",
+      "findings": "Change matches the brief.",
+      "cost_usd": 0.6715,
+      "tokens": {
+        "input": 12215,
+        "output": 2464,
+        "cache_read": 171434,
+        "cache_creation": 21429
+      },
+      "duration_ms": 227151
+    }
+  ]
+}

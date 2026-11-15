@@ -698,3 +698,45 @@ describe('B5: self-test + publish gate', () => {
     expect(off.json.reason).toBe('flows_disabled')
   })
 })
+
+describe('obj 900911: Tools a step can call (GET /api/flows/tools, PUT …/enabled)', () => {
+  it('lists registered Tools with this workspace\'s switch; only a cookie owner/admin can flip it; cross-workspace is 403', async () => {
+    const { registerFlowTool, unregisterFlowTool } = await import('../services/flow-engine.js')
+    registerFlowTool('acme-notes', { effect: 'send', idempotent: false, meta: { source: 'okit', runner: 'http', description: 'Posts a note.' }, run: async () => null })
+    registerFlowTool('in-process', { effect: 'read', run: async () => null })
+    try {
+      const list = await call('GET', '/api/flows/tools?workspace=ws-a', { as: MEMBER_A })
+      expect(list.status).toBe(200)
+      expect(list.json.can_manage).toBe(false)
+      const byslug = Object.fromEntries(list.json.tools.map((t: Loose) => [t.slug, t]))
+      expect(byslug['acme-notes']).toEqual({
+        slug: 'acme-notes', effect: 'send', idempotent: false, description: 'Posts a note.', source: 'okit', runner: 'http', enabled: false,
+      })
+      expect(byslug['in-process']).toMatchObject({ source: 'engine', enabled: true })
+
+      // a member cannot switch it on; a cross-workspace read is 403; a card session sees its own workspace
+      expect((await call('PUT', '/api/flows/tools/acme-notes/enabled', { as: MEMBER_A, body: { workspace: 'ws-a', enabled: true } })).status).toBe(403)
+      expect((await call('GET', '/api/flows/tools?workspace=ws-b', { as: MEMBER_A })).status).toBe(403)
+      const session = mintSessionToken({ objectiveId: wsBSessionObjective, workspace: 'ws-b', actingUserId: ADMIN.id })
+      const own = await call('GET', '/api/flows/tools', { session })
+      expect(own.status).toBe(200)
+      expect(own.json.workspace).toBe('ws-b')
+      expect((await call('GET', '/api/flows/tools?workspace=ws-a', { session })).status).toBe(403)
+      expect((await call('PUT', '/api/flows/tools/acme-notes/enabled', { session, body: { workspace: 'ws-b', enabled: true } })).status).toBe(403)
+
+      // the owner switches it on for ws-a only
+      const on = await call('PUT', '/api/flows/tools/acme-notes/enabled', { as: ADMIN, body: { workspace: 'ws-a', enabled: true } })
+      expect(on.status).toBe(200)
+      expect(on.json.tools.find((t: Loose) => t.slug === 'acme-notes').enabled).toBe(true)
+      expect((await call('GET', '/api/flows/tools?workspace=ws-b', { as: ADMIN })).json.tools.find((t: Loose) => t.slug === 'acme-notes').enabled).toBe(false)
+      // an in-process or unknown Tool has no switch
+      expect((await call('PUT', '/api/flows/tools/in-process/enabled', { as: ADMIN, body: { workspace: 'ws-a', enabled: true } })).status).toBe(404)
+      expect((await call('PUT', '/api/flows/tools/acme-notes/enabled', { as: ADMIN, body: { workspace: 'ws-a', enabled: 'yes' } })).status).toBe(400)
+      const off = await call('PUT', '/api/flows/tools/acme-notes/enabled', { as: ADMIN, body: { workspace: 'ws-a', enabled: false } })
+      expect(off.json.tools.find((t: Loose) => t.slug === 'acme-notes').enabled).toBe(false)
+    } finally {
+      unregisterFlowTool('acme-notes')
+      unregisterFlowTool('in-process')
+    }
+  })
+})

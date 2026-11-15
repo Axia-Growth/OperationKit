@@ -132,6 +132,8 @@ import {
   markCeilingHit,
   describeCeilingSupport,
 } from './job-accounting.js'
+import { runSpendProjectionGuard } from './spend-guard.js'
+import { computeLiveObjectiveSpend } from './session-usage.js'
 import { teardownObjectiveJob } from './job-teardown.js'
 import { releaseBranchLeasesForObjective } from './branch-lease.js'
 
@@ -588,6 +590,9 @@ export async function pollActiveSessions(): Promise<void> {
     // watchdog, unchanged.
     if (detectedState === 'working' && objective.session_id) {
       if (await enforceRunningCeiling(objective)) continue
+      // obj 900909 — projected-cost guard: burn rate → projection → warn,
+      // then a cheaper tier, then park in review (worktree checkpointed).
+      if (await enforceSpendProjection(objective)) continue
     }
 
     // ── Watchdog force-route (ST3) ──────────────────────────────────────────
@@ -1632,6 +1637,29 @@ async function pollerTeardownDeps() {
     releaseBranchLeases: releaseBranchLeasesForObjective,
     releaseSessionLeases: releaseSessionLeasesForObjective,
   }
+}
+
+/**
+ * Projected-cost guard on the LIVE session (obj 900909). Thin wiring around
+ * `runSpendProjectionGuard` (services/spend-guard.ts), which owns the chain:
+ * it is throttled per card, so calling it every tick is cheap. Returns true
+ * when the card was parked and its job stopped (caller must `continue`).
+ */
+export async function enforceSpendProjection(objective: Objective): Promise<boolean> {
+  if (!objective.session_id || objective.status !== 'working') return false
+  const db = getDb()
+  const result = await runSpendProjectionGuard(db, objective, {
+    measureSpend: (o) => computeLiveObjectiveSpend(o.id, o.session_id ? [o.session_id] : []),
+    stopJob: async (o) => {
+      teardownObjectiveJob(db, o.id, `spend-guard:${o.session_id}:${Date.now()}`, await pollerTeardownDeps())
+    },
+    broadcast: (id) => {
+      const row = db.prepare('SELECT * FROM objectives WHERE id = ?').get(id) as Objective | undefined
+      if (row) broadcast({ type: 'objective_updated', payload: row })
+    },
+  })
+  if (result.stopped) console.warn(`[state-poller] obj ${objective.id} PARKED by the spend guard`)
+  return result.stopped
 }
 
 /**

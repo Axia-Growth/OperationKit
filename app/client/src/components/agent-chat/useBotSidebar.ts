@@ -1,11 +1,16 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { api } from '../../lib/api'
-import { isSidebarState } from './sidebar-model'
+import { subscribeServerMessages, useWebSocket } from '../../hooks/useWebSocket'
+import { isSidebarState, shouldAutoRead } from './sidebar-model'
 import { SIDEBAR_KEY, readCache, writeCache } from './chat-cache'
 import type { SidebarSection, SidebarState } from './types'
 
-/** How often the sidebar re-reads unread + previews while the page is visible. */
+/** How often the sidebar re-reads unread + previews while the page is visible (the backstop for the live push). */
 export const SIDEBAR_POLL_MS = 30_000
+/** Several replies landing together (a tool turn, a side thread) become one re-read. */
+export const SIDEBAR_PUSH_DEBOUNCE_MS = 250
+
+const tabVisible = () => typeof document === 'undefined' || document.visibilityState !== 'hidden'
 
 const BASE = '/agent-chat/sidebar'
 const bot = (slug: string) => `${BASE}/bots/${encodeURIComponent(slug)}`
@@ -14,6 +19,12 @@ const bot = (slug: string) => `${BASE}/bots/${encodeURIComponent(slug)}`
  * The person's Bots sidebar (obj 900798): pins, sections, hidden, unread and
  * previews, kept in step with /api/agent-chat/sidebar. Every write answers with
  * the whole new state, so the screen always shows what the server stored.
+ *
+ * LIVE (obj 900866): the server pings this person's sockets (`agent_chat_unread`,
+ * ids only) when a bot reply lands, and the sidebar re-reads at once, so a
+ * pending badge appears without waiting for the poll. The bot the person has
+ * open, in a tab in front, is read as soon as a new reply shows up there — the
+ * badge is for bots that need them, not the one they are looking at.
  *
  * The sidebar is ADDITIVE: a server without the route (or with an odd answer)
  * leaves `state` null and the list falls back to the defaults — talking to a
@@ -29,9 +40,14 @@ export function useBotSidebar() {
   }, [state])
   const [error, setError] = useState<string | null>(null)
   const reading = useRef(new Set<string>())
+  const activeRef = useRef<string | null>(null)
+  const autoRead = useRef<(slug: string) => void>(() => {})
 
   const take = useCallback((r: unknown) => {
-    if (isSidebarState(r)) setState(r)
+    if (!isSidebarState(r)) return
+    setState(r)
+    const open = activeRef.current
+    if (open && shouldAutoRead(r.bots[open], tabVisible())) autoRead.current(open)
   }, [])
 
   const refresh = useCallback(async () => {
@@ -47,7 +63,33 @@ export function useBotSidebar() {
     const t = setInterval(() => {
       if (typeof document === 'undefined' || document.visibilityState !== 'hidden') void refresh()
     }, SIDEBAR_POLL_MS)
-    return () => clearInterval(t)
+    // Coming back to the tab: catch up now, and read the open bot if it moved.
+    const onVisible = () => {
+      if (tabVisible()) void refresh()
+    }
+    document.addEventListener('visibilitychange', onVisible)
+    return () => {
+      clearInterval(t)
+      document.removeEventListener('visibilitychange', onVisible)
+    }
+  }, [refresh])
+
+  // The live push. The chat page has no other socket, so the sidebar opens
+  // one; any other socket the app has open delivers here too (page listeners).
+  useWebSocket(() => {})
+  useEffect(() => {
+    let timer: ReturnType<typeof setTimeout> | null = null
+    const unsub = subscribeServerMessages(msg => {
+      if (msg.type !== 'agent_chat_unread' || timer) return
+      timer = setTimeout(() => {
+        timer = null
+        void refresh()
+      }, SIDEBAR_PUSH_DEBOUNCE_MS)
+    })
+    return () => {
+      unsub()
+      if (timer) clearTimeout(timer)
+    }
   }, [refresh])
 
   /** Run one write; on failure keep the message for the toast and re-read the truth. */
@@ -85,6 +127,16 @@ export function useBotSidebar() {
       }
     },
     [patchLocal, take],
+  )
+  autoRead.current = slug => void markRead(slug)
+
+  /** The bot whose conversation is on screen (null = none). Opening one reads it. */
+  const setActive = useCallback(
+    (slug: string | null) => {
+      activeRef.current = slug
+      if (slug) void markRead(slug)
+    },
+    [markRead],
   )
 
   const markUnread = (slug: string) => run(() => api.post(`${bot(slug)}/unread`), 'Could not mark it unread')
@@ -139,6 +191,7 @@ export function useBotSidebar() {
     setError,
     refresh,
     markRead,
+    setActive,
     markUnread,
     setPinned,
     setHidden,

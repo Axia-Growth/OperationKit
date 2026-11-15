@@ -8,6 +8,7 @@ import path from 'path'
 import { execFile } from 'child_process'
 import type { Objective, ObjectiveStatus } from '@operationkit/shared'
 import { getDb } from '../db/index.js'
+import { resolveEffectiveCostCeiling } from './spend-guard.js'
 import {
   getSessionOutput,
   stopSession,
@@ -878,7 +879,10 @@ export async function pollAIReviewSessions(): Promise<void> {
       // spend lookup is fail-safe: any error falls back to the iteration cap so
       // an infra hiccup can never wedge the FSM (it just won't enforce budget).
       let spend = 0
+      // obj 900909 — the card's EFFECTIVE ceiling: an explicit one when set,
+      // else the per-effort default (settings, else the built-in $75/$150/$300).
       let ceiling = budgetCeilingForEffort(obj.effort)
+      try { ceiling = resolveEffectiveCostCeiling(db, obj).costUsd } catch { /* keep the built-in default */ }
       try {
         spend = computeObjectiveSpend(obj.id)
       } catch (err) {

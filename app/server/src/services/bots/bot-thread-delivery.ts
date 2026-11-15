@@ -32,6 +32,7 @@
  */
 import type { Database } from 'better-sqlite3'
 import { redactLive } from '../live-redaction.js'
+import { notifyBotMessage } from '../agent-chat/sidebar-live.js'
 
 const CURSOR_SETTING = 'bot_thread_delivery_cursor'
 const BATCH = 200
@@ -193,6 +194,7 @@ export function deliverBotThreadMessages(db: Database, limit = 50): DeliverResul
         Number(info.lastInsertRowid),
         row.delivery_id,
       )
+      notifyBotMessage(row.thread_user_id, row.thread_agent_slug)
       delivered++
     } catch (err) {
       db.prepare("UPDATE bot_thread_deliveries SET status = 'failed', last_error = ? WHERE delivery_id = ?").run((err as Error).message, row.delivery_id)

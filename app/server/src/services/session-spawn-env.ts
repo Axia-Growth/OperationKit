@@ -610,6 +610,11 @@ export function applySessionTrustEnv(
   // could mint its own token for ANY workspace and defeat the scoping entirely.
   stripServerSigningSecrets(env)
   env.CC_STRIP_SIGNING_SECRETS = '1'
+  // obj 900910: this same token is how POST /api/internal/objectives/:id/message
+  // derives the SENDER card (lib/message-caller.ts) instead of trusting a
+  // self-declared from_objective_id. KB access defaults ON, so every default
+  // spawn carries it; with both flags off a /message caller falls back to the
+  // recorded, unverified self-declared path.
   if (secretAccess || kbAccess) {
     try {
       env.CC_OBJECTIVE_ID = String(objective.id)

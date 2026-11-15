@@ -150,3 +150,34 @@ export function shortTime(iso: string, now: Date = new Date()): string {
   if (d.getFullYear() === now.getFullYear()) return d.toLocaleDateString([], { month: 'short', day: 'numeric' })
   return d.toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' })
 }
+
+/**
+ * What the pending badge on a bot says (obj 900866). "Pending" = a bot reply
+ * waiting on the person: unopened and unanswered (the server's unread_count),
+ * or a bot they marked unread. The number is the count of waiting replies,
+ * capped at "99+"; a bot marked unread with nothing new shows the badge with
+ * no number. null = no badge.
+ */
+export function pendingBadge(b: SidebarBot): { text: string; label: string } | null {
+  if (!b.unread) return null
+  const n = Math.max(0, Math.floor(b.unread_count))
+  if (n === 0) return { text: '', label: 'Marked unread' }
+  return { text: n > 99 ? '99+' : String(n), label: n === 1 ? '1 unread reply' : `${n} unread replies` }
+}
+
+/** Waiting replies across these bots (a bot marked unread with no count counts as one). */
+export function pendingTotal(agents: ChatAgentInfo[], state: SidebarState | null): number {
+  return agents.reduce((sum, a) => {
+    const b = botState(state, a.slug)
+    return b.unread ? sum + Math.max(1, b.unread_count) : sum
+  }, 0)
+}
+
+/**
+ * Should the bot the person has open be read right now? Yes when it has new
+ * replies and the tab is in front. Not when they pressed "Mark as unread"
+ * (with no new reply since): that is a choice, not something to undo.
+ */
+export function shouldAutoRead(b: SidebarBot | undefined, visible: boolean): boolean {
+  return !!b && visible && b.unread_count > 0 && !b.marked_unread
+}

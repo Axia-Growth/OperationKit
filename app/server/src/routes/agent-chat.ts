@@ -395,7 +395,12 @@ function highAgencyPayload(req: AuthRequest, slug: string) {
 
 function highAgencyError(res: Response, err: unknown): boolean {
   if (err instanceof HighAgencyError) {
-    res.status(err.status).json({ error: err.message })
+    res.status(err.status).json({
+      error: err.message,
+      // obj 900914: lets the panel offer the missing grant inline.
+      ...(err.code ? { code: err.code } : {}),
+      ...(err.grantOptions ? { grant_options: err.grantOptions } : {}),
+    })
     return true
   }
   return false

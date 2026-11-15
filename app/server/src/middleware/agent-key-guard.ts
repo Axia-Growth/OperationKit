@@ -163,6 +163,8 @@ const FLOW_ID = String.raw`\d+`
 export function flowScope(method: string, path: string): ScopeRule {
   const is = (re: string) => new RegExp(`^/api/flows${re}$`).test(path)
   if (method === 'GET') {
+    // obj 900911: the Tools a workflow can call (read-only list; switching one on is cookie owner/admin only).
+    if (is('/tools')) return { kind: 'scope', scope: 'board:read' }
     if (is('') || is('/runs') || is(`/${FLOW_ID}`) || is(`/${FLOW_ID}/runs`) || is(`/${FLOW_ID}/runs/${FLOW_ID}`) ||
         is(`/${FLOW_ID}/tests`) || is(`/${FLOW_ID}/tests/${FLOW_ID}`) ||
         // B8: repair incidents are readable; drafting one is the repair card's session only, approve/reject the owner's.

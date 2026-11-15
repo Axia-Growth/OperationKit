@@ -128,14 +128,20 @@ describe('bots terminology (obj 900327)', () => {
     expect(/\bagents?\b/i.test(text.replace(/Personal assistant \(demo\)/g, ''))).toBe(false)
   })
 
-  it('offers NO control that claims to create a bot or a conversation', async () => {
+  it('offers NO control that creates a bot or a conversation in place', async () => {
     await mount('/chat/demo-assistant')
     await settle()
-    const labels = buttons().map(b => `${b.textContent ?? ''} ${b.getAttribute('aria-label') ?? ''}`)
+    // obj 900866: the ONE exception is the sidebar's "New bot" button, and it
+    // creates nothing here — it opens the existing create flow (proved in
+    // BotSidebar.test.tsx). Every other control still must not claim to.
+    const labels = buttons()
+      .filter(b => (b.textContent ?? '').trim() !== 'New bot')
+      .map(b => `${b.textContent ?? ''} ${b.getAttribute('aria-label') ?? ''}`)
     for (const l of labels) {
       expect(l).not.toMatch(/new bot|add bot|create (a )?bot/i)
       expect(l).not.toMatch(/new (conversation|thread|chat)/i)
     }
+    expect(buttons().filter(b => (b.textContent ?? '').trim() === 'New bot')).toHaveLength(1)
   })
 
   it('names the Clear control after the conversation and promises the bot survives', async () => {

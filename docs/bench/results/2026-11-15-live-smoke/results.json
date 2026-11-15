@@ -1,0 +1,109 @@
+{
+  "schema": "cc-bench-result/1",
+  "harness_version": "cc-bench/1.0.0",
+  "mode": "live",
+  "taskset_version": "v1",
+  "taskset_hash": "f66eb240a2c07b322144302d6a11426f4252430def4c27c0a1398518c973c027",
+  "seed": 19,
+  "model": "claude-sonnet-5-5",
+  "budget_usd": 2,
+  "arms": [
+    "baseline"
+  ],
+  "task_order": [
+    "t02-slugify",
+    "t01-sum-range"
+  ],
+  "started_at": "2026-11-15T15:12:59.623Z",
+  "finished_at": "2026-11-15T15:13:01.194Z",
+  "runs": [
+    {
+      "status": "error",
+      "tokens": {
+        "input": 0,
+        "output": 0,
+        "cache_read": 0,
+        "cache_creation": 0,
+        "total": 0
+      },
+      "cost_usd": 0,
+      "wall_ms": 711,
+      "review_iterations": 0,
+      "human_interventions": 0,
+      "model": "claude-sonnet-5-5",
+      "error": "session ended with is_error",
+      "notes": [
+        "3 stream events",
+        "session duration 97ms",
+        "recorded ../../docs/bench/results/2026-11-15-live-smoke/transcripts/baseline/t02-slugify.json"
+      ],
+      "task_id": "t02-slugify",
+      "arm": "baseline",
+      "order_index": 0,
+      "score": {
+        "success": false,
+        "checks_passed": 0,
+        "checks_failed": 4,
+        "missing_files": [],
+        "check_exit_code": 1,
+        "output_tail": "  duration_ms: 0.177949\n  type: 'test'\n  location: '/tmp/cc-bench-t02-slugify-knZWaL/.bench-check/slugify.test.js:16:1'\n  failureType: 'testCodeFailure'\n  error: 'not implemented'\n  code: 'ERR_TEST_FAILURE'\n  stack: |-\n    slugify (file:///tmp/cc-bench-t02-slugify-knZWaL/src/slugify.js:2:9)\n    TestContext.<anonymous> (file:///tmp/cc-bench-t02-slugify-knZWaL/.bench-check/slugify.test.js:17:16)\n    Test.runInAsyncScope (node:async_hooks:214:14)\n    Test.run (node:internal/test_runner/test:1047:25)\n    Test.processPendingSubtests (node:internal/test_runner/test:744:18)\n    Test.postRun (node:internal/test_runner/test:1173:19)\n    Test.run (node:internal/test_runner/test:1101:12)\n    async Test.processPendingSubtests (node:internal/test_runner/test:744:7)\n  ...\n1..4\n# tests 4\n# suites 0\n# pass 0\n# fail 4\n# cancelled 0\n# skipped 0\n# todo 0\n# duration_ms 55.10477"
+      }
+    },
+    {
+      "status": "error",
+      "tokens": {
+        "input": 0,
+        "output": 0,
+        "cache_read": 0,
+        "cache_creation": 0,
+        "total": 0
+      },
+      "cost_usd": 0,
+      "wall_ms": 673,
+      "review_iterations": 0,
+      "human_interventions": 0,
+      "model": "claude-sonnet-5-5",
+      "error": "session ended with is_error",
+      "notes": [
+        "3 stream events",
+        "session duration 111ms",
+        "recorded ../../docs/bench/results/2026-11-15-live-smoke/transcripts/baseline/t01-sum-range.json"
+      ],
+      "task_id": "t01-sum-range",
+      "arm": "baseline",
+      "order_index": 1,
+      "score": {
+        "success": false,
+        "checks_passed": 1,
+        "checks_failed": 1,
+        "missing_files": [],
+        "check_exit_code": 1,
+        "output_tail": "  expected: 6\n  actual: 3\n  operator: 'strictEqual'\n  stack: |-\n    TestContext.<anonymous> (file:///tmp/cc-bench-t01-sum-range-aE6k6o/.bench-check/range.test.js:6:10)\n    Test.runInAsyncScope (node:async_hooks:214:14)\n    Test.run (node:internal/test_runner/test:1047:25)\n    Test.start (node:internal/test_runner/test:944:17)\n    startSubtestAfterBootstrap (node:internal/test_runner/harness:296:17)\n  ...\n# Subtest: from > to sums nothing\nok 2 - from > to sums nothing\n  ---\n  duration_ms: 0.169439\n  type: 'test'\n  ...\n1..2\n# tests 2\n# suites 0\n# pass 1\n# fail 1\n# cancelled 0\n# skipped 0\n# todo 0\n# duration_ms 56.303671"
+      }
+    }
+  ],
+  "paired_task_ids": [
+    "t02-slugify",
+    "t01-sum-range"
+  ],
+  "summary": {
+    "baseline": {
+      "arm": "baseline",
+      "runs": 2,
+      "successes": 0,
+      "success_rate": 0,
+      "wall_ms_total": 1384,
+      "wall_ms_median": 692,
+      "tokens_total": 0,
+      "tokens_mean": 0,
+      "cost_usd_total": 0,
+      "cost_usd_mean": 0,
+      "cost_per_success_usd": null,
+      "review_iterations_mean": 0,
+      "human_interventions_total": 0
+    }
+  },
+  "deltas": null,
+  "spent_usd": 0,
+  "stopped": null
+}

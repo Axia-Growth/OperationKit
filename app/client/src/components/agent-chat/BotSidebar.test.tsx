@@ -103,6 +103,8 @@ beforeEach(() => {
     max_pins: 12,
     max_sections: 20,
   }
+  // No real socket in tests: the live push is driven through dispatchServerMessage.
+  vi.stubGlobal('WebSocket', class { close() {} send() {} readyState = 0 })
   Object.defineProperty(navigator, 'clipboard', { value: { writeText: vi.fn(async () => {}) }, configurable: true })
   vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
     const method = init?.method ?? 'GET'
@@ -182,13 +184,13 @@ describe('layout', () => {
     expect(row('ops-bot')).toBeNull()
   })
 
-  it('shows the last-message preview (side thread named, "You:" for your own) and an unread dot', async () => {
+  it('shows the last-message preview (side thread named, "You:" for your own) and a pending badge', async () => {
     await mount()
     await settle()
     expect(row('marketing-bot')!.textContent).toContain('Launch · Draft is ready')
-    expect(row('marketing-bot')!.querySelector('[aria-label="1 unread"]')).not.toBeNull()
+    expect(row('marketing-bot')!.querySelector('[aria-label="1 unread reply"]')).not.toBeNull()
     expect(row('dev-bot')!.textContent).toContain('You: ship it')
-    expect(row('dev-bot')!.querySelector('[role="img"]')).toBeNull()
+    expect(row('dev-bot')!.querySelector('[data-pending-badge]')).toBeNull()
   })
 
   it('opening a bot marks it read', async () => {
@@ -288,7 +290,7 @@ describe('the per-bot context menu', () => {
     expect(rowsIn('Support')).toEqual(['helper'])
   })
 
-  it('Mark as unread puts a dot on the bot', async () => {
+  it('Mark as unread puts a badge (no number) on the bot', async () => {
     await mount()
     await settle()
     await openMenu('dev-bot')
@@ -403,5 +405,186 @@ describe('section management', () => {
     await settle()
     expect(writes()).toContainEqual({ url: '/api/agent-chat/sidebar/sections/order', method: 'PUT', body: { ids: [2, 1] } })
     expect(sectionNames('section[aria-label]:not([aria-label="Pinned bots"])')).toEqual(['Marketing', 'Development', 'Other bots'])
+  })
+})
+
+/* obj 900866 — the pending badge (count, live, clears on open) and the New bot button. */
+describe('pending badge (obj 900866)', () => {
+  const badge = (slug: string) => row(slug)?.querySelector('[data-pending-badge]') as HTMLElement | null
+  const tile = (name: string) => host.querySelector(`section[aria-label="Pinned bots"] button[title="${name}"]`) as HTMLButtonElement | null
+  const ping = async (slug: string) => {
+    const { dispatchServerMessage } = await import('../../hooks/useWebSocket')
+    dispatchServerMessage({ type: 'agent_chat_unread', payload: { user_id: 2, agent_slug: slug } })
+  }
+
+  it('shows the number of waiting replies on the row and the pinned tile, capped at 99+', async () => {
+    Object.assign(sb.bots['marketing-bot'], { unread: true, unread_count: 3 })
+    Object.assign(sb.bots['ops-bot'], { unread: true, unread_count: 120 })
+    await mount()
+    await settle()
+    expect(badge('marketing-bot')!.textContent).toBe('3')
+    expect(badge('marketing-bot')!.getAttribute('aria-label')).toBe('3 unread replies')
+    const pinned = tile('Ops Bot')!
+    expect(pinned.querySelector('[data-pending-badge]')!.textContent).toBe('99+')
+    expect(pinned.getAttribute('aria-label')).toBe('Ops Bot (120 unread replies) — pinned')
+    expect(badge('dev-bot')).toBeNull()
+  })
+
+  it('says how many replies are waiting in the header, and that line opens the Unread filter', async () => {
+    Object.assign(sb.bots['marketing-bot'], { unread: true, unread_count: 2 })
+    Object.assign(sb.bots['dev-bot'], { unread: true, marked_unread: true, unread_count: 0 })
+    await mount()
+    await settle()
+    const line = [...host.querySelectorAll('button')].find(b => b.textContent === '3 replies waiting on you')!
+    expect(line).toBeDefined()
+    line.click()
+    await settle(4)
+    expect(host.querySelector('button[aria-pressed="true"]')!.textContent).toContain('Unread')
+    expect(rowsIn('Development')).toEqual(['dev-bot'])
+    expect(rowsIn('Other bots')).toEqual(['marketing-bot'])
+  })
+
+  it('a collapsed section shows the count of waiting replies inside it', async () => {
+    sb.sections[0].collapsed = true
+    Object.assign(sb.bots['dev-bot'], { unread: true, unread_count: 4 })
+    await mount()
+    await settle()
+    expect(nav().querySelector('[aria-label="4 unread in this section"]')!.textContent).toBe('4')
+  })
+
+  it('appears live when the server pings a new reply, without waiting for the poll', async () => {
+    await mount()
+    await settle()
+    expect(badge('dev-bot')).toBeNull()
+    const reads = calls.filter(c => c.url === '/api/agent-chat/sidebar').length
+    // A reply lands for dev-bot on the server, and the server pings this person.
+    Object.assign(sb.bots['dev-bot'], { unread: true, unread_count: 1 })
+    await ping('dev-bot')
+    await ping('dev-bot') // a burst becomes one re-read
+    await new Promise(r => setTimeout(r, 300))
+    await settle()
+    expect(calls.filter(c => c.url === '/api/agent-chat/sidebar').length).toBe(reads + 1)
+    expect(badge('dev-bot')!.textContent).toBe('1')
+  })
+
+  it('ignores other socket messages', async () => {
+    await mount()
+    await settle()
+    const reads = calls.filter(c => c.url === '/api/agent-chat/sidebar').length
+    const { dispatchServerMessage } = await import('../../hooks/useWebSocket')
+    dispatchServerMessage({ type: 'alert_acked', payload: { id: 1 } })
+    await new Promise(r => setTimeout(r, 300))
+    await settle()
+    expect(calls.filter(c => c.url === '/api/agent-chat/sidebar').length).toBe(reads)
+  })
+
+  it('clears the moment the bot is opened', async () => {
+    await mount()
+    await settle()
+    expect(badge('marketing-bot')).not.toBeNull()
+    ;(row('marketing-bot')!.querySelector('button') as HTMLButtonElement).click()
+    await settle()
+    expect(writes()).toContainEqual({ url: '/api/agent-chat/sidebar/bots/marketing-bot/read', method: 'POST', body: null })
+    expect(badge('marketing-bot')).toBeNull()
+  })
+
+  it('a new reply in the bot you have open is read at once; one for another bot gets a badge', async () => {
+    await mount('/chat/dev-bot')
+    await settle()
+    calls = []
+    Object.assign(sb.bots['dev-bot'], { unread: true, unread_count: 1 })
+    Object.assign(sb.bots['ops-bot'], { unread: true, unread_count: 2 })
+    await ping('dev-bot')
+    await new Promise(r => setTimeout(r, 300))
+    await settle()
+    expect(writes()).toContainEqual({ url: '/api/agent-chat/sidebar/bots/dev-bot/read', method: 'POST', body: null })
+    expect(writes().some(c => c.url.includes('/ops-bot/read'))).toBe(false)
+    expect(badge('dev-bot')).toBeNull()
+    expect(tile('Ops Bot')!.querySelector('[data-pending-badge]')!.textContent).toBe('2')
+  })
+
+  it('does not undo "Mark as unread" on the bot you have open', async () => {
+    await mount('/chat/dev-bot')
+    await settle()
+    await openMenu('dev-bot')
+    menuItem('Mark as unread')!.click()
+    await settle()
+    calls = []
+    await ping('marketing-bot')
+    await new Promise(r => setTimeout(r, 300))
+    await settle()
+    expect(writes().some(c => c.url.includes('/dev-bot/read'))).toBe(false)
+    expect(row('dev-bot')!.querySelector('[aria-label="Marked unread"]')).not.toBeNull()
+  })
+})
+
+describe('New bot button (obj 900866)', () => {
+  const newBot = () => [...host.querySelectorAll('button')].find(b => b.textContent?.trim() === 'New bot') as HTMLButtonElement | undefined
+  const aside = () => host.querySelector('nav[aria-label="Bots"]')!.parentElement!
+
+  it('is a visible, filled primary in the Bots header for an admin, and the only one in the sidebar', async () => {
+    role = 'admin'
+    await mount()
+    await settle()
+    const b = newBot()!
+    expect(b).toBeDefined()
+    expect(b.closest('[aria-label="Pinned bots"], [role="menu"]')).toBeNull()
+    expect(b.className).toContain('bg-accent')
+    const filled = [...aside().querySelectorAll('button')].filter(x => /(^|\s)bg-accent(\s|$)/.test(x.className))
+    expect(filled).toEqual([b])
+  })
+
+  it('is not offered to someone who cannot add bots', async () => {
+    await mount()
+    await settle()
+    expect(newBot()).toBeUndefined()
+  })
+
+  it('opens the existing create flow — template and paste, plus the Dev bot when it is installed — and creates nothing itself', async () => {
+    role = 'admin'
+    agents.push(agent('operation-kit-dev', 'Dev'))
+    sb.bots['operation-kit-dev'] = bot()
+    await mount()
+    await settle()
+    const before = writes().length
+    newBot()!.click()
+    await settle(4)
+    const dialog = document.body.querySelector('[role="dialog"]')!
+    expect(dialog.textContent).toContain('New bot')
+    const links = [...dialog.querySelectorAll('a[data-new-bot]')].map(a => [a.getAttribute('data-new-bot'), a.getAttribute('href')])
+    const { devBotLink } = await import('../agents/CreateAgentGuide')
+    expect(links).toEqual([
+      ['dev', devBotLink('bot')],
+      ['template', '/agents?tab=templates'],
+      ['paste', '/agents?tab=templates&paste=1'],
+    ])
+    expect(writes().length).toBe(before)
+  })
+
+  it('without the Dev bot it still offers the template and paste paths', async () => {
+    role = 'admin'
+    await mount()
+    await settle()
+    newBot()!.click()
+    await settle(4)
+    const keys = [...document.body.querySelectorAll('[role="dialog"] a[data-new-bot]')].map(a => a.getAttribute('data-new-bot'))
+    expect(keys).toEqual(['template', 'paste'])
+  })
+
+  it('"Ask the Dev bot" opens its conversation with the request typed, not sent', async () => {
+    role = 'admin'
+    agents.push(agent('operation-kit-dev', 'Dev'))
+    sb.bots['operation-kit-dev'] = bot()
+    await mount()
+    await settle()
+    newBot()!.click()
+    await settle(4)
+    ;(document.body.querySelector('[role="dialog"] a[data-new-bot="dev"]') as HTMLAnchorElement).click()
+    await settle()
+    expect(document.body.querySelector('[role="dialog"]')).toBeNull()
+    const { CREATE_PROMPTS } = await import('../agents/CreateAgentGuide')
+    const box = host.querySelector('textarea') as HTMLTextAreaElement
+    expect(box.value).toBe(CREATE_PROMPTS.bot)
+    expect(writes().some(c => c.url.endsWith('/messages'))).toBe(false)
   })
 })

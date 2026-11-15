@@ -422,22 +422,23 @@ describe('delivery and retry', () => {
   it('a provider error is retried with backoff, then given up on and reported to the sender', async () => {
     const { bot_conversation_id: id } = await alphaToBeta()
     const seen: Seen[] = []
-    let now = new Date('2026-11-15T12:00:00Z')
+    // A clock ahead of the real one: the message is queued with real now, so a fixed past date stops it ever being due.
+    let now = new Date('2099-01-01T12:00:00Z')
     const opts = () => ({ env: ENV, deps: { fetch: failingFetch(seen) }, now: () => now })
 
     expect((await drainBotMessages(opts())).retried).toBe(1)
     let m = one("SELECT * FROM bot_messages WHERE kind = 'message'")
     expect(m).toMatchObject({ status: 'pending', attempts: 1 })
-    expect(m.next_attempt_at).toBe('2026-11-15 12:00:30')
+    expect(m.next_attempt_at).toBe('2099-01-01 12:00:30')
     // Not due yet: nothing happens.
     expect(await drainBotMessages(opts())).toMatchObject({ retried: 0, delivered: 0, failed: 0 })
 
-    now = new Date('2026-11-15T12:00:31Z')
+    now = new Date('2099-01-01T12:00:31Z')
     expect((await drainBotMessages(opts())).retried).toBe(1)
     m = one("SELECT * FROM bot_messages WHERE kind = 'message'")
-    expect(m).toMatchObject({ status: 'pending', attempts: 2, next_attempt_at: '2026-11-15 12:02:31' })
+    expect(m).toMatchObject({ status: 'pending', attempts: 2, next_attempt_at: '2099-01-01 12:02:31' })
 
-    now = new Date('2026-11-15T12:03:00Z')
+    now = new Date('2099-01-01T12:03:00Z')
     expect((await drainBotMessages(opts())).failed).toBe(1)
     m = one("SELECT * FROM bot_messages WHERE kind = 'message'")
     expect(m.status).toBe('failed')

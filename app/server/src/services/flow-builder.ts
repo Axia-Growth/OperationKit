@@ -177,9 +177,9 @@ const OKIT_BRIEF_TIMEOUT_MS = 8000
 
 /**
  * Tools a `tool` node can name: every Tool registered with the flow engine (these
- * run today), plus — best-effort, time-boxed — the okit Tools registry. The okit
- * runner is not wired into the engine yet (B2 notes), so those are listed as
- * "registry only" and a dry self-test must mock them.
+ * run today — since obj 900911 that includes every okit Tool with a `run:` block),
+ * plus — best-effort, time-boxed — the rest of the okit Tools registry, listed as
+ * "registry only" (documentation-only Tools): a dry self-test must mock them.
  */
 export async function toolRegistryForBrief(): Promise<{ tools: BriefTool[]; okit: 'ok' | 'unavailable' }> {
   const tools: BriefTool[] = listRegisteredFlowTools().map((t) => ({ slug: t.slug, effect: t.effect ?? 'send', source: 'engine' as const }))
@@ -329,6 +329,8 @@ export function builderBrief(b: BuilderBriefInput): string {
     for (const t of b.tools) {
       lines.push(`| \`${t.slug}\` | ${t.effect} | ${t.source === 'engine' ? 'yes' : 'registry only — mock it'}${t.description ? ` — ${mdCell(t.description)}` : ''} |`)
     }
+    // obj 900911: okit Tools run only where the workspace switched them on.
+    lines.push('', `An okit Tool runs only once an owner switches it on for workspace \`${b.workspace}\` (Jobs → Workflows → Tools); until then a live step fails \`tool_disabled\`. Set each \`tool\` node's \`effect\` to the Tool's effect above: a node may not label a send/spend Tool as read/write.`)
   }
   if (b.okit === 'unavailable') {
     lines.push('', '_The okit Tools registry was not reachable when this brief was written; the full list is `GET /api/internal/operationkit/registry`._')

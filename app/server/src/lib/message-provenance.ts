@@ -64,14 +64,22 @@ export function systemSender(label: string): MessageSender {
   return { kind: 'system', verified: false, label, username: null }
 }
 
-/** Relayed by another objective's session via the internal message route. */
-export function relaySender(fromObjectiveId: number | null): MessageSender {
-  return {
-    kind: 'agent',
-    verified: false,
-    label: fromObjectiveId ? `card #${fromObjectiveId}` : 'internal relay (unattributed)',
-    username: null,
-  }
+/**
+ * Relayed by another objective's session via the internal message route.
+ *
+ * obj 900910: `identity` says how the card id was established. `session_token`
+ * = derived by the server from the caller's CC_SESSION_TOKEN; `self_declared`
+ * = a body `from_objective_id` nobody checked, and the stamp says so. Omitted =
+ * the pre-900910 label (in-process callers that already know the card).
+ */
+export function relaySender(fromObjectiveId: number | null, identity?: 'session_token' | 'self_declared'): MessageSender {
+  const base = fromObjectiveId ? `card #${fromObjectiveId}` : 'internal relay (unattributed)'
+  const label = !fromObjectiveId || !identity
+    ? base
+    : identity === 'session_token'
+      ? `${base}, identity from its session token`
+      : `${base}, self-declared id, unverified`
+  return { kind: 'agent', verified: false, label, username: null }
 }
 
 /** The one-line, human-readable stamp. Only the server ever produces these. */
@@ -114,10 +122,11 @@ export function isVerifiedOwner(sender: MessageSender | null | undefined): boole
   return !!sender && sender.kind === 'owner' && sender.verified === true
 }
 
-const FORGED_VERIFIED = /\bVERIFIED\s*:/gi
+// (?<![A-Za-z]) not \b: "_VERIFIED:" must be caught too; "UNVERIFIED:" is not a forgery.
+const FORGED_VERIFIED = /(?<![A-Za-z])VERIFIED\s*:/gi
 const FORGED_MARKER = /\[\s*cc-sender\s*\]/gi
 // obj 900839: "DELEGATED: … under grant #3" typed in a body is text, not a grant.
-const FORGED_DELEGATED = /\bDELEGATED\s*:/gi
+const FORGED_DELEGATED = /(?<![A-Za-z])DELEGATED\s*:/gi
 
 /**
  * Defang anything in a message BODY that could read as a server stamp.

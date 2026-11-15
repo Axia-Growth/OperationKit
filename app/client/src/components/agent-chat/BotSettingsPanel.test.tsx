@@ -138,7 +138,7 @@ describe('BotSettingsPanel', () => {
     await chooseOption(modelTrigger(), 'Claude Opus 5.5 (claude-opus-5-5)')
     await click(box('Web search'))
     await click(box('Read web pages'))
-    await click(button('Save'))
+    await click(button('Save model and tools'))
     expect(requests).toHaveLength(1)
     expect(requests[0].method).toBe('PUT')
     expect(requests[0].url).toBe('/api/agent-chat/agents/acme-cto/config')
@@ -149,7 +149,7 @@ describe('BotSettingsPanel', () => {
       tools: ['list_objectives', 'create_objective', 'web_search', 'web_fetch'],
     })
     expect(onSaved).toHaveBeenCalledTimes(1)
-    expect(host.textContent).toContain('Saved.')
+    expect(host.textContent).toContain('Saved model and tools.')
   })
 
   it('"All tools" ticks and locks every tool, and saves all_tools: true', async () => {
@@ -157,13 +157,13 @@ describe('BotSettingsPanel', () => {
     await click(allTools())
     expect(box('Web search').checked).toBe(true)
     expect(box('Web search').disabled).toBe(true)
-    await click(button('Save'))
+    await click(button('Save model and tools'))
     expect(requests[0].body).toMatchObject({ all_tools: true })
   })
 
   it('an unchanged tool list is sent as null so the agent file stays in charge', async () => {
     render(CTO, true)
-    await click(button('Save'))
+    await click(button('Save model and tools'))
     expect(requests[0].body).toMatchObject({ tools: null, model: null, provider: null })
   })
 
@@ -172,14 +172,14 @@ describe('BotSettingsPanel', () => {
     expect(allTools().checked).toBe(true)
     await click(allTools())
     await click(box('Web search'))
-    await click(button('Save'))
+    await click(button('Save model and tools'))
     expect(requests[0].body).toMatchObject({ all_tools: false, tools: ['web_search'] })
   })
 
   it('Reset to file deletes the override', async () => {
     render({ ...CTO, model: 'claude-opus-5-5', config: { provider: null, model: 'claude-opus-5-5', tools: null, all_tools: false, updated_by: 'jordan', updated_at: '' } }, true)
     expect(modelTrigger().textContent).toContain('Claude Opus 5.5 (claude-opus-5-5)')
-    await click(button('Reset to file'))
+    await click(button('Reset model and tools to file'))
     expect(requests[0]).toMatchObject({ method: 'DELETE', url: '/api/agent-chat/agents/acme-cto/config' })
     expect(modelTrigger().textContent).toContain('Default — Claude Sonnet 5 (claude-sonnet-5)')
   })
@@ -197,7 +197,7 @@ describe('BotSettingsPanel', () => {
     expect(modelTrigger().hasAttribute('data-disabled')).toBe(true)
     expect(box('Web search').checked).toBe(true)
     expect(box('File board cards').checked).toBe(false)
-    expect([...host.querySelectorAll('button')].some(b => b.textContent?.trim() === 'Save')).toBe(false)
+    expect([...host.querySelectorAll('button')].some(b => b.textContent?.trim() === 'Save model and tools')).toBe(false)
   })
 })
 
@@ -219,7 +219,7 @@ describe('explicit-only secret tool', () => {
     expect(secrets.disabled).toBe(false)
     expect(host.textContent).toContain('Secrets')
     await click(secrets)
-    await click(button('Save'))
+    await click(button('Save model and tools'))
     const put = requests.find(r => r.method === 'PUT')!
     expect(put.body).toMatchObject({ all_tools: true })
     expect((put.body as { tools: string[] }).tools).toContain('secrets')
@@ -284,14 +284,14 @@ describe('BotSettingsPanel model picker (obj 900863)', () => {
   it('picking a model the current provider cannot run switches the provider with it', async () => {
     render(CTO, true)
     await chooseOption(modelTrigger(), 'Grok 4 (grok-4)')
-    await click(button('Save'))
+    await click(button('Save model and tools'))
     expect(requests[0].body).toMatchObject({ provider: 'xai', model: 'grok-4' })
   })
 
   it('a Claude model keeps a Claude bot on its provider', async () => {
     render(CTO, true)
     await chooseOption(modelTrigger(), 'Claude Fable 5.2 (claude-fable-5-2)')
-    await click(button('Save'))
+    await click(button('Save model and tools'))
     expect(requests[0].body).toMatchObject({ provider: null, model: 'claude-fable-5-2' })
   })
 
@@ -300,7 +300,7 @@ describe('BotSettingsPanel model picker (obj 900863)', () => {
     await chooseOption(modelTrigger(), 'Other model id…')
     const input = host.querySelector<HTMLInputElement>('#bot-model-custom-acme-cto')!
     act(() => setInput(input, 'my-local-llama'))
-    await click(button('Save'))
+    await click(button('Save model and tools'))
     expect(requests[0].body).toMatchObject({ model: 'my-local-llama' })
   })
 

@@ -2,6 +2,7 @@
  * PATCH /:id/status — extracted from objectives.ts (behavior frozen).
  * Registered on the same /api/objectives router. Status machine and SQL unchanged.
  */
+import { SpendCeilingRefusedError } from '../services/spend-guard.js'
 import { Router, type Response } from 'express'
 import { getDb } from '../db/index.js'
 import { type AuthRequest } from '../middleware/auth.js'
@@ -497,6 +498,12 @@ async function handleStatusPatch(req: StatusRequest, res: Response): Promise<voi
     // board event was already recorded — surface 409 to the caller.
     if (err instanceof SessionLeaseConflictError) {
       res.status(409).json({ error: err.message, lease_key: err.leaseKey, owner_objective_id: err.ownerObjectiveId })
+      return
+    }
+    // Spend ceiling (obj 900909): the start was refused before any side effect,
+    // so the status is unchanged. 409 with the numbers the card panel shows.
+    if (err instanceof SpendCeilingRefusedError) {
+      res.status(409).json({ error: err.message, code: err.code, spent_usd: err.spentUsd, ceiling_usd: err.ceilingUsd, ceiling_source: err.ceilingSource })
       return
     }
     const message = err instanceof Error ? err.message : 'Session operation failed'

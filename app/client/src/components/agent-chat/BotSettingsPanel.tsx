@@ -37,6 +37,7 @@ import type { ModelRow } from '@operationkit/shared'
    the panel scrolls (obj 900864). A "Jump to" row reaches each in one click. */
 
 const SECTION_LINKS: Array<{ label: string; idPrefix: string }> = [
+  { label: 'Model and tools', idPrefix: 'bot-model-tools-title' },
   { label: 'Workspace access', idPrefix: 'bot-ws-title' },
   { label: 'Approve on my behalf', idPrefix: 'bot-delegation-title' },
   { label: 'High Agency', idPrefix: 'high-agency-title' },
@@ -99,8 +100,12 @@ export function BotSettingsPanel({
   })
   const [saving, setSaving] = useState(false)
   // obj 900797: a grant/revoke can change where High Agency may wake (or switch
-  // it off), so the High Agency section reloads after one.
+  // it off), so the High Agency section re-reads after one. obj 900914: it
+  // re-reads IN PLACE (it used to be remounted via `key`, which threw away the
+  // admin's unsaved High Agency edits and reset the form to the cached setting).
   const [accessVersion, setAccessVersion] = useState(0)
+  // High Agency's inline "Grant access to <ws> and save" → Workspace access re-reads.
+  const [grantVersion, setGrantVersion] = useState(0)
   const [error, setError] = useState<string | null>(null)
   const [saved, setSaved] = useState(false)
   const panelRef = useRef<HTMLElement>(null)
@@ -163,6 +168,12 @@ export function BotSettingsPanel({
     setTools(cur => (cur.includes(name) ? cur.filter(t => t !== name) : [...cur, name]))
   }
 
+  // obj 900914: this Save covers ONLY model, provider and tools. Track what it
+  // would change, so the section says when it has unsaved edits.
+  const snapshot = (p: string, m: string, all: boolean, t: string[]) => JSON.stringify([p, m.trim(), all, [...t].sort()])
+  const [baseline, setBaseline] = useState(() => snapshot(provider, model, allTools, tools))
+  const modelToolsDirty = isAdmin && snapshot(provider, model, allTools, tools) !== baseline
+
   const save = async () => {
     setSaving(true)
     setError(null)
@@ -180,6 +191,7 @@ export function BotSettingsPanel({
     try {
       const r = await api.put<{ agent: ChatAgentInfo }>(`/agent-chat/agents/${encodeURIComponent(agent.slug)}/config`, body)
       onSaved(r.agent)
+      setBaseline(snapshot(provider, model, allTools, tools))
       setSaved(true)
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Could not save these settings')
@@ -198,7 +210,9 @@ export function BotSettingsPanel({
       setModel('')
       setCustomModel(false)
       setAllTools(r.agent.all_tools ?? false)
-      setTools(r.agent.tools.filter(t => catalog.some(c => c.name === t)))
+      const fileTools = r.agent.tools.filter(t => catalog.some(c => c.name === t))
+      setTools(fileTools)
+      setBaseline(snapshot('', '', r.agent.all_tools ?? false, fileTools))
       onSaved(r.agent)
       setSaved(true)
     } catch (e) {
@@ -262,6 +276,13 @@ export function BotSettingsPanel({
             </a>
           ))}
         </nav>
+
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <h4 id={`bot-model-tools-title-${agent.slug}`} className="font-display text-sm font-semibold text-fg-0">Model and tools</h4>
+          {modelToolsDirty && (
+            <span className="rounded-full bg-warning/10 px-2 py-0.5 text-xs text-warning">Unsaved changes</span>
+          )}
+        </div>
 
         {!isAdmin && (
           <p className="text-xs text-fg-2">Only an admin can change a bot&apos;s model or tools.</p>
@@ -368,20 +389,27 @@ export function BotSettingsPanel({
 
         {isAdmin && (
           <div className="flex flex-wrap items-center gap-2">
-            <Button variant="primary" size="sm" loading={saving} onClick={() => void save()}>Save</Button>
-            <Button variant="ghost" size="sm" disabled={saving || !cfg} onClick={() => void reset()}>Reset to file</Button>
-            {saved && <span role="status" className="text-xs text-fg-2">Saved.</span>}
+            {/* obj 900914: each section has its own, labelled Save. This one sends
+                model, provider and tools only (PUT …/config) — never High
+                Agency, workspace access or approvals. */}
+            <Button variant="primary" size="sm" loading={saving} onClick={() => void save()}>Save model and tools</Button>
+            <Button variant="ghost" size="sm" disabled={saving || !cfg} onClick={() => void reset()}>Reset model and tools to file</Button>
+            {saved && (
+              <span role="status" className="text-xs text-fg-2">
+                Saved model and tools. Workspace access, approvals and High Agency are saved in their own sections and did not change.
+              </span>
+            )}
             {cfg?.updated_by && !saved && (
               <span className="text-xs text-fg-2">Changed by {cfg.updated_by}</span>
             )}
           </div>
         )}
 
-        <WorkspaceAccessSection agent={agent} isAdmin={isAdmin} onChanged={() => setAccessVersion(v => v + 1)} />
+        <WorkspaceAccessSection agent={agent} isAdmin={isAdmin} version={grantVersion} onChanged={() => setAccessVersion(v => v + 1)} />
 
         <DelegationSection agent={agent} isAdmin={isAdmin} />
 
-        <HighAgencySection key={accessVersion} agent={agent} isAdmin={isAdmin} />
+        <HighAgencySection agent={agent} isAdmin={isAdmin} accessVersion={accessVersion} onAccessChanged={() => setGrantVersion(v => v + 1)} />
       </div>
     </section>
   )

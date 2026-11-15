@@ -179,7 +179,9 @@ describe('acceptance 1: schema-invalid LLM output retries then fails with a type
     expect(JSON.parse(run.output_json)).toEqual({ category: 'sales' })
     expect(steps(runId).filter((s) => s.node_id === 'classify').map((s) => s.status)).toEqual(['failed', 'succeeded'])
     // The model saw the resolved prompt, the schema in the system prompt and the default model.
-    expect(llm.calls[0].prompt).toContain('Classify this note: what does the pro plan cost?')
+    // obj 900910: the interpolated trigger value arrives inside an untrusted frame.
+    expect(llm.calls[0].prompt.startsWith('Classify this note: <<<UNTRUSTED-CONTENT source="flow-step"')).toBe(true)
+    expect(llm.calls[0].prompt).toContain('\nwhat does the pro plan cost?\nEND-UNTRUSTED-CONTENT>>>')
     expect(llm.calls[0].systemPrompt).toContain(JSON.stringify(CATEGORY_SCHEMA))
     expect(llm.calls[0].model).toBe(DEFAULT_MODEL)
   })
@@ -239,7 +241,9 @@ describe('llm max_iterations', () => {
     expect(run.status).toBe('succeeded')
     expect(JSON.parse(run.output_json)).toEqual({ category: 'sales' })
     expect(lookup.calls).toEqual([{ q: 'pro' }])
-    expect(llm.calls[1].prompt).toContain('Tool "crm-lookup" returned: {"plan":"pro","tier":"enterprise"}')
+    // obj 900910: the tool result is fed back inside an untrusted frame.
+    expect(llm.calls[1].prompt).toContain('Tool "crm-lookup" returned:\n<<<UNTRUSTED-CONTENT source="flow-step"')
+    expect(llm.calls[1].prompt).toContain('\n{"plan":"pro","tier":"enterprise"}\nEND-UNTRUSTED-CONTENT>>>')
     expect(llm.calls[0].systemPrompt).toContain('"tool_call"')
   })
 

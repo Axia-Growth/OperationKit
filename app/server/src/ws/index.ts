@@ -11,7 +11,7 @@ import type { ServerMessage, ClientMessage, User, UserRole } from '@operationkit
 // Per-connection state. We snapshot workspace memberships at connect time —
 // see Phase 5 audit note. If admin grants a new workspace mid-session the
 // client reconnects (or reloads) to pick it up.
-interface ConnectedClient {
+export interface ConnectedClient {
   ws: WebSocket
   userId: number
   role: UserRole
@@ -216,7 +216,10 @@ function resolveMessageWorkspace(message: ServerMessage): string | undefined {
  *
  * Mutates no state; safe to call sync.
  */
-function shouldDeliver(message: ServerMessage, client: ConnectedClient): boolean {
+export function shouldDeliver(message: ServerMessage, client: ConnectedClient): boolean {
+  // A person's bot conversation is theirs alone: not even an admin's socket
+  // hears that someone else got a reply (obj 900866).
+  if (message.type === 'agent_chat_unread') return message.payload.user_id === client.userId
   if (client.role === 'admin') {
     // View-scoping: only filter when the admin is viewing a single workspace.
     // 'all' (or unset) keeps the historical see-everything behavior (back-compat).

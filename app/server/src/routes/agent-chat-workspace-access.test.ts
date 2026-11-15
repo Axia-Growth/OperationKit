@@ -287,3 +287,68 @@ describe('cards filed by a High Agency wake land only in granted workspaces', ()
     expect(r.status, JSON.stringify(r.json)).toBe(201)
   })
 })
+
+// obj 900914 — Found on OVH: Operator set the CTO bot to High Agency level 10, then
+// saved the bot's model/tools with the panel's OTHER Save, and the bot was back
+// at level 1 (one wake a day). Saving one section must never touch another.
+describe('saving the main bot settings never changes High Agency (obj 900914)', () => {
+  it('model / provider / tools Save and Reset to file leave level, on/off, workspace, permissions and the hourly routine as they were', async () => {
+    await admin('PUT', '/agents/cto/workspaces', { workspaces: ['ops', 'sales'] })
+    const on = await admin('PUT', '/agents/cto/high-agency', { enabled: true, level: 10, workspace: 'sales', allow_cards: false, allow_workflows: true })
+    expect(on.status).toBe(200)
+    expect(on.json.high_agency).toMatchObject({ enabled: true, level: 10, workspace: 'sales', allow_cards: false, allow_workflows: true, runs_per_day: 24 })
+    const before = on.json.high_agency
+    const changes = activity('high_agency_changed').length
+    // Level 10 = every hour: the routine's cron is "<minute> * * * *".
+    expect(routine('cto').cron_expr).toMatch(/^\d{1,2} \* \* \* \*$/)
+
+    const saves: [string, string, unknown][] = [
+      ['PUT', '/agents/cto/config', { provider: 'claude', model: 'claude-opus-5-5', all_tools: false, tools: ['list_objectives'] }],
+      ['PUT', '/agents/cto/config', { all_tools: true }],
+      ['PUT', '/agents/cto/config', { provider: null, model: null, all_tools: false, tools: null }],
+      ['DELETE', '/agents/cto/config', undefined],
+    ]
+    for (const [method, p, body] of saves) {
+      const r = await admin(method, p, body)
+      expect(r.status).toBe(200)
+      const after = (await admin('GET', '/agents/cto/high-agency')).json.high_agency
+      expect(after).toMatchObject({
+        enabled: true, level: 10, runs_per_day: 24, workspace: 'sales', allow_cards: false, allow_workflows: true,
+        run_as_user_id: before.run_as_user_id, routine_id: before.routine_id,
+      })
+      expect(after.wake_times).toHaveLength(24)
+      const rt = routine('cto')
+      expect(rt.cron_expr).toMatch(/^\d{1,2} \* \* \* \*$/)
+      expect(Number(rt.enabled)).toBe(1)
+    }
+    // Nothing logged a High Agency change: the bot-settings Save never wrote it.
+    expect(activity('high_agency_changed')).toHaveLength(changes)
+  })
+
+  it('a High Agency save that sends only one field leaves every other field as saved', async () => {
+    await admin('PUT', '/agents/cto/workspaces', { workspaces: ['ops', 'sales'] })
+    await admin('PUT', '/agents/cto/high-agency', { enabled: true, level: 10, workspace: 'sales', allow_cards: true, allow_workflows: true })
+    const r = await admin('PUT', '/agents/cto/high-agency', { workspace: 'ops' })
+    expect(r.status).toBe(200)
+    expect(r.json.high_agency).toMatchObject({ enabled: true, level: 10, workspace: 'ops', allow_cards: true, allow_workflows: true })
+  })
+})
+
+describe('the "no workspace it may wake in" refusal says how to fix it (obj 900914)', () => {
+  it('names where access is granted and carries the workspaces the admin can grant on the spot', async () => {
+    await admin('PUT', '/agents/cto/workspaces', { workspaces: [] })
+    const r = await admin('PUT', '/agents/cto/high-agency', { enabled: true, level: 10 })
+    expect(r.status).toBe(409)
+    expect(r.json.code).toBe('no_wake_workspace')
+    expect(r.json.error).toMatch(/no workspace it may wake in\. Grant it one under Workspace access on this settings page/)
+    expect(r.json.grant_options).toEqual(expect.arrayContaining(['ops', 'sales', 'finance']))
+  })
+
+  it('a workspace the bot is not granted offers exactly that workspace', async () => {
+    await admin('PUT', '/agents/cto/workspaces', { workspaces: ['sales'] })
+    const r = await admin('PUT', '/agents/cto/high-agency', { enabled: true, workspace: 'ops' })
+    expect(r.status).toBe(403)
+    expect(r.json).toMatchObject({ code: 'workspace_not_granted', grant_options: ['ops'] })
+    expect(r.json.error).toMatch(/not granted workspace "ops"/)
+  })
+})

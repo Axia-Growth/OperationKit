@@ -3,6 +3,8 @@
  * (behavior frozen). Registered on the same /api/objectives router.
  */
 import fs from 'fs'
+import { isUntrustedSender } from '../lib/relay-framing.js'
+import { noteUntrustedPayload } from '../services/injection-telemetry.js'
 import { Router } from 'express'
 import { getDb } from '../db/index.js'
 import { type AuthRequest } from '../middleware/auth.js'
@@ -390,6 +392,12 @@ router.post('/:id/message', async (req: AuthRequest, res) => {
     return
   }
   if (delegation.kind === 'allowed') sender = delegation.sender
+  // obj 900910: an AGENT / API / DELEGATED body crosses an agent boundary. It is
+  // framed where the session reads it (followUpSessionText); scanned here —
+  // telemetry only, delivery is never blocked.
+  if (isUntrustedSender(sender)) {
+    noteUntrustedPayload(String(message), { boundary: 'relayed-message', objectiveId: objective.id, workspace: objective.workspace, project: objective.project, label: sender.label })
+  }
   const noteDelegatedApproval = (sessionId: string) => {
     if (delegation.kind !== 'allowed' || !req.agentKey) return
     try {
@@ -477,7 +485,7 @@ router.post('/:id/message', async (req: AuthRequest, res) => {
         nowMs: Date.now(),
       })
     } catch (err) {
-      console.warn(`[followup-queue] decision failed for ${req.params.id}; restarting as before:`, (err as Error).message)
+      console.warn('[followup-queue] decision failed for %s; restarting as before:', req.params.id, (err as Error).message)
     }
     if (decision.queue) {
       try {
@@ -486,7 +494,7 @@ router.post('/:id/message', async (req: AuthRequest, res) => {
         noteDelegatedApproval(existingSessionId)
       } catch (err) {
         const code = (err as NodeJS.ErrnoException)?.code
-        console.error(`[objectives] message → queue write failed for ${req.params.id}:`, err)
+        console.error('[objectives] message → queue write failed for %s:', req.params.id, err)
         res.status(code === 'ENOSPC' ? 507 : 500).json({ error: code === 'ENOSPC' ? 'Disk is full — message not sent. Cleanup is running; retry in a minute.' : 'Failed to record message' })
         return
       }
@@ -524,7 +532,7 @@ router.post('/:id/message', async (req: AuthRequest, res) => {
     noteDelegatedApproval(existingSessionId)
   } catch (err) {
     const code = (err as NodeJS.ErrnoException)?.code
-    console.error(`[objectives] message → jsonl write failed for ${req.params.id}:`, err)
+    console.error('[objectives] message → jsonl write failed for %s:', req.params.id, err)
     releaseRespawnHold()
     if (code === 'ENOSPC') {
       res.status(507).json({ error: 'Disk is full — message not sent. Cleanup is running; retry in a minute.' })
@@ -554,7 +562,7 @@ router.post('/:id/message', async (req: AuthRequest, res) => {
       releaseRespawnHold(respawnHoldGraceMs())
     } catch (err) {
       releaseRespawnHold()
-      console.error(`[objectives] message → deferred sendFollowUp failed for ${req.params.id}:`, err)
+      console.error('[objectives] message → deferred sendFollowUp failed for %s:', req.params.id, err)
       // obj 900412 (round 2) — this used to be silent: the bubble stayed in the
       // thread, the card flipped back, and it looked like the agent ignored the
       // owner. Say what happened, in the thread, where they are looking.
@@ -572,7 +580,7 @@ router.post('/:id/message', async (req: AuthRequest, res) => {
         )
         broadcast({ type: 'objective_updated', payload: reverted })
       } catch (revertErr) {
-        console.error(`[objectives] message → failed to revert status for ${req.params.id}:`, revertErr)
+        console.error('[objectives] message → failed to revert status for %s:', req.params.id, revertErr)
       }
     }
   })
