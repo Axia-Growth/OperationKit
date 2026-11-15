@@ -30,6 +30,7 @@ import type { LlmNode } from '../../../shared/flow/types.js'
 import type { BackendResult, LlmBackend } from './llm-gateway/claude-cli-backend.js'
 import { DEFAULT_MODEL, SUPPORTED_MODELS } from './llm-gateway/translate.js'
 import { extractJson, unsupportedSchemaKeywords, validateAgainstSchema, type SchemaIssue } from '../lib/flow-json-schema.js'
+import { frameUntrusted } from '../lib/untrusted-content.js'
 
 export const LLM_DEFAULTS = {
   maxIterations: 1,
@@ -61,6 +62,24 @@ export interface LlmAttemptArgs {
   onCost?: (usd: number) => void
   /** Called before turns 2..N; a returned problem stops the attempt (budget). */
   beforeTurn?: () => LlmProblem | null
+  /**
+   * obj 900910: wraps a tool result before it is fed into the next turn. The
+   * engine passes one that also scans + logs; the default only frames.
+   */
+  frameToolResult?: (slug: string, text: string) => string
+}
+
+/** An error the ENGINE raised (not the Tool): its text is server-written and is not framed. */
+export function localToolRefusal(message: string): Error {
+  return Object.assign(new Error(message), { flowLocalRefusal: true as const })
+}
+
+function isLocalToolRefusal(err: unknown): boolean {
+  return !!err && typeof err === 'object' && (err as { flowLocalRefusal?: unknown }).flowLocalRefusal === true
+}
+
+function defaultFrameToolResult(slug: string, text: string): string {
+  return frameUntrusted({ source: 'flow-step', label: `tool ${slug}`, text, maxChars: LLM_DEFAULTS.toolResultChars + 64 })
 }
 
 export type LlmAttemptResult =
@@ -195,10 +214,16 @@ export async function runLlmAttempt(args: LlmAttemptArgs): Promise<LlmAttemptRes
         try {
           const out = await args.runTool(slug, isObj(call) ? call.input ?? {} : {})
           const text = JSON.stringify(out ?? null) ?? 'null'
-          feedback = `Tool "${slug}" returned: ${text.length > LLM_DEFAULTS.toolResultChars ? `${text.slice(0, LLM_DEFAULTS.toolResultChars)}…(truncated)` : text}`
+          const clipped = text.length > LLM_DEFAULTS.toolResultChars ? `${text.slice(0, LLM_DEFAULTS.toolResultChars)}…(truncated)` : text
+          feedback = `Tool "${slug}" returned:\n${(args.frameToolResult ?? defaultFrameToolResult)(slug, clipped)}`
         } catch (err) {
           if (signal.aborted) throw err
-          feedback = `Tool "${slug}" failed: ${err instanceof Error ? err.message : String(err)}`
+          const msg = err instanceof Error ? err.message : String(err)
+          // obj 900910: a Tool's own error often echoes remote content (HTTP body, MCP
+          // error) — framed. The engine's refusals are server-written and stay plain.
+          feedback = isLocalToolRefusal(err)
+            ? `Tool "${slug}" failed: ${msg}`
+            : `Tool "${slug}" failed:\n${(args.frameToolResult ?? defaultFrameToolResult)(slug, msg.slice(0, LLM_DEFAULTS.toolResultChars))}`
         }
       }
       history.push({ reply: r.text, feedback })

@@ -9,6 +9,7 @@
 //   move/schedule a meeting with <name> · what's on my to-do list
 //   add <task> to my to-do list · <ask for real work> → board card · how are my cards doing
 import type { OAIToolCall } from '../llm-gateway/translate.js'
+import { untrustedFrameBody } from '../../lib/untrusted-content.js'
 import type { CompletionRequest, CompletionResult } from './providers.js'
 
 type Json = Record<string, unknown>
@@ -70,7 +71,10 @@ export function demoReply(req: CompletionRequest): CompletionResult {
     if (m.role === 'assistant') for (const c of m.tool_calls ?? []) names.set(c.id, c.function.name)
     if (m.role === 'tool') {
       let v: Json = {}
-      try { v = JSON.parse(textOf(m.content)) as Json } catch { v = { error: textOf(m.content) } }
+      // obj 900910: tool results arrive framed as untrusted data; the script reads the payload.
+      const raw = textOf(m.content)
+      const body = untrustedFrameBody(raw) ?? raw
+      try { v = JSON.parse(body) as Json } catch { v = { error: body } }
       called.set(names.get(m.tool_call_id ?? '') ?? m.name ?? '', v)
     }
   }

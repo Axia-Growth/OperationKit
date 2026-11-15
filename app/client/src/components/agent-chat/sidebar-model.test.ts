@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { buildSidebarView, isSidebarState, shortTime } from './sidebar-model'
+import { DEFAULT_BOT, buildSidebarView, isSidebarState, pendingBadge, pendingTotal, shortTime, shouldAutoRead } from './sidebar-model'
 import type { ChatAgentInfo, SidebarBot, SidebarState } from './types'
 
 /* obj 900798 — the arrangement rules of the Bots sidebar, without rendering. */
@@ -93,5 +93,45 @@ describe('shortTime', () => {
     expect(shortTime('2026-11-10T12:00:00Z', now)).toMatch(/^[A-Z][a-z]{2}/)
     expect(shortTime('2026-10-01 12:00:00', now)).toMatch(/Oct/)
     expect(shortTime('not a date', now)).toBe('')
+  })
+})
+
+describe('pending badge rules (obj 900866)', () => {
+  const b = (p: Partial<SidebarBot>): SidebarBot => ({ ...DEFAULT_BOT, ...p })
+
+  it('no badge when nothing is waiting', () => {
+    expect(pendingBadge(b({}))).toBeNull()
+    // A count without the unread flag is not shown: the server's flag decides.
+    expect(pendingBadge(b({ unread: false, unread_count: 0 }))).toBeNull()
+  })
+
+  it('the number of waiting replies, singular/plural, capped at 99+', () => {
+    expect(pendingBadge(b({ unread: true, unread_count: 1 }))).toEqual({ text: '1', label: '1 unread reply' })
+    expect(pendingBadge(b({ unread: true, unread_count: 7 }))).toEqual({ text: '7', label: '7 unread replies' })
+    expect(pendingBadge(b({ unread: true, unread_count: 100 }))).toEqual({ text: '99+', label: '100 unread replies' })
+  })
+
+  it('a plain "Mark as unread" is a badge with no number', () => {
+    expect(pendingBadge(b({ unread: true, marked_unread: true, unread_count: 0 }))).toEqual({ text: '', label: 'Marked unread' })
+  })
+
+  it('totals waiting replies, a marked-unread bot counting as one', () => {
+    const agents = [{ slug: 'a' }, { slug: 'b' }, { slug: 'c' }] as ChatAgentInfo[]
+    const state = {
+      sections: [],
+      max_pins: 12,
+      max_sections: 20,
+      bots: { a: b({ unread: true, unread_count: 3 }), b: b({ unread: true, marked_unread: true }), c: b({}) },
+    }
+    expect(pendingTotal(agents, state)).toBe(4)
+    expect(pendingTotal(agents, null)).toBe(0)
+  })
+
+  it('reads the open bot only for a new reply in a tab in front, never undoing Mark as unread', () => {
+    expect(shouldAutoRead(b({ unread: true, unread_count: 1 }), true)).toBe(true)
+    expect(shouldAutoRead(b({ unread: true, unread_count: 1 }), false)).toBe(false)
+    expect(shouldAutoRead(b({ unread: true, marked_unread: true, unread_count: 0 }), true)).toBe(false)
+    expect(shouldAutoRead(b({ unread: true, marked_unread: true, unread_count: 2 }), true)).toBe(false)
+    expect(shouldAutoRead(undefined, true)).toBe(false)
   })
 })

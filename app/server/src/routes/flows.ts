@@ -7,6 +7,9 @@
  *   POST /api/flows                           create a workflow / a new draft version from okflow/1 JSON,
  *                                             OR "New workflow" from a goal: {workspace, goal, name?,
  *                                             end_condition?, builder?: {max_iterations}} → a builder card (B6)
+ *   GET  /api/flows/tools?workspace=          Tools a `tool` node can call + whether this workspace enabled each (obj 900911)
+ *   PUT  /api/flows/tools/:slug/enabled {workspace, enabled}  switch an okit Tool on/off for a workspace
+ *                                             (cookie owner/admin only; a disabled Tool refuses `tool_disabled`)
  *   PATCH /api/flows/:id {notes?, tools?}     edit a workflow's Notes + Tools (obj 900868; not versioned)
  *   POST /api/flows/validate {definition}     validate okflow/1 JSON without saving it (B6)
  *   POST /api/flows/:id/versions {definition} draft a new version of an existing workflow (B6); every
@@ -66,7 +69,9 @@ import { broadcast } from '../ws/index.js'
 import { logActivity } from './feed.js'
 import {
   saveFlowVersion, flowsEnabled, flowDefinitionSha256, recordedFlowApprovals, withRecordedApprovals, listOpenWaits,
+  listRegisteredFlowTools, getRegisteredFlowTool,
 } from '../services/flow-engine.js'
+import { enabledToolsForWorkspace, setToolEnabledForWorkspace } from '../services/flow-okit-tools.js'
 import {
   checkPublishGate, getSelfTest, latestSelfTest, listSelfTests, parseFixtures, recordFlowApprovals, runSelfTest,
 } from '../services/flow-self-test.js'
@@ -95,7 +100,7 @@ import type { RepairClassification } from '../../../shared/flow/repair.js'
 import type {
   FlowBuilderState, FlowDetailResponse, FlowGoalResult, FlowListResponse, FlowNodeAttempt, FlowNodeInspectResponse,
   FlowPublishState, FlowRoutineInfo, FlowRunDetailResponse, FlowRunSummary, FlowRunsResponse, FlowStepSummary,
-  FlowSummary, FlowVersionChanges, FlowVersionSummary,
+  FlowSummary, FlowToolsResponse, FlowVersionChanges, FlowVersionSummary,
 } from '../../../shared/flow/api.js'
 
 const router = Router()
@@ -412,6 +417,83 @@ router.get('/runs', (req: AuthRequest, res) => {
   ).all(...w.params, limit) as RunRow[]
   const body: FlowRunsResponse = { flows_enabled: flowsEnabled(db), runs: rows.map((r) => runSummary(r)) }
   res.json(body)
+})
+
+// ── Tools a `tool` node can call (obj 900911) ───────────────────────────────
+
+const TOOL_SLUG = /^[a-z0-9_]+(-[a-z0-9_]+)*$/
+
+/** `?workspace=` for the Tools routes: one workspace (a card session defaults to its own). */
+function toolsWorkspace(req: AuthRequest, res: Response, raw: unknown): string | null {
+  const ws = raw === undefined && req.sessionFile ? req.sessionFile.workspace : raw
+  if (typeof ws !== 'string' || !WS_SLUG.test(ws)) {
+    res.status(400).json({ error: 'workspace must be a workspace slug' })
+    return null
+  }
+  if (!canAccessWorkspace(req, ws)) {
+    forbidden(res, ws)
+    return null
+  }
+  return ws
+}
+
+function toolsBody(req: AuthRequest, db: Database.Database, workspace: string): FlowToolsResponse {
+  const enabled = enabledToolsForWorkspace(db, workspace)
+  return {
+    workspace,
+    flows_enabled: flowsEnabled(db),
+    can_manage: isCookieAdmin(req),
+    tools: listRegisteredFlowTools().map((t) => ({
+      slug: t.slug,
+      effect: t.effect ?? null,
+      idempotent: t.idempotent,
+      description: t.description ?? null,
+      source: t.source ?? 'engine',
+      runner: t.runner ?? null,
+      // In-process (non-okit) Tools have no per-workspace switch; only okit Tools are gated.
+      enabled: t.source === 'okit' ? enabled.has(t.slug) : true,
+    })),
+  }
+}
+
+router.get('/tools', (req: AuthRequest, res) => {
+  const workspace = toolsWorkspace(req, res, req.query.workspace)
+  if (!workspace) return
+  res.json(toolsBody(req, getDb(), workspace))
+})
+
+router.put('/tools/:slug/enabled', (req: AuthRequest, res) => {
+  const workspace = toolsWorkspace(req, res, (req.body ?? {}).workspace)
+  if (!workspace) return
+  if (!isCookieAdmin(req)) {
+    res.status(403).json({ error: 'Switching a Tool on or off needs an owner/admin signed in to the web app', code: 'tools_require_owner' })
+    return
+  }
+  const slug = String(req.params.slug ?? '')
+  const enabled = (req.body ?? {}).enabled
+  if (!TOOL_SLUG.test(slug)) {
+    res.status(400).json({ error: 'tool slug is not valid' })
+    return
+  }
+  if (typeof enabled !== 'boolean') {
+    res.status(400).json({ error: 'enabled must be true or false' })
+    return
+  }
+  const tool = getRegisteredFlowTool(slug)
+  if (!tool || tool.meta?.source !== 'okit') {
+    res.status(404).json({ error: `No okit Tool "${slug}" is registered with the workflow engine` })
+    return
+  }
+  const db = getDb()
+  setToolEnabledForWorkspace(db, workspace, slug, enabled, actorOf(req))
+  try {
+    logActivity({
+      project: 'flows', workspace, event_type: 'decision',
+      title: `Workflow Tool "${slug}" ${enabled ? 'enabled' : 'disabled'} for ${workspace}`, detail: null,
+      metadata: { kind: enabled ? 'flow_tool_enabled' : 'flow_tool_disabled', tool: slug, actor: actorOf(req) },
+    })
+  } catch { /* the audit line never blocks the switch */ }
+  res.json(toolsBody(req, db, workspace))
 })
 
 router.get('/:id', (req: AuthRequest, res) => {

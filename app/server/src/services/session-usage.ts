@@ -154,3 +154,64 @@ export function extractUsageForSessionId(sessionId: string): { tokens: number; c
   const jsonlPath = path.join(TRANSCRIPT_DIR, `${sessionId}.jsonl`)
   return extractFinalUsage(jsonlPath)
 }
+
+/** Per-transcript parse cache keyed on file size, so a live transcript is only
+ *  re-read when it has grown (obj 900909 — the spend guard measures live cards). */
+const liveUsageCache = new Map<string, { size: number; cost: number }>()
+
+function liveTranscriptCost(sessionId: string): number {
+  const p = path.join(TRANSCRIPT_DIR, `${sessionId}.jsonl`)
+  let size = -1
+  try { size = fs.statSync(p).size } catch { return 0 }
+  const hit = liveUsageCache.get(sessionId)
+  if (hit && hit.size === size) return hit.cost
+  const cost = extractFinalUsage(p).cost
+  liveUsageCache.set(sessionId, { size, cost })
+  if (liveUsageCache.size > 500) {
+    const first = liveUsageCache.keys().next().value
+    if (first !== undefined) liveUsageCache.delete(first)
+  }
+  return cost
+}
+
+/**
+ * {@link computeObjectiveSpend}, but the LIVE sessions are always measured from
+ * their transcript (obj 900909).
+ *
+ * `computeObjectiveSpend` trusts a `session_intel` row when one exists. A
+ * follow-up respawn reuses the session id, so an intel row written at the end of
+ * an earlier turn goes stale the moment the next turn starts spending, and a
+ * burn rate computed from it would read 0 for the whole turn. For the sessions
+ * named in `liveSessionIds` the transcript is the truth; every other session is
+ * counted exactly as `computeObjectiveSpend` counts it, so the two never
+ * disagree about a finished session.
+ */
+export function computeLiveObjectiveSpend(objectiveId: number, liveSessionIds: string[]): number {
+  const live = new Set(liveSessionIds.filter(Boolean))
+  let spend = 0
+  const known = new Set<string>()
+  try {
+    const rows = getDb()
+      .prepare('SELECT session_id, total_cost_usd FROM session_intel WHERE objective_id = ?')
+      .all(objectiveId) as { session_id: string; total_cost_usd: number }[]
+    for (const r of rows) {
+      if (live.has(r.session_id)) continue
+      spend += r.total_cost_usd || 0
+      known.add(r.session_id)
+    }
+  } catch { /* intel unreadable → transcripts below still count */ }
+  for (const sid of live) {
+    spend += liveTranscriptCost(sid)
+    known.add(sid)
+  }
+  try {
+    const prefixes = [`cc-${objectiveId}-`, `cc-plan-${objectiveId}-`, `cc-review-${objectiveId}-`]
+    for (const f of listTranscriptJsonl()) {
+      const sid = f.slice(0, -'.jsonl'.length)
+      if (known.has(sid) || !prefixes.some(p => sid.startsWith(p))) continue
+      spend += liveTranscriptCost(sid)
+      known.add(sid)
+    }
+  } catch { /* transcript dir unreadable */ }
+  return spend
+}

@@ -298,6 +298,20 @@ export function initFlowSchema(db: Database.Database): void {
   db.exec('CREATE INDEX IF NOT EXISTS idx_flow_repairs_status ON flow_repairs(status)')
   db.exec('CREATE INDEX IF NOT EXISTS idx_flow_runs_repair ON flow_runs(mode, status, repair_state)')
 
+  // obj 900911 (audit #4): which okit Tools a workspace has switched on for its
+  // workflows. A row = enabled; no row = refused at call time (`tool_disabled`).
+  // Fail closed: a Tool appearing in the okit registry runs nowhere until an
+  // owner/admin enables it for a workspace (services/flow-okit-tools.ts).
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS flow_workspace_tools (
+      workspace  TEXT NOT NULL,
+      tool_slug  TEXT NOT NULL,
+      enabled_by TEXT NOT NULL,
+      enabled_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+      PRIMARY KEY (workspace, tool_slug)
+    );
+  `)
+
   // Kill switch (mirrors routines_enabled). Seeded OFF here (fail closed for test DBs);
   // initDb then switches it ON once via enableFlowsOnce() now that B4 has shipped
   // the scheduler + Jobs surface (docs/design/WORKFLOWS.md §8, obj 900675).

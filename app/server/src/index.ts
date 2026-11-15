@@ -230,7 +230,9 @@ app.use(cors({
 // GitHub webhook (obj 937 changelog collector) must read the RAW body to verify
 // the HMAC-SHA256 signature, so it is mounted with express.raw BEFORE the global
 // JSON parser. express.json then no-ops for this path (req._body already set).
-app.use('/api/webhooks/github', express.raw({ type: '*/*', limit: '5mb' }), githubWebhookRouter)
+// It sits ahead of the global /api budget below, so it gets its own limiter
+// (same rule: per source IP here, since GitHub sends no credential; obj 900855).
+app.use('/api/webhooks/github', createApiRateLimiter(), express.raw({ type: '*/*', limit: '5mb' }), githubWebhookRouter)
 // Agent-chat messages carry pasted screenshots as base64 (obj 900157), which a
 // 2mb body cap rejects before the route ever sees it. Mounted BEFORE the global
 // parser; express.json then no-ops for this path (req._body already set). The
@@ -238,6 +240,7 @@ app.use('/api/webhooks/github', express.raw({ type: '*/*', limit: '5mb' }), gith
 // services/agent-chat/attachments.ts.
 app.use('/api/agent-chat/agents', express.json({ limit: '30mb' }))
 app.use(express.json({ limit: '2mb' }))
+// codeql[js/missing-token-validation] -- every route below is behind createCsrfGuard() (Origin / Sec-Fetch-Site check on cookie-authenticated writes, OWASP Fetch Metadata) on top of the SameSite=Strict session cookie; CodeQL only models csurf/lusca-style token middleware (csrf-guard.test.ts)
 app.use(cookieParser())
 // obj 900838: a cookie-authenticated write must come from this app's own
 // origin (Fetch Metadata / Origin check on top of SameSite=Strict), and every

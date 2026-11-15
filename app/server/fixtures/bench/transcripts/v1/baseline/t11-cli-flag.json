@@ -1,0 +1,93 @@
+{
+  "schema": "cc-bench-transcript/1",
+  "arm": "baseline",
+  "task_id": "t11-cli-flag",
+  "provenance": "synthetic",
+  "model": "claude-sonnet-5-5",
+  "recorded_at": "2026-11-15T00:00:00.000Z",
+  "rounds": [
+    {
+      "role": "worker",
+      "cwd": "/tmp/cc-bench-synthetic",
+      "events": [
+        {
+          "type": "system",
+          "subtype": "init",
+          "model": "claude-sonnet-5-5",
+          "cwd": "/tmp/cc-bench-synthetic",
+          "tools": [
+            "Read",
+            "Write",
+            "Edit",
+            "MultiEdit",
+            "Bash"
+          ]
+        },
+        {
+          "type": "assistant",
+          "message": {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "tool_use",
+                "id": "toolu_synthetic_0",
+                "name": "Read",
+                "input": {
+                  "file_path": "/tmp/cc-bench-synthetic/src/wc.js"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "type": "assistant",
+          "message": {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "tool_use",
+                "id": "toolu_synthetic_1",
+                "name": "Write",
+                "input": {
+                  "file_path": "/tmp/cc-bench-synthetic/src/wc.js",
+                  "content": "#!/usr/bin/env node\n// Usage: node src/wc.js [--lines] <file>\n//   default: prints the number of words in <file>; --lines: the number of newlines.\nimport fs from 'node:fs'\n\nconst args = process.argv.slice(2)\nconst flags = args.filter((a) => a.startsWith('--'))\nconst files = args.filter((a) => !a.startsWith('--'))\nfor (const f of flags) {\n  if (f !== '--lines') {\n    console.error(`unknown flag: ${f}`)\n    process.exit(2)\n  }\n}\nconst text = fs.readFileSync(files[0], 'utf8')\nif (flags.includes('--lines')) console.log(String((text.match(/\\n/g) ?? []).length))\nelse console.log(String(text.split(/\\s+/).filter(Boolean).length))\n"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "type": "assistant",
+          "message": {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "tool_use",
+                "id": "toolu_synthetic_2",
+                "name": "Bash",
+                "input": {
+                  "command": "node --test",
+                  "description": "Run tests"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "type": "result",
+          "subtype": "success",
+          "is_error": false,
+          "duration_ms": 65111,
+          "num_turns": 7,
+          "total_cost_usd": 0.121695,
+          "usage": {
+            "input_tokens": 6581,
+            "output_tokens": 1932,
+            "cache_read_input_tokens": 78715,
+            "cache_creation_input_tokens": 13162
+          }
+        }
+      ]
+    }
+  ]
+}

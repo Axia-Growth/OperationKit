@@ -640,7 +640,7 @@ describe('initDb wiring', () => {
     const { initDb } = await import('../db/index.js')
     const real = initDb()
     const tables = (real.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name LIKE 'flow_%' ORDER BY name").all() as { name: string }[]).map((t) => t.name)
-    expect(tables).toEqual(['flow_builder_attempts', 'flow_definitions', 'flow_repairs', 'flow_runs', 'flow_self_tests', 'flow_step_runs', 'flow_versions', 'flow_wait_tokens'])
+    expect(tables).toEqual(['flow_builder_attempts', 'flow_definitions', 'flow_repairs', 'flow_runs', 'flow_self_tests', 'flow_step_runs', 'flow_versions', 'flow_wait_tokens', 'flow_workspace_tools'])
     expect(real.prepare("SELECT value FROM settings WHERE key = 'flows_enabled'").get()).toEqual({ value: '1' })
     expect(real.prepare("SELECT value FROM settings WHERE key = 'flows_enabled_default_on_applied'").get()).toEqual({ value: '1' })
   })

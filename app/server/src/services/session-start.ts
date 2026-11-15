@@ -26,6 +26,8 @@ import { resolveCommonDir } from './worktree-gitdir.js'
 import { claimObjectiveSession } from './objective-session-claim.js'
 import { logSessionStart } from './session-start-reasons.js'
 import { isSessionActive } from './session-control.js'
+import { assertSpawnWithinCeiling } from './spend-guard.js'
+import { computeLiveObjectiveSpend } from './session-usage.js'
 import {
   ensureUser,
   ensureObjectiveMemoryDir,
@@ -119,6 +121,11 @@ export function emitSessionLeaseConflictWarning(objective: Objective, sessionId:
 }
 
 export async function startSession(objective: Objective): Promise<string> {
+  // obj 900909 — refuse a spawn over the card's cost ceiling (explicit, or the
+  // per-effort default) BEFORE any side effect. Throws SpendCeilingRefusedError
+  // with the reason; callers leave the card's status untouched.
+  assertSpawnWithinCeiling(getDb(), objective, 'spawn', () => computeLiveObjectiveSpend(objective.id, []))
+
   // Design Arena (obj 594) — DORMANT BY DEFAULT. `shouldRunArena` is false unless the
   // `.ui-gate.json` `arena` block is enabled AND the objective is arena-eligible, so
   // with the arena off this guard is a no-op and everything below is byte-identical to

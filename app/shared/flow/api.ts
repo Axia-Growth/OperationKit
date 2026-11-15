@@ -128,6 +128,30 @@ export interface FlowListResponse {
   flows: FlowSummary[]
 }
 
+/** obj 900911: one Tool a workflow `tool` node can call (GET /api/flows/tools). */
+export interface FlowToolInfo {
+  slug: string
+  /** read | write | send | spend; null = not declared, which the engine treats as `send`. */
+  effect: string | null
+  /** The engine may re-run an in-flight call after a crash (it dedupes by idempotency key). */
+  idempotent: boolean
+  description: string | null
+  /** `okit` for the okit Tools registry; otherwise an in-process Tool. */
+  source: string
+  /** `http` | `script` for okit Tools. */
+  runner: string | null
+  /** Switched on for this workspace. A disabled Tool refuses with `tool_disabled`. */
+  enabled: boolean
+}
+
+export interface FlowToolsResponse {
+  workspace: string
+  flows_enabled: boolean
+  tools: FlowToolInfo[]
+  /** Whether the viewer may switch Tools on/off (a signed-in owner/admin). */
+  can_manage: boolean
+}
+
 export interface FlowRunsResponse {
   flows_enabled: boolean
   runs: FlowRunSummary[]

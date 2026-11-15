@@ -7,6 +7,7 @@ import { renderMarkdown } from '../../lib/markdown'
 import { AcceptanceCriteriaResults } from '../AcceptanceCriteriaResults'
 import { Card, Badge, cn } from '../ui'
 import { formatCost, formatDateTime, humanize } from '../../lib/format'
+import { SpendPanel } from './SpendPanel'
 
 export function BriefPanel({
   objective,
@@ -53,6 +54,9 @@ export function BriefPanel({
             <span>{(Number(objective.total_tokens) / 1000).toFixed(0)}k tokens</span>
           )}
         </div>
+
+        {/* Spend: ceiling, spent so far, projection (obj 900909) */}
+        <SpendPanel objectiveId={objective.id} status={objective.status} />
 
         {/* Last session summary */}
         {objective.last_session_summary && (

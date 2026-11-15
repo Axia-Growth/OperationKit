@@ -30,11 +30,14 @@ export function WorkspaceAccessSection({
   agent,
   isAdmin,
   onChanged,
+  version = 0,
 }: {
   agent: Pick<ChatAgentInfo, 'slug' | 'name'>
   isAdmin: boolean
   /** Called after a grant/revoke so siblings (High Agency) can reload. */
   onChanged?: () => void
+  /** Bumped when a sibling (High Agency's inline grant, obj 900914) changed access: re-read. */
+  version?: number
 }) {
   const [access, setAccess] = useState<BotWorkspaceAccessInfo | null>(null)
   const [options, setOptions] = useState<{ slug: string; name: string }[]>([])
@@ -64,7 +67,7 @@ export function WorkspaceAccessSection({
       .catch(e => { if (live) setLoadError(e instanceof Error ? e.message : 'Could not load workspace access') })
     return () => { live = false }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [url])
+  }, [url, version])
 
   const granted = access?.workspaces ?? []
   const addable = options.filter(o => !granted.includes(o.slug))

@@ -1,0 +1,93 @@
+{
+  "schema": "cc-bench-transcript/1",
+  "arm": "baseline",
+  "task_id": "t02-slugify",
+  "provenance": "synthetic",
+  "model": "claude-sonnet-5-5",
+  "recorded_at": "2026-11-15T00:00:00.000Z",
+  "rounds": [
+    {
+      "role": "worker",
+      "cwd": "/tmp/cc-bench-synthetic",
+      "events": [
+        {
+          "type": "system",
+          "subtype": "init",
+          "model": "claude-sonnet-5-5",
+          "cwd": "/tmp/cc-bench-synthetic",
+          "tools": [
+            "Read",
+            "Write",
+            "Edit",
+            "MultiEdit",
+            "Bash"
+          ]
+        },
+        {
+          "type": "assistant",
+          "message": {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "tool_use",
+                "id": "toolu_synthetic_0",
+                "name": "Read",
+                "input": {
+                  "file_path": "/tmp/cc-bench-synthetic/src/slugify.js"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "type": "assistant",
+          "message": {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "tool_use",
+                "id": "toolu_synthetic_1",
+                "name": "Write",
+                "input": {
+                  "file_path": "/tmp/cc-bench-synthetic/src/slugify.js",
+                  "content": "export function slugify(text) {\n  return text\n    .normalize('NFKD')\n    .replace(/[̀-ͯ]/g, '')\n    .toLowerCase()\n    .replace(/[^a-z0-9]+/g, '-')\n    .replace(/^-+|-+$/g, '')\n}\n"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "type": "assistant",
+          "message": {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "tool_use",
+                "id": "toolu_synthetic_2",
+                "name": "Bash",
+                "input": {
+                  "command": "node --test",
+                  "description": "Run tests"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "type": "result",
+          "subtype": "success",
+          "is_error": false,
+          "duration_ms": 37742,
+          "num_turns": 4,
+          "total_cost_usd": 0.072435,
+          "usage": {
+            "input_tokens": 4235,
+            "output_tokens": 994,
+            "cache_read_input_tokens": 43526,
+            "cache_creation_input_tokens": 8470
+          }
+        }
+      ]
+    }
+  ]
+}

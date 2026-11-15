@@ -25,7 +25,9 @@ import {
 } from './attachments.js'
 import { agentHasTool, botWorkspacesForPerson, runChatTool, toolSpecsFor, ToolUseError, type ToolContext } from './tools.js'
 import { mcpToolSetFor, runMcpTool, type McpToolSet } from './mcp-tools.js'
+import { botReplyForModel, earlierActionForModel, toolResultForModel } from './tool-result-framing.js'
 import type { WebToolDeps } from './web-tools.js'
+import { notifyBotMessage } from './sidebar-live.js'
 import { laneKey, lanePredicate, laneThreadId, MAIN_LANE, touchThread, type ChatLane } from './threads.js'
 
 export const MAX_STEPS = 8
@@ -217,6 +219,7 @@ function addMessage(
   const id = Number(info.lastInsertRowid)
   const row = mapRow(db.prepare('SELECT * FROM agent_chat_messages WHERE id = ?').get(id) as Record<string, unknown>)
   row.images = saveImages(id, userId, slug, images, lane)
+  if (m.role === 'assistant') notifyBotMessage(userId, slug)
   return row
 }
 
@@ -251,12 +254,14 @@ function userContentForModel(row: Pick<ChatMessageRow, 'id' | 'content' | 'image
 }
 
 /** Earlier turns (tool rows become short notes to the model). */
-function historyForModel(rows: ChatMessageRow[], withImages: boolean): ChatMessage[] {
+// obj 900910: another bot's reply (bot_reply rows) is replayed framed, and a tool
+// row's quoted title/subject is neutralised — see tool-result-framing.ts.
+function historyForModel(rows: ChatMessageRow[], withImages: boolean, workspace?: string | null): ChatMessage[] {
   const out: ChatMessage[] = []
   for (const r of rows.slice(-HISTORY_LIMIT)) {
     if (r.role === 'user') out.push({ role: 'user', content: userContentForModel(r, withImages) })
-    else if (r.role === 'assistant') out.push({ role: 'assistant', content: r.content })
-    else if (r.role === 'tool') out.push({ role: 'assistant', content: `[earlier action] ${r.content}` })
+    else if (r.role === 'assistant') out.push({ role: 'assistant', content: r.meta?.kind === 'bot_reply' ? botReplyForModel(r.content, workspace) : r.content })
+    else if (r.role === 'tool') out.push({ role: 'assistant', content: earlierActionForModel(r.tool_name, r.content) })
   }
   return out
 }
@@ -372,7 +377,14 @@ export async function runModelLoop(p: {
         resultForModel = { error: msg }
         record({ role: 'tool', content: msg, provider: provider.id, model: provider.model, tool_name: c.function.name, meta: { ok: false } })
       }
-      convo.push({ role: 'tool', tool_call_id: c.id, name: c.function.name, content: JSON.stringify(resultForModel) })
+      // obj 900910: third-party results (web, email, MCP, other bots, card text) reach
+      // the model only inside an untrusted frame, and are scanned (telemetry only).
+      convo.push({
+        role: 'tool',
+        tool_call_id: c.id,
+        name: c.function.name,
+        content: toolResultForModel({ fnName: c.function.name, isMcp: mcpTools.targets.has(c.function.name), result: resultForModel, workspace: ctx.workspace, agentSlug: p.agent.slug }),
+      })
     }
   }
   const message = `Stopped after ${MAX_STEPS} steps without a final answer. Try a more specific request.`
@@ -481,7 +493,7 @@ export async function runTurn(input: TurnInput): Promise<{ messages: ChatMessage
       return { messages: created }
     }
     const convo: ChatMessage[] = [
-      ...historyForModel(prior, provider.supportsImages),
+      ...historyForModel(prior, provider.supportsImages, ctx.workspace),
       { role: 'user', content: userContentForModel(userRow, provider.supportsImages) },
     ]
 

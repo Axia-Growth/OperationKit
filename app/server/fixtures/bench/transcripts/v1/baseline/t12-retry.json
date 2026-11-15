@@ -1,0 +1,93 @@
+{
+  "schema": "cc-bench-transcript/1",
+  "arm": "baseline",
+  "task_id": "t12-retry",
+  "provenance": "synthetic",
+  "model": "claude-sonnet-5-5",
+  "recorded_at": "2026-11-15T00:00:00.000Z",
+  "rounds": [
+    {
+      "role": "worker",
+      "cwd": "/tmp/cc-bench-synthetic",
+      "events": [
+        {
+          "type": "system",
+          "subtype": "init",
+          "model": "claude-sonnet-5-5",
+          "cwd": "/tmp/cc-bench-synthetic",
+          "tools": [
+            "Read",
+            "Write",
+            "Edit",
+            "MultiEdit",
+            "Bash"
+          ]
+        },
+        {
+          "type": "assistant",
+          "message": {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "tool_use",
+                "id": "toolu_synthetic_0",
+                "name": "Read",
+                "input": {
+                  "file_path": "/tmp/cc-bench-synthetic/src/retry.js"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "type": "assistant",
+          "message": {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "tool_use",
+                "id": "toolu_synthetic_1",
+                "name": "Write",
+                "input": {
+                  "file_path": "/tmp/cc-bench-synthetic/src/retry.js",
+                  "content": "// retry(fn, { attempts, delayMs }) calls async fn until it resolves, at most\n// `attempts` times in total, waiting `delayMs * 2 ** (attemptIndex)` between tries\n// (so delays are delayMs, 2*delayMs, 4*delayMs ...). Resolves with fn's value, or\n// rejects with the LAST error. `attempts` defaults to 3, `delayMs` to 100.\nexport async function retry(fn, { attempts = 3, delayMs = 100 } = {}) {\n  let last\n  for (let i = 0; i < attempts; i++) {\n    try {\n      return await fn()\n    } catch (err) {\n      last = err\n      if (i < attempts - 1) await new Promise((r) => setTimeout(r, delayMs * 2 ** i))\n    }\n  }\n  throw last\n}\n"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "type": "assistant",
+          "message": {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "tool_use",
+                "id": "toolu_synthetic_2",
+                "name": "Bash",
+                "input": {
+                  "command": "node --test",
+                  "description": "Run tests"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "type": "result",
+          "subtype": "success",
+          "is_error": false,
+          "duration_ms": 50383,
+          "num_turns": 6,
+          "total_cost_usd": 0.095184,
+          "usage": {
+            "input_tokens": 5319,
+            "output_tokens": 1427,
+            "cache_read_input_tokens": 59779,
+            "cache_creation_input_tokens": 10637
+          }
+        }
+      ]
+    }
+  ]
+}

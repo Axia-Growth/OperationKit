@@ -247,6 +247,31 @@ function renderTemplateString(src: string, scope: FlowEvalScope): unknown {
   return out
 }
 
+/**
+ * obj 900910 — render a template where EVERY `{{ expr }}` substitution goes
+ * through `wrap`. Used for an llm node's prompt: the author's text stays as
+ * written, and each runtime value (a tool / mcp / llm step output, the trigger
+ * payload, a loop item) is handed to `wrap`, which frames it as untrusted data.
+ * Always returns a string (a prompt). A null/undefined value renders as '',
+ * exactly as renderTemplateString does.
+ */
+export function renderTemplateFramed(src: string, scope: FlowEvalScope, wrap: (value: unknown, expr: string) => string): string {
+  let out = ''
+  let i = 0
+  for (;;) {
+    const open = src.indexOf('{{', i)
+    if (open < 0) { out += src.slice(i); break }
+    const close = src.indexOf('}}', open + 2)
+    if (close < 0) throw new FlowExprError(`unclosed "{{" in "${src}"`)
+    out += src.slice(i, open)
+    const expr = src.slice(open + 2, close)
+    const v = evaluateExpression(expr, scope)
+    out += v === null || v === undefined ? '' : wrap(v, expr.trim())
+    i = close + 2
+  }
+  return out
+}
+
 /** Resolve every `{{ }}` inside a JSON value (node `input`, `end.output`). Non-strings pass through. */
 export function resolveTemplates(value: unknown, scope: FlowEvalScope): unknown {
   if (typeof value === 'string') return value.includes('{{') ? renderTemplateString(value, scope) : value

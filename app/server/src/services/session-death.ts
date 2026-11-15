@@ -10,6 +10,7 @@ import { TRANSCRIPT_DIR } from '../config.js'
 import type { ActiveSession } from './session-registry.js'
 import { cleanupJailHome } from './jail-home.js'
 import { getDb } from '../db/index.js'
+import { DurableRetryCounter } from './session-retry-counters.js'
 import {
   recordSessionEnd,
   recordRateLimit,
@@ -430,7 +431,10 @@ export function handleSessionDeath(sessionId: string): SessionDeathResult {
   return { limitHit, spendCapHit, overloaded, turnsExhausted, authFailed, authReason, toolCalls, accountId: accountId ?? null }
 }
 
-export const autoResumeCounts = new Map<string, number>()
-export const overloadRetryCounts = new Map<string, number>()
+// Restart-durable (obj 900911): a deploy no longer hands a looping session a
+// fresh limit-rotation / 529 / max-turns budget. See session-retry-counters.ts.
+export const autoResumeCounts = new DurableRetryCounter('limit_rotate')
+export const overloadRetryCounts = new DurableRetryCounter('overload_retry')
+// In memory on purpose: it marks a backoff timer that only exists in this process.
 export const overloadRetryPending = new Set<string>()
-export const turnsContinueCounts = new Map<string, number>()
+export const turnsContinueCounts = new DurableRetryCounter('turns_continue')

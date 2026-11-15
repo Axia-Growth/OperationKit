@@ -216,7 +216,7 @@ export function NewWorkflowDialog({
             </div>
             <div>
               <label className={LABEL} htmlFor={`${titleId}-tools`}>Tools <span className="text-fg-3">(optional)</span></label>
-              <FlowToolsInput id={`${titleId}-tools`} value={tools} onChange={setTools} describedBy={`${titleId}-tools-help`} />
+              <FlowToolsInput id={`${titleId}-tools`} value={tools} onChange={setTools} describedBy={`${titleId}-tools-help`} workspace={workspace || undefined} />
               <p id={`${titleId}-tools-help`} className="mt-1 text-xs text-fg-3">The tools or integrations this workflow should use. Press Enter after each one.</p>
             </div>
             <div>

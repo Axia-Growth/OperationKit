@@ -1,0 +1,93 @@
+{
+  "schema": "cc-bench-transcript/1",
+  "arm": "baseline",
+  "task_id": "t01-sum-range",
+  "provenance": "synthetic",
+  "model": "claude-sonnet-5-5",
+  "recorded_at": "2026-11-15T00:00:00.000Z",
+  "rounds": [
+    {
+      "role": "worker",
+      "cwd": "/tmp/cc-bench-synthetic",
+      "events": [
+        {
+          "type": "system",
+          "subtype": "init",
+          "model": "claude-sonnet-5-5",
+          "cwd": "/tmp/cc-bench-synthetic",
+          "tools": [
+            "Read",
+            "Write",
+            "Edit",
+            "MultiEdit",
+            "Bash"
+          ]
+        },
+        {
+          "type": "assistant",
+          "message": {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "tool_use",
+                "id": "toolu_synthetic_0",
+                "name": "Read",
+                "input": {
+                  "file_path": "/tmp/cc-bench-synthetic/src/range.js"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "type": "assistant",
+          "message": {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "tool_use",
+                "id": "toolu_synthetic_1",
+                "name": "Write",
+                "input": {
+                  "file_path": "/tmp/cc-bench-synthetic/src/range.js",
+                  "content": "// Sum of every integer from `from` to `to`, BOTH ends inclusive.\n// sumRange(1, 3) should be 6.\nexport function sumRange(from, to) {\n  let total = 0\n  for (let i = from; i <= to; i++) total += i\n  return total\n}\n"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "type": "assistant",
+          "message": {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "tool_use",
+                "id": "toolu_synthetic_2",
+                "name": "Bash",
+                "input": {
+                  "command": "node --test",
+                  "description": "Run tests"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "type": "result",
+          "subtype": "success",
+          "is_error": false,
+          "duration_ms": 95605,
+          "num_turns": 11,
+          "total_cost_usd": 0.17659,
+          "usage": {
+            "input_tokens": 9195,
+            "output_tokens": 2978,
+            "cache_read_input_tokens": 117921,
+            "cache_creation_input_tokens": 18389
+          }
+        }
+      ]
+    }
+  ]
+}

@@ -96,7 +96,7 @@ function writeJob(job: PreviewJob): boolean {
     return true
   } catch (err) {
     console.warn(
-      `[preview-spool] failed to enqueue ${job.action} for PR #${job.pr_number}:`,
+      '[preview-spool] failed to enqueue %s for PR #%s:', job.action, job.pr_number,
       err instanceof Error ? err.message : err,
     )
     return false

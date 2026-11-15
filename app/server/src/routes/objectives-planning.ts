@@ -325,7 +325,7 @@ router.post('/:id/planning/approve', async (req: AuthRequest, res) => {
       const sessionId = await startSession(row)
       db.prepare("UPDATE objectives SET session_id = ?, updated_at = datetime('now') WHERE id = ?").run(sessionId, req.params.id)
     } catch (err) {
-      console.error(`[planning] failed to start worker after approve on obj ${req.params.id}:`, (err as Error).message)
+      console.error('[planning] failed to start worker after approve on obj %s:', req.params.id, (err as Error).message)
       db.prepare("UPDATE objectives SET status = 'queue', updated_at = datetime('now') WHERE id = ?").run(req.params.id)
     }
   }

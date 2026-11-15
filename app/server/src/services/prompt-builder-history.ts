@@ -10,7 +10,8 @@ import { getDb } from '../db/index.js'
 import { callHaikuSummarizer } from './mentor-context.js'
 import { TRANSCRIPT_DIR } from '../config.js'
 import type { MessageSender } from '@operationkit/shared'
-import { stampForSession, systemSender } from '../lib/message-provenance.js'
+import { systemSender } from '../lib/message-provenance.js'
+import { stampAndFrameForSession } from '../lib/relay-framing.js'
 import { verifiedSenderStampsEnabled } from '../lib/session-trust.js'
 import {
   COMPACTION_SESSION_SENTINEL,
@@ -50,7 +51,7 @@ export function extractObjectiveTurns(objectiveId: number): ObjectiveTurn[] {
             turns.push({
               role: 'user',
               text: stampHistory
-                ? stampForSession((event.sender as MessageSender | undefined) ?? systemSender('sender not recorded (pre-stamp message)'), event.text)
+                ? stampAndFrameForSession((event.sender as MessageSender | undefined) ?? systemSender('sender not recorded (pre-stamp message)'), event.text)
                 : event.text,
             })
           } else if (event.type === 'assistant' && event.message?.content) {

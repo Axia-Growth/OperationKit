@@ -1,0 +1,7 @@
+{
+  "name": "bench-t03-parse-duration",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": { "test": "node --test" }
+}

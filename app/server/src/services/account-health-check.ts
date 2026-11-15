@@ -62,7 +62,7 @@ export async function checkSlot(
     const seatEnv = account.credentialKind === 'setup_token' ? seatCredentialEnv(account) : undefined
     result = await probe(account.homeDir, seatEnv)
   } catch (err) {
-    console.warn(`[slot-health] probe threw for ${accountId}:`, err instanceof Error ? err.message : err)
+    console.warn('[slot-health] probe threw for %s:', accountId, err instanceof Error ? err.message : err)
     return 'inconclusive'
   }
 

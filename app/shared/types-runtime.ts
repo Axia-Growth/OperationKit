@@ -23,6 +23,10 @@ export type ServerMessage =
   | { type: 'error'; payload: { message: string } }
   // Workflow run progress for the live viewer overlay (card B7). Workspace-scoped.
   | { type: 'flow_step'; payload: FlowLiveEvent }
+  // A bot reply landed in ONE person's conversation (obj 900866): the Bots
+  // sidebar re-reads its unread badges. Ids only, never message text, and it is
+  // delivered to that person's sockets alone (admins included).
+  | { type: 'agent_chat_unread'; payload: { user_id: number; agent_slug: string } }
 
 export type ClientMessage =
   | { type: 'terminal_input'; payload: { session_id: string; data: string } }

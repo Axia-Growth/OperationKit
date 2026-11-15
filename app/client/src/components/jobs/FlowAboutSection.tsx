@@ -18,7 +18,7 @@ export function FlowAboutSection({
   goal,
   onSaved,
 }: {
-  flow: Pick<FlowSummary, 'id' | 'name' | 'notes' | 'tools'>
+  flow: Pick<FlowSummary, 'id' | 'name' | 'notes' | 'tools'> & { workspace?: string }
   /** The goal statement (shown version's definition, else the builder's goal). */
   goal: string | null
   onSaved?: (flow: FlowSummary) => void
@@ -90,7 +90,7 @@ export function FlowAboutSection({
           </div>
           <div>
             <label className={FLOW_LABEL} htmlFor={`${ids}-tools`}>Tools <span className="text-fg-3">(optional)</span></label>
-            <FlowToolsInput id={`${ids}-tools`} value={tools} onChange={setTools} describedBy={`${ids}-tools-help`} />
+            <FlowToolsInput id={`${ids}-tools`} value={tools} onChange={setTools} describedBy={`${ids}-tools-help`} workspace={flow.workspace} />
             <p id={`${ids}-tools-help`} className="mt-1 text-xs text-fg-3">The tools or integrations this workflow should use. Press Enter after each one.</p>
           </div>
           {error && <Alert tone="alarm" title="Could not save">{error}</Alert>}

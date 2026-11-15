@@ -329,7 +329,7 @@ export function recordPRTerminalState(input: {
     })()
   } catch (e) {
     console.error(
-      `[objective-prs] FAILED to record ${state} for ${repo}#${prNumber}:`,
+      '[objective-prs] FAILED to record %s for %s#%s:', state, repo, prNumber,
       (e as Error).message,
     )
     return null

@@ -1,0 +1,93 @@
+{
+  "schema": "cc-bench-transcript/1",
+  "arm": "baseline",
+  "task_id": "t06-csv-quotes",
+  "provenance": "synthetic",
+  "model": "claude-sonnet-5-5",
+  "recorded_at": "2026-11-15T00:00:00.000Z",
+  "rounds": [
+    {
+      "role": "worker",
+      "cwd": "/tmp/cc-bench-synthetic",
+      "events": [
+        {
+          "type": "system",
+          "subtype": "init",
+          "model": "claude-sonnet-5-5",
+          "cwd": "/tmp/cc-bench-synthetic",
+          "tools": [
+            "Read",
+            "Write",
+            "Edit",
+            "MultiEdit",
+            "Bash"
+          ]
+        },
+        {
+          "type": "assistant",
+          "message": {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "tool_use",
+                "id": "toolu_synthetic_0",
+                "name": "Read",
+                "input": {
+                  "file_path": "/tmp/cc-bench-synthetic/src/csv.js"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "type": "assistant",
+          "message": {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "tool_use",
+                "id": "toolu_synthetic_1",
+                "name": "Write",
+                "input": {
+                  "file_path": "/tmp/cc-bench-synthetic/src/csv.js",
+                  "content": "// Parses CSV text into rows. Handles quotes, but splits lines first.\nexport function parseCsv(text) {\n  return text\n    .split(/\\r?\\n/)\n    .filter((line) => line.length > 0)\n    .map((line) => {\n      const out = []\n      let field = ''\n      let quoted = false\n      for (let i = 0; i < line.length; i++) {\n        const c = line[i]\n        if (quoted) {\n          if (c === '\"' && line[i + 1] === '\"') { field += '\"'; i++ }\n          else if (c === '\"') quoted = false\n          else field += c\n        } else if (c === '\"') quoted = true\n        else if (c === ',') { out.push(field); field = '' }\n        else field += c\n      }\n      out.push(field)\n      return out\n    })\n}\n"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "type": "assistant",
+          "message": {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "tool_use",
+                "id": "toolu_synthetic_2",
+                "name": "Bash",
+                "input": {
+                  "command": "node --test",
+                  "description": "Run tests"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "type": "result",
+          "subtype": "success",
+          "is_error": false,
+          "duration_ms": 57477,
+          "num_turns": 7,
+          "total_cost_usd": 0.107964,
+          "usage": {
+            "input_tokens": 5927,
+            "output_tokens": 1671,
+            "cache_read_input_tokens": 68899,
+            "cache_creation_input_tokens": 11853
+          }
+        }
+      ]
+    }
+  ]
+}
