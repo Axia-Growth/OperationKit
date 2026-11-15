@@ -7,6 +7,7 @@ import { resolveMessageCaller } from '../lib/message-caller.js'
 import { frameAndScan, noteUntrustedPayload } from '../services/injection-telemetry.js'
 import { Router } from 'express'
 import { getDb } from '../db/index.js'
+import { cardSessionFullAccess, protectedCardRefusal, writeFullAccessAudit } from '../services/agent-chat/bot-full-access.js'
 import { broadcast } from '../ws/index.js'
 import { logActivity } from './feed.js'
 import {
@@ -693,7 +694,26 @@ router.post('/objectives/:id/message', (req, res) => {
       return
     }
     const relation = relationBetween(db, fromId, objective.id)
-    if (relation === null) {
+    // obj 900972: a card worked by a bot with Full access in this workspace may
+    // message any card in it. Only for a SERVER-DERIVED sender (its session
+    // token) — a self-declared id never gets this — and every use is logged.
+    const fullAccessBot = relation === null && identity === 'session_token' ? cardSessionFullAccess(fromId, objective.workspace) : null
+    // A card that carries a protected pull request is out of Full access's reach:
+    // refused and logged, never delivered.
+    const protectedRefusal = fullAccessBot
+      ? protectedCardRefusal({ slug: fullAccessBot, workspace: objective.workspace, ability: 'card_comment', card: objective, detail: `card #${fromId} tried to message card #${objective.id}, which carries a protected pull request` })
+      : null
+    if (protectedRefusal) {
+      res.status(403).json({ error: protectedRefusal, code: 'protected_pr', from_objective_id: fromId, to_objective_id: objective.id })
+      return
+    }
+    if (fullAccessBot) {
+      callerRelation = 'full_access'
+      writeFullAccessAudit({
+        event: 'ability_used', slug: fullAccessBot, workspace: objective.workspace, actor: `bot:${fullAccessBot}`,
+        ability: 'card_comment', objective_id: objective.id, detail: `card #${fromId} messaged card #${objective.id}`,
+      })
+    } else if (relation === null) {
       res.status(403).json({
         error: `Objective ${fromId} has no parent/child/sibling relationship to ${objective.id} — messaging is limited to one graph hop.`,
         from_objective_id: fromId,
@@ -701,8 +721,9 @@ router.post('/objectives/:id/message', (req, res) => {
         allowed_relations: ['self', 'parent', 'child', 'sibling'],
       })
       return
+    } else {
+      callerRelation = relation ?? callerRelation
     }
-    callerRelation = relation
   } else if (
     (db.prepare("SELECT value FROM settings WHERE key = 'message_require_from_objective'").get() as { value?: string } | undefined)?.value === '1'
   ) {

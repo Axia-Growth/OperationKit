@@ -28,7 +28,8 @@ import { DEMO_AGENT_SLUG, type ChatAgent } from './agent-defs.js'
 import { resolveConnectors } from './connectors.js'
 import { chooseProviderId, createProvider, type ChatMessage, type ProviderDeps } from './providers.js'
 import { mcpToolSetFor, type McpToolSet } from './mcp-tools.js'
-import { kbWorkspacesForChat, toolSpecsFor, type ToolContext } from './tools.js'
+import { kbWorkspacesForChat, toolSpecsForContext, type ToolContext } from './tools.js'
+import { fullAccessPromptLine, withFullAccess } from './full-access-tools.js'
 import type { WebToolDeps } from './web-tools.js'
 import {
   auditBotMessage,
@@ -269,9 +270,10 @@ async function wake(msg: BotMessage, conversation: BotConversation, opts: DrainO
   }
   let mcpTools: McpToolSet = { specs: [], targets: new Map() }
   try { mcpTools = mcpToolSetFor(recipient, conversation.workspace) } catch { /* no MCP tools rather than no wake */ }
-  const tools = [...toolSpecsFor(recipient), ...mcpTools.specs]
+  const tools = [...toolSpecsForContext(ctx), ...mcpTools.specs]
   const system =
-    systemPromptFor(withResolvedKnowledgeFolders(recipient, ctx.kbRoot, kbWorkspacesForChat(ctx.userId, recipient.slug)), {
+    systemPromptFor(withFullAccess({ ...ctx, agent: withResolvedKnowledgeFolders(recipient, ctx.kbRoot, kbWorkspacesForChat(ctx.userId, recipient.slug)) }).agent, {
+      fullAccess: fullAccessPromptLine(ctx),
       username: person,
       now: now(),
       connectors: [connectors.mail?.label, connectors.calendar?.label].filter((x): x is string => !!x),

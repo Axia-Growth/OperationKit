@@ -11,6 +11,7 @@
 - [Features](./Features)
   - [Workspaces & Multi-tenancy](./Workspaces-and-Multi-tenancy)
   - [Bot Workspace Access](./Bot-Workspace-Access)
+  - [Bot Full access](./Bot-Full-Access)
   - [Board & Objectives Lifecycle](./Board-and-Objectives-Lifecycle)
   - [Skills, Tools & Agents](./Skills-Tools-Agents)
   - [Knowledge Base & Context Loading](./Knowledge-Base-and-Context-Loading)

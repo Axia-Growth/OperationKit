@@ -77,6 +77,8 @@ beforeEach(() => {
     if (url.includes('/high-agency')) return new Response(JSON.stringify(HIGH_AGENCY_OFF), { status: 200, headers: { 'content-type': 'application/json' } })
     // Same for the Workspace access section (obj 900797, WorkspaceAccessSection.test.tsx).
     if (url.includes('/workspaces')) return new Response(JSON.stringify(WORKSPACE_ACCESS), { status: 200, headers: { 'content-type': 'application/json' } })
+    // And the Full access section (obj 900972, FullAccessSection.test.tsx).
+    if (url.includes('/full-access')) return new Response(JSON.stringify({ slug: 'acme-cto', workspaces: [], workspace_options: [], can_manage: false, audit: [] }), { status: 200, headers: { 'content-type': 'application/json' } })
     // And the Approve on my behalf section (obj 900839, DelegationSection.test.tsx).
     if (url.includes('/delegations')) return new Response(JSON.stringify({ bot: null, workspace_options: [], grants: [], can_manage: false }), { status: 200, headers: { 'content-type': 'application/json' } })
     const body = init?.body ? JSON.parse(String(init.body)) : null
@@ -369,5 +371,19 @@ describe('BotSettingsPanel sections are reachable for every bot (obj 900862)', (
     await click(link)
     expect(scrollTo).toHaveBeenCalledTimes(1)
     expect(scrollTo.mock.calls[0][0]).toMatchObject({ behavior: 'smooth' })
+  })
+})
+
+describe('Full access on the settings panel (obj 900972)', () => {
+  it('has its own section, after Workspace access, and a Jump to link that points at it', async () => {
+    render(CTO, true)
+    await act(async () => { await Promise.resolve() })
+    const title = host.querySelector('#bot-full-access-title-acme-cto')
+    expect(title?.textContent).toBe('Full access')
+    const link = [...host.querySelectorAll('nav a')].find(a => a.textContent === 'Full access')
+    expect(link?.getAttribute('href')).toBe('#bot-full-access-title-acme-cto')
+    const order = [...host.querySelectorAll('h4')].map(h => h.textContent)
+    expect(order.indexOf('Full access')).toBe(order.indexOf('Workspace access') + 1)
+    expect(order.indexOf('Full access')).toBeLessThan(order.indexOf('Approve on my behalf'))
   })
 })

@@ -3,6 +3,7 @@ import { api } from '../../lib/api'
 import { Alert, Button, cn } from '../ui'
 import { HighAgencySection } from './HighAgencySection'
 import { WorkspaceAccessSection } from './WorkspaceAccessSection'
+import { FullAccessSection } from './FullAccessSection'
 import { DelegationSection } from './DelegationSection'
 import {
   PROVIDER_LABELS,
@@ -39,6 +40,7 @@ import type { ModelRow } from '@operationkit/shared'
 const SECTION_LINKS: Array<{ label: string; idPrefix: string }> = [
   { label: 'Model and tools', idPrefix: 'bot-model-tools-title' },
   { label: 'Workspace access', idPrefix: 'bot-ws-title' },
+  { label: 'Full access', idPrefix: 'bot-full-access-title' },
   { label: 'Approve on my behalf', idPrefix: 'bot-delegation-title' },
   { label: 'High Agency', idPrefix: 'high-agency-title' },
 ]
@@ -406,6 +408,14 @@ export function BotSettingsPanel({
         )}
 
         <WorkspaceAccessSection agent={agent} isAdmin={isAdmin} version={grantVersion} onChanged={() => setAccessVersion(v => v + 1)} />
+
+        {/* obj 900972: per-workspace Full access. Re-reads when the workspace list changes on either side. */}
+        <FullAccessSection
+          agent={agent}
+          isAdmin={isAdmin}
+          version={accessVersion + grantVersion}
+          onChanged={summary => onSaved({ ...agent, full_access: summary })}
+        />
 
         <DelegationSection agent={agent} isAdmin={isAdmin} />
 

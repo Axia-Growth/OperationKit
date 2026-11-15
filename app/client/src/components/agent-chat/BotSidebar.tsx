@@ -27,6 +27,7 @@ import { api } from '../../lib/api'
 import { Button, IconButton, Modal, SearchInput, Toast, cn, useConfirm } from '../ui'
 import { copyText } from '../ui/CopyButton'
 import { AgentAvatar } from './ChatItems'
+import { FullAccessBadge, fullAccessSentence } from './FullAccessBadge'
 import { ContextMenu, type MenuAnchor, type MenuItem } from './ContextMenu'
 import { botState, buildSidebarView, pendingBadge, pendingTotal, shortTime, type SidebarFilter } from './sidebar-model'
 import { DEV_BOT_SLUG, devBotLink } from '../agents/CreateAgentGuide'
@@ -198,6 +199,8 @@ function BotRow({
           </span>
           <span className="mt-0.5 flex items-center gap-2">
             <span className={cn('min-w-0 flex-1 truncate text-sm', entry.unread ? 'text-fg-1' : 'text-fg-2')}>{previewFor(agent, entry)}</span>
+            {/* obj 900972: this bot has Full access in a workspace right now. */}
+            <FullAccessBadge access={agent.full_access} />
             <PendingBadge entry={entry} />
           </span>
           {live && <BotLiveLine entry={live} className="mt-0.5" />}
@@ -251,7 +254,7 @@ function PinnedTile({
         onPointerLeave={press.onPointerLeave}
         onPointerCancel={press.onPointerCancel}
         aria-current={active ? 'page' : undefined}
-        aria-label={`${agent.name}${entry.unread ? ` (${pendingBadge(entry)?.label ?? 'unread'})` : ''} — pinned`}
+        aria-label={`${agent.name}${entry.unread ? ` (${pendingBadge(entry)?.label ?? 'unread'})` : ''} — pinned${agent.full_access?.workspaces.length ? ` — ${fullAccessSentence(agent.full_access)}` : ''}`}
         title={agent.name}
         className="group flex w-full flex-col items-center gap-1.5 rounded-xl px-1 pb-1.5 pt-1 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/50"
       >
@@ -265,6 +268,7 @@ function PinnedTile({
             )}
           />
           <PendingBadge entry={entry} className="absolute -right-1.5 -top-1 ring-2 ring-surface-1" />
+          <FullAccessBadge access={agent.full_access} variant="icon" className="absolute -bottom-1 -right-1.5" />
         </span>
         <span className={cn('block w-full truncate text-center text-xs', active || entry.unread ? 'text-fg-0' : 'text-fg-2', entry.unread && 'font-semibold')}>
           {agent.name}

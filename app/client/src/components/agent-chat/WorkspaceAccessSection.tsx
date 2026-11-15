@@ -102,9 +102,11 @@ export function WorkspaceAccessSection({
 
   const revoke = (ws: string) =>
     run(`revoke:${ws}`, () => api.del<BotWorkspaceAccessResponse>(`${url}/${encodeURIComponent(ws)}`), r =>
-      r.high_agency_switched_off
-        ? `Revoked ${ws}. High Agency was switched off because it woke in ${ws}.`
-        : `Revoked ${ws}.`)
+      [
+        `Revoked ${ws}.`,
+        r.high_agency_switched_off ? `High Agency was switched off because it woke in ${ws}.` : '',
+        r.full_access_switched_off?.length ? `Full access in ${r.full_access_switched_off.join(', ')} ended with it.` : '',
+      ].filter(Boolean).join(' '))
 
   const lockOut = () =>
     run('none', () => api.put<BotWorkspaceAccessResponse>(url, { workspaces: [] }), r =>

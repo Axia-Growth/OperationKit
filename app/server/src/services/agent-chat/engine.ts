@@ -24,7 +24,8 @@ import {
   type IncomingImage,
   type StoredImage,
 } from './attachments.js'
-import { agentHasTool, botWorkspacesForPerson, kbWorkspacesForChat, runChatTool, toolSpecsFor, ToolUseError, type ToolContext } from './tools.js'
+import { agentHasTool, botWorkspacesForPerson, kbWorkspacesForChat, runChatTool, toolSpecsFor, toolSpecsForContext, ToolUseError, type ToolContext } from './tools.js'
+import { fullAccessPromptLine, withFullAccess } from './full-access-tools.js'
 import { mcpToolSetFor, runMcpTool, type McpToolSet } from './mcp-tools.js'
 import { botReplyForModel, earlierActionForModel, toolResultForModel } from './tool-result-framing.js'
 import type { WebToolDeps } from './web-tools.js'
@@ -280,7 +281,7 @@ function historyForModel(rows: ChatMessageRow[], withImages: boolean, workspace?
   return out
 }
 
-export function systemPromptFor(agent: ChatAgent, ctx: { username: string; now: Date; connectors: string[]; workspace?: string; userId?: number }): string {
+export function systemPromptFor(agent: ChatAgent, ctx: { username: string; now: Date; connectors: string[]; workspace?: string; userId?: number; fullAccess?: string }): string {
   // obj 900797: person ∩ bot list, so the prompt never names a workspace the person cannot see.
   const allow = ctx.workspace === undefined ? undefined : ctx.userId === undefined ? null : botWorkspacesForPerson(ctx.userId, agent.slug)
   const parts = [
@@ -309,6 +310,8 @@ export function systemPromptFor(agent: ChatAgent, ctx: { username: string; now: 
       : ctx.workspace
         ? `- This chat's workspace is ${ctx.workspace}.${allow ? ` You may only work in these workspaces: ${allow.join(', ')}. Anything in another workspace is off limits.` : ''}`
         : '- You have no workspace you may work in with this person yet (an admin grants workspaces on your settings panel), so board, knowledge-base and secrets tools will refuse. Say so plainly if asked.',
+    // obj 900972: said only while Full access counts for this bot, this person and this workspace.
+    ctx.fullAccess ?? '',
     '- Never ask for or repeat passwords or API keys.',
     ctx.connectors.length ? `- Connected: ${ctx.connectors.join('; ')}.` : '',
     '- Keep answers short and use simple markdown (bullets, bold).',
@@ -384,7 +387,7 @@ export async function runModelLoop(p: {
       let resultForModel: unknown
       try {
         const r = mcpTools.targets.has(c.function.name)
-          ? await runMcpTool(ctx.workspace, mcpTools, c.function.name, args)
+          ? await runMcpTool(ctx.workspace, mcpTools, c.function.name, args, { slug: ctx.agent.slug, botName: ctx.agent.name, userId: ctx.userId })
           : await runChatTool(ctx, c.function.name, args)
         resultForModel = r.result
         record({
@@ -712,7 +715,8 @@ export async function runTurn(input: TurnInput): Promise<{ messages: ChatMessage
       return { messages: created }
     }
 
-    const system = systemPromptFor(withResolvedKnowledgeFolders(agent, ctx.kbRoot, kbWorkspacesForChat(ctx.userId, agent.slug)), {
+    const system = systemPromptFor(withFullAccess({ ...ctx, agent: withResolvedKnowledgeFolders(agent, ctx.kbRoot, kbWorkspacesForChat(ctx.userId, agent.slug)) }).agent, {
+      fullAccess: fullAccessPromptLine(ctx),
       username: input.username,
       now: now(),
       connectors: [connectors.mail?.label, connectors.calendar?.label].filter((x): x is string => !!x),
@@ -725,7 +729,7 @@ export async function runTurn(input: TurnInput): Promise<{ messages: ChatMessage
     if (ctx.workspace) {
       try { mcpTools = mcpToolSetFor(agent, ctx.workspace) } catch { /* no MCP tools rather than no chat */ }
     }
-    const tools = [...toolSpecsFor(agent), ...mcpTools.specs]
+    const tools = [...toolSpecsForContext(ctx), ...mcpTools.specs]
     // An agent answered by a provider that cannot look at an image must SAY so.
     // Silently dropping the screenshot is the bug this objective exists for: the
     // model then answers "I can't open screenshots" and nobody knows why.

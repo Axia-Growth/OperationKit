@@ -36,6 +36,8 @@ export function toolResultSource(fnName: string, isMcp: boolean): string | null 
   // list_folders too: anyone with KB write access chooses the file names it returns.
   if (fnName === 'search' || fnName === 'read_file' || fnName === 'list_folders') return 'knowledge-base'
   if (fnName === 'get_objective' || fnName === 'list_objectives' || fnName === 'board_briefing') return 'board-card'
+  // obj 900972: Full access reads — card, workflow, scheduled-task and bot text other agents and people wrote.
+  if (fnName === 'card_read') return 'board-card'
   return 'tool-result'
 }
 

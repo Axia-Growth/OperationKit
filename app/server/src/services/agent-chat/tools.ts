@@ -46,6 +46,9 @@ import { containedIn, realpathOrNull, workspaceScopeRoots } from '../../lib/kb-w
 import { searchKnowledgeBase } from '../kb-semantic/search.js'
 import { noteKbWrite } from '../kb-semantic/service.js'
 import type { ChatLane } from './threads.js'
+import { fullAccessActive, fullAccessAnywhere, protectedCardRefusal, refuseExclusion } from './bot-full-access.js'
+import { exclusionGate, type OutboundCall } from './full-access-exclusions.js'
+import { FULL_ACCESS_FNS, fullAccessToolSpecs, runFullAccessTool, withFullAccess, type FullAccessHost } from './full-access-tools.js'
 import {
   BotMessageRefused,
   botMessageWorkspaces,
@@ -85,6 +88,8 @@ export interface ToolContext {
    * to that conversation's ONE workspace.
    */
   botWake?: { conversationId: number; depth: number }
+  /** obj 900972: how a Full access tool starts or messages a card. Tests pass a stub; the host default uses the internal routes. */
+  fullAccessHost?: FullAccessHost
 }
 
 /** What the chat UI shows for a tool call (drafts get buttons, cards get a status chip). */
@@ -239,6 +244,22 @@ export function agentHasTool(agent: Pick<ChatAgent, 'tools'>, tool: string): boo
 export function toolSpecsFor(agent: ChatAgent): ToolSpec[] {
   const out: ToolSpec[] = []
   for (const t of effectiveTools(agent)) out.push(...(SPECS[t] ?? []))
+  return out
+}
+
+/**
+ * The function specs for one TURN (obj 900972): what the bot's file lists, plus
+ * what Full access adds while it counts for this bot, this person and this
+ * workspace — the knowledge and board tools it implies, the Full access tool
+ * family. Full access NEVER adds the secrets tools.
+ * With no Full access this is exactly toolSpecsFor(agent).
+ */
+export function toolSpecsForContext(ctx: ToolContext): ToolSpec[] {
+  const elevated = withFullAccess(ctx)
+  const out = toolSpecsFor(elevated.agent)
+  const extra = fullAccessToolSpecs(ctx)
+  if (extra.length === 0) return out
+  out.push(...extra)
   return out
 }
 
@@ -932,6 +953,8 @@ function s(args: Record<string, unknown>, key: string, required = false): string
 export async function runChatTool(ctxIn: ToolContext, fnName: string, args: Record<string, unknown>): Promise<ToolOutcome> {
   // obj 900948: knowledge folders resolved for this KB's layout (workspaces/<ws>/…).
   const ctx = withKbFolders(ctxIn)
+  // obj 900972: the Full access tool family. Checked again inside, on every call.
+  if (FULL_ACCESS_FNS.has(fnName)) return runFullAccessTool(ctx, fnName, args)
   if (BOT_MESSAGE_FNS.has(fnName)) return runBotMessageTool(ctx, fnName, args)
   if (fnName === 'secrets_list' || fnName === 'secret_http') return runSecretTool(ctx, fnName, args)
   if (fnName === 'search' && args.mode !== 'keyword' && agentHasTool(ctx.agent, 'search')) {
@@ -1078,6 +1101,14 @@ const SECRET_USE_RATE = () => Number(process.env.CC_SECRETS_BROKER_RATE_PER_MIN)
  * workspace comes from the chat, never from the model's arguments.
  */
 async function runSecretTool(ctx: ToolContext, fnName: 'secrets_list' | 'secret_http', args: Record<string, unknown>): Promise<ToolOutcome> {
+  // obj 900972: for a bot with Full access here, every secret use is a PERMANENT
+  // hard exclusion — refused and logged before anything is sent, whatever the
+  // bot's file lists. Full access never adds the secrets tool either.
+  const fullAccessHere = !!ctx.workspace && fullAccessActive(ctx.agent.slug, ctx.workspace, ctx.now?.())
+  if (fullAccessHere) {
+    const refusal = exclusionGate({ slug: ctx.agent.slug, botName: ctx.agent.name, workspace: ctx.workspace, userId: ctx.userId, call: secretCallShape(fnName, args), now: ctx.now?.() })
+    if (refusal) throw new ToolUseError(refusal)
+  }
   if (!agentHasTool(ctx.agent, 'secrets')) throw new ToolUseError(`Tool "${fnName}" is not allowed for this agent.`)
   if (!ctx.workspace) throw new ToolUseError(noWorkspaceMessage(ctx))
   const role = (getDb().prepare('SELECT role FROM users WHERE id = ?').get(ctx.userId) as { role?: string } | undefined)?.role
@@ -1085,8 +1116,22 @@ async function runSecretTool(ctx: ToolContext, fnName: 'secrets_list' | 'secret_
     throw new ToolUseError(`You are not a member of workspace '${ctx.workspace}', so no secrets are available here.`)
   }
   const caller = callerForChat(ctx.userId, ctx.workspace)
+  // obj 900972: a bot that has Full access in ANY workspace never reaches a
+  // Shared (install-wide) secret, in any chat. Its file's own secrets tool keeps
+  // working here for this workspace's secrets only.
+  const noShared = !fullAccessHere && fullAccessAnywhere(ctx.agent.slug, ctx.now?.())
+  if (noShared && fnName === 'secret_http') {
+    const shared = new Set(listForCaller(caller, { workspace: ctx.workspace }).filter(x => x.scope === 'global').map(x => x.name))
+    const hit = (secretCallShape(fnName, args).secretNames ?? []).filter(n => shared.has(n))
+    if (hit.length > 0) {
+      throw new ToolUseError(refuseExclusion({
+        slug: ctx.agent.slug, botName: ctx.agent.name, workspace: ctx.workspace, exclusion: 'secret_values', actorUserId: ctx.userId,
+        what: `secret_http with the Shared secret ${hit.join(', ')}`,
+      }))
+    }
+  }
   if (fnName === 'secrets_list') {
-    const secrets = listForCaller(caller, { workspace: ctx.workspace }).map(x => ({
+    const secrets = listForCaller(caller, { workspace: ctx.workspace }).filter(x => !(noShared && x.scope === 'global')).map(x => ({
       name: x.name,
       description: x.description,
       allowed_hosts: x.allowed_hosts,
@@ -1128,6 +1173,24 @@ async function runSecretTool(ctx: ToolContext, fnName: 'secrets_list' | 'secret_
   }
 }
 
+/** What a secrets call is aimed at, for the Full access exclusion gate. Reads only names, hosts and paths — never a value. */
+function secretCallShape(fnName: 'secrets_list' | 'secret_http', args: Record<string, unknown>): OutboundCall {
+  if (fnName === 'secrets_list') return { what: 'listing the secrets this bot may use', usesSecret: true }
+  const method = typeof args.method === 'string' ? args.method.toUpperCase() : 'GET'
+  let host: string | null = null
+  let pathname: string | null = null
+  const url = typeof args.url === 'string' ? args.url : ''
+  try {
+    // A {{secret:NAME}} placeholder in the URL must not break parsing of the host.
+    const u = new URL(url.replace(/\{\{\s*secret:[^}]*\}\}/gi, 'x'))
+    host = u.hostname
+    pathname = u.pathname
+  } catch { /* an unparsable URL is refused by the broker itself */ }
+  const text = [url, typeof args.body === 'string' ? args.body : '', ...(args.headers && typeof args.headers === 'object' ? Object.values(args.headers as Record<string, unknown>).map(String) : [])].join('\n')
+  const secretNames = [...new Set([...text.matchAll(/\{\{\s*secret:\s*([A-Za-z0-9_.-]+)\s*\}\}/g)].map(m => m[1]))]
+  return { what: `secret_http ${method} ${host ?? '(unreadable url)'}${secretNames.length ? ` with ${secretNames.join(', ')}` : ''}`, host, path: pathname, method, secretNames, usesSecret: true }
+}
+
 /**
  * obj 900948: the context with the agent's knowledge folders resolved for this
  * knowledge base (a built-in bot's `business` → `workspaces/<ws>/business` on a
@@ -1135,7 +1198,9 @@ async function runSecretTool(ctx: ToolContext, fnName: 'secrets_list' | 'secret_
  */
 function withKbFolders(ctx: ToolContext): ToolContext {
   const agent = withResolvedKnowledgeFolders(ctx.agent, ctx.kbRoot, kbWorkspacesForChat(ctx.userId, ctx.agent.slug))
-  return agent === ctx.agent ? ctx : { ...ctx, agent }
+  // obj 900972: while Full access counts, the whole workspace knowledge folder
+  // and the knowledge / board tools it implies. Idempotent.
+  return withFullAccess(agent === ctx.agent ? ctx : { ...ctx, agent })
 }
 
 export function runTool(ctxIn: ToolContext, fnName: string, args: Record<string, unknown>): ToolOutcome {
@@ -1212,6 +1277,15 @@ export function runTool(ctxIn: ToolContext, fnName: string, args: Record<string,
     }
     case 'get_objective': {
       const id = Number(args.id)
+      // obj 900972: a bot with Full access in the card's workspace never reads a
+      // card that carries a protected pull request, through this tool either.
+      const guarded = Number.isInteger(id) && id > 0
+        ? (getDb().prepare('SELECT id, workspace, pr_number, pr_url FROM objectives WHERE id = ? AND deleted_at IS NULL').get(id) as { id: number; workspace: string; pr_number: number | null; pr_url: string | null } | undefined)
+        : undefined
+      if (guarded && fullAccessActive(ctx.agent.slug, guarded.workspace, ctx.now?.())) {
+        const refusal = protectedCardRefusal({ slug: ctx.agent.slug, workspace: guarded.workspace, ability: 'get_objective', card: guarded, actorUserId: ctx.userId })
+        if (refusal) throw new ToolUseError(refusal)
+      }
       const card = getBoardCard(ctx, id)
       return { result: card, summary: `Checked card #${id} (${card.status})`, objective_id: id }
     }

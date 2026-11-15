@@ -160,6 +160,44 @@ export function initAgentChatSchema(db: Database.Database): void {
       PRIMARY KEY (slug, workspace)
     );
 
+    -- Bot Full access (obj 900972): a per-bot, per-workspace switch ON TOP of
+    -- the workspace access list above (services/agent-chat/bot-full-access.ts).
+    -- No row = off. expires_at NULL = until switched off. allow_billing
+    -- is the one switchable exclusion (0 = refused and logged). Secret values,
+    -- keys and DNS / Cloudflare Access have NO column: always refused. Its own table, so "Reset to
+    -- file" and workspace-list edits never flip it by accident.
+    CREATE TABLE IF NOT EXISTS agent_chat_bot_full_access (
+      slug TEXT NOT NULL,
+      workspace TEXT NOT NULL,
+      enabled INTEGER NOT NULL DEFAULT 0 CHECK (enabled IN (0, 1)),
+      expires_at TEXT,
+      allow_billing INTEGER NOT NULL DEFAULT 0 CHECK (allow_billing IN (0, 1)),
+      -- 1 once the 'expired' audit row was written for the current expiry.
+      expiry_logged INTEGER NOT NULL DEFAULT 0,
+      updated_by TEXT,
+      updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+      PRIMARY KEY (slug, workspace)
+    );
+    -- Append-only audit: every switch change (who, when, bot, workspace, on/off,
+    -- expiry, which exclusion), every use of a Full access ability and every
+    -- refusal. Never updated.
+    CREATE TABLE IF NOT EXISTS agent_chat_bot_full_access_audit (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      event TEXT NOT NULL CHECK (event IN ('enabled', 'disabled', 'expiry_changed', 'exclusion_changed', 'expired', 'workspace_revoked', 'ability_used', 'ability_refused', 'exclusion_refused', 'protected_refused')),
+      slug TEXT NOT NULL,
+      workspace TEXT,
+      actor TEXT,
+      actor_user_id INTEGER,
+      enabled INTEGER,
+      expires_at TEXT,
+      exclusion TEXT,
+      ability TEXT,
+      objective_id INTEGER,
+      detail TEXT,
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+    CREATE INDEX IF NOT EXISTS idx_bot_full_access_audit_slug ON agent_chat_bot_full_access_audit(slug, id);
+
     -- The Bots sidebar (obj 900798): each person's OWN arrangement of the bot
     -- list. Sections are named groups ("Development", "Marketing") in the
     -- person's order; a bot sits in at most one of them (section_id NULL =
