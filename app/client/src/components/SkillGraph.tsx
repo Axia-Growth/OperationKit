@@ -360,6 +360,12 @@ export function GraphCanvas({ data, onOpenNode, alarmLabel = 'needs work' }: {
   }, [graph, nodeById, neighbors, pan, zoom, hovered, selected])
 
   useEffect(() => { draw() }, [draw])
+  // Colours are read from CSS tokens at draw time; redraw when the theme flips.
+  useEffect(() => {
+    const mo = new MutationObserver(() => draw())
+    mo.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] })
+    return () => mo.disconnect()
+  }, [draw])
 
   // Fit on first measure and whenever the graph changes, so the whole thing is
   // in frame without the operator hunting for it.
@@ -434,7 +440,7 @@ export function GraphCanvas({ data, onOpenNode, alarmLabel = 'needs work' }: {
       )}
 
       {/* Legend */}
-      <div className="pointer-events-none absolute bottom-3 left-3 flex flex-wrap items-center gap-x-3 gap-y-1.5 rounded-md border border-line bg-surface-1/90 px-3 py-2 text-[12px] backdrop-blur">
+      <div className="pointer-events-none absolute bottom-3 left-3 flex flex-wrap items-center gap-x-3 gap-y-1.5 rounded-md border border-line bg-surface-1/90 px-3 py-2 text-xs backdrop-blur">
         <LegendDot layer="agent" label="agent" />
         <LegendDot layer="skill" label="skill" />
         <LegendDot layer="tool" label="tool" />
@@ -491,15 +497,15 @@ function NodeCard({ node, onClose, onOpen, className }: { node: GraphNode; onClo
             <Badge tone={LAYER_TONE[node.layer]}>{node.layer}</Badge>
             {node.needsImprovement && <Badge tone="alarm">needs work</Badge>}
           </div>
-          <div className="mt-1.5 break-words font-mono text-[12px] font-medium text-fg-0">{node.slug}</div>
+          <div className="mt-1.5 break-words font-mono text-xs font-medium text-fg-0">{node.slug}</div>
         </div>
         {onClose && (
           <Button variant="ghost" size="sm" onClick={onClose} aria-label="Close detail">Close</Button>
         )}
       </div>
-      <p className="mt-1 text-[12px] text-fg-2">{node.detail}</p>
+      <p className="mt-1 text-xs text-fg-2">{node.detail}</p>
       {node.description && (
-        <p className="mt-2 line-clamp-4 text-[12px] leading-relaxed text-fg-2">{node.description}</p>
+        <p className="mt-2 line-clamp-4 text-xs leading-relaxed text-fg-2">{node.description}</p>
       )}
       {onOpen && (
         <Button variant="secondary" size="sm" className="mt-2.5 w-full" onClick={onOpen}>
@@ -575,16 +581,16 @@ export function SkillGraphTab() {
     <div className="flex h-full min-h-[520px] flex-col">
       <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 border-b border-line px-5 py-3">
         <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
-          <h3 className="font-display text-[14px] font-semibold text-fg-0">Skill Graph</h3>
-          <span className="font-mono text-[12px] text-fg-2">
+          <h3 className="font-display text-base font-semibold text-fg-0">Skill Graph</h3>
+          <span className="font-mono text-xs text-fg-2">
             {c.agents} agents · {c.skills} skills · {c.tools} tools
           </span>
-          <span className="font-mono text-[12px] text-fg-2">
+          <span className="font-mono text-xs text-fg-2">
             {c.agent_skill_edges} agent→skill · {c.skill_tool_edges} skill→tool
           </span>
           <Badge tone="verify">{data.source}</Badge>
         </div>
-        <span className="text-[12px] text-fg-2">Drag to pan · scroll to zoom · click a node to inspect</span>
+        <span className="text-xs text-fg-2">Drag to pan · scroll to zoom · click a node to inspect</span>
       </div>
       <div className="min-h-0 flex-1">
         <GraphCanvas data={data} />

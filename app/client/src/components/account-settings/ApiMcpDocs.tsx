@@ -38,7 +38,7 @@ const LINK = 'text-accent-hover underline-offset-2 hover:text-accent hover:under
 
 function Snippet({ code }: { code: string }) {
   return (
-    <pre className="max-w-full overflow-x-auto rounded-md border border-line bg-surface-1 p-3 font-mono text-[12px] leading-relaxed text-fg-1">
+    <pre className="max-w-full overflow-x-auto rounded-md border border-line bg-surface-1 p-3 font-mono text-xs leading-relaxed text-fg-1">
       <code>{code}</code>
     </pre>
   )
@@ -62,7 +62,7 @@ export function ApiMcpDocs() {
     <Card inset className="mt-6" aria-labelledby="api-mcp-docs-heading" data-testid="api-mcp-docs">
       <CardHeader title="API docs" eyebrow="Reference" />
       <CardBody className="space-y-5">
-        <p className="max-w-prose text-[12.5px] leading-relaxed text-fg-2">
+        <p className="max-w-prose text-sm leading-relaxed text-fg-2">
           The full, current contract for this install is the live spec at{' '}
           <DocLink href={links.spec}><code className="font-mono">{links.spec}</code></DocLink> (never stale) and
           the discovery doc at <DocLink href={links.discovery}><code className="font-mono">{links.discovery}</code></DocLink>.
@@ -71,7 +71,7 @@ export function ApiMcpDocs() {
           whole API in one shot is <DocLink href={links.agentPrompt}>docs/api/AGENT-PROMPT.md</DocLink>.
         </p>
 
-        <p className="max-w-prose text-[12px] text-fg-3">
+        <p className="max-w-prose text-xs text-fg-3">
           Connecting an agent over MCP? Use the setup prompt in <span className="text-fg-1">Connect a coding agent</span>{' '}
           above — one URL (<code className="font-mono">{origin}/api/mcp</code>) for board and knowledge-base tools,
           with a named agent key.
@@ -79,10 +79,10 @@ export function ApiMcpDocs() {
 
         <div className="space-y-2">
           <div className="flex items-center justify-between gap-2">
-            <h3 className="text-[13px] font-semibold text-fg-0">REST — copy-paste curl example</h3>
+            <h3 className="text-sm font-semibold text-fg-0">REST — copy-paste curl example</h3>
             <CopyButton value={curlExample} label="Copy curl" />
           </div>
-          <p className="text-[12px] text-fg-3">
+          <p className="text-xs text-fg-3">
             Every call: <code className="font-mono">Authorization: Bearer cc_live_…</code>. This one reads the
             cards that need a decision (<code className="font-mono">board:read</code>).
           </p>

@@ -31,7 +31,7 @@ export function FooterActions({
             type="button"
             onClick={onDelete}
             disabled={loading}
-            className="rounded-md px-3 py-2 text-sm text-flag-blocked transition-colors duration-fast ease-out hover:bg-flag-blocked/10"
+            className="rounded-md px-3 py-2 text-base text-flag-blocked transition-colors duration-fast ease-out hover:bg-flag-blocked/10"
           >
             Delete
           </button>
@@ -43,7 +43,7 @@ export function FooterActions({
               type="button"
               onClick={() => onReopen(objective.id)}
               disabled={loading}
-              className="rounded-md px-3 py-2 text-sm text-fg-1 transition-colors duration-fast ease-out hover:bg-surface-3 hover:text-fg-0"
+              className="rounded-md px-3 py-2 text-base text-fg-1 transition-colors duration-fast ease-out hover:bg-surface-3 hover:text-fg-0"
             >
               Re-Open
             </button>
@@ -57,14 +57,14 @@ export function FooterActions({
         <button
           type="button"
           onClick={onClose}
-          className="rounded-md px-4 py-2 text-sm text-fg-1 transition-colors duration-fast ease-out hover:bg-surface-3 hover:text-fg-0"
+          className="rounded-md px-4 py-2 text-base text-fg-1 transition-colors duration-fast ease-out hover:bg-surface-3 hover:text-fg-0"
         >
           Cancel
         </button>
         <button
           type="submit"
           disabled={loading || !descHydrated}
-          className="rounded-md bg-accent px-4 py-2 text-sm font-medium text-accent-fg transition-colors duration-fast ease-out hover:bg-accent-hover active:bg-accent-press disabled:opacity-50 min-h-[36px]"
+          className="rounded-md bg-accent px-4 py-2 text-base font-medium text-accent-fg transition-colors duration-fast ease-out hover:bg-accent-hover active:bg-accent-press disabled:opacity-50 min-h-[36px]"
         >
           {uploading ? 'Uploading…' : loading ? 'Saving…' : !descHydrated ? 'Loading…' : isEdit ? 'Update' : 'Create'}
         </button>

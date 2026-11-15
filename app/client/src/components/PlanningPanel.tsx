@@ -1,7 +1,9 @@
-import { useCallback, useEffect, useRef, useState, type ClipboardEvent } from 'react'
+import { useCallback, useEffect, useId, useRef, useState, type ClipboardEvent } from 'react'
 import { Paperclip } from 'lucide-react'
 import type { Objective, SessionMessage } from '@operationkit/shared'
 import { api } from '../lib/api'
+import { Modal } from './ui/Modal'
+import { useConfirm } from './ui/ConfirmDialog'
 import { filesFromClipboard, useFileDrop } from '../hooks/useFileDrop'
 import { GroupedMessages } from './SessionMessages'
 import { FileEditorOverlay } from './FileEditorOverlay'
@@ -42,6 +44,8 @@ export function PlanningPanel({ objective: initialObjective, onClose, onApproved
   const scrollRef = useRef<HTMLDivElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
+  const titleId = useId()
+  const { confirm, confirmDialog } = useConfirm()
 
   // Reset incremental state when objective changes
   useEffect(() => {
@@ -213,7 +217,13 @@ export function PlanningPanel({ objective: initialObjective, onClose, onApproved
   }
 
   async function handleCancel() {
-    if (!confirm('Cancel planning? The conversation is preserved; you can resume by re-opening planning.')) return
+    const ok = await confirm({
+      title: 'Cancel planning?',
+      message: 'The conversation is preserved; you can resume by re-opening planning.',
+      confirmLabel: 'Cancel planning',
+      cancelLabel: 'Keep planning',
+    })
+    if (!ok) return
     try {
       await api.post(`/objectives/${objective.id}/planning/cancel`, {})
       onClose()
@@ -223,15 +233,23 @@ export function PlanningPanel({ objective: initialObjective, onClose, onApproved
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex flex-col bg-surface">
+    // Full-screen dialog on ui/Modal (UI SDK Dialog): page behind inert, focus
+    // trapped, Escape closes, focus returns to the card that opened it. The
+    // backdrop is covered edge-to-edge, so a press outside cannot happen.
+    <Modal
+      open
+      onClose={onClose}
+      labelledBy={titleId}
+      panelClassName="flex flex-col inset-0 m-0 h-full max-h-none w-full max-w-none rounded-none border-0 overflow-x-hidden overflow-y-hidden bg-surface shadow-none"
+    >
       <div className="flex items-center justify-between border-b border-border px-4 py-3 bg-surface-raised">
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2">
-            <span className="rounded bg-status-planning/20 text-status-planning border border-status-planning/30 px-1.5 py-0.5 text-[12px] font-semibold">PLANNING</span>
-            <h3 className="text-sm font-medium text-fg-0 truncate">{objective.title}</h3>
+            <span className="rounded bg-status-planning/20 text-status-planning border border-status-planning/30 px-1.5 py-0.5 text-xs font-semibold">PLANNING</span>
+            <h3 id={titleId} className="text-base font-medium text-fg-0 truncate">{objective.title}</h3>
           </div>
           {objective.planning_session_id && (
-            <div className="text-[12px] text-fg-3 font-mono truncate mt-0.5">{objective.planning_session_id}</div>
+            <div className="text-xs text-fg-3 font-mono truncate mt-0.5">{objective.planning_session_id}</div>
           )}
         </div>
         <div className="flex items-center gap-2 ml-3">
@@ -254,9 +272,10 @@ export function PlanningPanel({ objective: initialObjective, onClose, onApproved
           )}
           <button
             onClick={onClose}
+            aria-label="Close planning"
             className="rounded-lg p-2 text-fg-2 hover:text-fg-1 hover:bg-surface-overlay"
           >
-            <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+            <svg aria-hidden="true" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
               <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
             </svg>
           </button>
@@ -266,13 +285,13 @@ export function PlanningPanel({ objective: initialObjective, onClose, onApproved
       {!sessionStarted && (
         <div className="flex-1 flex items-center justify-center px-6">
           <div className="max-w-md text-center space-y-4">
-            <p className="text-sm text-fg-2">
+            <p className="text-base text-fg-2">
               This is a Project-type objective, so it starts in the planning stage. A read-only planner sub-session will ask you clarifying questions, then emit a plan you approve. Approving the plan starts the worker — you do not click Start again.
             </p>
             <button
               onClick={handleStart}
               disabled={starting}
-              className="rounded-md bg-status-planning/90 hover:bg-status-planning px-4 py-2 text-sm font-medium text-surface-0 disabled:opacity-50 transition-colors duration-fast ease-out"
+              className="rounded-md bg-status-planning/90 hover:bg-status-planning px-4 py-2 text-base font-medium text-surface-0 disabled:opacity-50 transition-colors duration-fast ease-out"
             >
               {starting ? 'Starting planner...' : 'Start Planning'}
             </button>
@@ -309,7 +328,7 @@ export function PlanningPanel({ objective: initialObjective, onClose, onApproved
                     <span className="cc-think-dot text-status-planning" />
                     <span className="cc-think-dot text-status-planning" />
                   </div>
-                  <div className="text-sm text-fg-2">Planner is loading context...</div>
+                  <div className="text-base text-fg-2">Planner is loading context...</div>
                 </div>
               )}
               <GroupedMessages messages={messages} />
@@ -318,7 +337,7 @@ export function PlanningPanel({ objective: initialObjective, onClose, onApproved
 
           <div className="border-t border-border bg-surface-raised">
             <div className="max-w-4xl mx-auto px-3 pt-2 pb-3">
-              <div className="mb-2 rounded bg-surface px-3 py-1.5 text-[12px] text-fg-2 border border-border/60 flex items-center gap-2">
+              <div className="mb-2 rounded bg-surface px-3 py-1.5 text-xs text-fg-2 border border-border/60 flex items-center gap-2">
                 <span className="text-signal-verify">●</span>
                 <span>Planner is read-only. Click <span className="text-signal-verify font-medium">Approve Plan</span> to lock the plan and start the worker.</span>
               </div>
@@ -367,6 +386,7 @@ export function PlanningPanel({ objective: initialObjective, onClose, onApproved
                 </button>
                 <textarea
                   ref={textareaRef}
+                  data-autofocus
                   value={message}
                   onChange={e => setMessage(e.target.value)}
                   onKeyDown={e => {
@@ -378,12 +398,12 @@ export function PlanningPanel({ objective: initialObjective, onClose, onApproved
                   onPaste={handlePaste}
                   placeholder={isDragging ? 'Drop files to attach…' : "Answer the planner's questions, or say 'approve' to lock the plan..."}
                   rows={1}
-                  className="flex-1 resize-none bg-transparent py-1.5 text-base sm:text-sm text-fg-0 placeholder-fg-3 focus:outline-none font-mono"
+                  className="flex-1 resize-none bg-transparent py-1.5 text-lg sm:text-base text-fg-0 placeholder-fg-3 focus:outline-none font-mono"
                 />
                 <button
                   onClick={handleSend}
                   disabled={(!message.trim() && attachedFiles.length === 0) || sending}
-                  className="mb-1 shrink-0 rounded-md bg-accent px-3 py-1 text-sm font-medium text-accent-fg disabled:opacity-40"
+                  className="mb-1 shrink-0 rounded-md bg-accent px-3 py-1 text-base font-medium text-accent-fg disabled:opacity-40"
                 >
                   Send
                 </button>
@@ -396,6 +416,7 @@ export function PlanningPanel({ objective: initialObjective, onClose, onApproved
       {editingDocPath && (
         <FileEditorOverlay filePath={editingDocPath} onClose={() => setEditingDocPath(null)} />
       )}
-    </div>
+      {confirmDialog}
+    </Modal>
   )
 }

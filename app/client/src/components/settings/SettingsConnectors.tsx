@@ -224,7 +224,7 @@ export function SettingsConnectors() {
   return (
     <div className="max-w-3xl space-y-4">
       <div className="flex flex-wrap items-start justify-between gap-3">
-        <p className="min-w-0 flex-1 text-[13px] leading-relaxed text-fg-2">
+        <p className="min-w-0 flex-1 text-sm leading-relaxed text-fg-2">
           Accounts and services agents can work in for you. Keys and sign-ins are stored encrypted on this server and
           are never shown again — not here, and not to agents.
         </p>
@@ -274,7 +274,7 @@ export function SettingsConnectors() {
             </div>
           ) : connected.length > 0 && (
             <section aria-labelledby="accounts-title" className="space-y-3">
-              <h3 id="accounts-title" className="pt-2 font-display text-[15px] font-semibold text-fg-0">Accounts</h3>
+              <h3 id="accounts-title" className="pt-2 font-display text-lg font-semibold text-fg-0">Accounts</h3>
               {connected.map(c => (
                 <ConnectorCard
                   key={c.id}

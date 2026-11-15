@@ -29,10 +29,10 @@ export function FlowRunWaitsPanel({
   if (waits.length === 0) return null
   return (
     <div className="space-y-1" data-testid="flow-run-waits">
-      <h4 className="text-[12px] font-semibold uppercase tracking-[0.06em] text-fg-3">Run #{runId} is waiting for</h4>
+      <h4 className="text-xs font-semibold uppercase tracking-eyebrow text-fg-3">Run #{runId} is waiting for</h4>
       <ul className="space-y-2">
         {waits.map(w => (
-          <li key={`${w.node_id}:${w.iteration}:${w.reason}`} className="rounded-md border border-line bg-surface-0 p-3 text-[12px]">
+          <li key={`${w.node_id}:${w.iteration}:${w.reason}`} className="rounded-md border border-line bg-surface-0 p-3 text-xs">
             <WaitRow flowId={flowId} runId={runId} wait={w} onChanged={onChanged} />
           </li>
         ))}
@@ -74,14 +74,14 @@ function WaitRow({ flowId, runId, wait: w, onChanged }: { flowId: number; runId:
   if (w.reason === 'approval') {
     return (
       <div className="space-y-2" data-testid="flow-wait-approval">
-        {header(<ShieldQuestion className="h-4 w-4 text-signal-amber" strokeWidth={1.75} />, 'Owner approval')}
-        {w.approval?.prompt && <p className="text-[13px] text-fg-0">{w.approval.prompt}</p>}
+        {header(<ShieldQuestion className="h-4 w-4 text-signal-amber" />, 'Owner approval')}
+        {w.approval?.prompt && <p className="text-sm text-fg-0">{w.approval.prompt}</p>}
         {w.next && (
           <div className="space-y-1">
             <div className="text-fg-2">
               If approved, <span className="font-mono">{w.next.node_id}</span> ({w.next.kind}{w.next.effect ? `, ${w.next.effect}` : ''}) runs with:
             </div>
-            <pre className="max-h-48 overflow-auto rounded bg-surface-2 p-2 font-mono text-[12px] text-fg-1" data-testid="flow-wait-payload">
+            <pre className="max-h-48 overflow-auto rounded bg-surface-2 p-2 font-mono text-xs text-fg-1" data-testid="flow-wait-payload">
               {JSON.stringify(w.next.input, null, 2)}
             </pre>
           </div>
@@ -89,7 +89,7 @@ function WaitRow({ flowId, runId, wait: w, onChanged }: { flowId: number; runId:
         <div className="flex flex-wrap items-center gap-2">
           <input
             aria-label="Note"
-            className="min-w-[12rem] flex-1 rounded-md border border-line bg-surface-1 px-2 py-1 text-[12px] text-fg-0"
+            className="min-w-[12rem] flex-1 rounded-md border border-line bg-surface-1 px-2 py-1 text-xs text-fg-0"
             placeholder="Note (optional)"
             value={note}
             onChange={e => setNote(e.target.value)}
@@ -99,7 +99,7 @@ function WaitRow({ flowId, runId, wait: w, onChanged }: { flowId: number; runId:
             disabled={busy}
             onClick={() => void act(() => answerFlowApproval(flowId, runId, { decision: 'approve', node_id: w.node_id, iteration: w.iteration, ...(note ? { note } : {}) }))}
           >
-            <CheckCircle2 className="h-3.5 w-3.5" strokeWidth={1.75} /> Approve
+            <CheckCircle2 className="h-3.5 w-3.5" /> Approve
           </Button>
           <Button
             size="sm"
@@ -107,7 +107,7 @@ function WaitRow({ flowId, runId, wait: w, onChanged }: { flowId: number; runId:
             disabled={busy}
             onClick={() => void act(() => answerFlowApproval(flowId, runId, { decision: 'reject', node_id: w.node_id, iteration: w.iteration, ...(note ? { note } : {}) }))}
           >
-            <XCircle className="h-3.5 w-3.5" strokeWidth={1.75} /> Reject
+            <XCircle className="h-3.5 w-3.5" /> Reject
           </Button>
         </div>
         {error && <Alert tone="alarm" title="Not recorded">{error}</Alert>}
@@ -118,7 +118,7 @@ function WaitRow({ flowId, runId, wait: w, onChanged }: { flowId: number; runId:
   if (w.reason === 'unknown_outcome') {
     return (
       <div className="space-y-2" data-testid="flow-wait-unknown">
-        {header(<ShieldQuestion className="h-4 w-4 text-signal-alarm" strokeWidth={1.75} />, 'Confirm: did this step happen?')}
+        {header(<ShieldQuestion className="h-4 w-4 text-signal-alarm" />, 'Confirm: did this step happen?')}
         <p className="text-fg-2">
           The engine stopped while <span className="font-mono">{w.node_id}</span> was in flight. It is not re-run automatically, so it cannot send twice.
         </p>
@@ -137,10 +137,10 @@ function WaitRow({ flowId, runId, wait: w, onChanged }: { flowId: number; runId:
 
   if (w.reason === 'agent') {
     return header(
-      <Bot className="h-4 w-4 text-accent-hover" strokeWidth={1.75} />,
+      <Bot className="h-4 w-4 text-accent-hover" />,
       w.objective_id != null ? (
         <a className="inline-flex items-center gap-1 text-accent-hover hover:underline" href={`/o/${w.objective_id}`}>
-          Agent card #{w.objective_id} <ExternalLink className="h-3 w-3" strokeWidth={1.75} />
+          Agent card #{w.objective_id} <ExternalLink className="h-3 w-3" />
           {w.objective_status && <Badge tone="neutral" mono>{w.objective_status}</Badge>}
         </a>
       ) : 'Agent card',
@@ -149,11 +149,11 @@ function WaitRow({ flowId, runId, wait: w, onChanged }: { flowId: number; runId:
   }
 
   if (w.reason === 'event') {
-    return header(<Radio className="h-4 w-4 text-accent-hover" strokeWidth={1.75} />, <>Event <span className="font-mono">{w.event_name}</span></>, 'info')
+    return header(<Radio className="h-4 w-4 text-accent-hover" />, <>Event <span className="font-mono">{w.event_name}</span></>, 'info')
   }
 
   return header(
-    w.reason === 'duration' ? <Hourglass className="h-4 w-4 text-fg-2" strokeWidth={1.75} /> : <Clock className="h-4 w-4 text-fg-2" strokeWidth={1.75} />,
+    w.reason === 'duration' ? <Hourglass className="h-4 w-4 text-fg-2" /> : <Clock className="h-4 w-4 text-fg-2" />,
     w.expires_at ? <>Resumes {relativeFuture(w.expires_at)}</> : 'Timer',
     'neutral',
   )

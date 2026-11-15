@@ -71,7 +71,7 @@ const LOGO_SLOTS: Array<{ slot: 'wordmark' | 'wordmark-dark' | 'icon' | 'favicon
 
 function HexInput({ value, onChange, disabled, label }: { value: string; onChange: (v: string) => void; disabled?: boolean; label: string }) {
   return (
-    <label className="flex flex-wrap items-center gap-2 text-[13px] text-fg-1">
+    <label className="flex flex-wrap items-center gap-2 text-sm text-fg-1">
       <span className="w-36 shrink-0">{label}</span>
       <input
         type="color"
@@ -85,7 +85,7 @@ function HexInput({ value, onChange, disabled, label }: { value: string; onChang
         value={value}
         onChange={e => onChange(e.target.value)}
         disabled={disabled}
-        className="h-9 w-28 rounded-md border border-line bg-surface-1 px-2 font-mono text-[13px] text-fg-0 disabled:opacity-50"
+        className="h-9 w-28 rounded-md border border-line bg-surface-1 px-2 font-mono text-sm text-fg-0 disabled:opacity-50"
       />
     </label>
   )
@@ -134,7 +134,7 @@ export function BrandingPanel() {
     return (
       <Card>
         <CardBody>
-          <p className="text-[13px] text-fg-2">Only an admin can view or change branding.</p>
+          <p className="text-sm text-fg-2">Only an admin can view or change branding.</p>
         </CardBody>
       </Card>
     )
@@ -267,12 +267,12 @@ export function BrandingPanel() {
   return (
     <div className="flex flex-col gap-4">
       {error && (
-        <div className="rounded-md border border-signal-alarm/30 bg-signal-alarm/10 px-3 py-2 text-[13px] text-signal-alarm">
+        <div className="rounded-md border border-signal-alarm/30 bg-signal-alarm/10 px-3 py-2 text-sm text-signal-alarm">
           {error}
         </div>
       )}
       {notice && !error && (
-        <div className="rounded-md border border-signal-verify/30 bg-signal-verify/10 px-3 py-2 text-[13px] text-signal-verify">
+        <div className="rounded-md border border-signal-verify/30 bg-signal-verify/10 px-3 py-2 text-sm text-signal-verify">
           {notice}
         </div>
       )}
@@ -289,7 +289,7 @@ export function BrandingPanel() {
           }
         />
         <CardBody className="flex flex-col gap-4">
-          <label className="flex flex-wrap items-center gap-2 text-[13px] text-fg-1">
+          <label className="flex flex-wrap items-center gap-2 text-sm text-fg-1">
             <span className="w-36 shrink-0">Product name</span>
             <input
               type="text"
@@ -297,12 +297,12 @@ export function BrandingPanel() {
               onChange={e => setName(e.target.value)}
               disabled={locked.has('name')}
               maxLength={60}
-              className="h-9 w-full min-w-0 rounded-md border border-line bg-surface-1 px-2.5 text-[14px] text-fg-0 disabled:opacity-50 sm:w-64"
+              className="h-9 w-full min-w-0 rounded-md border border-line bg-surface-1 px-2.5 text-base text-fg-0 disabled:opacity-50 sm:w-64"
             />
             {locked.has('name') && <span className="text-fg-3">set via OK_BRAND_NAME env var</span>}
           </label>
 
-          <label className="flex items-start gap-2 text-[13px] text-fg-1">
+          <label className="flex items-start gap-2 text-sm text-fg-1">
             <input
               type="checkbox"
               checked={poweredBy}
@@ -312,7 +312,7 @@ export function BrandingPanel() {
             />
             <span>
               Show a small “Powered by” credit for the underlying platform on the sign-in page
-              <span className="block text-[12px] text-fg-3">Off by default — leave it off for a fully white-labeled install.</span>
+              <span className="block text-xs text-fg-3">Off by default — leave it off for a fully white-labeled install.</span>
             </span>
           </label>
 
@@ -321,9 +321,9 @@ export function BrandingPanel() {
               <div>
                 <div className="flex items-center gap-2">
                   <HexInput label="Accent color" value={tokens.accent} onChange={setAccent} disabled={locked.has('accent')} />
-                  {locked.has('accent') && <span className="text-[12px] text-fg-3">env-locked</span>}
+                  {locked.has('accent') && <span className="text-xs text-fg-3">env-locked</span>}
                 </div>
-                <p className="mt-1.5 text-[12px] text-fg-3 sm:pl-[9.5rem]">
+                <p className="mt-1.5 text-xs text-fg-3 sm:pl-[9.5rem]">
                   Your one brand color — primary buttons, links, focus rings and the selected-item marker.
                   Pages, cards, navigation and text stay neutral in light and dark mode.
                 </p>
@@ -340,9 +340,9 @@ export function BrandingPanel() {
                         disabled={locked.has(f.key)}
                       />
                       {locked.has(f.key) ? (
-                        <span className="text-[12px] text-fg-3">env-locked</span>
+                        <span className="text-xs text-fg-3">env-locked</span>
                       ) : (
-                        <label className="inline-flex items-center gap-1.5 text-[12px] text-fg-2">
+                        <label className="inline-flex items-center gap-1.5 text-xs text-fg-2">
                           <input
                             type="checkbox"
                             checked={auto}
@@ -357,7 +357,7 @@ export function BrandingPanel() {
                 })}
               </div>
               <details className="group rounded-md border border-line-soft bg-surface-0 px-3 py-2">
-                <summary className="cursor-pointer select-none text-[13px] font-medium text-fg-1">
+                <summary className="cursor-pointer select-none py-1.5 text-sm font-medium text-fg-1">
                   Advanced — status colors
                   <span className="ml-2 font-normal text-fg-3">semantic, not brand; most installs never change these</span>
                 </summary>
@@ -365,7 +365,7 @@ export function BrandingPanel() {
                   {SEMANTIC_FIELDS.map(f => (
                     <div key={f.key} className="flex items-center gap-2">
                       <HexInput label={f.label} value={tokens[f.key]} onChange={v => setToken(f.key, v)} disabled={locked.has(f.key)} />
-                      {locked.has(f.key) && <span className="text-[12px] text-fg-3">env-locked</span>}
+                      {locked.has(f.key) && <span className="text-xs text-fg-3">env-locked</span>}
                     </div>
                   ))}
                 </div>
@@ -388,11 +388,13 @@ export function BrandingPanel() {
               >
                 {assetUrl[slot]
                   ? <img src={assetUrl[slot]!} alt="" className="max-h-10 max-w-20 object-contain" />
-                  : <span className="text-[12px] text-fg-3">not set</span>}
+                  // The tile is a fixed light/dark preview background, so its hint
+                  // text is fixed too (fg-3 vanished on white in dark mode).
+                  : <span className="text-xs" style={{ color: slot === 'wordmark-dark' ? '#8b949e' : '#6b7280' }}>not set</span>}
               </div>
               <div className="min-w-0 flex-1">
-                <div className="text-[13px] text-fg-0">{label}</div>
-                <div className="text-[12px] text-fg-3">{help}</div>
+                <div className="text-sm text-fg-0">{label}</div>
+                <div className="text-xs text-fg-3">{help}</div>
               </div>
               <label className="shrink-0">
                 <input
@@ -406,7 +408,7 @@ export function BrandingPanel() {
                     e.target.value = ''
                   }}
                 />
-                <span className="inline-flex h-8 cursor-pointer items-center rounded-md border border-line bg-surface-1 px-3 text-[12.5px] text-fg-1 hover:border-line-strong hover:bg-surface-3">
+                <span className="inline-flex h-8 cursor-pointer items-center rounded-md border border-line bg-surface-1 px-3 text-sm text-fg-1 hover:border-line-strong hover:bg-surface-3">
                   {uploading === slot ? 'Uploading…' : 'Upload'}
                 </span>
               </label>
@@ -419,23 +421,23 @@ export function BrandingPanel() {
       <Card>
         <CardHeader title="Set this up with your coding agent" eyebrow="Copy-paste prompt" />
         <CardBody className="flex flex-col gap-3">
-          <label className="flex flex-wrap items-center gap-2 text-[13px] text-fg-1">
+          <label className="flex flex-wrap items-center gap-2 text-sm text-fg-1">
             <span className="shrink-0">Company website</span>
             <input
               type="url"
               placeholder="https://acme.com"
               value={websiteUrl}
               onChange={e => setWebsiteUrl(e.target.value)}
-              className="h-9 w-full min-w-0 rounded-md border border-line bg-surface-1 px-2.5 text-[14px] text-fg-0 sm:w-72"
+              className="h-9 w-full min-w-0 rounded-md border border-line bg-surface-1 px-2.5 text-base text-fg-0 sm:w-72"
             />
           </label>
           <div className="flex items-start gap-2">
-            <pre className="flex-1 whitespace-pre-wrap rounded-md border border-line bg-surface-1 p-3 font-mono text-[12px] text-fg-1">
+            <pre className="flex-1 whitespace-pre-wrap rounded-md border border-line bg-surface-1 p-3 font-mono text-xs text-fg-1">
               {brandingAgentPrompt(websiteUrl)}
             </pre>
             <CopyButton size="sm" value={brandingAgentPrompt(websiteUrl)} />
           </div>
-          <p className="text-[12px] text-fg-3">
+          <p className="text-xs text-fg-3">
             Paste this into Claude Code (or any coding agent) pointed at this repo. Full reference: docs/branding.md.
             Using a custom domain? See docs/custom-domain.md.
           </p>
@@ -466,15 +468,15 @@ function LivePreview({ tokens, name, branding }: { tokens: BrandTokens; name: st
             <BrandLogo branding={draft} size="md" />
             <Button variant="primary" size="sm">Primary action</Button>
             <Button variant="secondary" size="sm">Secondary</Button>
-            <a href="#preview" onClick={e => e.preventDefault()} className="text-[13px] font-medium text-accent hover:underline">A link</a>
+            <a href="#preview" onClick={e => e.preventDefault()} className="text-sm font-medium text-accent hover:underline">A link</a>
           </div>
           <div className="flex flex-wrap items-center gap-2">
-            <span className="rounded-full border border-success/30 bg-success/10 px-2 py-0.5 text-[12px] font-medium text-success">Done</span>
-            <span className="rounded-full border border-warning/30 bg-warning/10 px-2 py-0.5 text-[12px] font-medium text-warning">In review</span>
-            <span className="rounded-full border border-danger/30 bg-danger/10 px-2 py-0.5 text-[12px] font-medium text-danger">Blocked</span>
-            <span className="rounded-full border border-info/30 bg-info/10 px-2 py-0.5 text-[12px] font-medium text-info">Working</span>
-            <span className="rounded-md border border-line bg-surface-selected px-2 py-0.5 text-[12px] font-medium text-fg-0 shadow-[inset_2px_0_0_var(--accent-text)]">Selected row</span>
-            <span className="rounded-full border border-[color:var(--accent-line)] bg-[var(--accent-tint)] px-2 py-0.5 text-[12px] font-medium text-accent">Needs you</span>
+            <span className="rounded-full border border-success/30 bg-success/10 px-2 py-0.5 text-xs font-medium text-success">Done</span>
+            <span className="rounded-full border border-warning/30 bg-warning/10 px-2 py-0.5 text-xs font-medium text-warning">In review</span>
+            <span className="rounded-full border border-danger/30 bg-danger/10 px-2 py-0.5 text-xs font-medium text-danger">Blocked</span>
+            <span className="rounded-full border border-info/30 bg-info/10 px-2 py-0.5 text-xs font-medium text-info">Working</span>
+            <span className="rounded-md border border-line bg-surface-selected px-2 py-0.5 text-xs font-medium text-fg-0 shadow-[inset_2px_0_0_var(--accent-text)]">Selected row</span>
+            <span className="rounded-full border border-[color:var(--accent-line)] bg-[var(--accent-tint)] px-2 py-0.5 text-xs font-medium text-accent">Needs you</span>
           </div>
         </div>
       </CardBody>

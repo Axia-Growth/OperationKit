@@ -57,12 +57,12 @@ export function SaveAnswerButton({
           {saved ? 'Saved to wiki' : 'Save to wiki'}
         </Button>
         {saved ? (
-          <span className="flex min-w-0 flex-wrap items-center gap-2 text-[12.5px] text-fg-2" aria-live="polite">
+          <span className="flex min-w-0 flex-wrap items-center gap-2 text-sm text-fg-2" aria-live="polite">
             Saved as <span className="font-medium text-fg-0">{saved.title}</span>
             <Button size="sm" variant="ghost" className="min-h-[44px] sm:min-h-[32px]" onClick={() => onOpen(saved.rel)}>Open</Button>
           </span>
         ) : (
-          <span className="text-[12px] text-fg-3">Keeps this answer as a page, linked from the pages it used.</span>
+          <span className="text-xs text-fg-3">Keeps this answer as a page, linked from the pages it used.</span>
         )}
       </div>
       {error && <Alert tone="alarm" title="Couldn't save the answer">{error}</Alert>}

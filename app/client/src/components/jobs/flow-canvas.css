@@ -1,0 +1,28 @@
+/* React Flow chrome in our tokens, so Controls, MiniMap, Background and the
+   attribution follow light/dark (obj 900819, polish F3 #900804). */
+.ok-flow .react-flow {
+  --xy-background-color: var(--surface-0);
+  --xy-background-pattern-dots-color-default: var(--line);
+  --xy-edge-stroke-default: var(--line-strong);
+  --xy-edge-stroke-selected-default: var(--accent);
+  --xy-connectionline-stroke-default: var(--line-strong);
+  --xy-minimap-background-color-default: var(--surface-1);
+  --xy-minimap-mask-background-color-default: color-mix(in srgb, var(--surface-3) 60%, transparent);
+  --xy-minimap-mask-stroke-color-default: var(--line);
+  --xy-minimap-node-background-color-default: var(--surface-4);
+  --xy-minimap-node-stroke-color-default: transparent;
+  --xy-controls-button-background-color-default: var(--surface-1);
+  --xy-controls-button-background-color-hover-default: var(--surface-3);
+  --xy-controls-button-color-default: var(--fg-1);
+  --xy-controls-button-color-hover-default: var(--fg-0);
+  --xy-controls-button-border-color-default: var(--line);
+  --xy-controls-box-shadow-default: var(--shadow-pop);
+  --xy-attribution-background-color-default: transparent;
+}
+.ok-flow .react-flow__attribution a {
+  color: var(--fg-3);
+  font-size: 12px;
+}
+.ok-flow .react-flow__controls-button svg {
+  fill: currentColor;
+}

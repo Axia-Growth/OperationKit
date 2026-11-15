@@ -95,6 +95,7 @@ vi.mock('../lib/mermaid', () => ({
 }))
 
 const { JobsBoard } = await import('./JobsBoard')
+const { Toaster, toast } = await import('./ui/Toaster')
 
 ;(globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = false
 
@@ -221,5 +222,60 @@ describe('JobsBoard — workflows (B4)', () => {
     runNow.click()
     await settle()
     expect(flowRunNow).toHaveBeenCalledWith(12)
+  })
+})
+
+/* obj 900819 — Canvas / Mermaid is one choice: a ui/SegmentedControl radio
+   group (UI SDK) instead of two aria-pressed buttons. */
+describe('workflow chart view switch', () => {
+  it('is a named radio group with one tab stop; ArrowRight switches to the Mermaid chart', async () => {
+    window.history.replaceState(null, '', '/jobs?view=workflows&flow=12')
+    await mount()
+    const detail = container.querySelector('[data-testid="flow-detail"]')!
+    const group = detail.querySelector('[role="radiogroup"][aria-label="Chart view"]') as HTMLElement
+    expect(group).not.toBeNull()
+    const radios = [...group.querySelectorAll<HTMLElement>('[role="radio"]')]
+    expect(radios.map(r => r.textContent)).toEqual(['Canvas', 'Mermaid'])
+    expect(radios[0].getAttribute('aria-checked')).toBe('true')
+    expect(radios.filter(r => r.tabIndex === 0)).toHaveLength(1)
+    radios[0].focus()
+    radios[0].dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true, cancelable: true }))
+    await settle()
+    expect(radios[1].getAttribute('aria-checked')).toBe('true')
+    expect(document.activeElement).toBe(radios[1])
+    expect(container.querySelector('[data-testid="flow-diagram"]')?.textContent).toBe(`RENDERED:${MERMAID}`)
+  })
+})
+
+/* obj 900819 — Run now feedback is a ui/Toaster toast (UI SDK, announced in
+   a live region) naming the job, not a bare inline span. */
+describe('Run now feedback toasts', () => {
+  afterEach(() => { toast.dismiss() })
+
+  const region = () => document.querySelector('[data-slot="toast-region"]') as HTMLElement
+  const runNowIn = (scope: ParentNode) =>
+    Array.from(scope.querySelectorAll('button')).find(b => b.textContent?.includes('Run now')) as HTMLButtonElement
+
+  it('a workflow Run now toasts "Queued: <workflow>" in the named status region', async () => {
+    window.history.replaceState(null, '', '/jobs?view=workflows&flow=12')
+    flushSync(() => root.render(<><JobsBoard workspace={'acme' as never} /><Toaster /></>))
+    await settle()
+    runNowIn(container.querySelector('[data-testid="flow-detail"]')!).click()
+    await settle()
+    expect(flowRunNow).toHaveBeenCalledWith(12)
+    expect(region().getAttribute('aria-label')).toBe('Status messages')
+    const t = region().querySelector('[data-slot="toast"]')!
+    expect(t.textContent).toContain('Queued: Daily booking triage')
+    expect(t.getAttribute('data-type')).toBe('success')
+  })
+
+  it('a routine Run now toasts "Started: <routine>"', async () => {
+    window.history.replaceState(null, '', '/jobs?view=runs')
+    flushSync(() => root.render(<><JobsBoard workspace={'acme' as never} /><Toaster /></>))
+    await settle()
+    const row = Array.from(container.querySelectorAll('tr')).find(tr => tr.textContent?.includes('Nightly agent job') && runNowIn(tr))!
+    runNowIn(row).click()
+    await settle()
+    expect(region().querySelector('[data-slot="toast"]')?.textContent).toContain('Started: Nightly agent job')
   })
 })

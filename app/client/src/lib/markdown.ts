@@ -30,7 +30,7 @@ export function renderMarkdown(text: string): string {
       }).join('')
       codeBlocks.push(
         `<div class="relative group my-2">` +
-        `<button data-copy-code class="absolute top-1.5 right-1.5 rounded-xs px-1.5 py-0.5 text-[12px] text-fg-3 bg-surface-3 hover:bg-surface-4 hover:text-fg-1 opacity-0 group-hover:opacity-100 transition-opacity" title="Copy">Copy</button>` +
+        `<button data-copy-code class="absolute top-1.5 right-1.5 rounded-xs px-1.5 py-0.5 text-xs text-fg-3 bg-surface-3 hover:bg-surface-4 hover:text-fg-1 opacity-0 group-hover:opacity-100 transition-opacity" title="Copy">Copy</button>` +
         `<pre class="bg-surface-1 rounded-md p-2 pr-14 text-xs overflow-x-auto border border-line-soft font-mono">${rows}</pre>` +
         `</div>`
       )
@@ -38,7 +38,7 @@ export function renderMarkdown(text: string): string {
     }
     codeBlocks.push(
       `<div class="relative group my-2">` +
-      `<button data-copy-code class="absolute top-1.5 right-1.5 rounded-xs px-1.5 py-0.5 text-[12px] text-fg-3 bg-surface-3 hover:bg-surface-4 hover:text-fg-1 opacity-0 group-hover:opacity-100 transition-opacity" title="Copy">Copy</button>` +
+      `<button data-copy-code class="absolute top-1.5 right-1.5 rounded-xs px-1.5 py-0.5 text-xs text-fg-3 bg-surface-3 hover:bg-surface-4 hover:text-fg-1 opacity-0 group-hover:opacity-100 transition-opacity" title="Copy">Copy</button>` +
       `<pre class="bg-surface-1 rounded-md p-3 pr-14 text-xs overflow-x-auto border border-line-soft"><code class="font-mono text-fg-0">${escaped}</code></pre>` +
       `</div>`
     )
@@ -50,9 +50,9 @@ export function renderMarkdown(text: string): string {
   html = html.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;')
 
   // Headers — §07 prose hierarchy
-  html = html.replace(/^#### (.+)$/gm, '<h4 class="text-xs font-semibold uppercase tracking-wider text-fg-2 mt-3 mb-1">$1</h4>')
-  html = html.replace(/^### (.+)$/gm, '<h3 class="text-sm font-semibold text-fg-0 mt-3 mb-1">$1</h3>')
-  html = html.replace(/^## (.+)$/gm, '<h2 class="text-base font-semibold text-fg-0 mt-4 mb-1.5">$1</h2>')
+  html = html.replace(/^#### (.+)$/gm, '<h4 class="text-xs font-semibold uppercase tracking-eyebrow text-fg-2 mt-3 mb-1">$1</h4>')
+  html = html.replace(/^### (.+)$/gm, '<h3 class="text-base font-semibold text-fg-0 mt-3 mb-1">$1</h3>')
+  html = html.replace(/^## (.+)$/gm, '<h2 class="text-lg font-semibold text-fg-0 mt-4 mb-1.5">$1</h2>')
   html = html.replace(/^# (.+)$/gm, '<h1 class="text-lg font-semibold text-fg-0 mt-4 mb-2">$1</h1>')
 
   // Horizontal rule
@@ -68,7 +68,7 @@ export function renderMarkdown(text: string): string {
       const cells = row.split('|').filter((_, ci, arr) => ci > 0 && ci < arr.length - 1)
       const tag = i === 0 && isSep ? 'th' : 'td'
       const cls = i === 0 && isSep
-        ? 'text-left text-[12px] font-medium uppercase tracking-wider text-fg-2 px-2 py-1.5 border-b border-line'
+        ? 'text-left text-xs font-medium uppercase tracking-eyebrow text-fg-2 px-2 py-1.5 border-b border-line'
         : 'text-left text-xs text-fg-1 px-2 py-1 border-b border-line-soft'
       return `<tr>${cells.map(c => `<${tag} class="${cls}">${c.trim()}</${tag}>`).join('')}</tr>`
     }).join('')
@@ -90,7 +90,7 @@ export function renderMarkdown(text: string): string {
   })
 
   // Inline code — mono signal on quiet surface, neutral fg
-  html = html.replace(/`([^`]+)`/g, '<code class="bg-surface-3 rounded-xs px-1.5 py-0.5 text-[12px] font-mono text-fg-0">$1</code>')
+  html = html.replace(/`([^`]+)`/g, '<code class="bg-surface-3 rounded-xs px-1.5 py-0.5 text-xs font-mono text-fg-0">$1</code>')
 
   // Bold + italic
   html = html.replace(/\*\*\*([^*]+)\*\*\*/g, '<strong class="text-fg-0"><em>$1</em></strong>')

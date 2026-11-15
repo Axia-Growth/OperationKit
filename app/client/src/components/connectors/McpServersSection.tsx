@@ -12,6 +12,7 @@ import { Alert, Badge, Button, Card, EmptyState, Skeleton, useConfirm } from '..
 import { ConnectMcpServerDialog } from './ConnectMcpServerDialog'
 import { McpToolList } from './McpToolList'
 import { authLabel, errorHint, errorTitle, mcpOAuthReturnCopy, serverInfoLine, statusBadge } from './mcpServerCopy'
+import { Select } from '../ui/Select'
 
 function errText(err: unknown, fallback: string): string {
   if (err instanceof ApiError) return (err.body as { error?: string } | null)?.error || err.message || fallback
@@ -100,13 +101,13 @@ function ServerCard({
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div className="min-w-0">
             <div className="flex flex-wrap items-center gap-2">
-              <h4 className="text-[14.5px] font-semibold text-fg-0">{s.name}</h4>
+              <h4 className="text-base font-semibold text-fg-0">{s.name}</h4>
               <Badge tone={badge.tone}>{badge.label}</Badge>
               <Badge tone="neutral">{authLabel(s)}</Badge>
               {s.detected_transport && <Badge tone="neutral">{s.detected_transport === 'sse' ? 'SSE' : 'Streamable HTTP'}</Badge>}
             </div>
-            <div className="mt-1 truncate font-mono text-[12px] text-fg-3" title={s.url}>{s.url}</div>
-            <div className="mt-1.5 text-[12.5px] text-fg-2">
+            <div className="mt-1 truncate font-mono text-xs text-fg-3" title={s.url}>{s.url}</div>
+            <div className="mt-1.5 text-sm text-fg-2">
               {serverInfoLine(s)}
               <span className="text-fg-3"> · tools appear as <code className="font-mono">mcp__{s.slug}__…</code></span>
             </div>
@@ -134,7 +135,7 @@ function ServerCard({
             onSubmit={e => { e.preventDefault(); if (newKey.trim()) void replaceKey() }}
           >
             <div className="min-w-[240px] flex-1">
-              <label htmlFor={`mcp-key-${s.id}`} className="mb-1 block text-[12px] font-medium text-fg-1">New API key ({s.auth_header_name ?? 'Authorization'})</label>
+              <label htmlFor={`mcp-key-${s.id}`} className="mb-1 block text-xs font-medium text-fg-1">New API key ({s.auth_header_name ?? 'Authorization'})</label>
               <input
                 id={`mcp-key-${s.id}`}
                 type="password"
@@ -142,7 +143,7 @@ function ServerCard({
                 spellCheck={false}
                 value={newKey}
                 onChange={e => setNewKey(e.target.value)}
-                className="min-h-[44px] w-full rounded-md border border-line bg-surface-1 px-3 font-mono text-[13px] text-fg-0 outline-none hover:border-line-strong focus:border-accent focus-visible:ring-2 focus-visible:ring-accent/40 sm:min-h-[36px]"
+                className="min-h-[44px] w-full rounded-md border border-line bg-surface-1 px-3 font-mono text-sm text-fg-0 outline-none hover:border-line-strong focus:border-accent focus-visible:ring-2 focus-visible:ring-accent/40 sm:min-h-[36px]"
               />
             </div>
             <Button type="submit" size="sm" variant="primary" loading={busy === 'key'} disabled={!newKey.trim()}>Save and test</Button>
@@ -164,7 +165,7 @@ function ServerCard({
           </div>
         )}
         {!test && s.last_error && s.status !== 'connected' && (
-          <p className="mt-2 text-[12.5px] leading-relaxed text-signal-alarm">{s.last_error}</p>
+          <p className="mt-2 text-sm leading-relaxed text-signal-alarm">{s.last_error}</p>
         )}
       </div>
 
@@ -174,7 +175,7 @@ function ServerCard({
             type="button"
             aria-expanded={showTools}
             onClick={() => setShowTools(v => !v)}
-            className="flex min-h-[44px] w-full items-center justify-between gap-3 px-4 py-2 text-left text-[12.5px] font-medium text-fg-1 transition-colors duration-fast ease-out hover:bg-surface-3 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent/50 sm:px-5"
+            className="flex min-h-[44px] w-full items-center justify-between gap-3 px-4 py-2 text-left text-sm font-medium text-fg-1 transition-colors duration-fast ease-out hover:bg-surface-3 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent/50 sm:px-5"
           >
             <span>Tools ({s.tools.length})</span>
             <span className="text-fg-3">{showTools ? 'Hide' : 'Show'}</span>
@@ -273,21 +274,20 @@ export function McpServersSection({
     <section aria-labelledby="mcp-servers-title" className="space-y-3" data-testid="mcp-servers-section">
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div className="min-w-0">
-          <h3 id="mcp-servers-title" className="font-display text-[15px] font-semibold text-fg-0">MCP servers</h3>
-          <p className="mt-0.5 text-[12.5px] leading-relaxed text-fg-2">
+          <h3 id="mcp-servers-title" className="font-display text-lg font-semibold text-fg-0">MCP servers</h3>
+          <p className="mt-0.5 text-sm leading-relaxed text-fg-2">
             Remote MCP servers give agents and chat bots extra tools. Each server belongs to one workspace.
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <label className="sr-only" htmlFor="mcp-ws-picker">Workspace</label>
-          <select
+          <Select
             id="mcp-ws-picker"
             value={workspace}
-            onChange={e => setWorkspace(e.target.value)}
-            className="min-h-[36px] rounded-md border border-line bg-surface-1 px-2.5 text-[12.5px] text-fg-1 outline-none hover:border-line-strong focus-visible:ring-2 focus-visible:ring-accent/40"
+            onChange={v => setWorkspace(v)}
           >
             {workspaces.map(w => <option key={w.value} value={w.value}>{w.label}</option>)}
-          </select>
+          </Select>
           {isAdmin && showConnectButton && (
             <Button variant="primary" size="sm" onClick={() => setDialogOpen(true)} disabled={!workspace}>
               Connect an MCP server
@@ -315,7 +315,7 @@ export function McpServersSection({
             description={isAdmin ? 'Paste a remote MCP server URL or pick one from the catalog.' : 'An admin can connect one.'}
           />
         ) : (
-          <p className="rounded-lg border border-dashed border-line px-4 py-3 text-[12.5px] text-fg-3">
+          <p className="rounded-lg border border-dashed border-line px-4 py-3 text-sm text-fg-3">
             No MCP servers connected in this workspace{isAdmin ? ' — add one from New Integration.' : '.'}
           </p>
         )

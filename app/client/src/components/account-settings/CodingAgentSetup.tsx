@@ -17,7 +17,7 @@ import { useMemo, useState } from 'react'
 // with only Modal/useConfirm (e.g. AccountSettings.google.test.tsx) still render this card.
 import { Card, CardHeader, CardBody } from '../ui/Card'
 import { CopyButton } from '../ui/CopyButton'
-import { Tabs } from '../ui/Tabs'
+import { SegmentedControl } from '../ui/SegmentedControl'
 import { useBranding } from '../../hooks/useBranding'
 
 export type CodingAgent = 'claude-code' | 'cursor' | 'codex' | 'other'
@@ -108,7 +108,7 @@ export function CodingAgentSetup() {
     <Card inset className="mt-6" aria-labelledby="coding-agent-setup-heading" data-testid="coding-agent-setup">
       <CardHeader title="Connect a coding agent" eyebrow="Quick setup" />
       <CardBody className="space-y-4">
-        <ol className="max-w-prose list-decimal space-y-1 pl-5 text-[12.5px] leading-relaxed text-fg-2">
+        <ol className="max-w-prose list-decimal space-y-1 pl-5 text-sm leading-relaxed text-fg-2">
           <li>
             Create an agent key in <span className="text-fg-1">Agent keys</span> above and set it in your terminal as{' '}
             <code className="font-mono text-fg-1">export {KEY_ENV}=cc_live_…</code>
@@ -116,26 +116,27 @@ export function CodingAgentSetup() {
           <li>Copy this prompt and paste it into {agentLabel}. It sets itself up and checks the connection.</li>
         </ol>
 
-        <Tabs
+        <SegmentedControl
           items={CODING_AGENTS.map(a => ({ key: a.key, label: a.label }))}
           value={agent}
           onChange={k => setAgent(k as CodingAgent)}
+          label="Coding agent"
         />
 
         <div className="space-y-2">
           <div className="flex items-center justify-between gap-2">
-            <h3 id="coding-agent-setup-heading" className="text-[13px] font-semibold text-fg-0">
+            <h3 id="coding-agent-setup-heading" className="text-sm font-semibold text-fg-0">
               Setup prompt for {agentLabel}
             </h3>
             <CopyButton value={prompt} label="Copy prompt" />
           </div>
           <pre
             data-testid="coding-agent-prompt"
-            className="max-h-80 max-w-full overflow-auto whitespace-pre-wrap rounded-md border border-line bg-surface-1 p-3 font-mono text-[12px] leading-relaxed text-fg-1"
+            className="max-h-80 max-w-full overflow-auto whitespace-pre-wrap rounded-md border border-line bg-surface-1 p-3 font-mono text-xs leading-relaxed text-fg-1"
           >
             <code>{prompt}</code>
           </pre>
-          <p className="text-[12px] text-fg-3">
+          <p className="text-xs text-fg-3">
             The prompt never contains your key. It reads <code className="font-mono">{KEY_ENV}</code> from your
             environment.
           </p>

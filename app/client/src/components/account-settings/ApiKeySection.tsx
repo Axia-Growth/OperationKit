@@ -97,7 +97,7 @@ export function ApiKeySection() {
     <section className="rounded-lg border border-border bg-surface-raised p-5">
       <div className="mb-4 flex items-start justify-between gap-4">
         <div>
-          <h2 className="text-base font-semibold text-fg-0">API key</h2>
+          <h2 className="text-lg font-semibold text-fg-0">API key</h2>
           <p className="mt-1 text-xs text-fg-3">
             For your own scripts: full REST access that acts as you everywhere. Paste as{' '}
             <span className="font-mono">Authorization: Bearer …</span>. We only show the full key once. Do not give it
@@ -112,11 +112,11 @@ export function ApiKeySection() {
       </div>
 
       {error && (
-        <div className="mb-3 rounded bg-signal-alarm/10 px-3 py-2 text-sm text-signal-alarm">{error}</div>
+        <div className="mb-3 rounded bg-signal-alarm/10 px-3 py-2 text-base text-signal-alarm">{error}</div>
       )}
 
       {loading ? (
-        <div className="text-sm text-fg-3">Loading…</div>
+        <div className="text-base text-fg-3">Loading…</div>
       ) : (
         <div className="space-y-3">
           {plaintext && (
@@ -126,7 +126,7 @@ export function ApiKeySection() {
                 <input
                   readOnly
                   value={plaintext}
-                  className="w-full rounded border border-accent/40 bg-surface px-2.5 py-2 font-mono text-sm text-fg-0"
+                  className="w-full rounded border border-accent/40 bg-surface px-2.5 py-2 font-mono text-base text-fg-0"
                 />
                 <Button variant="primary" className="shrink-0" onClick={() => void copy()}>
                   {copied ? 'Copied' : 'Copy'}
@@ -136,13 +136,13 @@ export function ApiKeySection() {
           )}
 
           {!plaintext && configured && (
-            <p className="font-mono text-sm text-fg-1">cc_live_••••••••{summary!.last4}</p>
+            <p className="font-mono text-base text-fg-1">cc_live_••••••••{summary!.last4}</p>
           )}
           {configured && summary?.created_at && (
-            <p className="text-[12px] text-fg-3">Created {fmtDate(summary.created_at)}</p>
+            <p className="text-xs text-fg-3">Created {fmtDate(summary.created_at)}</p>
           )}
           {!configured && !plaintext && (
-            <p className="text-sm text-fg-2">No key yet. Generate one, copy it, paste it into Grok Bot.</p>
+            <p className="text-base text-fg-2">No key yet. Generate one, copy it, paste it into Grok Bot.</p>
           )}
 
           <div className="flex flex-wrap gap-2 pt-1">
@@ -150,7 +150,7 @@ export function ApiKeySection() {
               type="button"
               onClick={() => void generate()}
               disabled={busy}
-              className="rounded-md border border-border px-3 py-1.5 text-sm text-fg-1 transition-colors duration-fast ease-out hover:bg-surface-3 hover:text-fg-0 disabled:opacity-50"
+              className="rounded-md border border-border px-3 py-1.5 text-base text-fg-1 transition-colors duration-fast ease-out hover:bg-surface-3 hover:text-fg-0 disabled:opacity-50"
             >
               {busy ? 'Working…' : configured ? 'Generate new key' : 'Generate API key'}
             </button>
@@ -159,7 +159,7 @@ export function ApiKeySection() {
                 type="button"
                 onClick={() => void revoke()}
                 disabled={busy}
-                className="rounded-md border border-signal-alarm/40 px-3 py-1.5 text-sm text-signal-alarm transition-colors duration-fast ease-out hover:bg-signal-alarm/10 disabled:opacity-50"
+                className="rounded-md border border-signal-alarm/40 px-3 py-1.5 text-base text-signal-alarm transition-colors duration-fast ease-out hover:bg-signal-alarm/10 disabled:opacity-50"
               >
                 Revoke
               </button>

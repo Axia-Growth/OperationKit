@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useId, useRef, useState } from 'react'
 import { Save, X } from 'lucide-react'
 import { api } from '../lib/api'
+import { Modal } from './ui/Modal'
 import { useCreateBlockNote } from '@blocknote/react'
 import { BlockNoteView } from '@blocknote/mantine'
 import { BlockNoteSchema, defaultBlockSpecs, type PartialBlock } from '@blocknote/core'
@@ -114,38 +115,37 @@ export function FileEditorOverlay({ filePath, onClose }: FileEditorOverlayProps)
     return () => { if (saveTimer.current) clearTimeout(saveTimer.current) }
   }, [file?.path])
 
-  // Close on Escape
-  useEffect(() => {
-    const handler = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose() }
-    window.addEventListener('keydown', handler)
-    return () => window.removeEventListener('keydown', handler)
-  }, [onClose])
-
+  // Escape, a press on the backdrop, the focus trap and focus return all come
+  // from ui/Modal (UI SDK Dialog). Opened from inside another dialog (the
+  // session viewer, the planning panel) it stacks on top, so Escape closes only
+  // this overlay.
+  const titleId = useId()
   const displayPath = filePath.replace(/^\/home\/operator\//, '~/')
 
   return (
-    <div className="fixed inset-0 z-[60] flex items-center justify-center sm:p-6">
-      {/* Backdrop */}
-      <div className="absolute inset-0 bg-[var(--scrim)]" onClick={onClose} />
-
-      {/* Modal — full-sheet on mobile, centered card on desktop */}
-      <div className="cc-drawer-in relative z-10 flex flex-col w-full h-full sm:h-[85vh] sm:w-[min(960px,92vw)] sm:rounded-lg border border-line bg-surface-0 shadow-float overflow-hidden">
+    <Modal
+      open
+      onClose={onClose}
+      labelledBy={titleId}
+      // Full-sheet on mobile, centered card on desktop.
+      panelClassName="flex flex-col inset-0 m-0 h-full max-h-none w-full max-w-none rounded-none overflow-x-hidden overflow-y-hidden bg-surface-0 sm:m-auto sm:h-[85vh] sm:w-[min(960px,92vw)] sm:rounded-lg"
+    >
         {/* Header — quiet meta line, no decorative chrome */}
         <div className="flex items-center justify-between gap-2 border-b border-line bg-surface-1 px-4 py-2">
           <div className="min-w-0 truncate text-xs">
-            <span className="font-mono text-fg-0">{displayPath}</span>
+            <span id={titleId} className="font-mono text-fg-0">{displayPath}</span>
           </div>
           <div className="flex items-center gap-2 shrink-0">
             {file && !file.writable && (
-              <span className="rounded-xs bg-status-review/15 px-2 py-0.5 text-[12px] font-medium uppercase tracking-wider text-status-review">
+              <span className="rounded-xs bg-status-review/15 px-2 py-0.5 text-xs font-medium uppercase tracking-eyebrow text-status-review">
                 Read-only
               </span>
             )}
-            {saveState === 'saving' && <span className="text-[12px] text-fg-3">Saving…</span>}
-            {saveState === 'saved' && <span className="text-[12px] text-status-done">Saved</span>}
-            {saveState === 'error' && <span className="text-[12px] text-flag-blocked" title={saveError ?? ''}>Save failed</span>}
+            {saveState === 'saving' && <span className="text-xs text-fg-3">Saving…</span>}
+            {saveState === 'saved' && <span className="text-xs text-status-done">Saved</span>}
+            {saveState === 'error' && <span className="text-xs text-flag-blocked" title={saveError ?? ''}>Save failed</span>}
             {pendingMarkdown !== null && saveState === 'idle' && file?.writable && (
-              <span className="text-[12px] text-fg-3">Unsaved</span>
+              <span className="text-xs text-fg-3">Unsaved</span>
             )}
             <button
               onClick={handleManualSave}
@@ -167,16 +167,15 @@ export function FileEditorOverlay({ filePath, onClose }: FileEditorOverlayProps)
 
         {/* Body */}
         {loading && (
-          <div className="flex flex-1 items-center justify-center text-sm text-fg-3">Loading…</div>
+          <div className="flex flex-1 items-center justify-center text-base text-fg-3">Loading…</div>
         )}
         {error && (
-          <div className="flex flex-1 items-center justify-center text-sm text-flag-blocked">{error}</div>
+          <div className="flex flex-1 items-center justify-center text-base text-flag-blocked">{error}</div>
         )}
         {file && !loading && (
           <EditorPane key={file.path} file={file} onContentChange={handleContentChange} />
         )}
-      </div>
-    </div>
+    </Modal>
   )
 }
 

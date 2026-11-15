@@ -4,6 +4,7 @@
  *
  * `@operationkit/shared` still resolves to types.ts, which re-exports this.
  */
+import type { DelegationStamp } from './delegation.js'
 // ── Enums & Literals ──
 
 // `review` is the human review gate, always positioned after `ai_review`. It
@@ -574,12 +575,16 @@ export interface SessionMessage {
 
 /** Server-derived chat-message provenance (obj 718944). */
 export interface MessageSender {
-  kind: 'owner' | 'member' | 'agent' | 'api' | 'system'
+  /** obj 900839: 'delegated' = a bot message the server matched to an active
+   *  owner grant for ONE gated action (see `delegation`). */
+  kind: 'owner' | 'member' | 'agent' | 'api' | 'system' | 'delegated'
   /** True only for a human typing in the web UI (cookie-authenticated). */
   verified: boolean
   /** Display label: user display name, agent key label, or system source. */
   label: string
   username: string | null
+  /** obj 900839: present only when kind = 'delegated'. */
+  delegation?: DelegationStamp
 }
 
 /** One secret a worker asked the owner for (obj 718944). */

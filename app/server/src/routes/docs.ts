@@ -5,9 +5,11 @@ import { type AuthRequest } from '../middleware/auth.js'
 import { sessionFileWorkspace, sessionOrRequireAuth } from '../middleware/session-file-access.js'
 import { getUserWorkspaces } from '../middleware/workspace.js'
 import { getDocRoots, getWorkspaceSlugs } from '../services/workspaces.js'
-import { searchKnowledge } from '../services/knowledge-search.js'
+import { parseSearchMode, relatedDocs, searchKnowledgeBase } from '../services/kb-semantic/search.js'
+import { noteKbWrite, semanticAvailability } from '../services/kb-semantic/service.js'
 import { allWorkspaceKbRoots, knowledgeBaseRoot, workspaceKbRoot } from '../services/doc-ingest/kb-paths.js'
 import { pathWorkspaceResolver, workspaceOfPath, type PathWorkspace } from '../lib/doc-path-workspace.js'
+import { noteKbFileWritten } from '../services/kb-wiki/graph-sync.js'
 
 const router = Router()
 // obj 900204: card sessions authenticate with their objective-scoped
@@ -241,17 +243,25 @@ function realDeep(p: string): string | null {
  * realpath'd — matching what services/file-access.ts already does for
  * /api/files — so a link that leaves the root is rejected.
  */
-function resolveUnder(roots: string[], requested: string): string | null {
-  if (!requested) return null
+function resolveUnder(roots: string[], requested: unknown): string | null {
+  // obj 900838 (CodeQL js/type-confusion-through-parameter-tampering): a repeated
+  // query parameter (`?path=a&path=b`) reaches us as an ARRAY, and on an array
+  // `.includes('\0')` looks for an ELEMENT equal to "\0" — it never sees a NUL
+  // byte inside a string. Only a single string is a path.
+  if (typeof requested !== 'string' || !requested) return null
   if (requested.includes('\0')) return null
-  const resolved = realDeep(path.resolve(requested))
-  if (!resolved) return null
+  const real = realDeep(path.resolve(requested))
+  if (!real) return null
+  // Re-resolve so the containment test below runs on the exact normalised,
+  // absolute string we hand back (CodeQL js/path-injection models this
+  // `path.resolve` + `startsWith(dir)` shape as the guard; the realpath above
+  // is what defeats symlinks).
+  const resolved = path.resolve(real)
   for (const root of roots) {
     const rootResolved = realDeep(path.resolve(root))
     if (!rootResolved) continue
-    if (resolved === rootResolved || resolved.startsWith(rootResolved + path.sep)) {
-      return resolved
-    }
+    if (resolved === rootResolved) return rootResolved
+    if (resolved.startsWith(rootResolved + path.sep)) return resolved
   }
   return null
 }
@@ -293,12 +303,21 @@ function buildTree(dir: string, depth = 0): TreeNode[] {
   return nodes
 }
 
-// GET /api/docs/search?q=&workspace=
-// Agent/KB path: same retrieval CC sessions use at spawn (FTS5, grep fallback).
-router.get('/search', (req: AuthRequest, res) => {
+// GET /api/docs/search?q=&workspace=&limit=&mode=hybrid|keyword|semantic
+// obj 900816: HYBRID by default — FTS5 keyword + sqlite-vec semantic, fused with
+// reciprocal rank fusion; docs holding an exact query token (card number, ID,
+// slug, quoted phrase) rank first. mode=keyword is the pre-existing FTS5 path
+// (grep fallback), the same retrieval CC sessions use at spawn. Each hit keeps
+// {path, snippet} and adds score/match (+ heading/line for semantic hits).
+router.get('/search', async (req: AuthRequest, res) => {
   const q = typeof req.query.q === 'string' ? req.query.q.trim() : ''
   if (!q) {
     res.status(400).json({ error: 'q is required' })
+    return
+  }
+  const mode = parseSearchMode(req.query.mode)
+  if (!mode) {
+    res.status(400).json({ error: 'mode must be hybrid, keyword or semantic', code: 'bad_mode' })
     return
   }
   const readRoots = getReadRoots(req)
@@ -316,13 +335,37 @@ router.get('/search', (req: AuthRequest, res) => {
     res.status(403).json({ error: `Workspace not allowed: agent key '${req.agentKey?.label ?? 'agent key'}' cannot use workspace '${workspace}'`, code: 'workspace_not_allowed', workspace, allowed_workspaces: keyWs })
     return
   }
-  // obj 900021: a scoped key's hits must each resolve to one of its workspaces.
-  const hits = filterToKeyWorkspaces(
-    req,
-    searchKnowledge(q, workspace).filter(h => resolveUnder(readRoots, h.path) !== null),
-    h => h.path,
-  ).slice(0, limit)
-  res.json({ results: hits })
+  // A hit must resolve under the caller's read roots AND (obj 900021) to one of
+  // a scoped key's workspaces. Applied BEFORE the limit, so a hidden doc can
+  // neither take a slot nor leak a snippet.
+  const allow = (p: string) => resolveUnder(readRoots, p) !== null && filterToKeyWorkspaces(req, [p], (x) => x).length > 0
+  try {
+    const r = await searchKnowledgeBase(q, { mode, workspace, limit, allow })
+    res.json(r)
+  } catch (err) {
+    res.status(500).json({ error: (err as Error).message })
+  }
+})
+
+// GET /api/docs/related?path=&limit= — notes most similar to this one (obj 900816).
+// Empty list (not an error) when semantic search is off or the note is not embedded yet.
+router.get('/related', async (req: AuthRequest, res) => {
+  const readRoots = getReadRoots(req)
+  const resolved = resolveUnder(readRoots, String(req.query.path ?? ''))
+  if (!resolved) {
+    res.status(403).json({ error: 'Path not allowed' })
+    return
+  }
+  if (!enforceKeyWorkspace(req, res, resolved)) return
+  const rawLimit = parseInt(String(req.query.limit ?? ''), 10)
+  const limit = Number.isFinite(rawLimit) && rawLimit > 0 ? Math.min(rawLimit, 20) : 8
+  const allow = (p: string) => resolveUnder(readRoots, p) !== null && filterToKeyWorkspaces(req, [p], (x) => x).length > 0
+  try {
+    const related = await relatedDocs(resolved, { limit, allow, workspace: sessionFileWorkspace(req) || undefined })
+    res.json({ path: resolved, related, semantic: semanticAvailability() })
+  } catch (err) {
+    res.status(500).json({ error: (err as Error).message })
+  }
 })
 
 // GET /api/docs/tree — the ONE knowledge base tree (obj 720348). There is no
@@ -378,8 +421,8 @@ router.get('/tree', (req: AuthRequest, res) => {
 router.get('/file', (req: AuthRequest, res) => {
   const readRoots = getReadRoots(req)
   const writeRoots = getWriteRoots(req)
-  const filePath = req.query.path as string
-  const resolved = resolveUnder(readRoots, filePath)
+  // Not `as string`: a repeated `?path=` is an array and resolveUnder refuses it.
+  const resolved = resolveUnder(readRoots, req.query.path)
   if (!resolved) {
     res.status(403).json({ error: 'Path not allowed' })
     return
@@ -424,7 +467,7 @@ router.put('/file', (req: AuthRequest, res) => {
      *  vault capture is usually the first writer of `<ws>/decisions/`. */
     create_dirs?: boolean
   }
-  if (!filePath || typeof content !== 'string') {
+  if (typeof filePath !== 'string' || !filePath || typeof content !== 'string') {
     res.status(400).json({ error: 'path and content required' })
     return
   }
@@ -452,8 +495,12 @@ router.put('/file', (req: AuthRequest, res) => {
       fs.mkdirSync(dir, { recursive: true })
     }
     fs.writeFileSync(resolved, content, 'utf-8')
+    noteKbWrite(resolved) // obj 900816: embed the new content (async, never blocks the write)
     const stat = fs.statSync(resolved)
     res.json({ ok: true, path: resolved, size: stat.size, modifiedAt: stat.mtime.toISOString() })
+    // obj 900815: a plain write (the editor, MCP write_doc, a card session) reindexes that
+    // one page in its workspace's link graph — after the response, so the save never waits.
+    setImmediate(() => { noteKbFileWritten(resolved) })
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Write failed'
     res.status(500).json({ error: message })

@@ -6,7 +6,7 @@ import {
   PageContainer,
   PageHeader,
   Toolbar,
-  Tabs,
+  SegmentedControl,
   Card,
   Badge,
   Button,
@@ -17,6 +17,7 @@ import {
   type Column,
   type TabItem,
 } from './ui'
+import { Select } from './ui/Select'
 
 interface DailyCost {
   date: string
@@ -196,7 +197,7 @@ function DailyChart({ data, metric }: { data: DailyCost[]; metric: ChartMetric }
 
   if (!data.length) {
     return (
-      <Card className="p-6 text-center text-[13px] text-fg-3">No daily data for this range.</Card>
+      <Card className="p-6 text-center text-sm text-fg-3">No daily data for this range.</Card>
     )
   }
 
@@ -288,7 +289,7 @@ function BreakdownBar({
     <div className="flex items-center gap-3">
       <span
         className={cn(
-          'w-32 shrink-0 truncate rounded-sm border border-line bg-surface-3 px-2 py-0.5 font-mono text-[12px] font-medium sm:w-36',
+          'w-32 shrink-0 truncate rounded-sm border border-line bg-surface-3 px-2 py-0.5 font-mono text-xs font-medium sm:w-36',
           labelMuted ? 'italic text-fg-3' : 'text-fg-1',
         )}
         title={label}
@@ -303,13 +304,13 @@ function BreakdownBar({
           />
         </div>
       </div>
-      <div className="w-20 shrink-0 text-right font-mono text-[12.5px] font-medium tabular-nums text-fg-0">
+      <div className="w-20 shrink-0 text-right font-mono text-sm font-medium tabular-nums text-fg-0">
         {formatUsd(value)}
       </div>
-      <div className="hidden w-14 shrink-0 text-right font-mono text-[12px] tabular-nums text-fg-3 sm:block">
+      <div className="hidden w-14 shrink-0 text-right font-mono text-xs tabular-nums text-fg-3 sm:block">
         {sessions}s
       </div>
-      <div className="hidden w-14 shrink-0 text-right font-mono text-[12px] tabular-nums text-fg-3 sm:block">
+      <div className="hidden w-14 shrink-0 text-right font-mono text-xs tabular-nums text-fg-3 sm:block">
         {formatTokens(tokens)}
       </div>
     </div>
@@ -328,7 +329,7 @@ const METRIC_TABS: TabItem[] = [
 ]
 
 const dateInputCls =
-  'min-h-[44px] rounded-md border border-line bg-surface-2 px-2.5 font-mono text-[12px] text-fg-1 [color-scheme:dark] transition-colors duration-fast hover:border-line-strong focus:border-[color:var(--accent-line)] focus:outline-none focus:ring-2 focus:ring-accent/40 sm:min-h-[36px]'
+  'min-h-[44px] rounded-md border border-line bg-surface-2 px-2.5 font-mono text-xs text-fg-1 [color-scheme:dark] transition-colors duration-fast hover:border-line-strong focus:border-[color:var(--accent-line)] focus:outline-none focus:ring-2 focus:ring-accent/40 sm:min-h-[36px]'
 
 /* KPI tile — eyebrow + big mono value + sub. During first load the value slot
    shows a Skeleton; min-h reserves the loaded height so the row doesn't reflow. */
@@ -345,7 +346,7 @@ function KpiCard({
 }) {
   return (
     <Card className="min-h-[88px]">
-      <div className="text-[12px] uppercase tracking-[0.1em] text-fg-3 font-semibold tracking-[0.06em]">{label}</div>
+      <div className="text-xs uppercase tracking-eyebrow text-fg-3 font-semibold">{label}</div>
       {loading ? (
         <>
           <Skeleton className="mt-1.5 h-[26px] w-20" />
@@ -353,8 +354,8 @@ function KpiCard({
         </>
       ) : (
         <>
-          <div className="mt-1 font-mono text-[22px] font-semibold text-fg-0">{value}</div>
-          <div className="font-mono text-[12px] text-fg-3">{sub}</div>
+          <div className="mt-1 font-mono text-2xl font-semibold text-fg-0">{value}</div>
+          <div className="font-mono text-xs text-fg-3">{sub}</div>
         </>
       )}
     </Card>
@@ -524,7 +525,7 @@ export function CostsPage() {
             variant="secondary"
             onClick={fetchData}
             disabled={loading}
-            leftIcon={<RefreshCw className={cn('h-3.5 w-3.5', loading && 'animate-spin')} strokeWidth={1.75} />}
+            leftIcon={<RefreshCw className={cn('h-3.5 w-3.5', loading && 'animate-spin')} />}
           >
             Refresh
           </Button>
@@ -535,8 +536,8 @@ export function CostsPage() {
       <Toolbar
         left={
           <>
-            <Tabs items={PRESET_TABS} value={preset} onChange={k => changePreset(k as Exclude<Preset, 'custom'>)} />
-            <div className="flex items-center gap-2 font-mono text-[12px] text-fg-3">
+            <SegmentedControl items={PRESET_TABS} value={preset} onChange={k => changePreset(k as Exclude<Preset, 'custom'>)} label="Date range" />
+            <div className="flex items-center gap-2 font-mono text-xs text-fg-3">
               <input
                 type="date"
                 value={range.start}
@@ -560,17 +561,16 @@ export function CostsPage() {
         }
         right={
           <div className="flex items-center gap-2">
-            <span className="text-[12px] uppercase tracking-[0.08em] text-fg-3 font-semibold tracking-[0.06em]">TZ</span>
-            <select
+            <span className="text-xs uppercase tracking-eyebrow text-fg-3 font-semibold">TZ</span>
+            <Select
               value={tz}
-              onChange={e => changeTz(e.target.value)}
-              className="min-h-[44px] rounded-md border border-line bg-surface-2 px-2.5 text-[12.5px] text-fg-1 transition-colors duration-fast hover:border-line-strong focus:border-[color:var(--accent-line)] focus:outline-none focus:ring-2 focus:ring-accent/40 sm:min-h-[36px]"
+              onChange={v => changeTz(v)}
               aria-label="Timezone"
             >
               {TZ_OPTIONS.map(o => (
                 <option key={o.value} value={o.value}>{o.label}</option>
               ))}
-            </select>
+            </Select>
           </div>
         }
       />
@@ -622,12 +622,12 @@ export function CostsPage() {
       <section className="mb-6 space-y-2">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="flex items-center gap-3">
-            <h3 className="text-[12px] uppercase tracking-[0.12em] text-fg-3 font-semibold tracking-[0.06em]">
+            <h3 className="text-xs uppercase tracking-eyebrow text-fg-3 font-semibold">
               Daily {metric === 'cost' ? 'Spend' : 'Tokens'}
             </h3>
-            <Tabs items={METRIC_TABS} value={metric} onChange={k => setMetric(k as ChartMetric)} />
+            <SegmentedControl items={METRIC_TABS} value={metric} onChange={k => setMetric(k as ChartMetric)} label="Chart metric" />
           </div>
-          <div className="font-mono text-[12px] text-fg-3">
+          <div className="font-mono text-xs text-fg-3">
             {data ? `All-time: ${formatUsd(data.all_time_usd)}` : ''}
           </div>
         </div>
@@ -645,7 +645,7 @@ export function CostsPage() {
       {/* Per-account breakdown */}
       {(data?.by_account.length ?? 0) > 0 && (
         <section className="mb-6 space-y-2">
-          <h3 className="text-[12px] uppercase tracking-[0.12em] text-fg-3 font-semibold tracking-[0.06em]">
+          <h3 className="text-xs uppercase tracking-eyebrow text-fg-3 font-semibold">
             By Account <span className="text-fg-3">(selected range)</span>
           </h3>
           <Card className="space-y-2.5">
@@ -666,7 +666,7 @@ export function CostsPage() {
       {/* Per-model breakdown */}
       {(data?.by_model?.length ?? 0) > 0 && (
         <section className="mb-6 space-y-2">
-          <h3 className="text-[12px] uppercase tracking-[0.12em] text-fg-3 font-semibold tracking-[0.06em]">
+          <h3 className="text-xs uppercase tracking-eyebrow text-fg-3 font-semibold">
             By Model <span className="text-fg-3">(selected range)</span>
           </h3>
           <Card className="space-y-2.5">
@@ -687,7 +687,7 @@ export function CostsPage() {
 
       {/* Per-objective table */}
       <section className="space-y-2">
-        <h3 className="text-[12px] uppercase tracking-[0.12em] text-fg-3 font-semibold tracking-[0.06em]">
+        <h3 className="text-xs uppercase tracking-eyebrow text-fg-3 font-semibold">
           By Objective <span className="text-fg-3">(selected range, top 50 by cost)</span>
         </h3>
         <DataTable
@@ -706,7 +706,7 @@ export function CostsPage() {
             </a>
           )}
           empty={{
-            icon: <DollarSign className="h-5 w-5" strokeWidth={1.6} />,
+            icon: <DollarSign className="h-5 w-5" />,
             title: 'No objective costs in this range',
             description: 'Pick a wider date range or a different timezone.',
           }}

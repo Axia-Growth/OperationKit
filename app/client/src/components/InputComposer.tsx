@@ -157,7 +157,7 @@ export function InputComposer({
             placeholder={isDragging ? 'Drop files to attach…' : (placeholder ?? 'Send a message...')}
             disabled={disabled || sending}
             rows={1}
-            className="flex-1 resize-none bg-transparent py-1.5 text-sm text-fg-0 placeholder-fg-3 focus:outline-none disabled:opacity-50"
+            className="flex-1 resize-none bg-transparent py-1.5 text-base text-fg-0 placeholder-fg-3 focus:outline-none disabled:opacity-50"
           />
           <div className="mb-1 flex shrink-0 items-center gap-2">
             {sending && <span className="text-xs text-accent">Sending…</span>}
@@ -165,7 +165,7 @@ export function InputComposer({
             <button
               onClick={onSubmit}
               disabled={!canSend}
-              className="rounded-md bg-accent px-3 py-1 text-sm font-medium text-accent-fg transition hover:bg-accent-hover disabled:cursor-not-allowed disabled:opacity-40"
+              className="rounded-md bg-accent px-3 py-1 text-base font-medium text-accent-fg transition hover:bg-accent-hover disabled:cursor-not-allowed disabled:opacity-40"
             >
               Send
             </button>

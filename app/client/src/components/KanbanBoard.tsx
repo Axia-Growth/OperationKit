@@ -31,7 +31,7 @@ import { useProjects } from '../hooks/useProjects'
 import { ProjectFilterBar } from './ProjectFilterBar'
 import { KanbanColumn } from './KanbanColumn'
 import { ObjectiveModal } from './ObjectiveModal'
-import { ObjectiveSearchPanel } from './ObjectiveSearchPanel'
+import { ObjectiveSearchPanel } from './lazy-overlays'
 import { SessionViewer } from './SessionViewer'
 import { api } from '../lib/api'
 // Lazy: the planning overlay pulls in the heavy BlockNote editor (via
@@ -398,7 +398,7 @@ export function KanbanBoard({ workspaces }: KanbanBoardProps) {
           {SKELETON_COLS.map(({ label, status }, ci) => (
             <section key={status} className="ok-col" data-status={status}>
               <div className="ok-colhead">
-                <span className="text-[12px] uppercase tracking-[0.12em] text-fg-3 font-semibold tracking-[0.06em]">{label}</span>
+                <span className="text-xs uppercase tracking-eyebrow text-fg-3 font-semibold">{label}</span>
               </div>
               <div className="ok-cards">
                 {Array.from({ length: 3 - ci }).map((_, i) => (
@@ -427,10 +427,10 @@ export function KanbanBoard({ workspaces }: KanbanBoardProps) {
       {/* ── Status strip — operator chips + filter tabs + New ── */}
       <div className="flex items-center gap-3 overflow-x-auto border-b border-line-soft bg-surface-0 px-4 py-2.5 sm:px-5">
         {/* Chips */}
-        <div className="flex shrink-0 items-center gap-3.5 text-[12.5px]">
+        <div className="flex shrink-0 items-center gap-3.5 text-sm">
           {needsYouCount > 0 && (
             <span className="inline-flex items-center gap-1.5 text-accent">
-              <span aria-hidden="true" className="text-[15px] leading-none">›</span>
+              <span aria-hidden="true" className="text-base leading-none">›</span>
               <span className="font-mono font-semibold">{needsYouCount}</span>
               <span className="text-fg-1">need your review</span>
             </span>
@@ -467,7 +467,7 @@ export function KanbanBoard({ workspaces }: KanbanBoardProps) {
               onClick={t.toggle}
               aria-pressed={t.on}
               title={t.on ? `Hide ${t.label} column` : `Show ${t.label} column`}
-              className={`inline-flex items-center gap-1.5 rounded-sm px-2.5 py-1.5 text-[12.5px] transition-colors duration-fast ease-out focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/50 min-h-[36px] ${
+              className={`inline-flex items-center gap-1.5 rounded-sm px-2.5 py-1.5 text-sm transition-colors duration-fast ease-out focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/50 min-h-[36px] ${
                 t.on ? 'bg-surface-2 text-fg-0' : 'text-fg-2 hover:text-fg-1'
               }`}
             >
@@ -483,11 +483,11 @@ export function KanbanBoard({ workspaces }: KanbanBoardProps) {
             onClick={() => setSearchOpen(true)}
             aria-label="Search objectives"
             title="Search objectives (all stages) — press /"
-            className="inline-flex items-center gap-1.5 rounded-md border border-line bg-surface-2 px-2.5 py-1.5 text-sm text-fg-2 transition-colors duration-fast ease-out hover:border-line-strong hover:text-fg-1 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/50 min-h-[36px]"
+            className="inline-flex items-center gap-1.5 rounded-md border border-line bg-surface-2 px-2.5 py-1.5 text-base text-fg-2 transition-colors duration-fast ease-out hover:border-line-strong hover:text-fg-1 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/50 min-h-[36px]"
           >
             <Search className="h-4 w-4" />
             <span className="hidden md:inline">Search</span>
-            <span className="hidden font-mono text-[12px] text-fg-3 md:inline">/</span>
+            <span className="hidden font-mono text-xs text-fg-3 md:inline">/</span>
           </button>
           <ConnectionPulse
             state={connectionState}
@@ -497,7 +497,7 @@ export function KanbanBoard({ workspaces }: KanbanBoardProps) {
           />
           <button
             onClick={handleNewObjective}
-            className="inline-flex items-center gap-1 rounded-md bg-accent px-3 py-1.5 text-sm font-medium text-accent-fg transition-colors duration-fast ease-out hover:bg-accent-hover active:bg-accent-press min-h-[36px]"
+            className="inline-flex items-center gap-1 rounded-md bg-accent px-3 py-1.5 text-base font-medium text-accent-fg transition-colors duration-fast ease-out hover:bg-accent-hover active:bg-accent-press min-h-[36px]"
           >
             <Plus className="h-4 w-4" />
             <span>New</span>
@@ -522,7 +522,7 @@ export function KanbanBoard({ workspaces }: KanbanBoardProps) {
 
       {/* ── Assignee filter — multi-select toggle chips (obj 700857) ── */}
       <div className="flex items-center gap-2 overflow-x-auto border-b border-line-soft bg-surface-0 px-4 py-2 sm:px-5">
-        <span className="shrink-0 text-[12px] uppercase tracking-[0.12em] text-fg-3 font-semibold tracking-[0.06em]">Assignee</span>
+        <span className="shrink-0 text-xs uppercase tracking-eyebrow text-fg-3 font-semibold">Assignee</span>
         <div className="flex shrink-0 items-center gap-1">
           {[{ token: UNASSIGNED_TOKEN, label: 'Unassigned' }, ...assigneeOptions.map(u => ({ token: u, label: u }))].map(opt => {
             const active = selectedAssignees.has(opt.token)
@@ -531,7 +531,7 @@ export function KanbanBoard({ workspaces }: KanbanBoardProps) {
                 key={opt.token}
                 onClick={() => toggleAssignee(opt.token)}
                 aria-pressed={active}
-                className={`whitespace-nowrap rounded-full border px-2.5 py-1 text-[12px] transition-colors duration-fast ease-out focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/50 ${
+                className={`whitespace-nowrap rounded-full border px-2.5 py-1 text-xs transition-colors duration-fast ease-out focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/50 ${
                   active
                     ? 'border-accent bg-surface-2 text-fg-0'
                     : 'border-line text-fg-2 hover:border-line-strong hover:text-fg-1'

@@ -48,8 +48,11 @@ router.post('/:id/upload', (req: AuthRequest, res, next) => {
   }
   next()
 }, upload.array('files', 10), (req, res) => {
-  const files = req.files as Express.Multer.File[]
-  if (!files || files.length === 0) {
+  // multer.array() always sets an array, but req.files is typed (and modelled by
+  // CodeQL #442) as array-or-object. Narrow it, so a non-array can never reach
+  // .length / .map below (obj 900838).
+  const files: Express.Multer.File[] = Array.isArray(req.files) ? req.files : []
+  if (files.length === 0) {
     res.status(400).json({ error: 'No files uploaded' })
     return
   }

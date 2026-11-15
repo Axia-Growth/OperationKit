@@ -23,7 +23,8 @@ import {
   type GithubOrgRepo,
 } from '@operationkit/shared'
 import { api } from '../../lib/api'
-import { inputCls, selectCls, SectionLabel } from './config-form'
+import { inputCls, SectionLabel } from './config-form'
+import { Select } from '../ui/Select'
 
 // ── Workspaces Tab ──
 
@@ -142,7 +143,7 @@ export function WorkspacesTab() {
       await Promise.all([refreshWorkspaces(), loadAdminRecords()])
       setNewName(''); setNewSlug(''); setSlugDirty(false); setShowCreate(false)
     } catch (e) {
-      setCreateError(e instanceof Error ? e.message : 'Failed to create organization')
+      setCreateError(e instanceof Error ? e.message : 'Failed to create workspace')
     } finally {
       setCreating(false)
     }
@@ -165,7 +166,7 @@ export function WorkspacesTab() {
       await api.patch(`/admin/workspaces/${slug}`, { archived: false })
       await Promise.all([refreshWorkspaces(), loadAdminRecords()])
     } catch (e) {
-      alert(e instanceof Error ? e.message : 'Failed to restore organization')
+      alert(e instanceof Error ? e.message : 'Failed to restore workspace')
     } finally {
       setWsBusy(null)
     }
@@ -173,7 +174,7 @@ export function WorkspacesTab() {
 
   async function removeWorkspace(slug: string, name: string) {
     if (!(await confirm({
-      title: 'Remove organization?',
+      title: 'Remove workspace?',
       message: `“${name}” will be archived and hidden from the board.`,
       confirmLabel: 'Remove',
       danger: true,
@@ -184,7 +185,7 @@ export function WorkspacesTab() {
       await Promise.all([refreshWorkspaces(), loadAdminRecords()])
       if (expanded === slug) setExpanded(null)
     } catch (e) {
-      alert(e instanceof Error ? e.message : 'Failed to remove organization')
+      alert(e instanceof Error ? e.message : 'Failed to remove workspace')
     } finally {
       setWsBusy(null)
     }
@@ -230,7 +231,7 @@ export function WorkspacesTab() {
   async function removeRepo(slug: string, repo: WorkspaceRepo) {
     if (!(await confirm({
       title: 'Remove repo?',
-      message: `“${repo.name}” will be removed from this organization.`,
+      message: `“${repo.name}” will be removed from this workspace.`,
       confirmLabel: 'Remove',
       danger: true,
     }))) return
@@ -295,7 +296,7 @@ export function WorkspacesTab() {
       {isAdmin && (
         <Card inset>
           <CardHeader
-            title="Organizations"
+            title="Workspaces"
             eyebrow="Manage"
             actions={
               <Button
@@ -304,7 +305,7 @@ export function WorkspacesTab() {
                 leftIcon={<Plus className="h-4 w-4" />}
                 onClick={() => { setShowCreate(s => !s); setCreateError(null) }}
               >
-                {showCreate ? 'Cancel' : 'Add organization'}
+                {showCreate ? 'Cancel' : 'Add workspace'}
               </Button>
             }
           />
@@ -312,7 +313,7 @@ export function WorkspacesTab() {
             <form onSubmit={createWorkspace} className="space-y-3 p-4">
               <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                 <label className="space-y-1">
-                  <span className="text-[12px] font-medium uppercase tracking-wider text-fg-3">Name</span>
+                  <span className="text-xs font-medium uppercase tracking-eyebrow text-fg-3">Name</span>
                   <input
                     className={inputCls}
                     placeholder="Acme Co"
@@ -326,7 +327,7 @@ export function WorkspacesTab() {
                   />
                 </label>
                 <label className="space-y-1">
-                  <span className="text-[12px] font-medium uppercase tracking-wider text-fg-3">Slug</span>
+                  <span className="text-xs font-medium uppercase tracking-eyebrow text-fg-3">Slug</span>
                   <input
                     className={cn(inputCls, 'font-mono')}
                     placeholder="acme"
@@ -338,7 +339,7 @@ export function WorkspacesTab() {
               {createError && <Alert tone="alarm">{createError}</Alert>}
               <div className="flex justify-end">
                 <Button type="submit" variant="primary" size="sm" disabled={creating}>
-                  {creating ? 'Creating…' : 'Create organization'}
+                  {creating ? 'Creating…' : 'Create workspace'}
                 </Button>
               </div>
             </form>
@@ -350,8 +351,8 @@ export function WorkspacesTab() {
         <Card>
           <EmptyState
             icon={<Boxes className="h-5 w-5" />}
-            title="No organizations"
-            description="An organization is a workspace boundary — its own board, secrets and users. Create one when a project or team needs to be kept separate from the rest."
+            title="No workspaces"
+            description="A workspace is a boundary — its own board, secrets and users. Create one when a project or team needs to be kept separate from the rest."
           />
         </Card>
       )}
@@ -361,8 +362,8 @@ export function WorkspacesTab() {
           contrast with, so a board with no archived orgs looks unchanged. */}
       <div data-testid="active-organizations" className="space-y-4">
       {isAdmin && archivedWorkspaces.length > 0 && workspaces.length > 0 && (
-        <div className="px-1 text-[12px] font-medium uppercase tracking-wider text-fg-3">
-          Active organizations ({workspaces.length})
+        <div className="px-1 text-xs font-medium uppercase tracking-eyebrow text-fg-3">
+          Active workspaces ({workspaces.length})
         </div>
       )}
       {workspaces.map(([key, ws]) => {
@@ -372,15 +373,15 @@ export function WorkspacesTab() {
           <Card key={key} inset>
             {/* Header row */}
             <div className="flex items-center gap-2 px-4 py-3">
-              <button onClick={() => toggleExpand(key, ws)} className="flex min-w-0 flex-1 items-center gap-3 text-left">
+              <button type="button" onClick={() => toggleExpand(key, ws)} aria-expanded={isOpen} className="flex min-h-8 min-w-0 flex-1 items-center gap-3 rounded-md text-left outline-none focus-visible:ring-2 focus-visible:ring-accent/50">
                 <ChevronRight className={cn('h-4 w-4 shrink-0 text-fg-3 transition-transform', isOpen && 'rotate-90')} />
                 <div className="min-w-0">
                   <div className="flex flex-wrap items-center gap-2">
-                    <h3 className="font-display text-[14px] font-semibold text-fg-0">{ws.name}</h3>
+                    <h3 className="font-display text-base font-semibold text-fg-0">{ws.name}</h3>
                     <Badge mono>{key}</Badge>
                     <Badge tone="neutral">{ws.projects.length + dbRepos.length} {ws.projects.length + dbRepos.length === 1 ? 'repo' : 'repos'}</Badge>
                   </div>
-                  {ws.description && <p className="mt-0.5 truncate text-[12px] text-fg-3">{ws.description}</p>}
+                  {ws.description && <p className="mt-0.5 truncate text-xs text-fg-3">{ws.description}</p>}
                 </div>
               </button>
               {isAdmin && (
@@ -414,7 +415,7 @@ export function WorkspacesTab() {
                   <section>
                     <div className="mb-2 flex items-center justify-between">
                       <SectionLabel icon={<KeyRound className="h-3.5 w-3.5" />} className="mb-0">Agent pool</SectionLabel>
-                      {poolSaving === key && <span className="text-[12px] text-fg-3">saving…</span>}
+                      {poolSaving === key && <span className="text-xs text-fg-3">saving…</span>}
                     </div>
                     <div className="flex flex-wrap gap-1.5">
                       {agentsLoading && <Skeleton className="h-7 w-56" />}
@@ -426,7 +427,7 @@ export function WorkspacesTab() {
                             onClick={() => togglePoolAgent(key, a)}
                             disabled={poolSaving === key}
                             className={cn(
-                              'rounded-md border px-2 py-1 text-[12px] font-medium transition-colors disabled:opacity-50',
+                              'rounded-md border px-2 py-1 text-xs font-medium transition-colors disabled:opacity-50',
                               on
                                 ? 'border-[color:var(--accent-line)] bg-surface-2 text-accent'
                                 : 'border-line bg-surface-1 text-fg-3 hover:text-fg-1',
@@ -437,12 +438,12 @@ export function WorkspacesTab() {
                         )
                       })}
                     </div>
-                    <p className="mt-1.5 text-[12px] text-fg-3">
+                    <p className="mt-1.5 text-xs text-fg-3">
                       {adminRecords[key].default_agent_pool.length === 0
                         ? 'Empty pool — every agent is allowed (legacy default).'
-                        : 'Only agents above can be assigned to objectives in this organization.'}
+                        : 'Only agents above can be assigned to objectives in this workspace.'}
                     </p>
-                    {poolError && poolSaving !== key && <p className="mt-1 text-[12px] text-signal-alarm">{poolError}</p>}
+                    {poolError && poolSaving !== key && <p className="mt-1 text-xs text-signal-alarm">{poolError}</p>}
                   </section>
                 )}
 
@@ -455,17 +456,17 @@ export function WorkspacesTab() {
                       <div key={`db-${repo.id}`} className="flex items-center justify-between gap-3 rounded-md border border-line bg-surface-1 px-3 py-2.5">
                         <div className="min-w-0">
                           <div className="flex flex-wrap items-center gap-2">
-                            <span className="text-[13px] font-medium text-fg-0">{repo.name}</span>
+                            <span className="text-sm font-medium text-fg-0">{repo.name}</span>
                             {repo.github && (
                               <a href={`https://github.com/${repo.github}`} target="_blank" rel="noopener noreferrer"
-                                 className="font-mono text-[12px] text-status-working hover:underline">{repo.github}</a>
+                                 className="font-mono text-xs text-status-working hover:underline">{repo.github}</a>
                             )}
                             {repo.stack.map(s => <Badge key={s} tone="neutral">{s}</Badge>)}
                             {repo.docs_enabled && <Badge tone="verify">living docs</Badge>}
                           </div>
-                          {repo.description && <p className="mt-0.5 text-[12px] text-fg-3">{repo.description}</p>}
+                          {repo.description && <p className="mt-0.5 text-xs text-fg-3">{repo.description}</p>}
                           {repo.repo_path && (
-                            <p className="mt-0.5 font-mono text-[12px] text-fg-3">{repo.repo_path} · {repo.docs_path || 'docs/product'}</p>
+                            <p className="mt-0.5 font-mono text-xs text-fg-3">{repo.repo_path} · {repo.docs_path || 'docs/product'}</p>
                           )}
                         </div>
                         {isAdmin && (
@@ -489,20 +490,20 @@ export function WorkspacesTab() {
                       <div key={`cfg-${proj.name}`} className="flex items-center justify-between gap-3 rounded-md border border-line-soft bg-surface-1 px-3 py-2.5">
                         <div className="min-w-0">
                           <div className="flex flex-wrap items-center gap-2">
-                            <span className="text-[13px] font-medium text-fg-1">{proj.name}</span>
+                            <span className="text-sm font-medium text-fg-1">{proj.name}</span>
                             {proj.github && (
                               <a href={`https://github.com/${proj.github}`} target="_blank" rel="noopener noreferrer"
-                                 className="font-mono text-[12px] text-status-working hover:underline">{proj.github}</a>
+                                 className="font-mono text-xs text-status-working hover:underline">{proj.github}</a>
                             )}
                             {proj.stack.map(s => <Badge key={s} tone="neutral">{s}</Badge>)}
                           </div>
-                          {proj.description && <p className="mt-0.5 text-[12px] text-fg-3">{proj.description}</p>}
+                          {proj.description && <p className="mt-0.5 text-xs text-fg-3">{proj.description}</p>}
                         </div>
                         <Badge tone="neutral">config</Badge>
                       </div>
                     ))}
                     {dbRepos.length === 0 && ws.projects.length === 0 && (
-                      <p className="text-[12px] text-fg-3">No repos yet.</p>
+                      <p className="text-xs text-fg-3">No repos yet.</p>
                     )}
                   </div>
 
@@ -521,7 +522,7 @@ export function WorkspacesTab() {
                       </Button>
                     </form>
                   )}
-                  {repoError[key] && <p className="mt-1.5 text-[12px] text-signal-alarm">{repoError[key]}</p>}
+                  {repoError[key] && <p className="mt-1.5 text-xs text-signal-alarm">{repoError[key]}</p>}
                 </section>
 
                 {/* Connections (admin) — GitHub org + PostHog per workspace */}
@@ -533,7 +534,7 @@ export function WorkspacesTab() {
                 {contextContent[key] && (
                   <section>
                     <SectionLabel icon={<FileText className="h-3.5 w-3.5" />}>Context file</SectionLabel>
-                    <pre className="max-h-64 overflow-auto rounded-md border border-line bg-surface-1 p-3 font-mono text-[12px] leading-relaxed text-fg-2 whitespace-pre-wrap">
+                    <pre className="max-h-64 overflow-auto rounded-md border border-line bg-surface-1 p-3 font-mono text-xs leading-relaxed text-fg-2 whitespace-pre-wrap">
                       {contextContent[key]}
                     </pre>
                   </section>
@@ -550,13 +551,13 @@ export function WorkspacesTab() {
           active orgs lead and archived ones sit at the bottom as their own group. */}
       {isAdmin && archivedWorkspaces.length > 0 && (
         <Card inset data-testid="archived-organizations">
-          <CardHeader title={`Archived organizations (${archivedWorkspaces.length})`} eyebrow="Hidden from the board" />
+          <CardHeader title={`Archived workspaces (${archivedWorkspaces.length})`} eyebrow="Hidden from the board" />
           <div className="divide-y divide-line">
             {archivedWorkspaces.map(r => (
               <div key={r.slug} className="flex items-center gap-2 px-4 py-3">
                 <div className="min-w-0 flex-1">
                   <div className="flex flex-wrap items-center gap-2">
-                    <h3 className="font-display text-[14px] font-semibold text-fg-2">{r.name || r.slug}</h3>
+                    <h3 className="font-display text-base font-semibold text-fg-2">{r.name || r.slug}</h3>
                     <Badge mono>{r.slug}</Badge>
                     <Badge tone="neutral">archived</Badge>
                   </div>
@@ -583,7 +584,6 @@ export function WorkspacesTab() {
 // Inputs here meet the 44px mobile hit-target (taller than the dense forms
 // above) since they carry secrets and are the primary connect affordance.
 const connInputCls = cn(inputCls, 'min-h-[44px] sm:min-h-[38px]')
-const connSelectCls = cn(selectCls, 'min-h-[44px] w-full sm:min-h-[38px]')
 
 const POSTHOG_HOSTS = [
   { value: 'https://us.i.posthog.com', label: 'US Cloud' },
@@ -600,7 +600,7 @@ function ConnectionPanel({
         <span className="grid h-7 w-7 shrink-0 place-items-center rounded-md border border-line bg-surface-2 text-fg-2">
           {icon}
         </span>
-        <span className="text-[13px] font-semibold text-fg-0">{title}</span>
+        <span className="text-sm font-semibold text-fg-0">{title}</span>
         {connected
           ? <Badge tone="verify" className="ml-auto"><Check className="mr-1 inline h-3 w-3" />Connected</Badge>
           : <Badge tone="neutral" className="ml-auto">Not connected</Badge>}
@@ -645,7 +645,7 @@ function GithubConnect({ slug, integration, onChange, onRepoAdded }: {
   async function disconnect() {
     if (!(await confirm({
       title: 'Disconnect GitHub?',
-      message: 'GitHub will be disconnected from this organization.',
+      message: 'GitHub will be disconnected from this workspace.',
       confirmLabel: 'Disconnect',
       danger: true,
     }))) return
@@ -681,7 +681,7 @@ function GithubConnect({ slug, integration, onChange, onRepoAdded }: {
       {confirmDialog}
       {connected ? (
         <div className="space-y-3">
-          <div className="flex flex-wrap items-center gap-2 text-[12px]">
+          <div className="flex flex-wrap items-center gap-2 text-xs">
             <Badge mono>{integration?.org}</Badge>
             {integration?.token_last4 && <Badge tone="neutral" mono>token {integration.token_last4}</Badge>}
             {typeof integration?.repo_count === 'number' && (
@@ -706,18 +706,18 @@ function GithubConnect({ slug, integration, onChange, onRepoAdded }: {
                 </div>
               )}
               {orgRepos && orgRepos.length === 0 && !pickerError && (
-                <p className="px-1 py-2 text-[12px] text-fg-3">No repos found in this org.</p>
+                <p className="px-1 py-2 text-xs text-fg-3">No repos found in this org.</p>
               )}
               <div className="max-h-56 space-y-1 overflow-y-auto">
                 {orgRepos?.map(r => (
                   <div key={r.full_name} className="flex items-center justify-between gap-2 rounded-md px-2 py-1.5 hover:bg-surface-3">
                     <div className="min-w-0">
                       <div className="flex items-center gap-1.5">
-                        <span className="truncate text-[12.5px] font-medium text-fg-1">{r.name}</span>
+                        <span className="truncate text-sm font-medium text-fg-1">{r.name}</span>
                         {r.private && <Badge tone="amber">private</Badge>}
                         {r.language && <Badge tone="neutral">{r.language}</Badge>}
                       </div>
-                      <div className="truncate font-mono text-[12px] text-fg-3">{r.full_name}</div>
+                      <div className="truncate font-mono text-xs text-fg-3">{r.full_name}</div>
                     </div>
                     <Button size="sm" variant="secondary" disabled={picking === r.full_name}
                             onClick={() => pickRepo(r)} className="shrink-0">
@@ -726,7 +726,7 @@ function GithubConnect({ slug, integration, onChange, onRepoAdded }: {
                   </div>
                 ))}
               </div>
-              {pickerError && <p className="mt-1 px-1 text-[12px] text-signal-alarm">{pickerError}</p>}
+              {pickerError && <p className="mt-1 px-1 text-xs text-signal-alarm">{pickerError}</p>}
             </div>
           )}
         </div>
@@ -782,7 +782,7 @@ function PosthogConnect({ slug, integration, onChange }: {
   async function disconnect() {
     if (!(await confirm({
       title: 'Disconnect PostHog?',
-      message: 'PostHog will be disconnected from this organization.',
+      message: 'PostHog will be disconnected from this workspace.',
       confirmLabel: 'Disconnect',
       danger: true,
     }))) return
@@ -795,7 +795,7 @@ function PosthogConnect({ slug, integration, onChange }: {
       {confirmDialog}
       {connected ? (
         <div className="space-y-3">
-          <div className="flex flex-wrap items-center gap-2 text-[12px]">
+          <div className="flex flex-wrap items-center gap-2 text-xs">
             <Badge mono>{integration?.host}</Badge>
             {integration?.project_api_key_last4 && <Badge tone="neutral" mono>key {integration.project_api_key_last4}</Badge>}
           </div>
@@ -805,9 +805,9 @@ function PosthogConnect({ slug, integration, onChange }: {
         </div>
       ) : (
         <form onSubmit={connect} className="space-y-2">
-          <select className={connSelectCls} value={hostChoice} onChange={e => setHostChoice(e.target.value)}>
+          <Select className="w-full" aria-label="PostHog host" value={hostChoice} onChange={v => setHostChoice(v)}>
             {POSTHOG_HOSTS.map(h => <option key={h.value} value={h.value}>{h.label}</option>)}
-          </select>
+          </Select>
           {hostChoice === '__self' && (
             <input className={cn(connInputCls, 'font-mono')} placeholder="https://posthog.your-domain.com"
                    value={selfHost} onChange={e => setSelfHost(e.target.value)} autoComplete="off" />

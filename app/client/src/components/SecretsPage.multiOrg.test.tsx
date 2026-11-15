@@ -37,12 +37,8 @@ function setInputValue(node: HTMLInputElement, value: string) {
   node.dispatchEvent(new Event('input', { bubbles: true }))
 }
 
-function setSelectValue(node: HTMLSelectElement, value: string) {
-  const tracker = (node as any)._valueTracker
-  node.value = value
-  if (tracker) tracker.setValue('')
-  node.dispatchEvent(new Event('change', { bubbles: true }))
-}
+// The scope pickers are ui/Select comboboxes, found by their trigger id.
+const scopeTrigger = (c: ParentNode) => c.querySelector<HTMLElement>('#secret-scope-type')
 
 const { state, apiMock, ApiErrorMock } = vi.hoisted(() => {
   class ApiErrorMock extends Error {
@@ -94,6 +90,7 @@ vi.mock('./ui', () => ({
 }))
 
 import { SecretsPage } from './SecretsPage'
+import { chooseOption, click, optionsOf, press } from '../test/render'
 
 describe('Secrets create modal — multi-organization scoping (obj 706458)', () => {
   let container: HTMLElement
@@ -124,8 +121,7 @@ describe('Secrets create modal — multi-organization scoping (obj 706458)', () 
     const newBtn = Array.from(container.querySelectorAll('button')).find(b => b.textContent === '+ New')!
     flushSync(() => newBtn.dispatchEvent(new MouseEvent('click', { bubbles: true })))
     await flush()
-    const scopeSelect = container.querySelector('[data-testid="modal-scope-type"]') as HTMLSelectElement
-    flushSync(() => setSelectValue(scopeSelect, 'workspace'))
+    await chooseOption(scopeTrigger(container), 'Workspace')
     await flush()
   }
 
@@ -136,7 +132,8 @@ describe('Secrets create modal — multi-organization scoping (obj 706458)', () 
   }
 
   async function fillAndSubmit(key: string, value: string) {
-    const keyInput = container.querySelector('input[type="text"]') as HTMLInputElement
+    // The modal form's first text input (the page's ui/Select filters keep a hidden text input of their own).
+    const keyInput = container.querySelector('form input[type="text"]') as HTMLInputElement
     const valueInput = container.querySelector('input[type="password"]') as HTMLInputElement
     flushSync(() => setInputValue(keyInput, key))
     flushSync(() => setInputValue(valueInput, value))
@@ -150,7 +147,7 @@ describe('Secrets create modal — multi-organization scoping (obj 706458)', () 
     await openCreateAtOrgScope()
 
     // The old single-select is GONE at create time…
-    expect(container.querySelector('[data-testid="modal-scope-organization"]')).toBeNull()
+    expect(container.querySelector('#secret-scope-org')).toBeNull()
     // …replaced by one checkbox per organization the principals endpoint returned.
     const list = container.querySelector('[data-testid="modal-scope-organizations"]')!
     expect(list).toBeTruthy()
@@ -190,7 +187,7 @@ describe('Secrets create modal — multi-organization scoping (obj 706458)', () 
     // Named per organization — not an all-or-nothing claim.
     expect(container.querySelector('[data-testid="fanout-ok-example"]')).toBeTruthy()
     expect(container.querySelector('[data-testid="fanout-fail-example2"]')).toBeTruthy()
-    expect(report!.textContent).toContain('Created in 1 of 2 organizations')
+    expect(report!.textContent).toContain('Created in 1 of 2 workspaces')
     expect(report!.textContent).toContain('Example Growth')
     expect(report!.textContent).toContain('Example3')
 
@@ -208,7 +205,7 @@ describe('Secrets create modal — multi-organization scoping (obj 706458)', () 
     // Nothing ticked (admin default scope is global, so no org is preselected).
     await fillAndSubmit('SOME_KEY', 'v')
     expect(state.posts.length).toBe(0)
-    expect(container.textContent).toContain('Pick at least one organization')
+    expect(container.textContent).toContain('Pick at least one workspace')
   })
 
   it('shows the scope explanation inline under the Scope selector, not only as a tooltip', async () => {
@@ -216,12 +213,11 @@ describe('Secrets create modal — multi-organization scoping (obj 706458)', () 
     const hint = container.querySelector('[data-testid="modal-scope-hint"]')!
     expect(hint).toBeTruthy()
     // Rendered text (visible), not a title= attribute.
-    expect(hint.textContent).toContain('selected organization(s)')
+    expect(hint.textContent).toContain('selected workspace(s)')
     expect(hint.textContent).not.toBe('')
 
     // And Command Center reads as "everywhere".
-    const scopeSelect = container.querySelector('[data-testid="modal-scope-type"]') as HTMLSelectElement
-    flushSync(() => setSelectValue(scopeSelect, 'global'))
+    await chooseOption(scopeTrigger(container), 'Everywhere')
     await flush()
     expect(container.querySelector('[data-testid="modal-scope-hint"]')!.textContent).toContain('everywhere')
   })
@@ -240,8 +236,12 @@ describe('Secrets create modal — multi-organization scoping (obj 706458)', () 
     expect(container.querySelector('[data-testid="modal-org-checkbox-example"]')).toBeTruthy()
     expect(container.querySelector('[data-testid="modal-org-checkbox-example2"]')).toBeNull()
     // Command Center is not even an option for a member.
-    const scopeSelect = container.querySelector('[data-testid="modal-scope-type"]') as HTMLSelectElement
-    expect(Array.from(scopeSelect.options).map(o => o.value)).not.toContain('global')
+    const scopeSelect = scopeTrigger(container)!
+    await click(scopeSelect)
+    const offered = optionsOf(scopeSelect).map(o => o.textContent?.trim())
+    expect(offered).toContain('Workspace')
+    expect(offered).not.toContain('Everywhere')
+    await press('Escape')
   })
 
   it('keeps EDIT single-scope — the row-level modal still uses the single-select', async () => {
@@ -264,9 +264,10 @@ describe('Secrets create modal — multi-organization scoping (obj 706458)', () 
     await flush()
 
     // Single-select present, checkbox list absent — a row IS one scope.
-    const single = container.querySelector('[data-testid="modal-scope-organization"]') as HTMLSelectElement
+    const single = container.querySelector<HTMLElement>('#secret-scope-org')
     expect(single).toBeTruthy()
-    expect(single.value).toBe('example')
+    expect(single!.getAttribute('role')).toBe('combobox')
+    expect(single!.textContent).toContain('Example Growth')
     expect(container.querySelector('[data-testid="modal-scope-organizations"]')).toBeNull()
 
     apiMock.get.mockImplementation(((url: string) => {

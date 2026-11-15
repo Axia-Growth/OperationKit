@@ -13,11 +13,13 @@ import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type
 import { api, ApiError } from '../../lib/api'
 import { useWorkspaces } from '../../hooks/useWorkspaces'
 import { Alert, Badge, Button, Card, EmptyState, IconButton, Skeleton, cn, useConfirm } from '../../components/ui'
+import { Switch } from '../ui/Switch'
 import { SeatDeviceLogin } from './SeatDeviceLogin'
 import { SeatClaudeSignIn } from './SeatClaudeSignIn'
 import { ProvisioningBanner, SeatUsageStats, type ProvisioningHint, type SeatUsage } from './SeatUsage'
 import { ProviderKeysSection } from './ProviderKeysSection'
 import { ModelsModule } from '../ModelsModule'
+import { Select } from '../ui/Select'
 
 export type { ProvisioningHint, SeatUsage } from './SeatUsage'
 
@@ -65,7 +67,7 @@ const ENGINES: { kind: SeatKind; name: string; empty: string }[] = [
 const ENGINE_NAME: Record<SeatKind, string> = { claude: 'Claude', codex: 'Codex', grok: 'Grok' }
 
 const INPUT =
-  'min-h-[44px] w-full rounded-md border border-line bg-surface-1 px-3 text-[13px] text-fg-0 outline-none ' +
+  'min-h-[44px] w-full rounded-md border border-line bg-surface-1 px-3 text-sm text-fg-0 outline-none ' +
   'transition-colors duration-fast ease-out placeholder:text-fg-3 hover:border-line-strong focus:border-accent ' +
   'focus-visible:ring-2 focus-visible:ring-accent/40 disabled:cursor-not-allowed disabled:opacity-45 sm:min-h-[36px]'
 
@@ -140,47 +142,12 @@ function Chevron({ up }: { up?: boolean }) {
   )
 }
 
-/** Accessible on/off switch with a 44px tap target. */
-function Switch({ checked, onChange, label, disabled, busy }: {
-  checked: boolean; onChange: (v: boolean) => void; label: ReactNode; disabled?: boolean; busy?: boolean
-}) {
-  return (
-    <button
-      type="button"
-      role="switch"
-      aria-checked={checked}
-      aria-busy={busy || undefined}
-      disabled={disabled || busy}
-      onClick={() => onChange(!checked)}
-      className="group inline-flex min-h-[44px] items-center gap-2.5 rounded-md px-1 text-left text-[13px] text-fg-1 transition-colors duration-fast ease-out hover:text-fg-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/50 disabled:cursor-not-allowed disabled:opacity-45"
-    >
-      <span
-        className={cn(
-          'relative inline-flex h-5 w-9 shrink-0 items-center rounded-full border transition-colors duration-base ease-out',
-          checked ? 'border-transparent bg-accent' : 'border-line-strong bg-surface-3 group-hover:bg-surface-4',
-        )}
-        aria-hidden="true"
-      >
-        <span
-          className={cn(
-            'inline-block h-3.5 w-3.5 rounded-full transition-transform duration-base ease-out',
-            // Knob in the accent-fg (Paper) on the accent track in both themes;
-            // bg-fg-0 painted an Ink knob on Ultramarine in light mode (QA obj 900621).
-            checked ? 'translate-x-[18px] bg-accent-fg' : 'translate-x-[2px] bg-fg-2',
-          )}
-        />
-      </span>
-      <span>{label}</span>
-    </button>
-  )
-}
-
 function Field({ label, htmlFor, hint, children }: { label: string; htmlFor: string; hint?: ReactNode; children: ReactNode }) {
   return (
     <div className="space-y-1.5">
-      <label htmlFor={htmlFor} className="block text-[12.5px] font-medium text-fg-1">{label}</label>
+      <label htmlFor={htmlFor} className="block text-sm font-medium text-fg-1">{label}</label>
       {children}
-      {hint && <p className="text-[12px] leading-relaxed text-fg-3">{hint}</p>}
+      {hint && <p className="text-xs leading-relaxed text-fg-3">{hint}</p>}
     </div>
   )
 }
@@ -223,7 +190,7 @@ function TextToggle({ onClick, children, disabled }: { onClick: () => void; chil
       type="button"
       onClick={onClick}
       disabled={disabled}
-      className="inline-flex min-h-[44px] items-center rounded-md px-1 text-[12.5px] font-medium text-accent-hover underline-offset-2 transition-colors duration-fast ease-out hover:text-accent hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/50 disabled:cursor-not-allowed disabled:opacity-45 sm:min-h-[32px]"
+      className="inline-flex min-h-[44px] items-center rounded-md px-1 text-sm font-medium text-accent-hover underline-offset-2 transition-colors duration-fast ease-out hover:text-accent hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/50 disabled:cursor-not-allowed disabled:opacity-45 sm:min-h-[32px]"
     >
       {children}
     </button>
@@ -476,11 +443,11 @@ function SeatCard({ seat, onChange, onRemoved, onNotice, confirm }: {
             </form>
           ) : (
             <div className="flex flex-wrap items-center gap-2">
-              <Badge mono className="uppercase tracking-[0.08em]">{ENGINE_NAME[seat.kind]}</Badge>
-              <h4 className="truncate font-display text-[15px] font-semibold tracking-[-0.01em] text-fg-0">{name}</h4>
+              <Badge mono className="uppercase tracking-eyebrow">{ENGINE_NAME[seat.kind]}</Badge>
+              <h4 className="truncate font-display text-lg font-semibold tracking-tight text-fg-0">{name}</h4>
               <Badge tone={badge.tone}>{badge.text}</Badge>
               {seat.consecutiveFailures > 0 && (
-                <span className="text-[12px] text-fg-3">{seat.consecutiveFailures} failure{seat.consecutiveFailures === 1 ? '' : 's'} in a row</span>
+                <span className="text-xs text-fg-3">{seat.consecutiveFailures} failure{seat.consecutiveFailures === 1 ? '' : 's'} in a row</span>
               )}
             </div>
           )}
@@ -495,7 +462,7 @@ function SeatCard({ seat, onChange, onRemoved, onNotice, confirm }: {
       </div>
 
       {/* Stats */}
-      <dl className="grid grid-cols-2 gap-x-4 gap-y-2 text-[12.5px] sm:grid-cols-4">
+      <dl className="grid grid-cols-2 gap-x-4 gap-y-2 text-sm sm:grid-cols-4">
         <div>
           <dt className="text-fg-3">Sessions</dt>
           <dd className="font-mono text-fg-1">{seat.sessions.active} active · {seat.sessions.today} today</dd>
@@ -531,7 +498,7 @@ function SeatCard({ seat, onChange, onRemoved, onNotice, confirm }: {
 
       {needsSignIn && !rotating && (
         <div className="flex flex-col gap-3 rounded-md border border-signal-alarm/30 bg-signal-alarm/5 px-3 py-2.5 sm:flex-row sm:items-center sm:justify-between">
-          <p className="min-w-0 flex-1 text-[12.5px] leading-relaxed text-fg-1">
+          <p className="min-w-0 flex-1 text-sm leading-relaxed text-fg-1">
             This seat is signed in with the Claude CLI, which sandboxed sessions cannot use, so it stays unavailable.
             Sign in with Claude once to switch it to a setup token. Its name, priority and history stay.
           </p>
@@ -541,7 +508,7 @@ function SeatCard({ seat, onChange, onRemoved, onNotice, confirm }: {
         </div>
       )}
       {notSignedIn && !rotating && (
-        <p className="text-[12.5px] text-signal-amber">
+        <p className="text-sm text-signal-amber">
           {isClaude ? 'No usable token yet. Press Reconnect to sign in.' : 'Not signed in yet. Press Sign in again to finish the login.'}
         </p>
       )}
@@ -549,7 +516,7 @@ function SeatCard({ seat, onChange, onRemoved, onNotice, confirm }: {
       {/* Actions */}
       <div className="flex flex-wrap items-center gap-2 border-t border-line-soft pt-3">
         <div className="flex items-center gap-1.5">
-          <label htmlFor={`seat-priority-${seat.id}`} className="text-[12.5px] text-fg-2">Priority</label>
+          <label htmlFor={`seat-priority-${seat.id}`} className="text-sm text-fg-2">Priority</label>
           <input
             id={`seat-priority-${seat.id}`}
             type="number"
@@ -576,7 +543,7 @@ function SeatCard({ seat, onChange, onRemoved, onNotice, confirm }: {
         </Button>
       </div>
       {busy === 'test' && (
-        <p className="text-[12px] text-fg-3" aria-live="polite">Running a small test turn. This can take up to a minute.</p>
+        <p className="text-xs text-fg-3" aria-live="polite">Running a small test turn. This can take up to a minute.</p>
       )}
 
       {rotating && isClaude && rotateMode === 'signin' && (
@@ -685,8 +652,8 @@ function EngineSection({ kind, name, empty, seats, onSeat, onRemoved, onNotice, 
   return (
     <section aria-labelledby={`seats-${kind}`} className="space-y-3">
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <h3 id={`seats-${kind}`} className="font-display text-[15px] font-semibold tracking-[-0.01em] text-fg-0">
-          {name} <span className="font-mono text-[12px] font-normal text-fg-3">{seats.length}</span>
+        <h3 id={`seats-${kind}`} className="font-display text-lg font-semibold tracking-tight text-fg-0">
+          {name} <span className="font-mono text-xs font-normal text-fg-3">{seats.length}</span>
         </h3>
         {seats.length > 0 && addButton}
       </div>
@@ -795,19 +762,19 @@ function FailoverPanel({ onNotice }: { onNotice: (n: Notice) => void }) {
   return (
     <Card className="space-y-3" aria-labelledby="seats-failover">
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <h3 id="seats-failover" className="font-display text-[15px] font-semibold tracking-[-0.01em] text-fg-0">Engine failover</h3>
+        <h3 id="seats-failover" className="font-display text-lg font-semibold tracking-tight text-fg-0">Engine failover</h3>
         {choices.length > 1 && (
           <div className="flex items-center gap-2">
-            <label htmlFor="seats-failover-ws" className="text-[12.5px] text-fg-2">Workspace</label>
-            <select id="seats-failover-ws" className={cn(INPUT, 'w-auto pr-8')} value={workspace} onChange={e => setWorkspace(e.target.value)} disabled={saving}>
+            <label htmlFor="seats-failover-ws" className="text-sm text-fg-2">Workspace</label>
+            <Select id="seats-failover-ws" className="w-auto" value={workspace} onChange={v => setWorkspace(v)} disabled={saving}>
               {choices.map(s => <option key={s} value={s}>{labelOf(s)}</option>)}
-            </select>
+            </Select>
           </div>
         )}
       </div>
 
       {!workspace ? (
-        <p className="text-[13px] text-fg-3">No workspaces yet.</p>
+        <p className="text-sm text-fg-3">No workspaces yet.</p>
       ) : loading && !saved ? (
         <div className="space-y-2" aria-hidden="true">
           <Skeleton className="h-6 w-3/4" />
@@ -826,8 +793,8 @@ function FailoverPanel({ onNotice }: { onNotice: (n: Notice) => void }) {
           <ol className={cn('space-y-1.5 transition-opacity duration-base', !enabled && 'opacity-60')} aria-label="Failover order">
             {order.map((k, i) => (
               <li key={k} className="flex min-h-[44px] items-center gap-2 rounded-md border border-line bg-surface-1 pl-3 pr-1">
-                <span className="w-5 font-mono text-[12px] text-fg-3">{i + 1}</span>
-                <span className="flex-1 text-[13px] text-fg-1">{ENGINE_NAME[k]}</span>
+                <span className="w-5 font-mono text-xs text-fg-3">{i + 1}</span>
+                <span className="flex-1 text-sm text-fg-1">{ENGINE_NAME[k]}</span>
                 <IconButton label={`Move ${ENGINE_NAME[k]} up`} onClick={() => move(i, -1)} disabled={i === 0 || saving} className="disabled:cursor-not-allowed disabled:opacity-35">
                   <Chevron up />
                 </IconButton>
@@ -838,7 +805,7 @@ function FailoverPanel({ onNotice }: { onNotice: (n: Notice) => void }) {
             ))}
           </ol>
           <div className="flex flex-wrap items-center justify-between gap-2">
-            <p className="text-[12px] text-fg-3">Cards pinned to one engine never move.</p>
+            <p className="text-xs text-fg-3">Cards pinned to one engine never move.</p>
             <Button variant="primary" onClick={() => void save()} loading={saving} disabled={!dirty || loading}>Save</Button>
           </div>
         </>
@@ -958,8 +925,8 @@ export function SettingsSeats() {
   return (
     <div className="max-w-4xl space-y-6">
       <div>
-        <h3 className="font-display text-[15px] font-semibold tracking-[-0.01em] text-fg-0">Subscription seats</h3>
-        <p className="mt-1 text-[13px] leading-relaxed text-fg-2">
+        <h3 className="font-display text-lg font-semibold tracking-tight text-fg-0">Subscription seats</h3>
+        <p className="mt-1 text-sm leading-relaxed text-fg-2">
           Subscriptions sessions run on. Each card uses the healthy seat with the lowest priority number for its
           engine; a seat that hits a limit cools down and the next one takes over.
         </p>
@@ -973,7 +940,7 @@ export function SettingsSeats() {
         </div>
       )}
 
-      <p className="border-t border-line-soft pt-4 text-[12px] text-fg-3">
+      <p className="border-t border-line-soft pt-4 text-xs text-fg-3">
         Connect only subscriptions you own and follow each provider's terms.
       </p>
 

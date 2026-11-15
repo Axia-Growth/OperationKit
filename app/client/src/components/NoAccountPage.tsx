@@ -23,19 +23,19 @@ export function NoAccountPage() {
         </div>
 
         <div role="alert" className="space-y-4 rounded-lg border border-border bg-surface-raised p-6">
-          <h1 className="text-base font-semibold text-fg-0">
+          <h1 className="text-lg font-semibold text-fg-0">
             {ambiguous ? 'This email is on more than one account' : 'No account for this email'}
           </h1>
-          <p className="text-sm text-fg-1">
+          <p className="text-base text-fg-1">
             You signed in to Cloudflare as{' '}
             <span className="break-words font-medium text-fg-0">{accessDenied.email}</span>
             {ambiguous
               ? ', but more than one account uses that email, so we cannot tell which one is yours.'
               : ', but nobody here has an account with that email.'}
           </p>
-          <p className="text-sm text-fg-2">
+          <p className="text-base text-fg-2">
             Ask your admin to {ambiguous ? 'fix the email on those accounts' : 'add you, or link this email to your account'} in
-            Settings → Users.
+            Settings → Workspaces → Users.
           </p>
 
           <div className="flex flex-col gap-2 pt-1">

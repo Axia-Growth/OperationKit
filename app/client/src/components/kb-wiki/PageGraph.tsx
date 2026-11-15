@@ -91,14 +91,14 @@ export function PageGraph({ workspace, rel, onOpenNote }: { workspace: string; r
 
   return (
     <section aria-labelledby="kb-graph-title" className="flex flex-col gap-3 border-t border-line-soft px-5 py-4">
-      <h3 id="kb-graph-title" className="flex items-center gap-2 font-display text-[13.5px] font-semibold tracking-[-0.01em] text-fg-0">
+      <h3 id="kb-graph-title" className="flex items-center gap-2 font-display text-base font-semibold tracking-tight text-fg-0">
         <Share2 className="h-4 w-4 text-fg-2" aria-hidden="true" />
         Connections
-        <span className="font-mono text-[12px] font-normal text-fg-3">{data.related.length}{data.truncated ? '+' : ''}</span>
+        <span className="font-mono text-xs font-normal text-fg-3">{data.related.length}{data.truncated ? '+' : ''}</span>
       </h3>
 
       {data.related.length === 0 ? (
-        <p className="rounded-md border border-dashed border-line px-3 py-4 text-[12.5px] leading-relaxed text-fg-2">
+        <p className="rounded-md border border-dashed border-line px-3 py-4 text-sm leading-relaxed text-fg-2">
           No connections yet. They appear when another page links here, when a file, chat or call mentions this page, or when a saved answer uses it.
         </p>
       ) : (
@@ -118,7 +118,7 @@ export function PageGraph({ workspace, rel, onOpenNote }: { workspace: string; r
                       strokeDasharray={n.via.every(v => v.kind === 'cited_by') ? '3 3' : undefined}
                     />
                     {label && (
-                      <text x={(centre.x + p.x) / 2} y={(centre.y + p.y) / 2 + 3} textAnchor="middle" paintOrder="stroke" strokeWidth={4} strokeLinejoin="round" className="fill-fg-2 stroke-surface-1 text-[12px]">
+                      <text x={(centre.x + p.x) / 2} y={(centre.y + p.y) / 2 + 3} textAnchor="middle" paintOrder="stroke" strokeWidth={4} strokeLinejoin="round" className="fill-fg-2 stroke-surface-1 text-xs">
                         {shortTitle(label, 16)}
                       </text>
                     )}
@@ -128,7 +128,7 @@ export function PageGraph({ workspace, rel, onOpenNote }: { workspace: string; r
 
               <g aria-hidden="true">
                 <circle cx={centre.x} cy={centre.y} r={13} className="fill-accent" />
-                <text x={centre.x} y={centre.y + 29} textAnchor="middle" paintOrder="stroke" strokeWidth={4} strokeLinejoin="round" className="fill-fg-0 stroke-surface-1 text-[12px] font-semibold">
+                <text x={centre.x} y={centre.y + 29} textAnchor="middle" paintOrder="stroke" strokeWidth={4} strokeLinejoin="round" className="fill-fg-0 stroke-surface-1 text-xs font-semibold">
                   {shortTitle(data.page.title, 24)}
                 </text>
               </g>
@@ -154,7 +154,7 @@ export function PageGraph({ workspace, rel, onOpenNote }: { workspace: string; r
                     <circle cx={p.x} cy={p.y} r={12} className="fill-none stroke-transparent transition-colors duration-fast group-hover:stroke-accent group-focus-visible:stroke-accent" strokeWidth={2} />
                     <circle cx={p.x} cy={p.y} r={7} className={cn('origin-center transition-transform duration-fast [transform-box:fill-box] group-hover:scale-125 group-focus-visible:scale-125', toneOf(n.kind).fill)} />
                     {/* Name above nodes in the top half and at the sides, so neither a line nor the centre name crosses it. */}
-                    <text x={nameX(p.x)} y={p.y <= centre.y + 10 ? p.y - 14 : p.y + 22} textAnchor="middle" paintOrder="stroke" strokeWidth={4} strokeLinejoin="round" className="fill-fg-1 stroke-surface-1 text-[12px] transition-colors duration-fast group-hover:fill-fg-0">
+                    <text x={nameX(p.x)} y={p.y <= centre.y + 10 ? p.y - 14 : p.y + 22} textAnchor="middle" paintOrder="stroke" strokeWidth={4} strokeLinejoin="round" className="fill-fg-1 stroke-surface-1 text-xs transition-colors duration-fast group-hover:fill-fg-0">
                       {shortTitle(n.title)}
                     </text>
                   </g>
@@ -163,7 +163,7 @@ export function PageGraph({ workspace, rel, onOpenNote }: { workspace: string; r
             </svg>
           </div>
           {data.related.length > MAX_DRAWN && (
-            <p className="text-[12px] text-fg-3">The closest {MAX_DRAWN} are drawn; all {data.related.length}{data.truncated ? '+' : ''} are listed below.</p>
+            <p className="text-xs text-fg-3">The closest {MAX_DRAWN} are drawn; all {data.related.length}{data.truncated ? '+' : ''} are listed below.</p>
           )}
 
           <ul className="flex flex-col divide-y divide-line-soft rounded-md border border-line-soft bg-surface-1">
@@ -178,8 +178,8 @@ export function PageGraph({ workspace, rel, onOpenNote }: { workspace: string; r
                 >
                   <span className={cn('h-2 w-2 shrink-0 rounded-full', toneOf(n.kind).bg)} aria-hidden="true" />
                   <span className="flex min-w-0 flex-1 flex-col gap-0.5">
-                    <span className="truncate text-[13px] font-medium text-fg-0">{n.title}</span>
-                    {n.via.length > 0 && <span className="line-clamp-2 text-[12px] leading-snug text-fg-2">{edgeSentence(viaOf(n)[0], titleOf)}</span>}
+                    <span className="truncate text-sm font-medium text-fg-0">{n.title}</span>
+                    {n.via.length > 0 && <span className="line-clamp-2 text-xs leading-snug text-fg-2">{edgeSentence(viaOf(n)[0], titleOf)}</span>}
                   </span>
                   <Badge className="shrink-0">{kindName(n.kind)}</Badge>
                 </button>

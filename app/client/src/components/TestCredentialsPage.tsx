@@ -21,6 +21,7 @@ import type {
   TestCredential,
   UpdateTestCredentialRequest,
 } from '@operationkit/shared'
+import { Select } from './ui/Select'
 
 type FieldRow = { key: string; value: string; revealed: boolean }
 
@@ -103,8 +104,8 @@ export function TestCredentialsPage({ embedded = false }: { embedded?: boolean }
 
   if (adminWorkspaces.length === 0) {
     return (
-      <div className="flex h-full items-center justify-center text-fg-3 text-sm">
-        Organization admin role required to manage test credentials.
+      <div className="flex h-full items-center justify-center text-fg-3 text-base">
+        Workspace admin role required to manage test credentials.
       </div>
     )
   }
@@ -121,24 +122,24 @@ export function TestCredentialsPage({ embedded = false }: { embedded?: boolean }
           </div>
           <button
             onClick={openCreate}
-            className="rounded-md bg-accent px-3 py-1.5 text-sm font-medium text-accent-fg transition-colors duration-fast ease-out hover:bg-accent-hover"
+            className="rounded-md bg-accent px-3 py-1.5 text-base font-medium text-accent-fg transition-colors duration-fast ease-out hover:bg-accent-hover"
           >
             + New
           </button>
         </div>
 
         {error && (
-          <div className="mb-4 rounded bg-signal-alarm/10 px-3 py-2 text-sm text-signal-alarm">{error}</div>
+          <div className="mb-4 rounded bg-signal-alarm/10 px-3 py-2 text-base text-signal-alarm">{error}</div>
         )}
 
         {loading ? (
           <div className="overflow-x-auto rounded-lg border border-border bg-surface-raised">
-            <table className="w-full text-sm">
+            <table className="w-full text-base">
               <thead className="bg-surface border-b border-border">
                 <tr className="text-left text-xs text-fg-2">
                   <th className="px-3 py-2 font-medium">Slug</th>
                   <th className="px-3 py-2 font-medium">Label</th>
-                  <th className="px-3 py-2 font-medium">Organization</th>
+                  <th className="px-3 py-2 font-medium">Workspace</th>
                   <th className="px-3 py-2 font-medium">Project</th>
                   <th className="px-3 py-2 font-medium">Login URL</th>
                   <th className="px-3 py-2 font-medium">Updated</th>
@@ -161,17 +162,17 @@ export function TestCredentialsPage({ embedded = false }: { embedded?: boolean }
             </table>
           </div>
         ) : creds.length === 0 ? (
-          <div className="rounded-lg border border-dashed border-border p-8 text-center text-sm text-fg-3">
+          <div className="rounded-lg border border-dashed border-border p-8 text-center text-base text-fg-3">
             No test credentials yet. Click "New" to add one.
           </div>
         ) : (
           <div className="overflow-x-auto rounded-lg border border-border bg-surface-raised">
-            <table className="w-full text-sm">
+            <table className="w-full text-base">
               <thead className="bg-surface border-b border-border">
                 <tr className="text-left text-xs text-fg-2">
                   <th className="px-3 py-2 font-medium">Slug</th>
                   <th className="px-3 py-2 font-medium">Label</th>
-                  <th className="px-3 py-2 font-medium">Organization</th>
+                  <th className="px-3 py-2 font-medium">Workspace</th>
                   <th className="px-3 py-2 font-medium">Project</th>
                   <th className="px-3 py-2 font-medium">Login URL</th>
                   <th className="px-3 py-2 font-medium">Updated</th>
@@ -313,7 +314,7 @@ function TestCredentialModal({ existing, adminWorkspaces, onClose, onSaved }: Mo
         </div>
 
         {error && (
-          <div className="mb-3 rounded bg-signal-alarm/10 px-3 py-2 text-sm text-signal-alarm">{error}</div>
+          <div className="mb-3 rounded bg-signal-alarm/10 px-3 py-2 text-base text-signal-alarm">{error}</div>
         )}
 
         <form onSubmit={handleSubmit} className="space-y-3">
@@ -326,22 +327,23 @@ function TestCredentialModal({ existing, adminWorkspaces, onClose, onSaved }: Mo
                 onChange={e => setSlug(e.target.value)}
                 disabled={isEdit}
                 placeholder="e.g. staging-admin"
-                className="w-full rounded border border-border bg-surface px-2 py-1.5 text-sm text-fg-0 outline-none focus:border-accent disabled:opacity-50"
+                className="w-full rounded border border-border bg-surface px-2 py-1.5 text-base text-fg-0 outline-none focus:border-accent disabled:opacity-50"
                 required
               />
             </div>
             <div>
-              <label className="mb-1 block text-xs text-fg-2">Organization</label>
-              <select
+              <label className="mb-1 block text-xs text-fg-2">Workspace</label>
+              <Select
+                className="w-full"
+                aria-label="Workspace"
                 value={workspace}
-                onChange={e => setWorkspace(e.target.value)}
-                className="w-full rounded border border-border bg-surface px-2 py-1.5 text-sm text-fg-0 outline-none focus:border-accent"
+                onChange={v => setWorkspace(v)}
                 required
               >
                 {adminWorkspaces.map(ws => (
                   <option key={ws} value={ws}>{ws}</option>
                 ))}
-              </select>
+              </Select>
             </div>
           </div>
 
@@ -353,7 +355,7 @@ function TestCredentialModal({ existing, adminWorkspaces, onClose, onSaved }: Mo
                 value={label}
                 onChange={e => setLabel(e.target.value)}
                 placeholder="Human-readable name"
-                className="w-full rounded border border-border bg-surface px-2 py-1.5 text-sm text-fg-0 outline-none focus:border-accent"
+                className="w-full rounded border border-border bg-surface px-2 py-1.5 text-base text-fg-0 outline-none focus:border-accent"
                 required
               />
             </div>
@@ -364,7 +366,7 @@ function TestCredentialModal({ existing, adminWorkspaces, onClose, onSaved }: Mo
                 value={project}
                 onChange={e => setProject(e.target.value)}
                 placeholder="project slug or blank"
-                className="w-full rounded border border-border bg-surface px-2 py-1.5 text-sm text-fg-0 outline-none focus:border-accent"
+                className="w-full rounded border border-border bg-surface px-2 py-1.5 text-base text-fg-0 outline-none focus:border-accent"
               />
             </div>
           </div>
@@ -376,7 +378,7 @@ function TestCredentialModal({ existing, adminWorkspaces, onClose, onSaved }: Mo
               value={loginUrl}
               onChange={e => setLoginUrl(e.target.value)}
               placeholder="https://staging.example.com/login"
-              className="w-full rounded border border-border bg-surface px-2 py-1.5 text-sm text-fg-0 outline-none focus:border-accent"
+              className="w-full rounded border border-border bg-surface px-2 py-1.5 text-base text-fg-0 outline-none focus:border-accent"
               required
             />
           </div>
@@ -436,7 +438,7 @@ function TestCredentialModal({ existing, adminWorkspaces, onClose, onSaved }: Mo
               onChange={e => setNotes(e.target.value)}
               rows={2}
               placeholder="optional context for future operators"
-              className="w-full resize-none rounded border border-border bg-surface px-2 py-1.5 text-sm text-fg-0 outline-none focus:border-accent"
+              className="w-full resize-none rounded border border-border bg-surface px-2 py-1.5 text-base text-fg-0 outline-none focus:border-accent"
             />
           </div>
 
@@ -444,14 +446,14 @@ function TestCredentialModal({ existing, adminWorkspaces, onClose, onSaved }: Mo
             <button
               type="button"
               onClick={onClose}
-              className="rounded px-3 py-1.5 text-sm text-fg-2 hover:bg-surface-overlay"
+              className="rounded px-3 py-1.5 text-base text-fg-2 hover:bg-surface-overlay"
             >
               Cancel
             </button>
             <button
               type="submit"
               disabled={saving}
-              className="rounded bg-accent px-3 py-1.5 text-sm font-medium text-accent-fg hover:bg-accent-hover disabled:opacity-50"
+              className="rounded bg-accent px-3 py-1.5 text-base font-medium text-accent-fg hover:bg-accent-hover disabled:opacity-50"
             >
               {saving ? 'Saving...' : isEdit ? 'Update' : 'Create'}
             </button>

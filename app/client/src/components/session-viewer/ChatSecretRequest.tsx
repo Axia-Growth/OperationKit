@@ -22,11 +22,11 @@ import { SECRET_NAME_PATTERN, toSecretName } from '../../lib/secretDetect'
 import { SCOPE_LABELS } from '../secrets/scope'
 import { MaskedSecretInput, SecretScopePicker } from './SecretFields'
 
-/** "Organization (example)" / "Command Center" / "Org + me (example)" — the compact scope line. */
+/** "example secrets" / "Everywhere (every workspace)" / "Only me in example" — the compact scope line. */
 export function scopeSummary(scope: SecretRequestScope, workspace: string): string {
-  if (scope === 'global') return `${SCOPE_LABELS.global} (every organization)`
-  if (scope === 'workspace_user') return `Only me in ${workspace || 'this organization'}`
-  return `${workspace || 'this organization'} secrets`
+  if (scope === 'global') return `${SCOPE_LABELS.global} (every workspace)`
+  if (scope === 'workspace_user') return `Only me in ${workspace || 'this workspace'}`
+  return `${workspace || 'this workspace'} secrets`
 }
 
 export interface SecretFormProps {
@@ -87,9 +87,9 @@ export function SecretForm({
             spellCheck={false}
             aria-invalid={!!name && !nameOk}
             disabled={saving}
-            className="min-h-[44px] w-full rounded-md border border-line bg-surface-1 px-3 py-2 font-mono text-base text-fg-0 placeholder:text-fg-3 focus:border-accent focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/40 sm:min-h-[36px] sm:text-[13px]"
+            className="min-h-[44px] w-full rounded-md border border-line bg-surface-1 px-3 py-2 font-mono text-lg text-fg-0 placeholder:text-fg-3 focus:border-accent focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/40 sm:min-h-[36px] sm:text-sm"
           />
-          {name && !nameOk && <p className="text-[12px] text-flag-blocked">Use UPPER_SNAKE_CASE, at least two characters.</p>}
+          {name && !nameOk && <p className="text-xs text-flag-blocked">Use UPPER_SNAKE_CASE, at least two characters.</p>}
         </div>
       )}
       <div className="flex flex-col gap-2 sm:flex-row">
@@ -109,7 +109,7 @@ export function SecretForm({
       {showScope ? (
         <SecretScopePicker id={`${idPrefix}-scope`} value={scope} onChange={setScope} workspace={workspace} disabled={saving} />
       ) : (
-        <div className="flex flex-wrap items-center gap-x-1.5 text-[12px] text-fg-2">
+        <div className="flex flex-wrap items-center gap-x-1.5 text-xs text-fg-2">
           <Lock className="h-3 w-3 shrink-0" aria-hidden />
           <span>Saves to <span className="font-medium text-fg-1">{scopeSummary(scope, workspace)}</span>. Encrypted, write-only — never shown in chat.</span>
           <button
@@ -122,14 +122,14 @@ export function SecretForm({
           </button>
         </div>
       )}
-      {error && <div className="text-[12px] text-flag-blocked" role="alert">{error}</div>}
+      {error && <div className="text-xs text-flag-blocked" role="alert">{error}</div>}
     </form>
   )
 }
 
 function SavedLine({ name, scope, workspace }: { name: string; scope: SecretRequestScope; workspace: string }) {
   return (
-    <div role="status" className="flex items-start gap-2 text-[13px] text-fg-1">
+    <div role="status" className="flex items-start gap-2 text-sm text-fg-1">
       <Lock className="mt-0.5 h-3.5 w-3.5 shrink-0 text-signal-verify" aria-hidden />
       <span>
         <span className="font-mono font-semibold text-fg-0">{name}</span> saved to {scopeSummary(scope, workspace)}.
@@ -178,7 +178,7 @@ export function ChatSecretRequests({ objectiveId, workspace, items, canFill }: {
         <SecretBubble key={item.name} label={`The agent is asking for ${item.name}`}>
           <div className="flex items-start gap-2">
             <KeyRound className="mt-0.5 h-4 w-4 shrink-0 text-status-human" aria-hidden />
-            <div className="min-w-0 text-[14px] leading-relaxed text-fg-1">
+            <div className="min-w-0 text-base leading-relaxed text-fg-1">
               The agent needs <span className="font-mono font-semibold text-fg-0">{item.name}</span>
               {item.reason ? <> — {item.reason}</> : null}
             </div>
@@ -194,7 +194,7 @@ export function ChatSecretRequests({ objectiveId, workspace, items, canFill }: {
               onSaved={(name, scope) => setSaved(prev => [...prev.filter(p => p.name !== name), { name, scope }])}
             />
           ) : (
-            <p className="text-[12.5px] text-fg-2">Waiting for the card owner or an admin to add it, signed in to the web app.</p>
+            <p className="text-sm text-fg-2">Waiting for the card owner or an admin to add it, signed in to the web app.</p>
           )}
         </SecretBubble>
       ))}

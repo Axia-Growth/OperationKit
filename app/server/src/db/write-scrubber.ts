@@ -30,6 +30,8 @@ export const SCRUBBED_TABLES = [
   // A side thread's NAME is person-typed text too (obj 900370), so a key pasted
   // into "name this lane" is redacted on the same boundary as the messages.
   'agent_chat_threads',
+  // obj 900839: the delegated-approval audit quotes the bot's message.
+  'delegation_audit',
 ] as const
 
 const WRITE_SQL_RE = new RegExp(

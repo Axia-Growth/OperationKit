@@ -1,4 +1,5 @@
-import { useEffect, useState, useRef, useCallback } from 'react'
+import { useEffect, useState, useRef, useCallback, useId } from 'react'
+import { Command, CommandInput, CommandItem, CommandList, CommandStatus } from '@ui-sdk/react/command'
 import type { ObjectiveStatus, Workspace } from '@operationkit/shared'
 import {
   searchObjectives,
@@ -10,6 +11,8 @@ import {
 import { useWorkspaces } from '../hooks/useWorkspaces'
 import { NavIcon } from './nav-icons'
 import { STATUS_META, StatusDot } from './design/primitives'
+import { Modal } from './ui/Modal'
+import { SegmentedControl } from './ui/SegmentedControl'
 
 /* ─────────────────────────────────────────────────────────
    Objective search (obj 702389)
@@ -42,7 +45,7 @@ function StatusBadge({ status }: { status: ObjectiveStatus }) {
   const meta = STATUS_META[status] ?? STATUS_META.queue
   return (
     <span
-      className={`inline-flex shrink-0 items-center gap-1 rounded-sm border border-line-soft bg-surface-3 px-1.5 py-0.5 text-[12px] font-medium ${meta.tone}`}
+      className={`inline-flex shrink-0 items-center gap-1 rounded-sm border border-line-soft bg-surface-3 px-1.5 py-0.5 text-xs font-medium ${meta.tone}`}
     >
       <StatusDot status={status} size={6} />
       {meta.label}
@@ -54,12 +57,11 @@ export function ObjectiveSearchPanel({ open, workspace, onClose, onSelect }: Obj
   const { shortOf } = useWorkspaces()
   const [mode, setMode] = useState<Mode>('keyword')
   const [query, setQuery] = useState('')
-  const [cursor, setCursor] = useState(0)
   const [loading, setLoading] = useState(false)
   const [aiError, setAiError] = useState<string | null>(null)
   const [kwResults, setKwResults] = useState<ObjectiveSearchResult[]>([])
   const [aiResults, setAiResults] = useState<ObjectiveAiSearchResult[]>([])
-  const inputRef = useRef<HTMLInputElement>(null)
+  const titleId = useId()
   // Guards against out-of-order keyword responses (last query wins).
   const seqRef = useRef(0)
 
@@ -68,12 +70,10 @@ export function ObjectiveSearchPanel({ open, workspace, onClose, onSelect }: Obj
     if (!open) return
     setMode('keyword')
     setQuery('')
-    setCursor(0)
     setLoading(false)
     setAiError(null)
     setKwResults([])
     setAiResults([])
-    setTimeout(() => inputRef.current?.focus(), 0)
   }, [open])
 
   // Debounced keyword search as the user types (250ms). AI mode does NOT
@@ -93,7 +93,6 @@ export function ObjectiveSearchPanel({ open, workspace, onClose, onSelect }: Obj
         const { results } = await searchObjectives(q, workspace, 30)
         if (seq === seqRef.current) {
           setKwResults(results)
-          setCursor(0)
         }
       } catch {
         if (seq === seqRef.current) setKwResults([])
@@ -114,7 +113,6 @@ export function ObjectiveSearchPanel({ open, workspace, onClose, onSelect }: Obj
       const { results } = await searchObjectivesAi(q, workspace)
       if (seq !== seqRef.current) return
       setAiResults(results)
-      setCursor(0)
       if (results.length === 0) setAiError(null)
     } catch (err) {
       if (seq !== seqRef.current) return
@@ -133,123 +131,119 @@ export function ObjectiveSearchPanel({ open, workspace, onClose, onSelect }: Obj
 
   const results: Array<ObjectiveSearchResult | ObjectiveAiSearchResult> =
     mode === 'keyword' ? kwResults : aiResults
-  const safeCursor = Math.min(cursor, Math.max(0, results.length - 1))
 
   function switchMode(next: Mode) {
     if (next === mode) return
     setMode(next)
-    setCursor(0)
     setAiError(null)
     setLoading(false)
     seqRef.current++ // invalidate any in-flight request from the previous mode
     if (next === 'ai') setAiResults([])
-    setTimeout(() => inputRef.current?.focus(), 0)
-  }
-
-  function handleKeyDown(e: React.KeyboardEvent) {
-    if (e.key === 'Escape') { onClose(); return }
-    if (e.key === 'ArrowDown') { e.preventDefault(); setCursor(c => Math.min(results.length - 1, c + 1)); return }
-    if (e.key === 'ArrowUp')   { e.preventDefault(); setCursor(c => Math.max(0, c - 1)); return }
-    if (e.key === 'Enter') {
-      e.preventDefault()
-      // AI mode: Enter submits the query unless results for it are already shown.
-      if (mode === 'ai' && aiResults.length === 0) { runAiSearch(); return }
-      const r = results[safeCursor]
-      if (r) { onSelect(r.id); onClose() }
-    }
   }
 
   const showEmpty = !loading && query.trim() && results.length === 0 && !aiError
 
+  const select = (id: number) => { onClose(); onSelect(id) }
+  const status = aiError
+    ? aiError
+    : loading
+      ? 'Searching…'
+      : showEmpty
+        ? 'No matches'
+        : mode === 'ai' && !query.trim()
+          ? 'Type a natural-language query and press Enter.'
+          : null
+
+  // A real dialog (obj 900819): the board behind goes inert, Esc and an outside
+  // click close it, focus returns to where it was. Results are a UI SDK Command
+  // list with server-side filtering, so focus stays in the field and the
+  // highlighted result is announced (aria-activedescendant).
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-start justify-center bg-[var(--scrim)] p-4 pt-[10vh]"
-      onClick={onClose}
+    <Modal
+      open
+      onClose={onClose}
+      labelledBy={titleId}
+      panelClassName="top-[10vh] bottom-auto mt-0 flex max-h-[72vh] max-w-xl flex-col overflow-hidden bg-surface-2"
     >
-      <div
-        className="cc-toast-in flex max-h-[72vh] w-full max-w-xl flex-col overflow-hidden rounded-lg border border-line bg-surface-2 shadow-float"
-        onClick={e => e.stopPropagation()}
+      <h2 id={titleId} className="sr-only">Search objectives</h2>
+      <Command
+        loop
+        filter={false}
+        query={query}
+        onQueryChange={(q) => { setQuery(q); if (mode === 'ai') setAiResults([]) }}
+        status={loading ? 'loading' : 'idle'}
+        onAction={(value) => select(Number(value))}
+        className="flex min-h-0 flex-1 flex-col"
       >
-        {/* Input row */}
         <div className="flex items-center gap-2 border-b border-line-soft px-3 py-2.5">
           <NavIcon name="search" className="h-4 w-4 shrink-0 text-fg-3" />
-          <input
-            ref={inputRef}
-            value={query}
-            onChange={e => { setQuery(e.target.value); setCursor(0); if (mode === 'ai') setAiResults([]) }}
-            onKeyDown={handleKeyDown}
+          <CommandInput
+            data-autofocus=""
+            aria-label={mode === 'keyword' ? 'Search objectives' : 'Describe the objective you are looking for'}
             placeholder={mode === 'keyword' ? 'Search objectives (all stages)…' : 'Describe what you’re looking for, then Enter…'}
-            className="flex-1 bg-transparent text-sm text-fg-0 placeholder-fg-3 outline-none"
+            onKeyDown={(e) => {
+              // AI mode: Enter submits the query until results for it are shown.
+              if (e.key === 'Enter' && mode === 'ai' && aiResults.length === 0) {
+                e.preventDefault()
+                void runAiSearch()
+              }
+            }}
+            className="min-w-0 flex-1 bg-transparent text-base text-fg-0 placeholder-fg-3 outline-none"
           />
-          {loading && <span className="shrink-0 font-mono text-[12px] text-fg-3">…</span>}
-          <span className="shrink-0 font-mono text-[12px] text-fg-3">esc</span>
+          <kbd className="shrink-0 font-mono text-xs text-fg-3">esc</kbd>
         </div>
 
-        {/* Mode toggle */}
-        <div className="flex items-center gap-1 border-b border-line-soft px-3 py-1.5">
-          {(['keyword', 'ai'] as const).map(m => (
-            <button
-              key={m}
-              onClick={() => switchMode(m)}
-              aria-pressed={mode === m}
-              className={`rounded-sm px-2 py-1 text-[12px] font-medium transition-colors duration-fast ease-out focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/50 ${
-                mode === m ? 'bg-surface-3 text-fg-0' : 'text-fg-2 hover:text-fg-1'
-              }`}
-            >
-              {m === 'keyword' ? 'Keyword' : 'AI'}
-            </button>
-          ))}
+        <div className="flex items-center gap-2 border-b border-line-soft px-3 py-1.5">
+          <SegmentedControl
+            label="Search mode"
+            items={[{ key: 'keyword', label: 'Keyword' }, { key: 'ai', label: 'AI' }]}
+            value={mode}
+            onChange={(k) => switchMode(k as Mode)}
+          />
           {mode === 'ai' && (
             <button
-              onClick={runAiSearch}
+              type="button"
+              onClick={() => void runAiSearch()}
               disabled={loading || !query.trim()}
-              className="ml-auto rounded-sm bg-accent px-2.5 py-1 text-[12px] font-medium text-accent-fg transition-colors duration-fast ease-out hover:bg-accent-hover disabled:opacity-40"
+              className="ml-auto inline-flex h-7 items-center rounded-md bg-accent px-2.5 text-sm font-medium text-accent-fg transition-colors duration-fast ease-out hover:bg-accent-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/50 disabled:opacity-40"
             >
               {loading ? 'Searching…' : 'Search'}
             </button>
           )}
         </div>
 
-        {/* Results */}
-        <ul role="listbox" className="min-h-0 flex-1 overflow-y-auto py-1">
-          {aiError && (
-            <li className="px-3 py-3 text-sm text-[color:var(--ok-alarm)]">{aiError}</li>
-          )}
-          {showEmpty && <li className="px-3 py-3 text-sm text-fg-3">No matches</li>}
-          {mode === 'ai' && !loading && !query.trim() && !aiError && (
-            <li className="px-3 py-3 text-sm text-fg-3">Type a natural-language query and press Enter.</li>
-          )}
-          {results.map((r, i) => {
+        <CommandStatus className={status ? `px-3 py-3 text-base ${aiError ? 'text-[color:var(--ok-alarm)]' : 'text-fg-3'}` : 'sr-only'}>
+          {status ?? `${results.length} ${results.length === 1 ? 'result' : 'results'}`}
+        </CommandStatus>
+
+        <CommandList className="min-h-0 flex-1 overflow-y-auto py-1">
+          {results.map(r => {
             const snippet = 'snippet' in r ? r.snippet : r.reason
             const agent = 'agent_context' in r ? r.agent_context : null
             return (
-              <li
+              <CommandItem
                 key={r.id}
-                role="option"
-                aria-selected={i === safeCursor}
-                onMouseEnter={() => setCursor(i)}
-                onClick={() => { onSelect(r.id); onClose() }}
-                className={`flex cursor-pointer flex-col gap-1 px-3 py-2 transition-colors duration-fast ease-out ${
-                  i === safeCursor ? 'bg-surface-3' : 'hover:bg-surface-3'
-                }`}
+                value={String(r.id)}
+                label={r.title || 'Untitled'}
+                className="flex cursor-pointer flex-col gap-1 px-3 py-2 transition-colors duration-fast ease-out hover:bg-surface-3 data-[highlighted]:bg-surface-3"
               >
                 <div className="flex items-center gap-2">
                   <StatusBadge status={r.status} />
-                  <span className="min-w-0 flex-1 truncate text-sm text-fg-0">{r.title || 'Untitled'}</span>
-                  <span className="shrink-0 text-[12px] uppercase text-fg-3 font-semibold tracking-[0.06em]">{shortOf(r.workspace as Workspace)}</span>
+                  <span className="min-w-0 flex-1 truncate text-base text-fg-0">{r.title || 'Untitled'}</span>
+                  <span className="shrink-0 text-xs uppercase text-fg-3 font-semibold tracking-eyebrow">{shortOf(r.workspace as Workspace)}</span>
                 </div>
                 {(snippet || agent) && (
-                  <div className="flex items-center gap-1.5 text-[12px] leading-snug text-fg-3">
+                  <div className="flex items-center gap-1.5 text-xs leading-snug text-fg-3">
                     {agent && <span className="shrink-0 font-mono text-fg-2">{agent}</span>}
                     {agent && snippet && <span className="shrink-0 text-fg-3">·</span>}
                     {snippet && <span className="line-clamp-2">{snippet}</span>}
                   </div>
                 )}
-              </li>
+              </CommandItem>
             )
           })}
-        </ul>
-      </div>
-    </div>
+        </CommandList>
+      </Command>
+    </Modal>
   )
 }

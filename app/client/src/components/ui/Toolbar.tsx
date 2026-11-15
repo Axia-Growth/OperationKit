@@ -35,11 +35,11 @@ interface SearchInputProps extends InputHTMLAttributes<HTMLInputElement> {
 export function SearchInput({ wrapClassName, className, ...rest }: SearchInputProps) {
   return (
     <div className={cn('relative flex items-center', wrapClassName)}>
-      <Search className="pointer-events-none absolute left-2.5 h-4 w-4 text-fg-3" strokeWidth={1.75} />
+      <Search className="pointer-events-none absolute left-2.5 h-4 w-4 text-fg-3" />
       <input
         type="search"
         className={cn(
-          'min-h-[44px] w-full rounded-md border border-line bg-surface-2 pl-8 pr-3 text-[13px] text-fg-0 placeholder:text-fg-3 sm:min-h-[36px]',
+          'min-h-[44px] w-full rounded-md border border-line bg-surface-2 pl-8 pr-3 text-sm text-fg-0 placeholder:text-fg-3 sm:min-h-[36px]',
           'transition-colors duration-fast ease-out hover:border-line-strong focus:border-accent focus:outline-none focus:ring-1 focus:ring-inset focus:ring-accent',
           className,
         )}

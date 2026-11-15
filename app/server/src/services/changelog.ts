@@ -100,15 +100,18 @@ function platformForRepo(repo: string): string {
  * casing and the apostrophe variant. Returns the section text up to the next
  * heading, trimmed of template boilerplate / checklist lines.
  */
-function parseWhatsShipping(body: string): string {
+export function parseWhatsShipping(body: string): string {
   if (!body) return ''
   const lines = body.split(/\r?\n/)
   let capturing = false
   const out: string[] = []
   for (const line of lines) {
-    const heading = /^#{1,6}\s+(.*)$/.exec(line)
+    // obj 900838 (CodeQL js/polynomial-redos): `\s+(.*)$` overlapped on spaces and
+    // backtracked quadratically when `.` stopped at a stray \r. Match the marker,
+    // then slice — no capture group to backtrack into.
+    const heading = /^#{1,6}\s/.exec(line)
     if (heading) {
-      const text = heading[1].toLowerCase().replace(/[’']/g, "'")
+      const text = line.slice(heading[0].length).trimStart().toLowerCase().replace(/[’']/g, "'")
       if (/what'?s shipping/.test(text)) {
         capturing = true
         continue

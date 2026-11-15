@@ -152,3 +152,21 @@ describe('GET /api/docs/tree — one knowledge base', () => {
     }
   })
 })
+
+describe('obj 900838: a repeated ?path= is not a path (CodeQL type confusion)', () => {
+  const page = path.join(KB, 'workspaces', 'acme', 'people', 'dana-ruiz.md')
+  it('GET /file with ?path= twice is refused cleanly, not a 500', async () => {
+    const res = await fetch(`${baseUrl}/api/docs/file?path=${encodeURIComponent(page)}&path=${encodeURIComponent('/etc/passwd')}`, { headers: { Cookie: admin } })
+    expect(res.status).toBe(403)
+    const single = await get(`/api/docs/file?path=${encodeURIComponent(page)}`, admin)
+    expect(single.status).toBe(200)
+  })
+  it('PUT /file with a non-string path is a 400', async () => {
+    const res = await fetch(`${baseUrl}/api/docs/file`, {
+      method: 'PUT',
+      headers: { Cookie: admin, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ path: [page], content: '# x\n' }),
+    })
+    expect(res.status).toBe(400)
+  })
+})

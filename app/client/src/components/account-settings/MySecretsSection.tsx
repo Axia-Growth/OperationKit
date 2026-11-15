@@ -62,31 +62,31 @@ export function MySecretsSection() {
     <section className="mt-5 rounded-lg border border-border bg-surface-raised p-5">
       <div className="mb-4 flex items-start justify-between gap-4">
         <div>
-          <h2 className="text-base font-semibold text-fg-0">My secrets</h2>
+          <h2 className="text-lg font-semibold text-fg-0">My secrets</h2>
           <p className="mt-1 text-xs text-fg-3">
             Personal secrets scoped to you. Stored encrypted; the value is never shown again after you save it.
           </p>
         </div>
         <button
           onClick={() => { setEditingKey(null); setModalOpen(true) }}
-          className="shrink-0 rounded-md bg-accent px-3 py-1.5 text-sm font-medium text-accent-fg transition-colors duration-fast ease-out hover:bg-accent-hover"
+          className="shrink-0 rounded-md bg-accent px-3 py-1.5 text-base font-medium text-accent-fg transition-colors duration-fast ease-out hover:bg-accent-hover"
         >
           + New
         </button>
       </div>
 
       {error && (
-        <div className="mb-3 rounded bg-signal-alarm/10 px-3 py-2 text-sm text-signal-alarm">{error}</div>
+        <div className="mb-3 rounded bg-signal-alarm/10 px-3 py-2 text-base text-signal-alarm">{error}</div>
       )}
 
       {loading ? (
-        <div className="text-sm text-fg-3">Loading…</div>
+        <div className="text-base text-fg-3">Loading…</div>
       ) : secrets.length === 0 ? (
-        <div className="rounded-lg border border-dashed border-border p-6 text-center text-sm text-fg-3">
+        <div className="rounded-lg border border-dashed border-border p-6 text-center text-base text-fg-3">
           No personal secrets yet.
         </div>
       ) : (
-        <table className="w-full text-sm">
+        <table className="w-full text-base">
           <thead className="border-b border-border">
             <tr className="text-left text-xs text-fg-2">
               <th className="py-2 font-medium">Key</th>
@@ -164,7 +164,7 @@ function MySecretModal({ userId, editingKey, onClose, onSaved }: {
             </svg>
           </button>
         </div>
-        {error && <div className="mb-3 rounded bg-signal-alarm/10 px-3 py-2 text-sm text-signal-alarm">{error}</div>}
+        {error && <div className="mb-3 rounded bg-signal-alarm/10 px-3 py-2 text-base text-signal-alarm">{error}</div>}
         <form onSubmit={handleSubmit} className="space-y-3">
           <div>
             <label className="mb-1 block text-xs text-fg-2">Key {isEdit && <span className="text-fg-3">(locked)</span>}</label>
@@ -174,7 +174,7 @@ function MySecretModal({ userId, editingKey, onClose, onSaved }: {
               onChange={e => setKey(e.target.value)}
               disabled={isEdit}
               placeholder="e.g. MY_API_KEY"
-              className="w-full rounded border border-border bg-surface px-2 py-1.5 font-mono text-sm text-fg-0 outline-none focus:border-accent disabled:opacity-50"
+              className="w-full rounded border border-border bg-surface px-2 py-1.5 font-mono text-base text-fg-0 outline-none focus:border-accent disabled:opacity-50"
             />
           </div>
           <div>
@@ -185,12 +185,12 @@ function MySecretModal({ userId, editingKey, onClose, onSaved }: {
               value={value}
               onChange={e => setValue(e.target.value)}
               placeholder={isEdit ? 're-enter the value to set a new version' : 'secret value'}
-              className="w-full rounded border border-border bg-surface px-2 py-1.5 font-mono text-sm text-fg-0 outline-none focus:border-accent"
+              className="w-full rounded border border-border bg-surface px-2 py-1.5 font-mono text-base text-fg-0 outline-none focus:border-accent"
             />
           </div>
           <div className="flex justify-end gap-2 pt-2">
-            <button type="button" onClick={onClose} className="rounded px-3 py-1.5 text-sm text-fg-2 hover:bg-surface-overlay">Cancel</button>
-            <button type="submit" disabled={saving} className="rounded bg-accent px-3 py-1.5 text-sm font-medium text-accent-fg hover:bg-accent-hover disabled:opacity-50">
+            <button type="button" onClick={onClose} className="rounded px-3 py-1.5 text-base text-fg-2 hover:bg-surface-overlay">Cancel</button>
+            <button type="submit" disabled={saving} className="rounded bg-accent px-3 py-1.5 text-base font-medium text-accent-fg hover:bg-accent-hover disabled:opacity-50">
               {saving ? 'Saving...' : isEdit ? 'Update' : 'Create'}
             </button>
           </div>

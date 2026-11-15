@@ -1,5 +1,12 @@
 import { useEffect, useState } from 'react'
 import { isHttpUrl } from './designReview'
+import { Select } from '../components/ui/Select'
+import { SegmentedControl } from '../components/ui/SegmentedControl'
+
+const VIEWPORTS = [
+  { key: 'desktop', label: 'Desktop' },
+  { key: 'mobile', label: 'Mobile' },
+]
 
 export function DesignCanvas({
   url,
@@ -55,25 +62,23 @@ export function DesignCanvas({
           <button type="button" onClick={refresh} disabled={!src}>Refresh</button>
         </form>
         {seedUrls.length > 0 && (
-          <select
+          <Select
             aria-label="Detected preview URLs"
             value=""
-            onChange={e => { if (e.target.value) load(e.target.value) }}
+            onChange={v => { if (v) load(v) }}
           >
             <option value="">Detected URLs</option>
             {seedUrls.map(u => (
               <option key={u} value={u}>{u}</option>
             ))}
-          </select>
+          </Select>
         )}
-        <div className="cc-design-tools">
-          <button type="button" aria-pressed={viewport === 'desktop'} onClick={() => setViewport('desktop')}>
-            Desktop
-          </button>
-          <button type="button" aria-pressed={viewport === 'mobile'} onClick={() => setViewport('mobile')}>
-            Mobile
-          </button>
-        </div>
+        <SegmentedControl
+          label="Preview viewport"
+          items={VIEWPORTS}
+          value={viewport}
+          onChange={k => setViewport(k === 'mobile' ? 'mobile' : 'desktop')}
+        />
       </div>
       <div className={`cc-design-stage ${viewport}`}>
         {!src && (

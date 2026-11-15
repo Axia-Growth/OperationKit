@@ -24,7 +24,7 @@ export interface SharedAppInput {
 }
 
 const INPUT =
-  'min-h-[44px] w-full rounded-md border border-line bg-surface-1 px-3 font-mono text-[13px] text-fg-0 outline-none transition-colors duration-fast ease-out placeholder:text-fg-3 hover:border-line-strong focus:border-accent focus-visible:ring-2 focus-visible:ring-accent/40 disabled:opacity-60 sm:min-h-[36px]'
+  'min-h-[44px] w-full rounded-md border border-line bg-surface-1 px-3 font-mono text-sm text-fg-0 outline-none transition-colors duration-fast ease-out placeholder:text-fg-3 hover:border-line-strong focus:border-accent focus-visible:ring-2 focus-visible:ring-accent/40 disabled:opacity-60 sm:min-h-[36px]'
 
 export function sharedAppStateLabel(s: ConnectorSharedApp): { text: string; tone: 'neutral' | 'amber' } {
   if (!s.enabled) return { text: 'Off', tone: 'neutral' }
@@ -86,7 +86,7 @@ export function SharedOAuthAppPanel({
 
   const field = (key: 'issuer' | 'client_id' | 'redirect_uri' | 'provider_label', label: string, help: string, placeholder: string) => (
     <div>
-      <label htmlFor={`${ids}-${key}`} className="mb-1 block text-[12px] font-medium text-fg-1">{label}</label>
+      <label htmlFor={`${ids}-${key}`} className="mb-1 block text-xs font-medium text-fg-1">{label}</label>
       <input
         id={`${ids}-${key}`}
         type="text"
@@ -98,7 +98,7 @@ export function SharedOAuthAppPanel({
         onChange={e => setForm(prev => ({ ...prev, [key]: e.target.value }))}
         className={INPUT}
       />
-      <p className="mt-1 text-[12px] leading-relaxed text-fg-3">{help}</p>
+      <p className="mt-1 text-xs leading-relaxed text-fg-3">{help}</p>
     </div>
   )
 
@@ -112,12 +112,12 @@ export function SharedOAuthAppPanel({
         className="flex min-h-[44px] w-full items-center justify-between gap-3 px-4 py-2 text-left transition-colors duration-fast ease-out hover:bg-surface-3 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent/50 sm:px-5"
       >
         <span className="min-w-0">
-          <span className="flex flex-wrap items-center gap-2 text-[13px] font-medium text-fg-0">
+          <span className="flex flex-wrap items-center gap-2 text-sm font-medium text-fg-0">
             Shared third-party app
             <Badge>Optional</Badge>
             <Badge tone={state.tone}>{state.text}</Badge>
           </span>
-          <span className="block text-[12px] text-fg-3">
+          <span className="block text-xs text-fg-3">
             Only if you can't register your own {c.name} app. Not needed for a normal install.
           </span>
         </span>
@@ -129,7 +129,7 @@ export function SharedOAuthAppPanel({
 
       {open && (
         <div id={`${ids}-body`} className="space-y-4 px-4 pb-5 pt-1 sm:px-5">
-          <div className="space-y-2 text-[12px] leading-relaxed text-fg-2">
+          <div className="space-y-2 text-xs leading-relaxed text-fg-2">
             <p>
               Optional convenience. Some providers make it hard to register your own OAuth app. If so, you can sign in
               to {c.name} through a shared app that <strong className="text-fg-1">a third party you choose</strong> runs
@@ -149,14 +149,14 @@ export function SharedOAuthAppPanel({
             </p>
           </div>
 
-          {!isAdmin && <p className="text-[12px] text-fg-3">Only an admin can change this.</p>}
+          {!isAdmin && <p className="text-xs text-fg-3">Only an admin can change this.</p>}
 
           <form className="space-y-3" onSubmit={submit} aria-label={`Shared third-party app for ${c.name}`}>
             {field('provider_label', 'Who runs it (optional)', 'Shown on the connection so everyone can see who it depends on.', 'e.g. the company that runs the shared app')}
             {field('issuer', 'Issuer URL', "The third party's OAuth server. Must be https.", 'Paste from the third party you chose')}
             {field('client_id', 'Client ID', 'The client ID the third party gave you for its shared app.', 'Paste from the third party you chose')}
             {field('redirect_uri', 'Redirect URI', 'The redirect URI registered on the shared app. Must be https.', 'Paste from the third party you chose')}
-            <label className="flex items-start gap-2 text-[13px] text-fg-1">
+            <label className="flex items-start gap-2 text-sm text-fg-1">
               <input
                 type="checkbox"
                 className="mt-0.5 h-4 w-4 accent-[color:var(--accent)]"

@@ -46,10 +46,10 @@ export function WorkerRollup({ workers, onOpenWorker, label = 'Workers' }: Worke
     <div className="mt-2.5 ml-7 rounded-md border border-line-soft bg-surface-1/50">
       <button
         onClick={() => setExpanded(e => !e)}
-        className="flex w-full items-center gap-2 px-2.5 py-1.5 text-[12px] text-fg-2 hover:text-fg-1"
+        className="flex w-full items-center gap-2 px-2.5 py-1.5 text-xs text-fg-2 hover:text-fg-1"
       >
         <ChevronRight className={`h-3 w-3 shrink-0 transition-transform duration-fast ${expanded ? 'rotate-90' : ''}`} />
-        <span className="font-medium uppercase tracking-[0.06em]">{label}</span>
+        <span className="font-medium uppercase tracking-eyebrow">{label}</span>
         <span className="font-mono text-fg-3">{done}/{total} done</span>
         {running > 0 && <span className="text-status-working">● {running} running</span>}
         {reviewing > 0 && <span className="text-status-ai">◇ {reviewing} reviewing</span>}
@@ -63,11 +63,11 @@ export function WorkerRollup({ workers, onOpenWorker, label = 'Workers' }: Worke
             <li key={w.id} className="border-b border-line-soft/40 last:border-b-0">
               <button
                 onClick={() => onOpenWorker(w)}
-                className="flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-[12px] text-fg-1 transition-colors duration-fast ease-out hover:bg-surface-3"
+                className="flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-xs text-fg-1 transition-colors duration-fast ease-out hover:bg-surface-3"
               >
                 <StatusDot status={w.status} size={6} />
                 <span className="flex-1 truncate">{w.title.replace(/^worker:\s*/i, '')}</span>
-                <span className="shrink-0 font-mono text-[12px] text-fg-3">{workerStateLabel(w)}</span>
+                <span className="shrink-0 font-mono text-xs text-fg-3">{workerStateLabel(w)}</span>
               </button>
             </li>
           ))}

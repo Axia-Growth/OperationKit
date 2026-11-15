@@ -11,10 +11,11 @@ import type { IntegrationBuilderCreateResponse } from '@operationkit/shared'
 import { api, ApiError } from '../../lib/api'
 import { useNavigate } from '../../context/nav'
 import { Alert, Button, Card } from '../ui'
+import { Select } from '../ui/Select'
 
 const FIELD =
-  'w-full rounded-md border border-line bg-surface-1 px-3 py-2 text-[13px] text-fg-0 outline-none transition-colors duration-fast ease-out placeholder:text-fg-3 hover:border-line-strong focus:border-accent focus-visible:ring-2 focus-visible:ring-accent/40'
-const LABEL = 'mb-1 block text-[12px] font-medium text-fg-1'
+  'w-full rounded-md border border-line bg-surface-1 px-3 py-2 text-sm text-fg-0 outline-none transition-colors duration-fast ease-out placeholder:text-fg-3 hover:border-line-strong focus:border-accent focus-visible:ring-2 focus-visible:ring-accent/40'
+const LABEL = 'mb-1 block text-xs font-medium text-fg-1'
 
 function errText(err: unknown, fallback: string): string {
   if (err instanceof ApiError) return (err.body as { error?: string } | null)?.error || err.message || fallback
@@ -75,19 +76,19 @@ export function MakeMyOwnIntegration({
     <Card inset className="p-4 sm:p-5" data-testid="make-my-own">
       <div className="flex items-start gap-3">
         <div className="grid h-10 w-10 shrink-0 place-items-center rounded-lg border border-line bg-surface-3 text-fg-1">
-          <Bot className="h-5 w-5" strokeWidth={1.75} />
+          <Bot className="h-5 w-5" />
         </div>
         <div className="min-w-0">
-          <h3 className="font-display text-[15px] font-semibold text-fg-0">Make my own with the Integrations bot</h3>
-          <p className="mt-0.5 text-[12.5px] leading-relaxed text-fg-2">
+          <h3 className="font-display text-lg font-semibold text-fg-0">Make my own with the Integrations bot</h3>
+          <p className="mt-0.5 text-sm leading-relaxed text-fg-2">
             For anything not in the list. The bot works in a chat on its own board card:
           </p>
         </div>
       </div>
       <ol className="mt-3 grid gap-2 sm:grid-cols-2">
         {STEPS.map((s, i) => (
-          <li key={s.text} className="flex items-start gap-2 rounded-md border border-line-soft bg-surface-1 px-3 py-2 text-[12.5px] text-fg-1">
-            <span className="font-mono text-[12px] text-fg-3">{i + 1}</span>
+          <li key={s.text} className="flex items-start gap-2 rounded-md border border-line-soft bg-surface-1 px-3 py-2 text-sm text-fg-1">
+            <span className="font-mono text-xs text-fg-3">{i + 1}</span>
             <s.icon className="mt-0.5 h-3.5 w-3.5 shrink-0 text-fg-2" strokeWidth={1.75} aria-hidden="true" />
             <span>{s.text}</span>
           </li>
@@ -106,7 +107,7 @@ export function MakeMyOwnIntegration({
           </div>
         </div>
       ) : !isAdmin ? (
-        <p className="mt-4 text-[12.5px] text-fg-3">Only an admin can start the Integrations bot — ask one to set it up.</p>
+        <p className="mt-4 text-sm text-fg-3">Only an admin can start the Integrations bot — ask one to set it up.</p>
       ) : (
         <form
           className="mt-4 space-y-3"
@@ -137,19 +138,18 @@ export function MakeMyOwnIntegration({
               maxLength={8000}
               placeholder="https://developers.acme.com/api"
             />
-            <p className="mt-1 text-[12px] text-fg-3">Do not paste keys here. The bot asks for them in a secure form.</p>
+            <p className="mt-1 text-xs text-fg-3">Do not paste keys here. The bot asks for them in a secure form.</p>
           </div>
           <div className="flex flex-wrap items-end justify-between gap-3">
             <div>
               <label className={LABEL} htmlFor={`${id}-ws`}>Workspace</label>
-              <select
-                id={`${id}-ws`}
-                className={`${FIELD} min-h-[44px] w-auto sm:min-h-[36px]`}
+              <Select
+                id={`${id}-ws`} className="w-auto"
                 value={workspace}
-                onChange={e => setWorkspace(e.target.value)}
+                onChange={v => setWorkspace(v)}
               >
                 {workspaces.map(w => <option key={w.value} value={w.value}>{w.label}</option>)}
-              </select>
+              </Select>
             </div>
             <Button type="submit" variant="primary" loading={busy} disabled={!workspace}>
               Start the Integrations bot

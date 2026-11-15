@@ -17,6 +17,8 @@ import { HAS_CHAT_PAGE } from './lib/optional-pages'
 import { SYSTEM_ROUTE, AGENTS_ROUTE, LEGACY_REDIRECTS, REMOVED_ROUTES, usesPageScroll } from './lib/routes'
 import type { Workspace } from '@operationkit/shared'
 
+const Toaster = lazy(() => import('./components/ui/Toaster').then(m => ({ default: m.Toaster })))
+
 // Route-level code-splitting (obj 700585): the board is the landing surface
 // and stays eager. Every secondary route is lazy-loaded so its code — most
 // importantly the heavy BlockNote editor pulled in by DocsPage — no longer
@@ -34,6 +36,7 @@ const SettingsOrg = lazy(() => import('./components/settings/SettingsOrg').then(
 const SetupPage = lazy(() => import('./components/setup/SetupPage').then(m => ({ default: m.SetupPage })))
 const SettingsBranding = lazy(() => import('./components/settings/SettingsBranding').then(m => ({ default: m.SettingsBranding })))
 const SettingsEmail = lazy(() => import('./components/settings/SettingsEmail').then(m => ({ default: m.SettingsEmail })))
+const SettingsKnowledgeSearch = lazy(() => import('./components/settings/SettingsKnowledgeSearch').then(m => ({ default: m.SettingsKnowledgeSearch })))
 const AccountSettings = lazy(() => import('./components/AccountSettings').then(m => ({ default: m.AccountSettings })))
 const JobsBoard = lazy(() => import('./components/JobsBoard').then(m => ({ default: m.JobsBoard })))
 const AgentsHub = lazy(() => import('./components/agents/AgentsHub').then(m => ({ default: m.AgentsHub })))
@@ -58,11 +61,11 @@ function NotFound() {
   return (
     <div className="flex h-full flex-col items-center justify-center gap-2 p-6 text-center">
       <h1 className="text-lg font-semibold text-fg-0">Page not found</h1>
-      <p className="text-sm text-fg-3">No route matches this URL.</p>
+      <p className="text-base text-fg-3">No route matches this URL.</p>
       <a
         href="/"
         onClick={e => { e.preventDefault(); navigate('/') }}
-        className="mt-2 text-sm text-accent hover:underline"
+        className="mt-2 text-base text-accent hover:underline"
       >
         Back to the board
       </a>
@@ -208,7 +211,7 @@ function AppContent() {
           {LEGACY_REDIRECTS.map(r => <Route key={r.from} path={r.from} element={<Navigate to={r.to} replace />} />)}
           {/* Unfinished surfaces removed (obj 900543): their old URLs go to the board. */}
           {REMOVED_ROUTES.map(p => <Route key={p} path={p} element={<Navigate to="/" replace />} />)}
-          <Route path="/config" element={<Navigate to="/settings/org" replace />} />
+          <Route path="/config" element={<Navigate to="/settings/workspaces" replace />} />
           {/* The built-in assistant was removed (obj 720115); its old URLs land on the bots page when present.
               /chat and /chat/:slug are deliberately UNCHANGED by the obj-900327 rename so existing
               bookmarks and in-product deeplinks keep resolving. */}
@@ -234,9 +237,10 @@ function AppContent() {
             <Route path="api-mcp" element={<AccountSettings embedded />} />
             <Route path="secrets" element={<SettingsSecrets />} />
             <Route path="integrations" element={<SettingsConnectors />} />
-            <Route path="org" element={<SettingsOrg />} />
+            <Route path="workspaces" element={<SettingsOrg />} />
             <Route path="branding" element={<SettingsBranding />} />
             <Route path="email" element={<SettingsEmail />} />
+            <Route path="knowledge-search" element={<SettingsKnowledgeSearch />} />
             {/* Old bookmarks (pre sprint-4b-reorg, obj 900496), plus older ones before that.
                 SettingsPage itself does the real redirect; these just need to match so the
                 router mounts SettingsPage at all for these URLs. */}
@@ -245,12 +249,17 @@ function AppContent() {
             <Route path="seats" element={<Navigate to="/settings/models" replace />} />
             <Route path="account" element={<Navigate to="/settings/api-mcp" replace />} />
             <Route path="test-credentials" element={<Navigate to="/settings/secrets" replace />} />
+            {/* Settings → Org was renamed Settings → Workspaces (obj 900758). */}
+            <Route path="org" element={<Navigate to="/settings/workspaces" replace />} />
           </Route>
           <Route path="*" element={<NotFound />} />
         </Routes>
       </Suspense>
       </PageTransition>
     </Layout>
+    {/* The one visible stack for ui/Toaster's app-wide toast queue (obj 900819),
+        loaded after first paint: nothing toasts before a page has loaded. */}
+    <Suspense fallback={null}><Toaster /></Suspense>
     </BoardThemeProvider>
     </NavContext.Provider>
   )

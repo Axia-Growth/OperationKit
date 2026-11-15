@@ -20,7 +20,7 @@ export function ActivityIndicator({ variant, label, className = '' }: ActivityIn
     return (
       <div className={`flex flex-col items-center justify-center gap-3 ${className}`}>
         <ThinkingIndicator variant="dots" tone="accent" />
-        {label && <div className="text-sm text-fg-2">{label}</div>}
+        {label && <div className="text-base text-fg-2">{label}</div>}
       </div>
     )
   }

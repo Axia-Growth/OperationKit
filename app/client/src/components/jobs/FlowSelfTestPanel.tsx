@@ -80,8 +80,8 @@ export function FlowSelfTestPanel({
   return (
     <section className="space-y-2 rounded-md border border-line p-3" data-testid="flow-self-test">
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <h4 className="inline-flex items-center gap-1.5 text-[12px] font-semibold uppercase tracking-[0.06em] text-fg-3">
-          <FlaskConical className="h-3.5 w-3.5" strokeWidth={1.75} /> Self-test &amp; publish · v{publish.version}
+        <h4 className="inline-flex items-center gap-1.5 text-xs font-semibold uppercase tracking-eyebrow text-fg-3">
+          <FlaskConical className="h-3.5 w-3.5" /> Self-test &amp; publish · v{publish.version}
         </h4>
         <div className="flex items-center gap-2">
           <Button size="sm" variant="secondary" loading={busy === 'dry'} disabled={!flowsEnabled || busy !== null} onClick={() => void test('dry')}
@@ -95,14 +95,14 @@ export function FlowSelfTestPanel({
         </div>
       </div>
 
-      {!st && <p className="text-[12px] text-fg-2">No self-test of this version yet.</p>}
+      {!st && <p className="text-xs text-fg-2">No self-test of this version yet.</p>}
       {st && (
-        <div className="space-y-2 text-[12px]" data-testid="self-test-result">
+        <div className="space-y-2 text-xs" data-testid="self-test-result">
           <div className="flex flex-wrap items-center gap-2">
             {st.status === 'passed'
-              ? <Badge tone="verify" mono><CheckCircle2 className="mr-1 inline h-3 w-3" strokeWidth={2} />passed</Badge>
+              ? <Badge tone="verify" mono><CheckCircle2 className="mr-1 inline h-3 w-3" />passed</Badge>
               : st.status === 'failed'
-                ? <Badge tone="alarm" mono><XCircle className="mr-1 inline h-3 w-3" strokeWidth={2} />failed</Badge>
+                ? <Badge tone="alarm" mono><XCircle className="mr-1 inline h-3 w-3" />failed</Badge>
                 : <Badge tone="info" mono>running</Badge>}
             <span className="font-mono text-fg-2">#{st.id} · {st.mode} · {st.requested_by} · {relativeTime(st.created_at)} ago</span>
           </div>
@@ -148,10 +148,10 @@ export function FlowSelfTestPanel({
         </div>
       )}
 
-      <div className="space-y-1.5 border-t border-line pt-2 text-[12px]">
+      <div className="space-y-1.5 border-t border-line pt-2 text-xs">
         {isPublished && publish.approvals ? (
           <div className="inline-flex items-center gap-1.5 text-fg-2" data-testid="flow-approval-record">
-            <ShieldCheck className="h-3.5 w-3.5 text-signal-verify" strokeWidth={1.75} />
+            <ShieldCheck className="h-3.5 w-3.5 text-signal-verify" />
             Published by {publish.approvals.by} {relativeTime(publish.approvals.at)} ago
             {publish.approvals.nodes.length ? <> · approved <span className="font-mono">{publish.approvals.nodes.join(', ')}</span></> : ' · no send/spend nodes'}
           </div>

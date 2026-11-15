@@ -7,14 +7,14 @@ import { cn } from '../ui'
 // Shared input styling — token-bound, matches the Mission Control surface
 // language (no hardcoded hex). Used across the forms on this page.
 export const inputCls =
-  'w-full min-w-0 rounded-md border border-line bg-surface-1 px-3 py-2 text-[13px] text-fg-0 ' +
+  'w-full min-w-0 rounded-md border border-line bg-surface-1 px-3 py-2 text-sm text-fg-0 ' +
   'placeholder-fg-3 transition-colors focus:border-accent focus:outline-none'
 export const selectCls =
-  'rounded-md border border-line bg-surface-1 px-2.5 py-2 text-[13px] text-fg-0 focus:border-accent focus:outline-none'
+  'rounded-md border border-line bg-surface-1 px-2.5 py-2 text-sm text-fg-0 focus:border-accent focus:outline-none'
 
 export function SectionLabel({ icon, children, className }: { icon?: ReactNode; children: ReactNode; className?: string }) {
   return (
-    <div className={cn('mb-2 flex items-center gap-1.5 text-[12px] font-medium uppercase tracking-wider text-fg-3', className)}>
+    <div className={cn('mb-2 flex items-center gap-1.5 text-xs font-medium uppercase tracking-eyebrow text-fg-3', className)}>
       {icon}{children}
     </div>
   )

@@ -36,12 +36,17 @@ const CTO: ChatAgentInfo = {
 
 const HIGH_AGENCY_OFF = {
   high_agency: {
-    slug: 'acme-cto', enabled: false, times_per_day: 1, first_hour: 9, workspace: null, allow_cards: true, allow_workflows: true,
-    run_as_user_id: null, routine_id: null, updated_by: null, updated_at: null, wake_times: ['09:00'], cron: '0 9 * * *',
-    next_wake_at: null, routine: null, last_wake: null,
+    slug: 'acme-cto', enabled: false, level: 1, runs_per_day: 1, workspace: null, allow_cards: true, allow_workflows: true,
+    run_as_user_id: null, routine_id: null, updated_by: null, updated_at: null, wake_times: ['02:00'], timezone: 'America/New_York',
+    cron: '0 7 * * *', wake_model: null, next_wake_at: null, routine: null, last_wake: null,
   },
-  cadences: [1, 2, 3, 4, 6],
-  max_cards_per_wake: 3,
+  levels: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
+  max_new_projects_per_wake: 1,
+}
+
+const WORKSPACE_ACCESS = {
+  access: { slug: 'acme-cto', mode: 'restricted', configured: true, workspaces: ['ops'], grants: [{ workspace: 'ops', granted_by: 'jordan', granted_at: '2026-11-13 18:00:00' }], updated_by: 'jordan', updated_at: '' },
+  workspace_options: [{ slug: 'ops', name: 'Ops' }, { slug: 'sales', name: 'Sales' }],
 }
 
 let host: HTMLDivElement
@@ -56,6 +61,10 @@ beforeEach(() => {
     // The High Agency section (obj 900748) loads its own setting; it has its own
     // test file, so its calls are answered here and kept out of `requests`.
     if (url.includes('/high-agency')) return new Response(JSON.stringify(HIGH_AGENCY_OFF), { status: 200, headers: { 'content-type': 'application/json' } })
+    // Same for the Workspace access section (obj 900797, WorkspaceAccessSection.test.tsx).
+    if (url.includes('/workspaces')) return new Response(JSON.stringify(WORKSPACE_ACCESS), { status: 200, headers: { 'content-type': 'application/json' } })
+    // And the Approve on my behalf section (obj 900839, DelegationSection.test.tsx).
+    if (url.includes('/delegations')) return new Response(JSON.stringify({ bot: null, workspace_options: [], grants: [], can_manage: false }), { status: 200, headers: { 'content-type': 'application/json' } })
     const body = init?.body ? JSON.parse(String(init.body)) : null
     requests.push({ url, method: init?.method ?? 'GET', body })
     const agent = { ...CTO, model: body?.model ?? null, all_tools: !!body?.all_tools, config: init?.method === 'DELETE' ? null : { ...body, updated_by: 'jordan', updated_at: '' } }
@@ -82,10 +91,10 @@ const box = (label: string) => host.querySelector<HTMLInputElement>(`input[aria-
 const allTools = () => [...host.querySelectorAll<HTMLInputElement>('input[type="checkbox"]')].find(i => i.closest('label')?.textContent?.includes('All tools'))!
 const button = (t: string) => [...host.querySelectorAll('button')].find(b => b.textContent?.trim() === t)!
 
-function setInput(el: HTMLInputElement | HTMLSelectElement, value: string) {
-  const proto = el instanceof HTMLSelectElement ? HTMLSelectElement.prototype : HTMLInputElement.prototype
+function setInput(el: HTMLInputElement, value: string) {
+  const proto = HTMLInputElement.prototype
   Object.getOwnPropertyDescriptor(proto, 'value')!.set!.call(el, value)
-  el.dispatchEvent(new Event(el instanceof HTMLSelectElement ? 'change' : 'input', { bubbles: true }))
+  el.dispatchEvent(new Event('input', { bubbles: true }))
 }
 
 async function click(el: Element) {

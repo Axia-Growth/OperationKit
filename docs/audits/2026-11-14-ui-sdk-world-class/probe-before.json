@@ -1,0 +1,281 @@
+{
+ "screens": {
+  "board": {
+   "stops": 37,
+   "noFocusRing": [],
+   "small": [
+    "Draft Q1 pricing page copy(192x19)",
+    "Clean up stale secrets(192x19)"
+   ],
+   "buttons": 36,
+   "unnamedButtons": 0,
+   "nativeSelects": 0,
+   "comboboxes": 0,
+   "tablists": 0,
+   "tabpanels": 0,
+   "tooltips": 0,
+   "smallTargets": 2
+  },
+  "card-viewer": {
+   "stops": 19,
+   "noFocusRing": [],
+   "small": [],
+   "buttons": 24,
+   "unnamedButtons": 0,
+   "nativeSelects": 0,
+   "comboboxes": 0,
+   "tablists": 0,
+   "tabpanels": 0,
+   "tooltips": 0,
+   "smallTargets": 0
+  },
+  "archive": {
+   "stops": 18,
+   "noFocusRing": [],
+   "small": [
+    "Back to board(77x18)"
+   ],
+   "buttons": 16,
+   "unnamedButtons": 0,
+   "nativeSelects": 0,
+   "comboboxes": 0,
+   "tablists": 0,
+   "tabpanels": 0,
+   "tooltips": 0,
+   "smallTargets": 1
+  },
+  "chat": {
+   "stops": 19,
+   "noFocusRing": [],
+   "small": [],
+   "buttons": 16,
+   "unnamedButtons": 0,
+   "nativeSelects": 0,
+   "comboboxes": 0,
+   "tablists": 0,
+   "tabpanels": 0,
+   "tooltips": 0,
+   "smallTargets": 0
+  },
+  "knowledge": {
+   "stops": 12,
+   "noFocusRing": [],
+   "small": [],
+   "buttons": 11,
+   "unnamedButtons": 0,
+   "nativeSelects": 0,
+   "comboboxes": 0,
+   "tablists": 0,
+   "tabpanels": 0,
+   "tooltips": 0,
+   "smallTargets": 0
+  },
+  "kb-setup": {
+   "stops": 16,
+   "noFocusRing": [],
+   "small": [
+    "Context(49x18)"
+   ],
+   "buttons": 14,
+   "unnamedButtons": 0,
+   "nativeSelects": 1,
+   "comboboxes": 0,
+   "tablists": 0,
+   "tabpanels": 0,
+   "tooltips": 0,
+   "smallTargets": 1
+  },
+  "jobs": {
+   "stops": 16,
+   "noFocusRing": [],
+   "small": [],
+   "buttons": 15,
+   "unnamedButtons": 0,
+   "nativeSelects": 0,
+   "comboboxes": 0,
+   "tablists": 2,
+   "tabpanels": 0,
+   "tooltips": 0,
+   "smallTargets": 0
+  },
+  "agents": {
+   "stops": 33,
+   "noFocusRing": [],
+   "small": [
+    "Settings → Integrations(140x17)"
+   ],
+   "buttons": 26,
+   "unnamedButtons": 0,
+   "nativeSelects": 0,
+   "comboboxes": 0,
+   "tablists": 2,
+   "tabpanels": 0,
+   "tooltips": 0,
+   "smallTargets": 1
+  },
+  "system": {
+   "stops": 15,
+   "noFocusRing": [],
+   "small": [],
+   "buttons": 12,
+   "unnamedButtons": 0,
+   "nativeSelects": 0,
+   "comboboxes": 0,
+   "tablists": 1,
+   "tabpanels": 0,
+   "tooltips": 0,
+   "smallTargets": 0
+  },
+  "settings-models": {
+   "stops": 42,
+   "noFocusRing": [],
+   "small": [
+    "Enable Claude Fable 5.2(16x16)",
+    "Make Claude Fable 5.2 the default(16x16)",
+    "Make Claude Fable 5.2 the planner(16x16)",
+    "Enable Fable 5.1(16x16)",
+    "Enable Opus 5 (legacy)(16x16)",
+    "Enable Opus 4.8 (legacy)(16x16)",
+    "Enable Sonnet 5(16x16)",
+    "Enable Sonnet 4.6 (legacy)(16x16)",
+    "Enable Fable 5 (unavailable — US gov ban(16x16)",
+    "Enable GPT-5.5 (Codex)(16x16)",
+    "Enable GPT-5.4 (Codex)(16x16)",
+    "Enable GPT-5.4-mini (Codex)(16x16)",
+    "Enable Grok 4.6(16x16)"
+   ],
+   "buttons": 27,
+   "unnamedButtons": 0,
+   "nativeSelects": 3,
+   "comboboxes": 0,
+   "tablists": 1,
+   "tabpanels": 0,
+   "tooltips": 0,
+   "smallTargets": 13
+  },
+  "settings-api-mcp": {
+   "stops": 29,
+   "noFocusRing": [],
+   "small": [
+    "http://localhost:3912/api/openapi.json(304x17)",
+    "http://localhost:3912/api/agent(248x17)",
+    "docs/api/README.md(129x17)",
+    "docs/api/AGENT-PROMPT.md(175x17)"
+   ],
+   "buttons": 22,
+   "unnamedButtons": 0,
+   "nativeSelects": 0,
+   "comboboxes": 0,
+   "tablists": 2,
+   "tabpanels": 0,
+   "tooltips": 0,
+   "smallTargets": 4
+  },
+  "settings-secrets": {
+   "stops": 23,
+   "noFocusRing": [],
+   "small": [],
+   "buttons": 19,
+   "unnamedButtons": 0,
+   "nativeSelects": 1,
+   "comboboxes": 0,
+   "tablists": 2,
+   "tabpanels": 0,
+   "tooltips": 0,
+   "smallTargets": 0
+  },
+  "settings-integrations": {
+   "stops": 19,
+   "noFocusRing": [],
+   "small": [],
+   "buttons": 16,
+   "unnamedButtons": 0,
+   "nativeSelects": 1,
+   "comboboxes": 0,
+   "tablists": 1,
+   "tabpanels": 0,
+   "tooltips": 0,
+   "smallTargets": 0
+  },
+  "settings-workspaces": {
+   "stops": 29,
+   "noFocusRing": [],
+   "small": [
+    "Acmeacme0 repos(1257x21)",
+    "Northwindnorthwind0 repos(1257x21)",
+    "Personalpersonal-ws0 repos(1257x21)",
+    "Greenfieldgreenfield0 repos(1257x21)",
+    "Blue Harborblue-harbor0 repos(1257x21)"
+   ],
+   "buttons": 27,
+   "unnamedButtons": 0,
+   "nativeSelects": 0,
+   "comboboxes": 0,
+   "tablists": 2,
+   "tabpanels": 0,
+   "tooltips": 0,
+   "smallTargets": 5
+  },
+  "settings-branding": {
+   "stops": 41,
+   "noFocusRing": [],
+   "small": [
+    "INPUT(16x16)",
+    "INPUT(14x14)",
+    "INPUT(14x14)",
+    "INPUT(14x14)",
+    "Advanced — status colorssemantic, not br(1300x20)",
+    "A link(32x20)"
+   ],
+   "buttons": 23,
+   "unnamedButtons": 0,
+   "nativeSelects": 0,
+   "comboboxes": 0,
+   "tablists": 1,
+   "tabpanels": 0,
+   "tooltips": 0,
+   "smallTargets": 6
+  },
+  "settings-email": {
+   "stops": 21,
+   "noFocusRing": [],
+   "small": [],
+   "buttons": 18,
+   "unnamedButtons": 0,
+   "nativeSelects": 0,
+   "comboboxes": 0,
+   "tablists": 1,
+   "tabpanels": 0,
+   "tooltips": 0,
+   "smallTargets": 0
+  },
+  "setup": {
+   "stops": 15,
+   "noFocusRing": [],
+   "small": [],
+   "buttons": 8,
+   "unnamedButtons": 0,
+   "nativeSelects": 0,
+   "comboboxes": 0,
+   "tablists": 0,
+   "tabpanels": 0,
+   "tooltips": 0,
+   "smallTargets": 0
+  }
+ },
+ "chk": {
+  "palette": {
+   "dialog": false,
+   "combobox": null,
+   "activedescendant": "set-on-arrow",
+   "activedescendantAfterArrow": false,
+   "focusAfterEscape": "body"
+  },
+  "accountMenu": {
+   "role": null,
+   "text": "Aalex",
+   "afterArrow": "Aalex",
+   "focusAfterEscape": "Account menu"
+  }
+ }
+}

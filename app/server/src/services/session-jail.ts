@@ -38,6 +38,7 @@
 import { execFile, execFileSync } from 'node:child_process'
 import fs from 'node:fs'
 import path from 'node:path'
+import type { JailGitMount } from './worktree-gitdir.js'
 
 export const JAIL_NAME_PREFIX = 'ok-jail-'
 
@@ -269,6 +270,73 @@ export interface CreateJailOpts {
    * '' = not set. The caller must create the dir (buildJailClaudeTmpdirPrefix).
    */
   claudeTmpdir?: string
+  /**
+   * obj 900829: make the worktree's `.git` pointer resolve inside the jail.
+   * Control-plane paths, mounted at the SAME path in the jail (the pointer text
+   * is shared with host-side git and must not change). See
+   * {@link buildJailGitMountArgs} for the exact, hardened mount set.
+   */
+  gitMount?: JailGitMount
+}
+
+/**
+ * obj 900829 — the mounts that let git work inside a jail.
+ *
+ * Before this, a jailed card's `/workspace/.git` said
+ * `gitdir: <project>/.git/worktrees/cc-worktree-<id>` and nothing at that path
+ * was mounted, so every git command failed ("not a git repository") and a PR
+ * card could not commit. Mount set, all at their control-plane path:
+ *
+ *   - `<commonDir>`                rw  objects / refs / logs (a commit writes these)
+ *   - `<commonDir>/worktrees`      tmpfs, ro — hides every OTHER card's admin dir
+ *   - `<adminDir>`                 rw  this worktree's index / HEAD
+ *   - `<commonDir>/config`         ro  ┐ git EXECUTES from these (core.fsmonitor,
+ *   - `<commonDir>/hooks`          ro  ┘ core.hooksPath, hooks) as the root control
+ *                                      plane later — a jail must never write them
+ *   - `<adminDir>/commondir|gitdir` ro  the admin dir cannot be redirected elsewhere
+ *   - `<worktreeAlias>`            rw  same tree as /workspace, so the admin dir's
+ *                                      backlink resolves and an in-jail
+ *                                      `git worktree prune` cannot drop it
+ *
+ * Docker applies mounts parent-first, so the nested ones land on top.
+ */
+export function buildJailGitMountArgs(m: JailGitMount, hostPathMap: HostPathMap = []): string[] {
+  const commonDir = m.commonDir.replace(/\/+$/, '')
+  const adminDir = m.adminDir.replace(/\/+$/, '')
+  const alias = m.worktreeAlias.replace(/\/+$/, '')
+  for (const [k, v] of [['gitMount.commonDir', commonDir], ['gitMount.adminDir', adminDir], ['gitMount.worktreeAlias', alias]] as const) {
+    assertAbsolute(k, v)
+    // --mount is CSV: a comma would inject mount options.
+    if (/[,\n"]/.test(v)) throw new Error(`${k} may not contain a comma, quote or newline: ${JSON.stringify(v)}`)
+    if (v.includes('docker.sock')) throw new Error(`${k} may not be the docker socket`)
+    for (const reserved of [JAIL_WORKSPACE_PATH, JAIL_HOME_PATH]) {
+      if (v === reserved || v.startsWith(reserved + '/') || reserved.startsWith(v + '/')) {
+        throw new Error(`${k} may not overlap ${reserved}: ${v}`)
+      }
+    }
+    if (path.posix.normalize(v) !== v) throw new Error(`${k} must be a normalized path: ${v}`)
+  }
+  if (!/\.git$/.test(commonDir)) {
+    throw new Error(`gitMount.commonDir must be a git dir (…/.git), got ${commonDir}`)
+  }
+  if (path.posix.dirname(adminDir) !== `${commonDir}/worktrees`) {
+    throw new Error(`gitMount.adminDir must be ${commonDir}/worktrees/<name>, got ${adminDir}`)
+  }
+  if (alias === commonDir || alias.startsWith(commonDir + '/') || commonDir.startsWith(alias + '/')) {
+    throw new Error(`gitMount.worktreeAlias may not overlap the git dir: ${alias}`)
+  }
+  const bind = (src: string, target: string, ro = false) =>
+    ['--mount', `type=bind,source=${toHostPath(src, hostPathMap)},target=${target}${ro ? ',readonly' : ''},bind-propagation=rprivate`]
+  return [
+    ...bind(commonDir, commonDir),
+    '--mount', `type=tmpfs,target=${commonDir}/worktrees,tmpfs-size=1m,tmpfs-mode=0755`,
+    ...bind(adminDir, adminDir),
+    ...bind(`${commonDir}/config`, `${commonDir}/config`, true),
+    ...bind(`${commonDir}/hooks`, `${commonDir}/hooks`, true),
+    ...bind(`${adminDir}/commondir`, `${adminDir}/commondir`, true),
+    ...bind(`${adminDir}/gitdir`, `${adminDir}/gitdir`, true),
+    ...bind(alias, alias),
+  ]
 }
 
 /** Ordered `[containerPrefix, hostPrefix]` pairs; first (longest) match wins. */
@@ -356,6 +424,7 @@ export function buildJailRunArgv(opts: CreateJailOpts): string[] {
     network,
     tmpSize = DEFAULT_JAIL_TMP_SIZE,
     claudeTmpdir,
+    gitMount,
   } = opts
   const name = jailName(objectiveId)
   assertJailId(sessionId)
@@ -394,6 +463,7 @@ export function buildJailRunArgv(opts: CreateJailOpts): string[] {
     if (seatMount.source.includes('docker.sock')) throw new Error('seatMount.source may not be the docker socket')
     argv.push('--mount', `type=bind,source=${toHostPath(seatMount.source, hostPathMap)},target=${seatMount.target},bind-propagation=rprivate`)
   }
+  if (gitMount) argv.push(...buildJailGitMountArgs(gitMount, hostPathMap))
   if (network) {
     assertJailNetwork(network)
     argv.push('--network', network)

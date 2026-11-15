@@ -1,0 +1,27 @@
+{
+  "description": "obj 900816 eval: ~20 queries against a copy of the operationkit workspace vault. 'relevant' paths are relative to the vault copy root. kind=paraphrase queries deliberately avoid the target doc's own wording; kind=exact queries name an ID / identifier / proper name that must rank first. Relevance was judged from file names + Decision sections BEFORE any system was run.",
+  "queries": [
+    { "id": "p01", "kind": "paraphrase", "q": "server reboot wiped features that only existed as uncommitted edits", "relevant": ["decisions/2026-06-21-restart-storm-livetree-feature-loss-CORRECTION.md", "decisions/2026-06-21-obj1124-restart-storm-cleanup-confabulation.md", "decisions/2026-06-21-restart-storm-cleanup-phantom-regression-dirty-tree.md"] },
+    { "id": "p02", "kind": "paraphrase", "q": "sessions recorded as using no tokens after a backend restart", "relevant": ["decisions/2026-11-11-obj900510-zero-token-sessions-root-cause.md"] },
+    { "id": "p03", "kind": "paraphrase", "q": "throwaway copy of the app for screenshots killed a running worker", "relevant": ["decisions/2026-11-11-scratch-server-host-daemon-guard.md"] },
+    { "id": "p04", "kind": "paraphrase", "q": "the automated code reviewer just agrees with the author instead of checking the work", "relevant": ["decisions/2026-06-16-cc-ai-review-is-second-optimist.md"] },
+    { "id": "p05", "kind": "paraphrase", "q": "where do agent credentials really come from, Doppler or our own encrypted store", "relevant": ["decisions/2026-09-06-secrets-architecture-ground-truth.md"] },
+    { "id": "p06", "kind": "paraphrase", "q": "minimum font size and how greyed-out buttons should look", "relevant": ["decisions/2026-11-11-ui-disabled-token-12px-floor.md"] },
+    { "id": "p07", "kind": "paraphrase", "q": "reopening a finished card should continue the same conversation instead of starting over", "relevant": ["decisions/2026-06-14-cc-reopen-resumes-thread.md"] },
+    { "id": "p08", "kind": "paraphrase", "q": "background summarization must not fall back to the paid API when the local model server is down", "relevant": ["decisions/2026-10-27-obj719092-background-llm-loops-gate-on-free-backend.md"] },
+    { "id": "p09", "kind": "paraphrase", "q": "new chat bot name clashes with the CTO executive persona", "relevant": ["decisions/2026-11-09-chat-bot-slug-collision-with-executive-roster.md"] },
+    { "id": "p10", "kind": "paraphrase", "q": "pre-launch page that collects sign-ups from interested people", "relevant": ["decisions/2026-06-24-operationkit-waitlist-page-and-capture.md", "decisions/2026-06-24-operationkit-teaser-repo-and-waitlist.md"] },
+    { "id": "p11", "kind": "paraphrase", "q": "stop hardcoding the default Claude model and manage the list from a database table", "relevant": ["decisions/2026-06-13-cc-model-registry-fable5-removal.md", "decisions/2026-11-12-model-registry-provider-refresh.md"] },
+    { "id": "p12", "kind": "paraphrase", "q": "status endpoint said everything was fine while alerts were not reaching anyone", "relevant": ["decisions/2026-11-09-notification-delivery-routing-and-health-pin.md"] },
+    { "id": "p13", "kind": "paraphrase", "q": "tool connector registered for one Claude login is missing in the other logins", "relevant": ["decisions/2026-09-12-worker-account-scoped-config-must-be-propagated.md"] },
+    { "id": "p14", "kind": "paraphrase", "q": "click-test the web app in a real browser without knowing the admin login", "relevant": ["decisions/2026-06-16-cc-in-browser-ui-verification-without-password-reset.md"] },
+    { "id": "p15", "kind": "paraphrase", "q": "run each worker in its own sandbox container behind a feature flag", "relevant": ["decisions/2026-08-28-session-jail-spawn-wiring.md", "decisions/2026-08-28-session-jail-docker-socket-blocker.md", "decisions/2026-08-28-session-jail-proof-via-gha.md", "prds/PRD-operationkit-session-container-isolation.md"] },
+    { "id": "p16", "kind": "paraphrase", "q": "how to reward people who contribute to the open source project", "relevant": ["strategy/operationkit-governance-contribution-mechanism.md"] },
+    { "id": "p17", "kind": "paraphrase", "q": "bringing customers over from a rival product", "relevant": ["prds/operationkit-competitor-migration.md"] },
+    { "id": "e01", "kind": "exact", "q": "obj 900510", "relevant": ["decisions/2026-11-11-obj900510-zero-token-sessions-root-cause.md", "decisions/2026-11-11-obj900510-jail-worktree-ownership.md"] },
+    { "id": "e02", "kind": "exact", "q": "sweepStaleWorkingSessions", "relevant": ["decisions/2026-11-11-obj900510-zero-token-sessions-root-cause.md", "decisions/2026-11-11-obj900510-jail-worktree-ownership.md"] },
+    { "id": "e03", "kind": "exact", "q": "obj719092", "relevant": ["decisions/2026-10-27-obj719092-background-llm-loops-gate-on-free-backend.md"] },
+    { "id": "e04", "kind": "exact", "q": "PR #442 session isolation", "relevant": ["decisions/2026-08-28-session-jail-spawn-wiring.md"] },
+    { "id": "e05", "kind": "exact", "q": "Fable 5 removal", "relevant": ["decisions/2026-06-13-cc-model-registry-fable5-removal.md"] }
+  ]
+}

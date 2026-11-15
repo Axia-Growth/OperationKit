@@ -6,6 +6,7 @@ import {
 } from '../../lib/kbWiki'
 import { Alert, Badge, Button, EmptyState, SkeletonText, useConfirm } from '../ui'
 import { wikiApi, wsQuery } from './wikiApi'
+import { Select } from '../ui/Select'
 
 const SCHEDULE_LABEL: Record<LintSchedule, string> = {
   nightly: 'Every night',
@@ -13,7 +14,6 @@ const SCHEDULE_LABEL: Record<LintSchedule, string> = {
   off: 'Only when I click “Run cleanup now”',
 }
 
-const FIELD = 'min-h-[44px] rounded-md border border-line bg-surface-1 px-2 text-[13px] text-fg-0 transition-colors duration-fast hover:border-line-strong focus:outline-none focus-visible:ring-2 focus-visible:ring-accent disabled:cursor-not-allowed disabled:opacity-60 sm:min-h-[36px]'
 
 function when(iso?: string | null): string {
   if (!iso) return ''
@@ -126,7 +126,7 @@ export function CleanupPanel({
       key={rel}
       type="button"
       onClick={() => onOpenNote(rel)}
-      className="inline-flex min-h-[44px] items-center rounded-md border border-line-soft bg-surface-2 px-2.5 text-[12px] text-fg-1 transition-all duration-fast hover:border-line-strong hover:bg-surface-3 hover:text-fg-0 focus:outline-none focus-visible:ring-2 focus-visible:ring-accent sm:min-h-[28px]"
+      className="inline-flex min-h-[44px] items-center rounded-md border border-line-soft bg-surface-2 px-2.5 text-xs text-fg-1 transition-all duration-fast hover:border-line-strong hover:bg-surface-3 hover:text-fg-0 focus:outline-none focus-visible:ring-2 focus-visible:ring-accent sm:min-h-[28px]"
     >
       {titles.get(rel) ?? labelFromRel(rel)}
     </button>
@@ -140,7 +140,7 @@ export function CleanupPanel({
           <li key={`${it.kind}-${it.page ?? ''}-${i}`} className="flex flex-col gap-1.5 py-2.5">
             <div className="flex flex-wrap items-start gap-2">
               <Badge tone={tone}>{LINT_KIND_LABEL[it.kind] ?? it.kind}</Badge>
-              <p className="min-w-0 flex-1 text-[13px] leading-snug text-fg-1">{it.detail}</p>
+              <p className="min-w-0 flex-1 text-sm leading-snug text-fg-1">{it.detail}</p>
             </div>
             {rels.length > 0 && <div className="flex flex-wrap gap-1.5">{rels.map(pageButton)}</div>}
           </li>
@@ -156,7 +156,7 @@ export function CleanupPanel({
   return (
     <div className="flex flex-col gap-5">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-        <p className="max-w-[64ch] text-[13px] leading-relaxed text-fg-2">
+        <p className="max-w-[64ch] text-sm leading-relaxed text-fg-2">
           Cleanup checks the wiki for broken links, missing topic pages, pages nothing links to, likely duplicates,
           pages that haven’t been updated in a while, and facts that disagree between files. Safe fixes happen
           automatically; anything that needs judgement is listed for you. Your original files are never changed.
@@ -188,28 +188,28 @@ export function CleanupPanel({
 
       {!running && report && (
         <div className="flex flex-col gap-5">
-          <p className="text-[12.5px] text-fg-3">Last run {when(report.ran_at)}.</p>
+          <p className="text-sm text-fg-3">Last run {when(report.ran_at)}.</p>
           {(report.notes ?? []).map(n => <Alert key={n} tone="info">{n}</Alert>)}
 
           <section aria-labelledby="cleanup-needs" className="flex flex-col gap-1.5">
-            <h4 id="cleanup-needs" className="flex items-center gap-2 font-display text-[13.5px] font-semibold tracking-[-0.01em] text-fg-0">
+            <h4 id="cleanup-needs" className="flex items-center gap-2 font-display text-base font-semibold tracking-tight text-fg-0">
               <Eye className="h-4 w-4 text-signal-amber" aria-hidden="true" />
               Needs a look
-              <span className="font-mono text-[12px] font-normal text-fg-3">{report.needs_human.length}</span>
+              <span className="font-mono text-xs font-normal text-fg-3">{report.needs_human.length}</span>
             </h4>
             {report.needs_human.length === 0
-              ? <p className="text-[13px] text-fg-2">Nothing needs your attention.</p>
+              ? <p className="text-sm text-fg-2">Nothing needs your attention.</p>
               : itemList(report.needs_human, 'amber')}
           </section>
 
           <section aria-labelledby="cleanup-fixed" className="flex flex-col gap-1.5">
-            <h4 id="cleanup-fixed" className="flex items-center gap-2 font-display text-[13.5px] font-semibold tracking-[-0.01em] text-fg-0">
+            <h4 id="cleanup-fixed" className="flex items-center gap-2 font-display text-base font-semibold tracking-tight text-fg-0">
               <CheckCircle2 className="h-4 w-4 text-signal-verify" aria-hidden="true" />
               Fixed automatically
-              <span className="font-mono text-[12px] font-normal text-fg-3">{report.fixed.length}</span>
+              <span className="font-mono text-xs font-normal text-fg-3">{report.fixed.length}</span>
             </h4>
             {report.fixed.length === 0
-              ? <p className="text-[13px] text-fg-2">Nothing needed fixing.</p>
+              ? <p className="text-sm text-fg-2">Nothing needed fixing.</p>
               : itemList(report.fixed, 'verify')}
           </section>
         </div>
@@ -217,26 +217,26 @@ export function CleanupPanel({
 
       {settings && (
         <section aria-labelledby="cleanup-schedule" className="flex flex-col gap-2 border-t border-line-soft pt-4">
-          <h4 id="cleanup-schedule" className="font-display text-[13.5px] font-semibold tracking-[-0.01em] text-fg-0">Schedule</h4>
+          <h4 id="cleanup-schedule" className="font-display text-base font-semibold tracking-tight text-fg-0">Schedule</h4>
           <div className="flex flex-wrap items-end gap-3">
-            <label className="flex flex-col gap-1 text-[12px] text-fg-3">
+            <label className="flex flex-col gap-1 text-xs text-fg-3">
               How often
-              <select value={settings.lint_schedule} disabled={!isAdmin || saving}
-                onChange={e => { void saveSettings({ lint_schedule: e.target.value as LintSchedule }) }} className={FIELD}>
+              <Select aria-label="How often" value={settings.lint_schedule} disabled={!isAdmin || saving}
+                onChange={v => { void saveSettings({ lint_schedule: v as LintSchedule }) }}>
                 {(Object.keys(SCHEDULE_LABEL) as LintSchedule[]).map(s => <option key={s} value={s}>{SCHEDULE_LABEL[s]}</option>)}
-              </select>
+              </Select>
             </label>
             {settings.lint_schedule === 'nightly' && (
-              <label className="flex flex-col gap-1 text-[12px] text-fg-3">
+              <label className="flex flex-col gap-1 text-xs text-fg-3">
                 At
-                <select value={settings.lint_hour_utc} disabled={!isAdmin || saving}
-                  onChange={e => { void saveSettings({ lint_hour_utc: Number(e.target.value) }) }} className={FIELD}>
+                <Select aria-label="At" value={String(settings.lint_hour_utc)} disabled={!isAdmin || saving}
+                  onChange={v => { void saveSettings({ lint_hour_utc: Number(v) }) }}>
                   {Array.from({ length: 24 }, (_, h) => <option key={h} value={h}>{hourLabel(h)}</option>)}
-                </select>
+                </Select>
               </label>
             )}
           </div>
-          <p className="text-[12px] text-fg-3">
+          <p className="text-xs text-fg-3">
             {nextRun && settings.lint_schedule !== 'off' ? `Next run around ${when(nextRun)}. ` : ''}
             {isAdmin ? 'This schedule applies to every workspace.' : 'Only an admin can change the schedule.'}
           </p>
@@ -245,9 +245,9 @@ export function CleanupPanel({
 
       {isAdmin && (
         <section aria-labelledby="cleanup-rebuild" className="flex flex-col gap-2 border-t border-line-soft pt-4">
-          <h4 id="cleanup-rebuild" className="font-display text-[13.5px] font-semibold tracking-[-0.01em] text-fg-0">Start over</h4>
+          <h4 id="cleanup-rebuild" className="font-display text-base font-semibold tracking-tight text-fg-0">Start over</h4>
           <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-            <p className="max-w-[60ch] text-[12.5px] text-fg-2">
+            <p className="max-w-[60ch] text-sm text-fg-2">
               Rebuild every page from your original files and imported chats — useful after big changes to how pages are written.
             </p>
             <Button variant="danger" loading={rebuilding} onClick={() => { void rebuild() }} leftIcon={<RefreshCw className="h-4 w-4" aria-hidden="true" />} className="shrink-0">

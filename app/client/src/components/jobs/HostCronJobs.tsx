@@ -48,12 +48,12 @@ export function HostCronJobs({ initial }: { initial?: CronJob[] } = {}) {
     <section id={HOST_CRON_ANCHOR} aria-labelledby="host-cron-heading" className="mb-6 scroll-mt-4 space-y-2">
       <h3
         id="host-cron-heading"
-        className="flex items-center gap-2 text-[12px] uppercase tracking-[0.12em] text-fg-3 font-semibold tracking-[0.06em]"
+        className="flex items-center gap-2 text-xs uppercase tracking-eyebrow text-fg-3 font-semibold"
       >
-        <Server className="h-3.5 w-3.5" strokeWidth={1.75} /> Host cron jobs
+        <Server className="h-3.5 w-3.5" /> Host cron jobs
         {!loading && <span className="font-mono text-fg-3">{jobs.length}</span>}
       </h3>
-      <p className="max-w-3xl text-[12.5px] leading-snug text-fg-2">{HOST_CRON_EXPLAINER}</p>
+      <p className="max-w-3xl text-sm leading-snug text-fg-2">{HOST_CRON_EXPLAINER}</p>
 
       {loading ? (
         <Card inset>
@@ -63,9 +63,9 @@ export function HostCronJobs({ initial }: { initial?: CronJob[] } = {}) {
           </div>
         </Card>
       ) : failed ? (
-        <p className="text-[12.5px] text-signal-amber">Couldn’t read the host crontab from the server.</p>
+        <p className="text-sm text-signal-amber">Couldn’t read the host crontab from the server.</p>
       ) : jobs.length === 0 ? (
-        <p data-testid="host-cron-none" className="text-[12.5px] text-fg-3">None tagged on this server.</p>
+        <p data-testid="host-cron-none" className="text-sm text-fg-3">None tagged on this server.</p>
       ) : (
         <div className="space-y-3">
           {jobs.map(job => (
@@ -73,16 +73,16 @@ export function HostCronJobs({ initial }: { initial?: CronJob[] } = {}) {
               <div className="flex flex-col gap-3 p-4 sm:flex-row sm:items-start sm:justify-between">
                 <div className="min-w-0">
                   <div className="flex flex-wrap items-center gap-2">
-                    <h4 className="font-display text-[14px] font-semibold text-fg-0">{formatName(job.name)}</h4>
+                    <h4 className="font-display text-base font-semibold text-fg-0">{formatName(job.name)}</h4>
                     <Badge tone="verify">Active</Badge>
                   </div>
-                  <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-[12px] text-fg-3">
+                  <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-fg-3">
                     <span>{job.scheduleHuman}</span>
                     {job.timezone !== 'UTC' && <Badge tone="neutral" mono>{job.timezone}</Badge>}
-                    <span className="font-mono text-[12px]">{job.schedule}</span>
+                    <span className="font-mono text-xs">{job.schedule}</span>
                   </div>
                 </div>
-                <div className="shrink-0 text-left font-mono text-[12px] text-fg-3 sm:text-right">
+                <div className="shrink-0 text-left font-mono text-xs text-fg-3 sm:text-right">
                   <div>{job.scriptPath.split('/').pop()}</div>
                   {job.logSize > 0 && <div className="mt-0.5">Log: {formatBytes(job.logSize)}</div>}
                 </div>
@@ -92,12 +92,12 @@ export function HostCronJobs({ initial }: { initial?: CronJob[] } = {}) {
                   <button
                     onClick={() => setExpandedLog(expandedLog === job.name ? null : job.name)}
                     aria-expanded={expandedLog === job.name}
-                    className="w-full border-t border-line px-4 py-2 text-left text-[12px] text-fg-3 transition-colors hover:bg-surface-3"
+                    className="w-full border-t border-line px-4 py-2 text-left text-xs text-fg-3 transition-colors hover:bg-surface-3"
                   >
                     {expandedLog === job.name ? 'Hide log' : 'Show log'} ({job.logTail.split('\n').length} lines)
                   </button>
                   {expandedLog === job.name && (
-                    <pre className="max-h-80 overflow-auto border-t border-line bg-surface-1 px-4 py-3 font-mono text-[12px] leading-relaxed text-fg-2">
+                    <pre className="max-h-80 overflow-auto border-t border-line bg-surface-1 px-4 py-3 font-mono text-xs leading-relaxed text-fg-2">
                       {job.logTail}
                     </pre>
                   )}

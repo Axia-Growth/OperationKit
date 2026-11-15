@@ -46,27 +46,27 @@ export function ChangePasswordPage() {
       <div className="w-full max-w-sm">
         <div className="mb-8 text-center">
           <BrandMark branding={branding} />
-          <p className="mt-2 text-sm text-fg-2">Choose your own password to finish setting up</p>
+          <p className="mt-2 text-base text-fg-2">Choose your own password to finish setting up</p>
         </div>
 
         <form onSubmit={handleSubmit} className="space-y-4 rounded-lg border border-border bg-surface-raised p-6" noValidate>
-          <p className="text-sm text-fg-1">
+          <p className="text-base text-fg-1">
             Signed in as <span className="font-medium text-fg-0">{user?.username}</span> with a one-time setup password.
             Pick a new one of at least {MIN_LENGTH} characters. You will use it from now on.
           </p>
 
           {error && (
-            <div role="alert" className="rounded bg-signal-alarm/10 px-3 py-2 text-sm text-signal-alarm">{error}</div>
+            <div role="alert" className="rounded bg-signal-alarm/10 px-3 py-2 text-base text-signal-alarm">{error}</div>
           )}
 
           <div>
-            <label htmlFor="current-password" className="mb-1 block text-sm text-fg-1">Setup password</label>
+            <label htmlFor="current-password" className="mb-1 block text-base text-fg-1">Setup password</label>
             <input id="current-password" type="password" autoComplete="current-password" value={current}
               onChange={e => setCurrent(e.target.value)} className={inputClass} autoFocus required />
           </div>
 
           <div>
-            <label htmlFor="new-password" className="mb-1 block text-sm text-fg-1">New password</label>
+            <label htmlFor="new-password" className="mb-1 block text-base text-fg-1">New password</label>
             <input id="new-password" type="password" autoComplete="new-password" value={next}
               onChange={e => setNext(e.target.value)} className={inputClass} aria-describedby="new-password-hint"
               aria-invalid={tooShort} required />
@@ -76,7 +76,7 @@ export function ChangePasswordPage() {
           </div>
 
           <div>
-            <label htmlFor="confirm-password" className="mb-1 block text-sm text-fg-1">Type it again</label>
+            <label htmlFor="confirm-password" className="mb-1 block text-base text-fg-1">Type it again</label>
             <input id="confirm-password" type="password" autoComplete="new-password" value={confirm}
               onChange={e => setConfirm(e.target.value)} className={inputClass} aria-describedby="confirm-hint"
               aria-invalid={mismatch} required />
@@ -86,14 +86,14 @@ export function ChangePasswordPage() {
           <button
             type="submit"
             disabled={!canSubmit}
-            className="min-h-[44px] w-full rounded bg-accent py-2 text-sm font-medium text-accent-fg transition duration-150 hover:bg-accent-hover hover:shadow-md active:bg-accent-press focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/50 disabled:cursor-not-allowed disabled:opacity-50"
+            className="min-h-[44px] w-full rounded bg-accent py-2 text-base font-medium text-accent-fg transition duration-150 hover:bg-accent-hover hover:shadow-md active:bg-accent-press focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/50 disabled:cursor-not-allowed disabled:opacity-50"
           >
             {saving ? 'Saving…' : 'Save new password'}
           </button>
           <button
             type="button"
             onClick={() => { void logout() }}
-            className="min-h-[44px] w-full rounded border border-border py-2 text-sm text-fg-1 transition duration-150 hover:border-border-hover hover:text-fg-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40"
+            className="min-h-[44px] w-full rounded border border-border py-2 text-base text-fg-1 transition duration-150 hover:border-border-hover hover:text-fg-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40"
           >
             Sign out
           </button>

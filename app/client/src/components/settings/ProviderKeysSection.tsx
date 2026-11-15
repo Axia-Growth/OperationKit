@@ -18,6 +18,7 @@ import { useEffect, useMemo, useState, type FormEvent } from 'react'
 import { api } from '../../lib/api'
 import { Alert, Button, useConfirm } from '../ui'
 import type { SecretSummary } from '@operationkit/shared'
+import { Select } from '../ui/Select'
 
 const KEY_PREFIX = 'PROVIDER_API_KEY__'
 
@@ -107,10 +108,10 @@ export function ProviderKeysSection() {
     <section className="space-y-3 rounded-lg border border-line bg-surface-2 p-4" aria-labelledby="provider-keys-heading">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
-          <h3 id="provider-keys-heading" className="font-display text-[15px] font-semibold tracking-[-0.01em] text-fg-0">
+          <h3 id="provider-keys-heading" className="font-display text-lg font-semibold tracking-tight text-fg-0">
             API key providers
           </h3>
-          <p className="mt-1 max-w-prose text-[12.5px] leading-relaxed text-fg-3">
+          <p className="mt-1 max-w-prose text-sm leading-relaxed text-fg-3">
             Bring your own key for Anthropic, OpenAI, xAI, or any OpenAI-compatible endpoint, stored the same way as
             every other secret here — encrypted, write-only, never shown again.
           </p>
@@ -121,9 +122,9 @@ export function ProviderKeysSection() {
       {error && <Alert tone="alarm">{error}</Alert>}
 
       {rows === null ? (
-        <p className="text-[12.5px] text-fg-3">Loading…</p>
+        <p className="text-sm text-fg-3">Loading…</p>
       ) : rows.length === 0 && !adding ? (
-        <p className="rounded-md border border-dashed border-line px-3 py-4 text-center text-[12.5px] text-fg-3">
+        <p className="rounded-md border border-dashed border-line px-3 py-4 text-center text-sm text-fg-3">
           No provider keys yet.
         </p>
       ) : (
@@ -136,8 +137,8 @@ export function ProviderKeysSection() {
             return (
               <li key={r.secretKey} className="flex flex-wrap items-center justify-between gap-2 px-3 py-2.5">
                 <div>
-                  <p className="text-[13px] font-medium text-fg-0">{label}</p>
-                  <p className="text-[12px] text-fg-3">v{r.version} · updated {fmtDate(r.updatedAt)}</p>
+                  <p className="text-sm font-medium text-fg-0">{label}</p>
+                  <p className="text-xs text-fg-3">v{r.version} · updated {fmtDate(r.updatedAt)}</p>
                 </div>
                 <Button variant="danger" size="sm" onClick={() => void handleRemove(r.secretKey, label)}>Remove</Button>
               </li>
@@ -202,15 +203,14 @@ function AddProviderKeyForm({ existing, onCancel, onSaved }: {
 
       <div>
         <label htmlFor="provider-key-provider" className="mb-1 block text-xs text-fg-2">Provider</label>
-        <select
+        <Select
           id="provider-key-provider"
           value={provider}
-          onChange={e => setProvider(e.target.value as ProviderChoice)}
-          className="min-h-[40px] w-full rounded border border-line bg-surface px-2 text-sm text-fg-0"
+          onChange={v => setProvider(v as ProviderChoice)} className="w-full"
         >
           {FIXED_PROVIDERS.map(p => <option key={p.id} value={p.id}>{p.label}</option>)}
           <option value="CUSTOM">OpenAI-compatible (custom base URL)</option>
-        </select>
+        </Select>
       </div>
 
       {provider === 'CUSTOM' && (
@@ -222,7 +222,7 @@ function AddProviderKeyForm({ existing, onCancel, onSaved }: {
               value={name}
               onChange={e => setName(e.target.value)}
               placeholder="e.g. Together AI"
-              className="min-h-[40px] w-full rounded border border-line bg-surface px-2.5 py-2 text-sm text-fg-0"
+              className="min-h-[40px] w-full rounded border border-line bg-surface px-2.5 py-2 text-base text-fg-0"
             />
           </div>
           <div>
@@ -233,7 +233,7 @@ function AddProviderKeyForm({ existing, onCancel, onSaved }: {
               value={baseUrl}
               onChange={e => setBaseUrl(e.target.value)}
               placeholder="https://api.example.com/v1"
-              className="min-h-[40px] w-full rounded border border-line bg-surface px-2.5 py-2 font-mono text-sm text-fg-0"
+              className="min-h-[40px] w-full rounded border border-line bg-surface px-2.5 py-2 font-mono text-base text-fg-0"
             />
           </div>
         </>
@@ -248,7 +248,7 @@ function AddProviderKeyForm({ existing, onCancel, onSaved }: {
           value={apiKey}
           onChange={e => setApiKey(e.target.value)}
           placeholder="Stored encrypted; never shown again"
-          className="min-h-[40px] w-full rounded border border-line bg-surface px-2.5 py-2 font-mono text-sm text-fg-0"
+          className="min-h-[40px] w-full rounded border border-line bg-surface px-2.5 py-2 font-mono text-base text-fg-0"
         />
       </div>
 

@@ -64,6 +64,16 @@ describe('enqueuePreviewDeploy', () => {
     expect(fs.readdirSync(tmpDir).filter((f) => f.endsWith('.json'))).toHaveLength(0)
   })
 
+  // obj 900838: the internal pr-created route passes the body value through; a
+  // string must never reach the job file name (path traversal out of the spool).
+  it('refuses a non-integer pr_number (no path traversal via the file name)', () => {
+    expect(enqueuePreviewDeploy('../../escape' as unknown as number, 'b')).toBe(false)
+    expect(enqueuePreviewDeploy(1.5, 'b')).toBe(false)
+    expect(enqueuePreviewTeardown('../../escape' as unknown as number)).toBe(false)
+    expect(fs.readdirSync(tmpDir).filter((f) => f.endsWith('.json'))).toHaveLength(0)
+    expect(fs.existsSync(path.join(tmpDir, '..', '..', 'escape.json'))).toBe(false)
+  })
+
   it('writes no partial files — only the final renamed job remains', () => {
     enqueuePreviewDeploy(7, 'b')
     const leftovers = fs.readdirSync(tmpDir).filter((f) => f.endsWith('.tmp'))

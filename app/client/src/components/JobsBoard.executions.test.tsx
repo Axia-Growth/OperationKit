@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import { checkPattern } from '@ui-sdk/core/testing'
 import { createRoot, type Root } from 'react-dom/client'
 import { flushSync } from 'react-dom'
 import type { RoutineSummary } from '../hooks/useRoutines'
@@ -222,5 +223,40 @@ describe('JobsBoard — per-run executions (obj 900676)', () => {
     expect(steps?.textContent).toContain('upsert')
     expect(steps?.textContent).toContain('row 2 rejected') // failed step opens by default
     expect(p.textContent).toContain('check "upsert" failed')
+  })
+})
+
+/* obj 900819 — the run list is a UI SDK listbox: one tab stop, arrow keys
+   move the selection, and the selection drives the same log view. */
+describe('JobsBoard — executions run list keyboard (UI SDK listbox)', () => {
+  it('passes the WAI-ARIA listbox pattern check', async () => {
+    await mount()
+    buttons(container, 'Runs')[0].click()
+    await settle()
+    const list = panel()!.querySelector('[role="listbox"]') as HTMLElement
+    await checkPattern(list, 'listbox')
+  })
+
+  it('ArrowDown / Home move the selected run and its log follows', async () => {
+    await mount()
+    buttons(container, 'Runs')[0].click()
+    await settle()
+    const list = panel()!.querySelector('[role="listbox"]') as HTMLElement
+    expect(list.getAttribute('aria-label')).toBe('Recorded runs')
+    const opts = [...list.querySelectorAll<HTMLElement>('[role="option"]')]
+    expect(opts.map(o => o.dataset.testid)).toEqual(['execution-rr-1', 'execution-rr-0', 'execution-obj-250'])
+    expect(opts.map(o => o.getAttribute('aria-selected'))).toEqual(['true', 'false', 'false'])
+    expect(opts.filter(o => o.tabIndex === 0)).toEqual([opts[0]])
+    opts[0].focus()
+    opts[0].dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true, cancelable: true }))
+    await settle()
+    expect(document.activeElement).toBe(opts[1])
+    expect(opts[1].getAttribute('aria-selected')).toBe('true')
+    expect(opts[1].className).toContain('bg-surface-selected')
+    expect(panel()!.querySelector('[data-testid="execution-log"]')?.textContent).toContain('Skipped — nothing ran')
+    opts[1].dispatchEvent(new KeyboardEvent('keydown', { key: 'Home', bubbles: true, cancelable: true }))
+    await settle()
+    expect(opts[0].getAttribute('aria-selected')).toBe('true')
+    expect(panel()!.querySelector('[data-testid="execution-log"]')?.textContent).toContain('Report sent')
   })
 })

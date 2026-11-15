@@ -18,6 +18,7 @@ import { fieldCls, labelCls } from './objective-modal/form-tokens'
 import { validateOwnerBot, OWNER_BOT_MAX_LENGTH } from '@operationkit/shared'
 import { FooterActions } from './objective-modal/FooterActions'
 import { parseDuplicateError, cardHref, type DuplicateCard } from '../lib/duplicateGuard'
+import { Select } from './ui/Select'
 
 interface ObjectiveModalProps {
   objective: Objective | null
@@ -183,7 +184,7 @@ function ObjectiveModalImpl({ objective, workspace, onClose, onCreate, onUpdate,
 
   async function submit(force: boolean) {
     if (!objWorkspace) {
-      setError('Pick an organization')
+      setError('Pick a workspace')
       return
     }
     const owner = validateOwnerBot(ownerBot)
@@ -281,7 +282,7 @@ function ObjectiveModalImpl({ objective, workspace, onClose, onCreate, onUpdate,
     >
       <div className="p-5 sm:p-6">
         <div className="mb-4 flex items-center justify-between">
-          <h2 id="objective-modal-title" className="text-[17px] font-semibold tracking-tight text-fg-0">
+          <h2 id="objective-modal-title" className="text-lg font-semibold tracking-tight text-fg-0">
             {isEdit ? 'Edit Objective' : 'New Objective'}
           </h2>
           <button
@@ -294,14 +295,14 @@ function ObjectiveModalImpl({ objective, workspace, onClose, onCreate, onUpdate,
         </div>
 
         {error && (
-          <div className="mb-4 rounded-md border border-flag-blocked/30 bg-flag-blocked/10 px-3 py-2 text-sm text-flag-blocked">{error}</div>
+          <div className="mb-4 rounded-md border border-flag-blocked/30 bg-flag-blocked/10 px-3 py-2 text-base text-flag-blocked">{error}</div>
         )}
 
         {duplicate && (
           <div
             data-testid="duplicate-notice"
             role="alert"
-            className="mb-4 rounded-md border border-flag-blocked/30 bg-flag-blocked/10 px-3 py-2 text-sm text-fg-1"
+            className="mb-4 rounded-md border border-flag-blocked/30 bg-flag-blocked/10 px-3 py-2 text-base text-fg-1"
           >
             <p>
               An open card with this title was created in the last 24h:{' '}
@@ -352,21 +353,21 @@ function ObjectiveModalImpl({ objective, workspace, onClose, onCreate, onUpdate,
           </div>
 
           <div>
-            <label className={labelCls}>Organization</label>
-            <select
+            <label className={labelCls}>Workspace</label>
+            <Select className="w-full"
               value={objWorkspace}
-              onChange={e => setObjWorkspace(e.target.value)}
-              className={fieldCls}
+              onChange={v => setObjWorkspace(v)}
               required
               aria-invalid={!objWorkspace}
+              aria-label="Workspace"
             >
               <option value="" disabled>
-                Select organization…
+                Select workspace…
               </option>
               {workspaceOptions.map(ws => (
                 <option key={ws} value={ws}>{labelOf(ws)}</option>
               ))}
-            </select>
+            </Select>
           </div>
 
           <div>
@@ -405,22 +406,22 @@ function ObjectiveModalImpl({ objective, workspace, onClose, onCreate, onUpdate,
               </div>
             ) : (
               <div className="flex items-center gap-2">
-                <select
-                  value={objProjectId ?? ''}
-                  onChange={e => setObjProjectId(e.target.value ? Number(e.target.value) : null)}
-                  className={fieldCls}
+                <Select className="w-full"
+                  value={objProjectId == null ? '' : String(objProjectId)}
+                  aria-label="Project"
+                  onChange={v => setObjProjectId(v ? Number(v) : null)}
                 >
                   <option value="">No project</option>
                   {availableProjects.map(proj => (
                     <option key={proj.id} value={proj.id}>{proj.name}</option>
                   ))}
-                </select>
+                </Select>
                 <button
                   type="button"
                   onClick={() => { setCreatingProject(true); setNewProjectName('') }}
                   aria-label="New project"
-                  title="Create a project in this organization"
-                  className="inline-flex shrink-0 items-center gap-1 rounded-md border border-line px-2.5 py-2 text-[12.5px] text-fg-2 transition-colors duration-fast ease-out hover:border-line-strong hover:text-fg-0"
+                  title="Create a project in this workspace"
+                  className="inline-flex shrink-0 items-center gap-1 rounded-md border border-line px-2.5 py-2 text-sm text-fg-2 transition-colors duration-fast ease-out hover:border-line-strong hover:text-fg-0"
                 >
                   <Plus className="h-3.5 w-3.5" />
                   New
@@ -433,15 +434,15 @@ function ObjectiveModalImpl({ objective, workspace, onClose, onCreate, onUpdate,
           {models.length > 0 && (
             <div>
               <label className={labelCls}>Model</label>
-              <select
+              <Select className="w-full"
                 value={model || defaultModel}
-                onChange={e => setModel(e.target.value)}
-                className={fieldCls}
+                aria-label="Model"
+                onChange={v => setModel(v)}
               >
                 {models.map(m => (
                   <option key={m.id} value={m.id}>{m.label}</option>
                 ))}
-              </select>
+              </Select>
             </div>
           )}
 
@@ -455,7 +456,7 @@ function ObjectiveModalImpl({ objective, workspace, onClose, onCreate, onUpdate,
               value={ownerBot}
               onChange={e => setOwnerBot(e.target.value)}
               maxLength={OWNER_BOT_MAX_LENGTH}
-              placeholder="Unowned — e.g. Grok: Research"
+              placeholder="Unowned — e.g. Research bot"
               className={fieldCls}
               autoComplete="off"
             />
@@ -472,11 +473,11 @@ function ObjectiveModalImpl({ objective, workspace, onClose, onCreate, onUpdate,
                     return (
                       <span
                         key={uid}
-                        className="inline-flex items-center gap-1 rounded-full border border-line bg-surface-3 px-2.5 py-0.5 text-[12px] text-fg-1"
+                        className="inline-flex items-center gap-1 rounded-full border border-line bg-surface-3 px-2.5 py-0.5 text-xs text-fg-1"
                       >
                         {u?.username ?? uid}
                         {idx === 0 && (
-                          <span className="ml-0.5 rounded-sm border border-[color:var(--accent-line)] px-1 py-px text-[12px] font-semibold uppercase tracking-wide text-accent">
+                          <span className="ml-0.5 rounded-sm border border-[color:var(--accent-line)] px-1 py-px text-xs font-semibold uppercase tracking-eyebrow text-accent">
                             primary
                           </span>
                         )}
@@ -493,15 +494,13 @@ function ObjectiveModalImpl({ objective, workspace, onClose, onCreate, onUpdate,
                   })}
                 </div>
               )}
-              <select
+              <Select className="w-full"
                 value=""
-                onChange={e => {
-                  const id = Number(e.target.value)
+                onChange={v => {
+                  const id = Number(v)
                   if (!id) return
                   setAssignedUserIds(ids => ids.includes(id) ? ids : [...ids, id])
-                  e.target.value = ''
                 }}
-                className={fieldCls}
                 aria-label="Add owner"
               >
                 <option value="">{assignedUserIds.length === 0 ? 'Unassigned — add owner…' : 'Add another owner…'}</option>
@@ -510,7 +509,7 @@ function ObjectiveModalImpl({ objective, workspace, onClose, onCreate, onUpdate,
                   .map(u => (
                     <option key={u.id} value={u.id}>{u.username}</option>
                   ))}
-              </select>
+              </Select>
             </div>
           )}
 
@@ -524,7 +523,7 @@ function ObjectiveModalImpl({ objective, workspace, onClose, onCreate, onUpdate,
                 onChange={e => setDelegateMode(e.target.checked)}
                 className="h-4 w-4 rounded border-line-strong accent-accent"
               />
-              <label htmlFor="delegate-mode" className="text-[12.5px] font-medium text-fg-1 cursor-pointer select-none">
+              <label htmlFor="delegate-mode" className="text-sm font-medium text-fg-1 cursor-pointer select-none">
                 Delegator mode
               </label>
             </div>
@@ -537,12 +536,12 @@ function ObjectiveModalImpl({ objective, workspace, onClose, onCreate, onUpdate,
               type="file"
               multiple
               onChange={handleFileChange}
-              className="block w-full text-sm text-fg-2 file:mr-3 file:rounded-md file:border file:border-line file:bg-surface-3 file:px-2.5 file:py-1.5 file:text-[12.5px] file:text-fg-1 file:transition-colors file:duration-fast file:ease-out hover:file:border-line-strong hover:file:text-fg-0"
+              className="block w-full text-base text-fg-2 file:mr-3 file:rounded-md file:border file:border-line file:bg-surface-3 file:px-2.5 file:py-1.5 file:text-sm file:text-fg-1 file:transition-colors file:duration-fast file:ease-out hover:file:border-line-strong hover:file:text-fg-0"
             />
             {pendingFiles.length > 0 && (
               <ul className="mt-2 space-y-1">
                 {pendingFiles.map(f => (
-                  <li key={f.name} className="flex items-center gap-2 text-[12.5px] text-fg-2">
+                  <li key={f.name} className="flex items-center gap-2 text-sm text-fg-2">
                     <span className="truncate">{f.name}</span>
                     <button
                       type="button"

@@ -571,7 +571,7 @@ export const MCP_TOOLS: McpTool[] = [
     name: 'search',
     access: 'read',
     scope: 'vault:read',
-    description: 'Full-text search over the knowledge base (one place: imported files, chat/call imports, wiki pages, saved answers, decisions, notes). Returns paths + snippets; open a hit with read_file.',
+    description: 'Search the knowledge base (one place: imported files, chat/call imports, wiki pages, saved answers, decisions, notes). Hybrid by default: finds notes by meaning even when the words differ, and exact names, IDs and card numbers always rank first. Returns paths, snippets and scores; open a hit with read_file.',
     inputSchema: {
       type: 'object',
       required: ['q'],
@@ -579,11 +579,17 @@ export const MCP_TOOLS: McpTool[] = [
         q: { type: 'string' },
         workspace: { type: 'string', description: 'Restrict to one workspace slug' },
         limit: { type: 'integer', minimum: 1, maximum: 20, description: 'Default 8' },
+        mode: { type: 'string', enum: ['hybrid', 'keyword', 'semantic'], description: 'hybrid (default) = keyword + semantic, exact matches first; keyword = full-text only; semantic = by meaning only' },
       },
     },
     run: async (a, rest) => {
-      const r = await rest('GET', `/api/docs/search${qs({ q: strArg(a, 'q', true), workspace: strArg(a, 'workspace'), limit: limitArg(a, 8, 20) })}`)
-      return { results: (r.results ?? []).map((h: Record<string, unknown>) => compact(h, 500)) }
+      const mode = strArg(a, 'mode')
+      const r = await rest('GET', `/api/docs/search${qs({ q: strArg(a, 'q', true), workspace: strArg(a, 'workspace'), limit: limitArg(a, 8, 20), mode: mode || undefined })}`)
+      return {
+        results: (r.results ?? []).map((h: Record<string, unknown>) => compact(h, 500)),
+        ...(r.mode_used ? { mode: r.mode, mode_used: r.mode_used } : {}),
+        ...(r.semantic && r.semantic.available === false && r.semantic.reason ? { note: `Semantic search unavailable: ${r.semantic.reason}` } : {}),
+      }
     },
   },
   {
@@ -1163,7 +1169,7 @@ export const MCP_TOOLS: McpTool[] = [
     name: 'send_message',
     access: 'write',
     scope: 'board:write',
-    description: 'Send a follow-up into a card thread; starts or resumes its worker. Use this instead of creating a new card for the same work. Pass idempotency_key so a retry never sends twice. Fails on done/cancelled cards — reopen (update_status queue) only if the human asked.',
+    description: 'Send a follow-up into a card thread; starts or resumes its worker. Use this instead of creating a new card for the same work. Pass idempotency_key so a retry never sends twice. Fails on done/cancelled cards — reopen (update_status queue) only if the human asked. approval: set ONLY when this message approves a merge, prod_migration or deploy on the owner\'s behalf under a grant they gave you (Settings → Bots → Approve on my behalf); pass owner_bot = your exact bot name. Without an active grant for you, this card\'s workspace and that action the message is refused (403) — then ask the owner to approve on the card themselves.',
     inputSchema: {
       type: 'object',
       required: ['id', 'message'],
@@ -1171,12 +1177,21 @@ export const MCP_TOOLS: McpTool[] = [
         id: ID_SCHEMA,
         message: { type: 'string' },
         idempotency_key: { type: 'string', description: 'Sent as the Idempotency-Key header (24h replay)' },
+        approval: { type: 'string', enum: ['merge', 'prod_migration', 'deploy'], description: 'Delegated approval: the ONE action this message approves on the owner\'s behalf. Omit for an ordinary message.' },
+        owner_bot: { ...OWNER_BOT_SCHEMA, description: 'Your exact bot name; the grant is matched against it. Only read together with approval.' },
       },
     },
     run: async (a, rest) => {
       const id = idArg(a)
       const idem = strArg(a, 'idempotency_key')
-      const row = await rest('POST', `/api/objectives/${id}/message`, { message: strArg(a, 'message', true) }, idem ? { 'Idempotency-Key': idem } : undefined)
+      const approval = strArg(a, 'approval')
+      const ownerBot = strArg(a, 'owner_bot')
+      const body: Record<string, unknown> = { message: strArg(a, 'message', true) }
+      if (approval) {
+        body.approval = approval
+        if (ownerBot) body.owner_bot = ownerBot
+      }
+      const row = await rest('POST', `/api/objectives/${id}/message`, body, idem ? { 'Idempotency-Key': idem } : undefined)
       return receipt(`Sent to #${id}; it is ${row.status ?? 'updated'}.`, row && typeof row === 'object' && row.id ? row : { ...row, id })
     },
   },

@@ -10,12 +10,14 @@
 import { useCallback, useEffect, useMemo, useState, type FormEvent, type ReactNode } from 'react'
 import { CheckCircle2, CircleAlert, Mail, Send } from 'lucide-react'
 import { Alert, Badge, Button, Card, CardHeader, Skeleton, cn, useConfirm } from '../ui'
-import { inputCls, selectCls, SectionLabel } from '../config/config-form'
+import { inputCls, SectionLabel } from '../config/config-form'
 import {
   emailAgentPrompt, emailApi, PROVIDER_LABEL,
   type DnsHelp, type EmailProvider, type EmailSetup, type EmailSetupInput, type SmtpSecurity,
 } from '../../lib/email'
 import { AgentPromptBox, CopyButton } from './AgentPromptBox'
+import { Select } from '../ui/Select'
+import { RadioGroup } from '../ui/RadioGroup'
 
 const PROVIDERS: Array<{ id: EmailProvider; blurb: string }> = [
   { id: 'resend', blurb: 'Simplest. Add your domain in Resend, paste an API key.' },
@@ -51,9 +53,9 @@ function toInput(s: EmailSetup, fallbackUrl: string): EmailSetupInput {
 function Field({ label, hint, children, htmlFor }: { label: string; hint?: ReactNode; children: ReactNode; htmlFor: string }) {
   return (
     <div className="min-w-0 space-y-1">
-      <label htmlFor={htmlFor} className="block text-[12px] font-medium text-fg-1">{label}</label>
+      <label htmlFor={htmlFor} className="block text-xs font-medium text-fg-1">{label}</label>
       {children}
-      {hint && <p className="text-[12px] leading-snug text-fg-3">{hint}</p>}
+      {hint && <p className="text-xs leading-snug text-fg-3">{hint}</p>}
     </div>
   )
 }
@@ -178,7 +180,7 @@ export function EmailSettingsPanel({ onChange, className }: EmailSettingsPanelPr
           title={<span className="flex items-center gap-2"><Mail className="h-4 w-4 text-fg-2" aria-hidden="true" />Email</span>}
           actions={<EmailStatusBadge setup={setup} />}
         />
-        <div className="space-y-3 p-4 text-[13px] text-fg-2">
+        <div className="space-y-3 p-4 text-sm text-fg-2">
           <p>
             The address this site sends sign-in links, invites and password resets from. It uses <strong className="text-fg-1">your own</strong> email
             provider account — nothing is relayed through anyone else.
@@ -197,27 +199,18 @@ export function EmailSettingsPanel({ onChange, className }: EmailSettingsPanelPr
       <form onSubmit={save} className="space-y-4">
         <Card inset>
           <CardHeader eyebrow="Step 1" title="Provider" />
-          <div role="radiogroup" aria-label="Email provider" className="grid gap-2 p-4 sm:grid-cols-3">
-            {PROVIDERS.map(p => {
-              const active = provider === p.id
-              return (
-                <button
-                  key={p.id} type="button" role="radio" aria-checked={active}
-                  onClick={() => set({ provider: p.id, smtp: form.smtp })}
-                  className={cn(
-                    'rounded-md border p-3 text-left transition-colors',
-                    active ? 'border-accent bg-[var(--accent-tint)]' : 'border-line bg-surface-1 hover:border-line-strong',
-                  )}
-                >
-                  <div className="flex items-center justify-between">
-                    <span className="text-[13px] font-medium text-fg-0">{PROVIDER_LABEL[p.id]}</span>
-                    {setup.has_credential[p.id] && <Badge tone="neutral">key saved</Badge>}
-                  </div>
-                  <p className={cn('mt-1 text-[12px] leading-snug', active ? 'text-fg-1' : 'text-fg-2')}>{p.blurb}</p>
-                </button>
-              )
-            })}
-          </div>
+          <RadioGroup
+            label="Email provider"
+            value={provider}
+            onChange={id => set({ provider: id, smtp: form.smtp })}
+            className="p-4 sm:grid-cols-3"
+            options={PROVIDERS.map(p => ({
+              value: p.id,
+              label: PROVIDER_LABEL[p.id],
+              description: p.blurb,
+              aside: setup.has_credential[p.id] ? <Badge tone="neutral">key saved</Badge> : undefined,
+            }))}
+          />
         </Card>
 
         {provider && (
@@ -249,12 +242,12 @@ export function EmailSettingsPanel({ onChange, className }: EmailSettingsPanelPr
                   </Field>
                   <div className="grid grid-cols-2 gap-3">
                     <Field label="Security" htmlFor="email-smtp-security">
-                      <select id="email-smtp-security" className={cn(selectCls, 'w-full')} value={form.smtp.security}
-                        onChange={e => { const s = e.target.value as SmtpSecurity; setSmtp({ security: s, port: SECURITY_PORT[s] }) }}>
+                      <Select id="email-smtp-security" className="w-full" value={form.smtp.security}
+                        onChange={v => { const s = v as SmtpSecurity; setSmtp({ security: s, port: SECURITY_PORT[s] }) }}>
                         <option value="starttls">STARTTLS</option>
                         <option value="tls">TLS</option>
                         <option value="none">None (local only)</option>
-                      </select>
+                      </Select>
                     </Field>
                     <Field label="Port" htmlFor="email-smtp-port">
                       <input id="email-smtp-port" inputMode="numeric" className={inputCls} value={String(form.smtp.port || '')}
@@ -285,7 +278,7 @@ export function EmailSettingsPanel({ onChange, className }: EmailSettingsPanelPr
               {setup.provider && (
                 <Button type="button" variant="ghost" size="sm" onClick={turnOff}>Turn off email</Button>
               )}
-              {saveMsg && <span className={cn('text-[12px]', saveMsg.tone === 'verify' ? 'text-signal-verify' : 'text-signal-alarm')} role="status">{saveMsg.text}</span>}
+              {saveMsg && <span className={cn('text-xs', saveMsg.tone === 'verify' ? 'text-signal-verify' : 'text-signal-alarm')} role="status">{saveMsg.text}</span>}
             </div>
           </Card>
         )}
@@ -304,10 +297,10 @@ export function EmailSettingsPanel({ onChange, className }: EmailSettingsPanelPr
                 Send test email
               </Button>
             </div>
-            {dirty && <p className="text-[12px] text-fg-3">Save your changes first.</p>}
+            {dirty && <p className="text-xs text-fg-3">Save your changes first.</p>}
             {testMsg && <Alert tone={testMsg.tone} title={testMsg.tone === 'verify' ? 'Sent' : 'Test failed'}>{testMsg.text}</Alert>}
             {!testMsg && setup.last_test && (
-              <p className={cn('flex items-center gap-1.5 text-[12px]', setup.last_test.ok ? 'text-signal-verify' : 'text-signal-alarm')}>
+              <p className={cn('flex items-center gap-1.5 text-xs', setup.last_test.ok ? 'text-signal-verify' : 'text-signal-alarm')}>
                 {setup.last_test.ok ? <CheckCircle2 className="h-3.5 w-3.5" /> : <CircleAlert className="h-3.5 w-3.5" />}
                 Last test {setup.last_test.ok ? 'sent' : 'failed'} {new Date(setup.last_test.at).toLocaleString()} (to *@{setup.last_test.to_domain})
                 {setup.last_test.error ? ` — ${setup.last_test.error}` : ''}
@@ -329,7 +322,7 @@ function DnsHelpCard({ dns }: { dns: DnsHelp }) {
   return (
     <Card inset>
       <CardHeader eyebrow="DNS" title={`Records for ${dns.domain}`} />
-      <div className="space-y-4 p-4 text-[13px] text-fg-2">
+      <div className="space-y-4 p-4 text-sm text-fg-2">
         <p>So inboxes trust your mail, your domain needs these records. {dns.where_to_get}</p>
         <ol className="list-decimal space-y-1 pl-5">
           {dns.steps.map(s => <li key={s}>{s}</li>)}
@@ -340,21 +333,21 @@ function DnsHelpCard({ dns }: { dns: DnsHelp }) {
               <div className="flex flex-wrap items-center gap-2">
                 <Badge tone="accent">{r.purpose}</Badge>
                 <Badge tone="neutral">{r.type}</Badge>
-                <code className="min-w-0 break-all font-mono text-[12px] text-fg-0">{r.host}</code>
+                <code className="min-w-0 break-all font-mono text-xs text-fg-0">{r.host}</code>
                 <CopyButton text={r.host} label="Copy name" className="ml-auto" />
               </div>
               <div className="mt-2 flex flex-wrap items-start gap-2">
-                <code className="min-w-0 flex-1 break-all font-mono text-[12px] text-fg-1">{r.value}</code>
+                <code className="min-w-0 flex-1 break-all font-mono text-xs text-fg-1">{r.value}</code>
                 {!r.value.includes('…') && !r.value.includes('<') && <CopyButton text={r.value} label="Copy value" />}
               </div>
-              <p className="mt-1 text-[12px] text-fg-3">{r.note}</p>
+              <p className="mt-1 text-xs text-fg-3">{r.note}</p>
             </div>
           ))}
         </div>
         {check && !check.error && (
           <div>
             <SectionLabel>What {check.domain} publishes now</SectionLabel>
-            <ul className="space-y-1 text-[12px]">
+            <ul className="space-y-1 text-xs">
               <li className={check.spf ? 'text-signal-verify' : 'text-signal-amber'}>
                 SPF: {check.spf ? <code className="break-all font-mono">{check.spf}</code> : 'not found'}
               </li>

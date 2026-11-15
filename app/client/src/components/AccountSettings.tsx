@@ -36,19 +36,19 @@ export function AccountSettings({ embedded = false }: { embedded?: boolean }) {
         </div>
         )}
 
-        <div data-testid="key-kinds" className="max-w-prose space-y-2 text-[12.5px] leading-relaxed text-fg-2">
+        <div data-testid="key-kinds" className="max-w-prose space-y-2 text-sm leading-relaxed text-fg-2">
           <p>Two kinds of key reach the board from outside the browser. Pick by who is calling:</p>
           <dl className="grid gap-2 sm:grid-cols-2">
             <div className="rounded-md border border-line bg-surface-1 p-3">
               <dt className="font-medium text-fg-0">Agent key — for a bot (MCP)</dt>
-              <dd className="mt-1 text-[12px] text-fg-2">
+              <dd className="mt-1 text-xs text-fg-2">
                 A scoped tool connection for one agent (Claude Code, Cursor, Grok Bot, any MCP client). It is its own
                 identity and can only reach the workspaces and board actions you tick.
               </dd>
             </div>
             <div className="rounded-md border border-line bg-surface-1 p-3">
               <dt className="font-medium text-fg-0">API key — for your scripts (REST)</dt>
-              <dd className="mt-1 text-[12px] text-fg-2">
+              <dd className="mt-1 text-xs text-fg-2">
                 Full REST access that acts as you everywhere. One per person. Do not hand it to a bot; give the bot
                 an agent key instead.
               </dd>

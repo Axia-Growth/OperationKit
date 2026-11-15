@@ -9,6 +9,7 @@ import { SaveAnswerButton } from './kb-wiki/SaveAnswerButton'
 import { WikiSection } from './kb-wiki/WikiSection'
 import { PageGraph } from './kb-wiki/PageGraph'
 import { wikilinksToLinks, type WikiPageSummary } from '../lib/kbWiki'
+import { Select } from './ui/Select'
 
 /* Import files — the Knowledge base page's file import (starter pack
    `knowledge-import`, obj 719936). Upload messy files, watch the librarian
@@ -264,15 +265,15 @@ export function KnowledgeImportPanel({ workspace, onClose }: { workspace: string
   const hasKnowledge = noteCount > 0 || wikiPages.length > 0
 
   const wsPicker = slugs.length > 1 && workspace === 'all' ? (
-    <label className="flex items-center gap-2 text-[12.5px] text-fg-2">
+    <label className="flex items-center gap-2 text-sm text-fg-2">
       Workspace
-      <select
+      <Select
+        aria-label="Workspace"
         value={ws}
-        onChange={e => setWs(e.target.value)}
-        className="min-h-[44px] rounded-md border border-line bg-surface-1 px-2 text-[13px] text-fg-0 transition-colors duration-fast hover:border-line-strong focus:outline-none focus-visible:ring-2 focus-visible:ring-accent sm:min-h-[36px]"
+        onChange={v => setWs(v)}
       >
         {slugs.map(s => <option key={s} value={s}>{labelOf(s)}</option>)}
-      </select>
+      </Select>
     </label>
   ) : null
 
@@ -281,8 +282,8 @@ export function KnowledgeImportPanel({ workspace, onClose }: { workspace: string
       <div className="mx-auto w-full max-w-6xl px-4 py-5 sm:px-6">
         <div className="mb-5 flex flex-wrap items-start justify-between gap-3">
           <div className="min-w-0 max-w-2xl">
-            <h1 className="text-[20px] font-semibold tracking-tight text-fg-0">Import files</h1>
-            <p className="mt-1 text-[13.5px] leading-relaxed text-fg-2">
+            <h1 className="text-xl font-semibold tracking-tight text-fg-0">Import files</h1>
+            <p className="mt-1 text-base leading-relaxed text-fg-2">
               Add spreadsheets, PDFs, Word documents and meeting transcripts. The librarian reads each one on this server and files it into knowledge-base notes — one per organization, person, project, product and topic — with links back to the original.
             </p>
           </div>
@@ -318,10 +319,10 @@ export function KnowledgeImportPanel({ workspace, onClose }: { workspace: string
                   rows={3}
                   maxLength={2000}
                   placeholder="e.g. What did we decide about pricing at the last team meeting?"
-                  className="w-full resize-y rounded-md border border-line bg-surface-1 px-3 py-2.5 text-[14px] leading-relaxed text-fg-0 placeholder:text-fg-3 transition-colors duration-fast hover:border-line-strong focus:border-accent focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/40"
+                  className="w-full resize-y rounded-md border border-line bg-surface-1 px-3 py-2.5 text-base leading-relaxed text-fg-0 placeholder:text-fg-3 transition-colors duration-fast hover:border-line-strong focus:border-accent focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/40"
                 />
                 <div className="flex flex-wrap items-center justify-between gap-2">
-                  <span className="text-[12px] text-fg-3">Answers use only your uploaded files, with links to where each fact came from.</span>
+                  <span className="text-xs text-fg-3">Answers use only your uploaded files, with links to where each fact came from.</span>
                   <Button type="submit" variant="primary" loading={asking} disabled={!question.trim() || !hasKnowledge} leftIcon={<MessageSquareText className="h-4 w-4" aria-hidden="true" />}>
                     Ask
                   </Button>
@@ -329,18 +330,18 @@ export function KnowledgeImportPanel({ workspace, onClose }: { workspace: string
               </form>
 
               {!hasKnowledge && !asking && (
-                <p className="mt-4 text-[13px] text-fg-2">Upload a file first — questions work once the librarian has filed some notes.</p>
+                <p className="mt-4 text-sm text-fg-2">Upload a file first — questions work once the librarian has filed some notes.</p>
               )}
 
               {hasKnowledge && !answer && !asking && !askError && (
                 <div className="mt-4 flex flex-col gap-2">
-                  <span className="text-[12px] uppercase tracking-[0.12em] text-fg-3 font-semibold tracking-[0.06em]">Try</span>
+                  <span className="text-xs uppercase tracking-eyebrow text-fg-3 font-semibold">Try</span>
                   {EXAMPLE_QUESTIONS.map(t => (
                     <button
                       key={t}
                       type="button"
                       onClick={() => { void ask(undefined, t) }}
-                      className="min-h-[44px] rounded-md border border-line-soft bg-surface-1 px-3 py-2 text-left text-[13px] text-fg-1 transition-all duration-fast hover:-translate-y-px hover:border-line-strong hover:bg-surface-3 hover:text-fg-0 focus:outline-none focus-visible:ring-2 focus-visible:ring-accent"
+                      className="min-h-[44px] rounded-md border border-line-soft bg-surface-1 px-3 py-2 text-left text-sm text-fg-1 transition-all duration-fast hover:-translate-y-px hover:border-line-strong hover:bg-surface-3 hover:text-fg-0 focus:outline-none focus-visible:ring-2 focus-visible:ring-accent"
                     >
                       {t}
                     </button>
@@ -358,7 +359,7 @@ export function KnowledgeImportPanel({ workspace, onClose }: { workspace: string
               {answer && (
                 <div className="mt-5 border-t border-line-soft pt-4" aria-live="polite">
                   <div
-                    className="cc-prose break-words text-[14px]"
+                    className="cc-prose break-words text-base"
                     onClick={onProseClick('')}
                     dangerouslySetInnerHTML={{ __html: renderMarkdown(citationsToLinks(answer.answer, answer.sources)) }}
                   />
@@ -369,9 +370,9 @@ export function KnowledgeImportPanel({ workspace, onClose }: { workspace: string
                           key={s.rel}
                           type="button"
                           onClick={() => { void viewNote(s.rel) }}
-                          className="inline-flex min-h-[44px] items-center gap-1.5 rounded-md border border-line bg-surface-1 px-3 text-[12.5px] text-fg-1 transition-all duration-fast hover:border-line-strong hover:bg-surface-3 hover:text-fg-0 focus:outline-none focus-visible:ring-2 focus-visible:ring-accent sm:min-h-[32px]"
+                          className="inline-flex min-h-[44px] items-center gap-1.5 rounded-md border border-line bg-surface-1 px-3 text-sm text-fg-1 transition-all duration-fast hover:border-line-strong hover:bg-surface-3 hover:text-fg-0 focus:outline-none focus-visible:ring-2 focus-visible:ring-accent sm:min-h-[32px]"
                         >
-                          <span className="text-[12px] uppercase text-fg-3 font-semibold tracking-[0.06em]">{folderOf(s.rel)}</span>
+                          <span className="text-xs uppercase text-fg-3 font-semibold tracking-eyebrow">{folderOf(s.rel)}</span>
                           {s.title}
                         </button>
                       ))}
@@ -401,7 +402,7 @@ export function KnowledgeImportPanel({ workspace, onClose }: { workspace: string
                 )}
               >
                 <Upload className="h-5 w-5 text-fg-2" aria-hidden="true" />
-                <div className="text-[13px] text-fg-1">Drop files here, or</div>
+                <div className="text-sm text-fg-1">Drop files here, or</div>
                 <input
                   ref={fileInput}
                   type="file"
@@ -414,7 +415,7 @@ export function KnowledgeImportPanel({ workspace, onClose }: { workspace: string
                 <Button variant="primary" loading={uploading} onClick={() => fileInput.current?.click()} disabled={!ws}>
                   Choose files
                 </Button>
-                <div className="text-[12px] text-fg-3">
+                <div className="text-xs text-fg-3">
                   Excel, CSV, PDF, Word, transcripts (.txt, .vtt) · up to {status?.max_upload_mb ?? 50} MB each · files stay on this server
                 </div>
               </div>
@@ -447,14 +448,14 @@ export function KnowledgeImportPanel({ workspace, onClose }: { workspace: string
                       <div className="flex items-start gap-2.5">
                         <FileIcon kind={f.kind} />
                         <div className="min-w-0 flex-1">
-                          <div className="truncate text-[13.5px] font-medium text-fg-0" title={f.file_name}>{f.file_name}</div>
-                          <div className="text-[12px] text-fg-3">{new Date(f.uploaded_at).toLocaleString()}</div>
+                          <div className="truncate text-base font-medium text-fg-0" title={f.file_name}>{f.file_name}</div>
+                          <div className="text-xs text-fg-3">{new Date(f.uploaded_at).toLocaleString()}</div>
                         </div>
                         <Badge tone={STATUS_LABEL[f.status].tone}>{STATUS_LABEL[f.status].label}</Badge>
                       </div>
                       {f.status === 'failed' && f.error && (
                         <div className="flex items-start justify-between gap-2 pl-6">
-                          <p className="text-[12.5px] text-signal-alarm">{f.error}</p>
+                          <p className="text-sm text-signal-alarm">{f.error}</p>
                           {f.kind !== 'unsupported' && (
                             <Button size="sm" variant="ghost" leftIcon={<RotateCcw className="h-3.5 w-3.5" aria-hidden="true" />} onClick={() => { void retry(f.id) }}>
                               Try again
@@ -468,7 +469,7 @@ export function KnowledgeImportPanel({ workspace, onClose }: { workspace: string
                             <button
                               type="button"
                               onClick={() => { void viewNote(f.source_note!) }}
-                              className="min-h-[44px] rounded-md border border-line bg-surface-1 px-2.5 text-[12px] text-fg-1 transition-all duration-fast hover:border-line-strong hover:bg-surface-3 hover:text-fg-0 focus:outline-none focus-visible:ring-2 focus-visible:ring-accent sm:min-h-[28px]"
+                              className="min-h-[44px] rounded-md border border-line bg-surface-1 px-2.5 text-xs text-fg-1 transition-all duration-fast hover:border-line-strong hover:bg-surface-3 hover:text-fg-0 focus:outline-none focus-visible:ring-2 focus-visible:ring-accent sm:min-h-[28px]"
                             >
                               Readable copy
                             </button>
@@ -478,16 +479,16 @@ export function KnowledgeImportPanel({ workspace, onClose }: { workspace: string
                               key={n}
                               type="button"
                               onClick={() => { void viewNote(n) }}
-                              className="inline-flex min-h-[44px] items-center gap-1 rounded-md border border-line-soft bg-surface-2 px-2.5 text-[12px] capitalize text-fg-1 transition-all duration-fast hover:border-line-strong hover:bg-surface-3 hover:text-fg-0 focus:outline-none focus-visible:ring-2 focus-visible:ring-accent sm:min-h-[28px]"
+                              className="inline-flex min-h-[44px] items-center gap-1 rounded-md border border-line-soft bg-surface-2 px-2.5 text-xs capitalize text-fg-1 transition-all duration-fast hover:border-line-strong hover:bg-surface-3 hover:text-fg-0 focus:outline-none focus-visible:ring-2 focus-visible:ring-accent sm:min-h-[28px]"
                             >
-                              <span className="text-[12px] uppercase text-fg-3 font-semibold tracking-[0.06em]">{folderOf(n)}</span>
+                              <span className="text-xs uppercase text-fg-3 font-semibold tracking-eyebrow">{folderOf(n)}</span>
                               {noteLabel(n)}
                             </button>
                           ))}
                         </div>
                       )}
                       {f.status === 'done' && (f.warnings ?? []).length > 0 && (
-                        <p className="pl-6 text-[12px] text-signal-amber">{f.warnings!.join(' ')}</p>
+                        <p className="pl-6 text-xs text-signal-amber">{f.warnings!.join(' ')}</p>
                       )}
                     </li>
                   ))}
@@ -505,12 +506,12 @@ export function KnowledgeImportPanel({ workspace, onClose }: { workspace: string
           {openNote && (
             <div className="flex max-h-[85vh] flex-col">
               <div className="flex items-center justify-between gap-3 border-b border-line-soft px-5 py-3">
-                <div id="import-note-title" className="min-w-0 truncate font-mono text-[12px] text-fg-2">{openNote.path}</div>
+                <div id="import-note-title" className="min-w-0 truncate font-mono text-xs text-fg-2">{openNote.path}</div>
                 <IconButton label="Close" onClick={() => setOpenNote(null)}><X className="h-4 w-4" aria-hidden="true" /></IconButton>
               </div>
               <div className="overflow-y-auto">
                 <div
-                  className="cc-prose break-words px-5 py-4 text-[14px]"
+                  className="cc-prose break-words px-5 py-4 text-base"
                   onClick={onProseClick(openNote.path)}
                   dangerouslySetInnerHTML={{ __html: renderMarkdown(wikilinksToLinks(stripFrontmatter(openNote.content), openNote.path, wikiPages)) }}
                 />

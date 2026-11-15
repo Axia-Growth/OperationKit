@@ -157,7 +157,8 @@ Over MCP the loop is the same with typed tools: `whoami` → `get_attention` →
 | POST | `/api/flows/:id/test` | Self-test a version (`dry` / `test`) — the engine's verdict |
 | POST | `/api/flows/:id/runs` · GET `/api/flows/:id/runs/:runId` | Run the published version now · one run + its steps |
 | GET | `/api/flows/:id/repairs` · `/api/flows/:id/repairs/:repairId` | Auto-debug repair incidents: patch, diff, safe-class verdict, replay evidence ([Repairs](#auto-debug-repairs-b8)) |
-| GET | `/api/docs/search?q=` | Second-brain search |
+| GET | `/api/docs/search?q=&mode=hybrid\|keyword\|semantic` | Knowledge base search. Hybrid by default (full-text + semantic, exact names/IDs/card numbers first); returns paths, snippets, scores |
+| GET | `/api/docs/related?path=` | Pages most similar to one page (semantic) |
 | GET | `/api/docs/file?path=` | Read a vault markdown file |
 | PUT | `/api/docs/file` | Write a `.md` file |
 | POST | `/api/kb-wiki/answers` | Save an answer into a workspace knowledge base as a wiki page `{workspace, question, answer, sources}` |
@@ -492,7 +493,7 @@ surface with the tool's scope, in the OpenAPI spec, and the only call the tool m
 | Call an API with a named secret | `POST /api/secrets-broker/http` | `call_with_secret(url, method?, headers?, body?, workspace?)` — write `{{secret:NAME}}`; reply comes back redacted | secrets:use |
 | Workspaces / agents | `GET /api/workspaces` · `GET /api/agents` | `list_workspaces` · `list_agents` | board:read |
 | Built-in chat agents (obj 719987) | `GET /api/agent-chat/agents` · `GET /api/agent-chat/agents/:slug` | `list_chat_agents` · `get_chat_agent(slug)`: the agent's instructions, knowledge folders and tools, to act as it from any MCP client. Chat history and drafts are never on this surface | vault:read |
-| Knowledge base search | `GET /api/docs/search` | `search(q, workspace?, limit?)` | vault:read |
+| Knowledge base search | `GET /api/docs/search` | `search(q, workspace?, limit?, mode?)` — mode `hybrid` (default) / `keyword` / `semantic` | vault:read |
 | Knowledge base browse | `GET /api/docs/tree` | `list_folders(root?)`: with no `root`, the ONE knowledge base tree (no source to pick); `root` = a folder inside it to go deeper. Response `{ root, label, folders[], tree }` | vault:read |
 | Knowledge base read | `GET /api/docs/file` | `read_file(path)` (`.md`) | vault:read |
 | Knowledge base write | `PUT /api/docs/file` | `write_doc(path, content)` | vault:write |
@@ -500,6 +501,7 @@ surface with the tool's scope, in the OpenAPI spec, and the only call the tool m
 | Knowledge-base graph | `GET /api/kb-wiki/graph` | (REST only) every page plus one link per connected pair (`kinds`, `label`), page degrees and counts by kind; `limit` ≤ 2000 keeps the best connected. The Knowledge base page draws this as its default graph view (obj 900674) | vault:read |
 | Knowledge-base connections | `GET /api/kb-wiki/graph/related` | `kb_related(workspace, page, depth?)`: pages linked to one page (path or name), each with kind (`related` / `mentions` / `cited_by` / `answer_used`) and label (`works for` …); depth ≤ 2 | vault:read |
 | Who knows about a topic | `GET /api/kb-wiki/graph/who-knows` | `kb_who_knows(workspace, topic, limit?)`: people linked to a topic, ranked by number of citing sources then recency | vault:read |
+| Unresolved links | `GET /api/kb-wiki/graph/unresolved` | (REST only) links written on a page that match no indexed page, grouped by target (`total`, `targets[{target,count,from}]`); `limit` ≤ 1000. The graph indexes every markdown folder of the workspace (obj 900815) | vault:read |
 | File search | `GET /api/files/search` | `search_files(q?, glob?, ext?, type?, path_prefix?, modified_*?, workspace?)` | vault:read |
 | File details | `GET /api/files/stat` | `file_info(path, workspace?, sha256?)` | vault:read |
 | File download | `GET /api/files/download` | `read_file(path, workspace?)`: text inline, binary base64 up to 300 KB, else metadata only | vault:read |

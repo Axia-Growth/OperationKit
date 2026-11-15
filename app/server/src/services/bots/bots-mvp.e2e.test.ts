@@ -30,7 +30,7 @@ vi.mock('../../ws/index.js', () => ({ broadcast: vi.fn(), broadcastToObjective: 
 vi.mock('../notifier.js', () => ({ sendTelegram: vi.fn(), insertAlert: vi.fn() }))
 
 const { getDb, initDb } = await import('../../db/index.js')
-const { createBotJob, followUpBotJob, getJobOrigin, listThreadJobs, MVP_JOB_MODE } = await import('./bot-jobs.js')
+const { createBotJob, followUpBotJob, getJobOrigin, listThreadJobs, findJobByIdempotency, MVP_JOB_MODE } = await import('./bot-jobs.js')
 const { authorizeBotJob } = await import('./bot-authorization.js')
 const { resolveBot, botForAgentSlug } = await import('./bot-registry.js')
 const { decideBotJobStart } = await import('./bot-job-start.js')
@@ -42,7 +42,7 @@ const { setObjectiveCeiling, resolveConfiguredCeiling, recordSpend, evaluateCeil
 const { isInWorkspaceScope } = await import('../../lib/kb-workspace-scope.js')
 const { canUseConnectorCredential } = await import('../connector-guard.js')
 const { default: BetterSqlite3 } = await import('better-sqlite3')
-const { runTool, ToolUseError } = await import('../agent-chat/tools.js')
+const { runTool, ToolUseError, botJobIdempotencyKey } = await import('../agent-chat/tools.js')
 
 const PERSON = 9001 // the one person
 const OUTSIDER = 9002 // a person with no membership in WS
@@ -613,6 +613,21 @@ describe('wiring — the chat tool the person actually uses goes through the gua
     const b = runTool(chatCtx(AGENT), 'create_objective', { title, description: 'same ask' })
     expect(b.objective_id).toBe(a.objective_id)
     expect(String((b.result as { note: string }).note)).toMatch(/already filed/)
+  })
+
+  // obj 900838 / CodeQL #149: the derived key fingerprints only the ask (title +
+  // body). The thread scoping lives in the lookup and the UNIQUE index, not in the
+  // hash, so identity data is no longer hashed and threads stay separate.
+  it('the derived key is a content fingerprint; the thread scope comes from the lookup', () => {
+    const title = uniqueTitle('Chat-filed scoped')
+    const out = runTool(chatCtx(AGENT), 'create_objective', { title, description: 'scoped ask' })
+    const key = botJobIdempotencyKey(title, 'scoped ask')
+    expect(key).toMatch(/^[0-9a-f]{40}$/)
+    expect(botJobIdempotencyKey(` ${title} `, 'scoped ask ')).toBe(key)
+    expect(botJobIdempotencyKey(title, 'a different ask')).not.toBe(key)
+    expect(findJobByIdempotency(getDb(), PERSON, AGENT, key)?.objective_id).toBe(out.objective_id)
+    expect(findJobByIdempotency(getDb(), PERSON, 'some-other-agent', key)).toBeNull()
+    expect(findJobByIdempotency(getDb(), OUTSIDER, AGENT, key)).toBeNull()
   })
 
   it('an UNREGISTERED agent keeps the original behaviour — legacy compatibility', () => {

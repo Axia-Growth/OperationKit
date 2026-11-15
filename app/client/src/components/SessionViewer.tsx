@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback, lazy, Suspense } from 'react'
+import { useState, useEffect, useId, useRef, useCallback, lazy, Suspense } from 'react'
 import { useComposerDraft } from '../hooks/useComposerDraft'
 import { draftKey } from '../lib/composerDrafts'
 import type { Objective, ObjectiveReview, ObjectivePR, SessionIntel } from '@operationkit/shared'
@@ -12,6 +12,7 @@ import { useAgents } from '../hooks/useAgents'
 import { relativeTime } from '../lib/time'
 import { api } from '../lib/api'
 import { cn } from './ui'
+import { Modal } from './ui/Modal'
 import {
   loadViewerSize, SIZE_KEY,
   type ViewerSize, type SessionViewerProps, type UploadedFile,
@@ -202,10 +203,14 @@ export function SessionViewer({
   const agentLabel = (slug: string) => agentLabelOf(slug)
 
   // Keyboard: Esc closes; `f` toggles fullscreen (ignored while typing so it
-  // doesn't swallow the letter in the composer / correction fields).
+  // doesn't swallow the letter in the composer / correction fields). In the
+  // drawer/dialog chromes Escape belongs to ui/Modal (it closes only the
+  // topmost dialog, e.g. an open file editor first); page chrome keeps it here.
+  const pageChrome = chrome === 'page'
+  const titleId = useId()
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
-      if (e.key === 'Escape') { onClose(); return }
+      if (e.key === 'Escape') { if (pageChrome) onClose(); return }
       if (e.key === 'f' || e.key === 'F') {
         const t = e.target as HTMLElement | null
         const tag = t?.tagName
@@ -217,7 +222,7 @@ export function SessionViewer({
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [onClose, toggleSize, onOpenInNewTab])
+  }, [onClose, toggleSize, onOpenInNewTab, pageChrome])
 
   // ThreadTimeline polls ?view=timeline itself; it bubbles server-detected
   // status changes (poller-driven) up here so the header + input stay in sync.
@@ -431,7 +436,7 @@ export function SessionViewer({
 
   const time = relativeTime(objective.updated_at)
 
-  const isPage = chrome === 'page'
+  const isPage = pageChrome
   const isDialog = chrome === 'dialog'
   const seedUrls = extractPreviewUrls(objective.pr_url, objective.last_session_summary, objective.description)
   useEffect(() => {
@@ -439,36 +444,53 @@ export function SessionViewer({
     setDesignUrl(seedUrls[0])
   }, [designUrl, seedUrls])
 
+  // The visible title lives in ViewerHeader; this hidden copy names the
+  // dialog / page region (aria-labelledby reads hidden elements).
+  const nameEl = <span id={titleId} hidden>{objective.title}</span>
+
+  // Page chrome fills its parent: a normal page region, no overlay.
+  if (isPage) {
+    return (
+      <div role="region" aria-labelledby={titleId} className="relative flex h-full min-h-0 w-full flex-col bg-surface-1">
+        {nameEl}
+        {viewerBody()}
+      </div>
+    )
+  }
+
+  // Drawer and dialog chromes are a ui/Modal (UI SDK Dialog): page behind
+  // inert, focus trapped, Escape / a press on the scrim closes, focus returns
+  // to the opener. The scrim is hidden in fullscreen drawer (edge-to-edge).
   return (
-    <>
-      {/* Backdrop — scrim behind the half-screen layout (mobile bottom-sheet AND
-          desktop right-drawer). Fullscreen covers the viewport edge-to-edge, so no
-          scrim there. Tap to dismiss. Page chrome fills its parent (no overlay). */}
-      {!isPage && (
-        <div
-          className={cn(
-            'fixed inset-0 z-40 bg-[var(--scrim)] transition-opacity duration-200',
-            isDialog ? 'block' : isFull ? 'hidden' : 'block',
-          )}
-          onClick={onClose}
-          aria-hidden="true"
-        />
+    <Modal
+      open
+      onClose={onClose}
+      labelledBy={titleId}
+      variant={isDialog ? 'center' : 'sheet'}
+      className={!isDialog && isFull ? 'hidden' : undefined}
+      panelClassName={cn(
+        'flex min-h-0 flex-col overflow-x-hidden overflow-y-hidden bg-surface-1',
+        isDialog && (showDesign
+          ? 'inset-x-3 top-[4vh] bottom-auto m-0 h-[min(920px,92vh)] max-h-none w-auto max-w-none rounded-2xl sm:inset-x-auto sm:left-1/2 sm:w-[min(1280px,calc(100vw-32px))] sm:-translate-x-1/2'
+          : 'inset-x-3 top-[8vh] bottom-auto m-0 h-[min(840px,84vh)] max-h-none w-auto max-w-none rounded-2xl sm:inset-x-auto sm:left-1/2 sm:w-[min(920px,calc(100vw-48px))] sm:-translate-x-1/2'),
+        !isDialog && 'shadow-none sm:rounded-none motion-safe:sm:transition-[width] motion-safe:sm:duration-300 motion-safe:sm:ease-out',
+        !isDialog && (isFull
+          ? 'top-0 bottom-0 h-full max-h-none rounded-none border-0 sm:w-screen'
+          : 'bottom-0 top-auto h-[80vh] max-h-none rounded-t-2xl border-x-0 border-b-0 sm:w-[min(820px,100vw)] sm:shadow-drawer'),
       )}
-      <div
-        role="dialog"
-        aria-modal={!isPage}
-        className={cn(
-          'flex flex-col bg-surface-1',
-          isPage && 'relative h-full min-h-0 w-full',
-          isDialog && (showDesign
-            ? 'cc-pop-in fixed inset-x-3 top-[4vh] z-50 h-[min(920px,92vh)] min-h-0 overflow-hidden rounded-2xl border border-line shadow-float sm:inset-x-auto sm:left-1/2 sm:w-[min(1280px,calc(100vw-32px))] sm:-translate-x-1/2'
-            : 'cc-pop-in fixed inset-x-3 top-[8vh] z-50 h-[min(840px,84vh)] min-h-0 overflow-hidden rounded-2xl border border-line shadow-float sm:inset-x-auto sm:left-1/2 sm:w-[min(920px,calc(100vw-48px))] sm:-translate-x-1/2'),
-          !isPage && !isDialog && 'cc-drawer-in fixed inset-x-0 z-50 sm:inset-y-0 sm:left-auto sm:right-0 sm:h-auto sm:rounded-none sm:border-t-0 sm:border-l sm:border-line motion-safe:sm:transition-[width] motion-safe:sm:duration-300 motion-safe:sm:ease-out',
-          !isPage && !isDialog && (isFull
-            ? 'top-0 bottom-0 sm:w-screen'
-            : 'bottom-0 top-auto h-[80vh] rounded-t-2xl border-t border-line sm:w-[min(820px,100vw)] sm:shadow-drawer'),
-        )}
-      >
+    >
+      {nameEl}
+      {/* Initial focus lands here (not on a status button in the header), so
+          Escape and the `f` shortcut work straight away. */}
+      <div tabIndex={-1} data-autofocus className="flex min-h-0 flex-1 flex-col outline-none">
+        {viewerBody()}
+      </div>
+    </Modal>
+  )
+
+  function viewerBody() {
+    return (
+      <>
       {/* Quiet meta-line header (§09). On mobile the action buttons reflow to
           a full-width row below the title (obj 700281) — only the window
           controls stay pinned top-right. Desktop keeps everything inline. */}
@@ -608,7 +630,7 @@ export function SessionViewer({
           <FileEditorOverlay filePath={editingDocPath} onClose={() => setEditingDocPath(null)} />
         </Suspense>
       )}
-      </div>
-    </>
-  )
+      </>
+    )
+  }
 }

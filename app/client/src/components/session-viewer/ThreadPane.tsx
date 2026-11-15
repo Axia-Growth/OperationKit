@@ -44,11 +44,11 @@ export function ThreadPane({
         {!threadHasContent && isActive && (
           <div className="mt-16 flex flex-col items-center justify-center gap-3">
             <ThinkingIndicator variant="dots" tone="accent" />
-            <div className="text-sm text-fg-2">Session starting…</div>
+            <div className="text-base text-fg-2">Session starting…</div>
           </div>
         )}
         {!threadHasContent && !isActive && (
-          <div className="mt-8 text-center text-sm text-fg-3">No session output</div>
+          <div className="mt-8 text-center text-base text-fg-3">No session output</div>
         )}
         {/* Collapsed thread: visible anchors + lazily-expandable action gaps. */}
         <ThreadTimeline
@@ -67,7 +67,7 @@ export function ThreadPane({
         {pendingEcho && (
           <div className="cc-land my-1 flex justify-end">
             <div
-              className="overflow-hidden break-words rounded-lg rounded-br-sm border border-line bg-surface-3 px-4 py-3 text-[14px] leading-relaxed text-fg-0"
+              className="overflow-hidden break-words rounded-lg rounded-br-sm border border-line bg-surface-3 px-4 py-3 text-base leading-relaxed text-fg-0"
               style={{ maxWidth: 'min(85%, 64ch)' }}
             >
               {pendingEcho}

@@ -1,23 +1,23 @@
 import { useEffect, useRef, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
+import { Dialog, DialogBackdrop, DialogContent } from '@ui-sdk/react/dialog'
 import { cn } from './cn'
 
 /* ─────────────────────────────────────────────────────────
-   Modal — the ONE overlay wrapper for the platform (audit OK-4/OK-29).
-   Retrofits the existing motion vocabulary onto every hard-cutting
-   overlay: backdrop fades in (`cc-backdrop-in`), the panel enters with
-   the shipped keyframes — `center` scales/fades from 0.97 (`cc-pop-in`),
-   `sheet` slides up on mobile (`cc-sheet-in`) / in from the right on
-   desktop (`cc-drawer-in`). Esc closes, body scroll locks, focus restores
-   to the trigger on close. All motion is reduced-motion guarded in index.css.
+   Modal — the ONE overlay wrapper for the platform, on the UI SDK dialog
+   behavior (obj 900819). The SDK puts the panel in the browser's top layer,
+   makes the page behind it inert (screen readers and Tab can no longer reach
+   it), traps focus, closes on Escape and outside press, and returns focus
+   to where it was. Motion keeps the shipped vocabulary: `center` pops in
+   (`cc-pop-in`), `sheet` slides up on a phone (`cc-sheet-in`) and in from
+   the right on desktop (`cc-drawer-in`), all reduced-motion guarded.
 
-   This is a presentation wrapper only — colours/spacing come from tokens;
-   it does NOT own confirm semantics (see ConfirmDialog).
+   Presentation only — colours and spacing come from tokens; confirm
+   semantics live in ConfirmDialog.
    ───────────────────────────────────────────────────────── */
 
 type Variant = 'center' | 'sheet'
 
-// Tab-focusable elements within the dialog (for the focus trap + initial focus).
 const FOCUSABLE =
   'a[href],button:not([disabled]),textarea:not([disabled]),input:not([disabled]),select:not([disabled]),[tabindex]:not([tabindex="-1"])'
 
@@ -38,125 +38,72 @@ export function Modal({
   variant?: Variant
   labelledBy?: string
   describedBy?: string
+  /** Extra classes on the backdrop. */
   className?: string
   /** Extra classes on the panel (sizing, etc.). */
   panelClassName?: string
   closeOnBackdrop?: boolean
 }) {
-  const restoreRef = useRef<HTMLElement | null>(null)
-  const panelRef = useRef<HTMLDivElement | null>(null)
-
-  // Latest-ref for onClose: parents pass inline closures, so onClose's identity
-  // changes on every parent re-render. Reading it through a ref keeps the
-  // focus/scroll-lock effect below from depending on that identity — otherwise
-  // the effect tears down + re-runs on every parent re-render (the state-poller
-  // re-renders the board every ~3s for any live session), yanking focus out of
-  // the field the user is in and breaking dropdowns. See obj 700071.
+  // Parents pass inline closures, so onClose changes identity on every render
+  // (the board re-renders every ~3s for live sessions). Read it through a ref
+  // so nothing re-subscribes or moves focus on those renders (obj 700071).
   const onCloseRef = useRef(onClose)
   useEffect(() => {
     onCloseRef.current = onClose
   })
 
-  // Esc to close + body scroll lock + focus capture/restore.
+  // Most callers unmount the Modal to close it rather than flipping `open`.
+  // The SDK returns focus on a close it sees; an unmount it never sees, so put
+  // focus back on the element that had it before the dialog opened.
+  const contentRef = useRef<HTMLDivElement | null>(null)
+  const restoreRef = useRef<HTMLElement | null>(null)
+  if (open && restoreRef.current === null && typeof document !== 'undefined') {
+    const active = document.activeElement
+    restoreRef.current = active instanceof HTMLElement && active !== document.body ? active : null
+  }
+  if (!open) restoreRef.current = null
   useEffect(() => {
-    if (!open) return
-    restoreRef.current = (document.activeElement as HTMLElement) ?? null
-    const prevOverflow = document.body.style.overflow
-    document.body.style.overflow = 'hidden'
-
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
-        e.stopPropagation()
-        onCloseRef.current()
-        return
-      }
-      // Focus trap: keep Tab / Shift+Tab cycling inside the dialog so focus
-      // never escapes to the page behind it (which is not inert).
-      if (e.key === 'Tab') {
-        const panel = panelRef.current
-        if (!panel) return
-        const focusables = Array.from(
-          panel.querySelectorAll<HTMLElement>(FOCUSABLE),
-        ).filter((el) => el.offsetParent !== null)
-        if (focusables.length === 0) {
-          e.preventDefault()
-          panel.focus()
-          return
-        }
-        const first = focusables[0]
-        const last = focusables[focusables.length - 1]
-        const active = document.activeElement as HTMLElement | null
-        if (e.shiftKey) {
-          if (active === first || active === panel || !panel.contains(active)) {
-            e.preventDefault()
-            last.focus()
-          }
-        } else if (active === last || active === panel || !panel.contains(active)) {
-          e.preventDefault()
-          first.focus()
-        }
-      }
-    }
-    document.addEventListener('keydown', onKey)
-
-    // Initial focus: honour an explicit [data-autofocus] target, else the first
-    // focusable element, else the panel — so focus always lands on something
-    // useful and inside the dialog (fixes ConfirmDialog's defeated autoFocus).
-    const t = window.setTimeout(() => {
-      const panel = panelRef.current
-      if (!panel) return
-      const target =
-        panel.querySelector<HTMLElement>('[data-autofocus]') ??
-        panel.querySelector<HTMLElement>(FOCUSABLE) ??
-        panel
-      target.focus()
-    }, 0)
-
     return () => {
-      document.removeEventListener('keydown', onKey)
-      document.body.style.overflow = prevOverflow
-      window.clearTimeout(t)
-      restoreRef.current?.focus?.()
+      const back = restoreRef.current
+      if (!back) return
+      queueMicrotask(() => {
+        const now = document.activeElement
+        if ((!now || now === document.body) && back.isConnected) back.focus()
+      })
     }
-  }, [open])
-
-  if (!open) return null
+  }, [])
 
   const isSheet = variant === 'sheet'
 
   return createPortal(
-    <div
-      className={cn(
-        'fixed inset-0 z-50 flex',
-        isSheet ? 'items-end justify-center sm:items-stretch sm:justify-end' : 'items-center justify-center p-4',
-        className,
-      )}
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby={labelledBy}
-      aria-describedby={describedBy}
+    <Dialog
+      open={open}
+      onOpenChange={(next) => {
+        if (!next) onCloseRef.current()
+      }}
+      closeOnOutsidePress={closeOnBackdrop}
     >
-      {/* Backdrop */}
-      <div
-        className="cc-backdrop-in absolute inset-0 bg-[var(--scrim)]"
-        onClick={closeOnBackdrop ? onClose : undefined}
-        aria-hidden="true"
-      />
-      {/* Panel */}
-      <div
-        ref={panelRef}
-        tabIndex={-1}
+      <DialogBackdrop className={cn('cc-backdrop-in fixed inset-0 z-50 bg-[var(--scrim)]', className)} />
+      <DialogContent
+        ref={contentRef}
+        aria-labelledby={labelledBy}
+        aria-describedby={describedBy}
+        initialFocus={() => {
+          const panel = contentRef.current
+          if (!panel) return null
+          return panel.querySelector<HTMLElement>('[data-autofocus]') ?? panel.querySelector<HTMLElement>(FOCUSABLE) ?? panel
+        }}
         className={cn(
-          'relative z-[1] outline-none',
+          'fixed z-50 m-0 overflow-y-auto border border-line bg-surface-1 p-0 text-fg-0 shadow-float outline-none',
           isSheet
-            ? 'cc-sheet-in sm:cc-drawer-in max-h-[88vh] w-full overflow-y-auto rounded-t-2xl border border-line bg-surface-1 shadow-float sm:h-full sm:max-h-none sm:w-[440px] sm:rounded-none sm:rounded-l-2xl sm:border-y-0 sm:border-r-0'
-            : 'cc-pop-in max-h-[88vh] w-full max-w-lg overflow-y-auto rounded-xl border border-line bg-surface-1 shadow-float',
+            ? 'cc-sheet-in sm:cc-drawer-in inset-x-0 bottom-0 top-auto max-h-[88vh] w-full max-w-none rounded-t-2xl sm:inset-y-0 sm:left-auto sm:right-0 sm:h-full sm:max-h-none sm:w-[440px] sm:rounded-none sm:rounded-l-2xl sm:border-y-0 sm:border-r-0'
+            : 'cc-pop-in inset-0 m-auto h-fit max-h-[88vh] w-[calc(100%-2rem)] max-w-lg rounded-xl',
           panelClassName,
         )}
       >
         {children}
-      </div>
-    </div>,
+      </DialogContent>
+    </Dialog>,
     document.body,
   )
 }

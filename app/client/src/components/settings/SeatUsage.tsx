@@ -107,7 +107,7 @@ export function ProvisioningBanner({ hint }: { hint: ProvisioningHint | null | u
       <Alert tone={tone} title={title}>
         <p className="break-words">{hint.message}</p>
         {hint.verdict !== 'ok' && (
-          <p className="mt-1 text-[12px] text-fg-3">
+          <p className="mt-1 text-xs text-fg-3">
             Under = rate-limited more than {hint.thresholds.limited_pct_24h}% of the last 24h. Over = {hint.thresholds.idle_sessions_24h === 0 ? 'no sessions' : `at most ${plural(hint.thresholds.idle_sessions_24h, 'session')}`} in the last 24h.
           </p>
         )}

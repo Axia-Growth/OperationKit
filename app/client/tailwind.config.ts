@@ -23,6 +23,23 @@ export default {
   content: ['./index.html', './src/**/*.{ts,tsx}'],
   darkMode: 'class',
   theme: {
+    // Type scale (polish F1, #900802): six steps, each with its line height.
+    // Replaces Tailwind's stock sizes so every screen draws from the same set;
+    // `type-scale-guard.test.ts` fails on any arbitrary text-[Npx].
+    fontSize: {
+      xs: ['12px', { lineHeight: '16px' }],
+      sm: ['13px', { lineHeight: '18px' }],
+      base: ['14px', { lineHeight: '20px' }],
+      lg: ['16px', { lineHeight: '24px' }],
+      xl: ['20px', { lineHeight: '28px' }],
+      '2xl': ['24px', { lineHeight: '32px' }],
+    },
+    // One tracking per role: tight for titles and buttons, eyebrow for small caps.
+    letterSpacing: {
+      tight: '-0.01em',
+      normal: '0',
+      eyebrow: '0.06em',
+    },
     extend: {
       colors: withAlpha({
         // Every color below resolves a CSS custom property defined in index.css

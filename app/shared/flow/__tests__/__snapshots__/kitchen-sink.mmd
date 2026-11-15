@@ -1,15 +1,15 @@
 flowchart TD
-  classDef llm fill:#efe3ff,stroke:#7a4cc2,stroke-width:2px
-  classDef agent fill:#e3eeff,stroke:#2b5fc2,stroke-width:2px
-  classDef write fill:#fff8db,stroke:#a68500
-  classDef send fill:#ffe9e0,stroke:#c2562b,stroke-width:2px
-  classDef spend fill:#ffe3ea,stroke:#c22b55,stroke-width:2px
-  classDef succeeded stroke:#2f8f4e,stroke-width:3px
-  classDef failed stroke:#c22b2b,stroke-width:3px,stroke-dasharray:4 2
-  classDef running stroke:#2b6fc2,stroke-width:3px
-  classDef waiting stroke:#c2952b,stroke-width:3px,stroke-dasharray:2 2
-  classDef skipped fill:#f2f2f2,color:#888888,stroke:#bbbbbb
-  classDef mocked stroke:#888888,stroke-width:2px,stroke-dasharray:1 3
+  classDef llm stroke-width:2px
+  classDef agent stroke-width:2px
+  classDef write stroke-width:1px
+  classDef send stroke-width:2px
+  classDef spend stroke-width:2px
+  classDef succeeded stroke-width:3px
+  classDef failed stroke-width:3px,stroke-dasharray:4 2
+  classDef running stroke-width:3px
+  classDef waiting stroke-width:3px,stroke-dasharray:2 2
+  classDef skipped stroke-width:1px
+  classDef mocked stroke-width:2px,stroke-dasharray:1 3
   n_kick(["⏰ trigger · webhook"])
   n_accounts["🔧 tool · accounts-list<br/>read"]
   subgraph n_graph ["Accounts #34;A–Z#34; #35;1<br/>🔁 loop · for each acct · max 50 · 2 parallel"]

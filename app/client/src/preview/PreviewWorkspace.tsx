@@ -76,8 +76,8 @@ export function PreviewWorkspace({ workspaces }: { workspaces: Workspace[] }) {
   if (!Number.isFinite(objectiveId)) {
     return (
       <div className="flex flex-1 flex-col items-center justify-center gap-2 p-8 text-center">
-        <p className="text-sm text-fg-2">That URL is missing an objective id.</p>
-        <button type="button" className="text-sm text-accent hover:underline" onClick={() => navigate('/')}>
+        <p className="text-base text-fg-2">That URL is missing an objective id.</p>
+        <button type="button" className="text-base text-accent hover:underline" onClick={() => navigate('/')}>
           Back to the board
         </button>
       </div>
@@ -87,8 +87,8 @@ export function PreviewWorkspace({ workspaces }: { workspaces: Workspace[] }) {
   if (error) {
     return (
       <div className="flex flex-1 flex-col items-center justify-center gap-2 p-8 text-center">
-        <p className="text-sm text-fg-2">{error}</p>
-        <button type="button" className="text-sm text-accent hover:underline" onClick={() => navigate('/')}>
+        <p className="text-base text-fg-2">{error}</p>
+        <button type="button" className="text-base text-accent hover:underline" onClick={() => navigate('/')}>
           Back to the board
         </button>
       </div>
@@ -96,7 +96,7 @@ export function PreviewWorkspace({ workspaces }: { workspaces: Workspace[] }) {
   }
 
   if (!objective) {
-    return <div className="flex flex-1 items-center justify-center text-sm text-fg-2">Opening objective…</div>
+    return <div className="flex flex-1 items-center justify-center text-base text-fg-2">Opening objective…</div>
   }
 
   return (

@@ -11,6 +11,7 @@ import {
 import { CONVERSATION_SOURCES_DIR, GENERATED_BY, IMPORTS_STATE_DIR, RAW_CALLS_DIR, RAW_CHATS_DIR, ensureKbGitignore } from './paths.js'
 import { appendLog, compileWiki, wikilink } from './wiki.js'
 import { wikiLlm } from './llm.js'
+import { noteKbWrite } from '../kb-semantic/service.js'
 
 /**
  * Chat-export and call-transcript imports (obj 720117).
@@ -793,6 +794,7 @@ export function writeConversation(kb: string, jobId: string, stored: StoredConve
     const existing = fs.existsSync(abs) ? fs.readFileSync(abs, 'utf8') : null
     fs.mkdirSync(path.dirname(abs), { recursive: true })
     fs.writeFileSync(abs, upsertEntityNote(existing, e, ref, today))
+    noteKbWrite(abs) // obj 900816: semantic index
     if (!index.all.some(x => x.rel === rel)) index.all.push({ type: e.type, name: e.name, aliases: e.aliases ?? [], rel })
     pages.push({ rel, title: e.name })
   }
@@ -800,6 +802,7 @@ export function writeConversation(kb: string, jobId: string, stored: StoredConve
   const abs = path.join(kb, noteRel)
   fs.mkdirSync(path.dirname(abs), { recursive: true })
   fs.writeFileSync(abs, renderSourceNote({ rel: noteRel, c, rawFile: stored.raw_file, jobId, r, pages, today }))
+  noteKbWrite(abs) // obj 900816: semantic index
   return { source_note: noteRel, pages: pages.map(p => p.rel) }
 }
 

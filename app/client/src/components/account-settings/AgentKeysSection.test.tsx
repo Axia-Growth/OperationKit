@@ -3,6 +3,10 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { flushSync } from 'react-dom'
 import { createRoot, type Root } from 'react-dom/client'
 import { AgentKeysSection } from './AgentKeysSection'
+import { byRole, cleanup, click, press, render } from '../../test/render'
+// test/render switches act() mode on at import; the older flushSync-based tests
+// in this file run without it, so it is on only inside the UI SDK block below.
+;(globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = false
 
 async function flush() {
   for (let i = 0; i < 6; i++) {
@@ -333,5 +337,55 @@ describe('AgentKeysSection', () => {
     button(container, 'Revoke').click()
     await flush()
     expect(apiMock.del).toHaveBeenCalledWith('/auth/agent-keys/7')
+  })
+})
+
+/* obj 900819 — the two one-of-N choices on the new-key form are radio-style
+   segmented controls (UI SDK); the per-workspace / per-account chips stay
+   independent aria-pressed toggles. */
+describe('AgentKeysSection one-of-N choices (UI SDK segmented control)', () => {
+  beforeEach(() => { (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true })
+  afterEach(() => { (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = false })
+  beforeEach(() => {
+    apiMock.get.mockReset().mockImplementation(async (p: string) =>
+      p === '/connectors' ? CONNECTOR_LIST : { keys: [EXISTING] })
+  })
+  afterEach(cleanup)
+
+  const group = (name: string) => byRole(document.body, 'radiogroup').find(g => g.getAttribute('aria-label') === name)!
+
+  it('workspace reach and connector reach are named radio groups driven by arrow keys', async () => {
+    await render(<AgentKeysSection />)
+    await flush()
+    await click(button(document.body as HTMLElement, 'New agent key'))
+    await flush()
+
+    const reach = group('Workspaces this key may reach')
+    const r = byRole(reach, 'radio')
+    expect(r.map(x => x.textContent)).toEqual(['All my workspaces', 'Only some'])
+    expect(r[0].getAttribute('aria-checked')).toBe('true')
+    expect(r.filter(x => x.tabIndex === 0)).toHaveLength(1)
+    r[0].focus()
+    await press('ArrowRight')
+    await flush()
+    expect(byRole(group('Workspaces this key may reach'), 'radio')[1].getAttribute('aria-checked')).toBe('true')
+    // "Only some" reveals the workspace chips — independent toggles, not radios.
+    const chip = button(document.body as HTMLElement, 'example2')
+    expect(chip.getAttribute('aria-pressed')).toBe('false')
+    expect(chip.getAttribute('role')).toBeNull()
+
+    const mode = group('Connected accounts this key may use')
+    const m = byRole(mode, 'radio')
+    expect(m.map(x => x.textContent)).toEqual(['Whatever I can use', 'Pick specific accounts', 'No connected accounts'])
+    m[0].focus()
+    await press('ArrowLeft') // wraps to the last option
+    await flush()
+    expect(m[2].getAttribute('aria-checked')).toBe('true')
+    expect(document.activeElement).toBe(m[2]) // focus survives the re-render
+    await press('ArrowLeft')
+    await flush()
+    expect(m[1].getAttribute('aria-checked')).toBe('true')
+    expect(document.activeElement).toBe(m[1])
+    expect(button(document.body as HTMLElement, 'GitHub').getAttribute('aria-pressed')).toBe('false')
   })
 })

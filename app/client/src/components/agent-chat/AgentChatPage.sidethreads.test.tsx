@@ -274,3 +274,25 @@ describe('the strip is additive', () => {
     expect(host.querySelector('[role="tab"][aria-selected="true"]')?.textContent).toContain('Main')
   })
 })
+
+/* obj 900819 — the lane strip is a ui/Tabs tablist on the UI SDK tabs. */
+describe('the lane strip keyboard (UI SDK tabs)', () => {
+  it('is a named tablist with one tab stop; ArrowRight moves to and opens the next lane; + Side thread sits outside it', async () => {
+    await mount()
+    await settle()
+    const list = host.querySelector('[role="tablist"]') as HTMLElement
+    expect(list.getAttribute('aria-label')).toBe('Conversations with this bot')
+    const tabs = [...list.querySelectorAll<HTMLElement>('[role="tab"]')]
+    expect(tabs.filter(t => t.tabIndex === 0)).toHaveLength(1)
+    expect(list.textContent).not.toContain('+ Side thread')
+    tabs[0].focus()
+    tabs[0].dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true, cancelable: true }))
+    await settle()
+    expect(document.activeElement).toBe(tabs[1])
+    expect(tabs[1].getAttribute('aria-selected')).toBe('true')
+    expect(urls()).toContain('/api/agent-chat/agents/librarian/messages?thread_id=7')
+    tabs[1].dispatchEvent(new KeyboardEvent('keydown', { key: 'Home', bubbles: true, cancelable: true }))
+    await settle()
+    expect(host.querySelector('[role="tab"][aria-selected="true"]')?.textContent).toBe('Main')
+  })
+})

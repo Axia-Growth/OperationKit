@@ -84,7 +84,7 @@ export function BotAccessModal({ secret, entry, organizations, onClose, onSaved 
         </div>
         <p className="mb-4 font-mono text-xs text-fg-1">{secret.key}</p>
 
-        <p className="mb-4 rounded-md border border-border bg-surface px-3 py-2 text-[12px] leading-relaxed text-fg-2">
+        <p className="mb-4 rounded-md border border-border bg-surface px-3 py-2 text-xs leading-relaxed text-fg-2">
           Bots never see this value. A bot writes <span className="font-mono text-fg-1">{`{{secret:${secret.key}}}`}</span> in a request;
           the server adds the value, sends it only to the hosts below, and blanks it out of the reply.
           Every use is logged by name.
@@ -98,9 +98,9 @@ export function BotAccessModal({ secret, entry, organizations, onClose, onSaved 
           onChange={e => setHosts(e.target.value)}
           rows={3}
           placeholder={'api.example.com\n*.example.com'}
-          className="w-full rounded border border-border bg-surface px-2 py-1.5 font-mono text-sm text-fg-0 outline-none focus:border-accent"
+          className="w-full rounded border border-border bg-surface px-2 py-1.5 font-mono text-base text-fg-0 outline-none focus:border-accent"
         />
-        <p className="mb-4 mt-1 text-[12px] text-fg-3">One per line. HTTPS only. <span className="font-mono">*.example.com</span> covers its subdomains.</p>
+        <p className="mb-4 mt-1 text-xs text-fg-3">One per line. HTTPS only. <span className="font-mono">*.example.com</span> covers its subdomains.</p>
 
         <fieldset className="mb-4">
           <legend className="mb-1 text-xs text-fg-2">Methods</legend>
@@ -116,9 +116,9 @@ export function BotAccessModal({ secret, entry, organizations, onClose, onSaved 
 
         {isGlobal && (
           <fieldset className="mb-4">
-            <legend className="mb-1 text-xs text-fg-2">Organizations whose bots may use it</legend>
+            <legend className="mb-1 text-xs text-fg-2">Workspaces whose bots may use it</legend>
             {organizations.length === 0 ? (
-              <p className="text-[12px] text-fg-3">No organizations.</p>
+              <p className="text-xs text-fg-3">No organizations.</p>
             ) : (
               <div className="flex flex-wrap gap-3" data-testid="bot-access-orgs">
                 {organizations.map(o => (
@@ -129,13 +129,13 @@ export function BotAccessModal({ secret, entry, organizations, onClose, onSaved 
                 ))}
               </div>
             )}
-            <p className="mt-1 text-[12px] text-fg-3">
-              This secret applies everywhere. Bots and API keys only get it in the organizations ticked here.
+            <p className="mt-1 text-xs text-fg-3">
+              This secret applies everywhere. Bots and API keys only get it in the workspaces ticked here.
             </p>
           </fieldset>
         )}
 
-        {error && <div className="mb-3 rounded bg-signal-alarm/10 px-3 py-2 text-sm text-signal-alarm">{error}</div>}
+        {error && <div className="mb-3 rounded bg-signal-alarm/10 px-3 py-2 text-base text-signal-alarm">{error}</div>}
 
         <div className="flex items-center justify-between gap-3">
           {entry ? (
@@ -144,12 +144,12 @@ export function BotAccessModal({ secret, entry, organizations, onClose, onSaved 
             </button>
           ) : <span />}
           <div className="flex gap-2">
-            <button type="button" onClick={onClose} className="rounded-md px-3 py-1.5 text-sm text-fg-2 hover:text-fg-0">Cancel</button>
+            <button type="button" onClick={onClose} className="rounded-md px-3 py-1.5 text-base text-fg-2 hover:text-fg-0">Cancel</button>
             <button
               type="submit"
               disabled={saving}
               data-testid="bot-access-save"
-              className="rounded-md bg-accent px-3 py-1.5 text-sm font-medium text-accent-fg hover:bg-accent-hover disabled:opacity-50"
+              className="rounded-md bg-accent px-3 py-1.5 text-base font-medium text-accent-fg hover:bg-accent-hover disabled:opacity-50"
             >
               {saving ? 'Saving…' : 'Save'}
             </button>

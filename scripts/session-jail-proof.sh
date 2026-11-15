@@ -8,7 +8,8 @@
 # scratch dir is unreadable by any other uid. Rows 11-13 (obj 900113): a jail on
 # the default bridge cannot reach the app at localhost:3002; on the shared jail
 # network with the generated forwarder it can, and the app trusts it only via
-# INTERNAL_TRUSTED_PEER_CIDRS. This is evidence, not a mock: every row
+# INTERNAL_TRUSTED_PEER_CIDRS. Rows 14-17 (obj 900829): git works inside a jailed
+# worktree (its .git pointer resolves), and config/hooks stay read-only. This is evidence, not a mock: every row
 # is the exit code of a command executed INSIDE a jail. Nothing here is stubbed —
 # if docker is unreachable the script fails LOUDLY at PRECHECK and prints the raw
 # daemon error rather than reporting a pass.
@@ -252,6 +253,110 @@ echo "trusted with CIDR=$T  without=$U"
   || bad 'jail peer trust decision wrong'
 docker rm -f "$CCN" "$J1" "$J0" >/dev/null 2>&1 || true
 docker network rm "$NET" >/dev/null 2>&1 || true
+
+
+# ── obj 900829: git must work inside a jailed card's worktree ─────────────────
+# A worktree's .git is a POINTER into <project>/.git/worktrees/<name>. The jail
+# used to mount only the worktree, so that pointer dangled and every git command
+# failed. Same layout as prod: project outside /tmp, worktree under /tmp (which
+# is a tmpfs in the jail). The mounts come from the SHIPPED buildJailRunArgv /
+# buildJailGitMountArgs (loaded with Node type stripping), not a copy.
+GIMG=buildpack-deps:bookworm-scm
+GROOT="${RUNNER_TEMP:-$HOME}/ok-jail-proof-git"
+GPROJ="$GROOT/projects/repo"
+GWT=/tmp/cc-worktree-900829proof
+GWT2=/tmp/cc-worktree-900829sibling
+GHOME=/tmp/ok-jail-proof-git-home
+GJ=ok-jail-900829proof
+GIT_READY=1
+sudo -n true 2>/dev/null || GIT_READY=0
+docker rm -f "$GJ" >/dev/null 2>&1 || true
+for d in "$GROOT" "$GWT" "$GWT2" "$GHOME"; do sudo rm -rf "$d" 2>/dev/null || rm -rf "$d"; done
+mkdir -p "$GPROJ" "$GHOME"
+gx() { git -c user.name=proof -c user.email=proof@example.com "$@"; }
+gx -C "$GPROJ" init -q -b main && echo hi > "$GPROJ/README.md" && gx -C "$GPROJ" add . && gx -C "$GPROJ" commit -qm init
+gx -C "$GPROJ" worktree add -q -b cc/obj-900829-proof "$GWT" main
+# Stand-in for GitHub: a bare remote the jail can reach (prod pushes over https).
+# It sits inside the worktree, so it is /workspace/.proof-remote.git in the jail.
+git init -q --bare "$GWT/.proof-remote.git"
+echo .proof-remote.git >> "$GPROJ/.git/info/exclude"
+gx -C "$GPROJ" remote add origin /workspace/.proof-remote.git
+gx -C "$GPROJ" worktree add -q -b cc/obj-900829-sibling "$GWT2" main
+# What ensureWorktree does: pre-set the upstream from the control plane.
+gx -C "$GPROJ" config branch.cc/obj-900829-proof.remote origin
+gx -C "$GPROJ" config branch.cc/obj-900829-proof.merge refs/heads/cc/obj-900829-proof
+GCOMMON="$GPROJ/.git"
+gjs() { node --experimental-strip-types --no-warnings --input-type=module -e "$1"; }
+MOUNT_JSON=$(gjs "const m=await import('./app/server/src/services/worktree-gitdir.ts');const r=m.resolveJailGitMount('$GWT','$GCOMMON');if(!r.mount){console.error(r.reason);process.exit(3)};process.stdout.write(JSON.stringify(r.mount))")
+echo "git mount: $MOUNT_JSON"
+[ -n "$MOUNT_JSON" ] || GIT_READY=0
+# argv for a jail running $SCRIPT; $1 = with|without the git mount
+jail_git_argv() {
+  gjs "const j=await import('./app/server/src/services/session-jail.ts');
+const o={objectiveId:'900829proof',sessionId:'s900829',worktreePath:'$GWT',homePath:'$GHOME',image:'$GIMG',tmpSize:'64m',
+ command:['bash','-c',process.env.SCRIPT]};
+if('$1'==='with') o.gitMount=$MOUNT_JSON;
+process.stdout.write(JSON.stringify(j.buildJailRunArgv(o)))"
+}
+run_jail_git() {  # $1=with|without ; SCRIPT env = bash run inside the jail
+  docker rm -f "$GJ" >/dev/null 2>&1 || true
+  local argv; argv=$(jail_git_argv "$1") || return 99
+  local A; mapfile -d '' -t A < <(node -e 'for (const a of JSON.parse(process.argv[1])) process.stdout.write(a + "\0")' "$argv")
+  docker "${A[@]}" >/dev/null || return 98
+  local rc; rc=$(docker wait "$GJ"); docker logs "$GJ" 2>&1; docker rm -f "$GJ" >/dev/null 2>&1
+  return "$rc"
+}
+
+if [ "$GIT_READY" = 1 ]; then
+# What ensureWorktree + ensureJailGitWritable do as root: hand the worktree, its
+# admin dir and objects/refs/logs to the jail uid; config and hooks/ stay put.
+WRITABLE=$(gjs "const m=await import('./app/server/src/services/worktree-gitdir.ts');process.stdout.write(m.jailGitWritablePaths($MOUNT_JSON).join('\n'))")
+echo "jail-writable paths:"; echo "$WRITABLE"
+mapfile -t WP <<< "$WRITABLE"
+sudo chown -R 1000:1000 "$GWT" "${WP[@]}"
+docker pull -q "$GIMG" >/dev/null
+
+row 14 'BUG REPRO (obj 900829): worktree-only jail — the .git pointer dangles and git fails'
+out=$(SCRIPT='cat /workspace/.git; git -C /workspace status' run_jail_git without 2>&1); rc=$?
+echo "$out"; echo "exit code: $rc"
+[ "$rc" -ne 0 ] && printf '%s' "$out" | grep -q 'not a git repository' && ok 'git dead in the jail without the gitdir mount (the reported bug)' \
+  || bad 'expected "not a git repository" without the gitdir mount'
+
+row 15 'FIX: with the git mount the jail can status, commit and push -u; the commit lands on the host branch'
+out=$(SCRIPT='set -e; cd /workspace; git status --short; echo change > proof.txt; git add proof.txt
+git -c user.name=jail -c user.email=jail@example.com commit -qm "jail commit"
+git push -q -u origin HEAD; echo PUSH-EXIT=$?; git log --oneline -1' run_jail_git with 2>&1); rc=$?
+echo "$out"; echo "exit code: $rc"
+HOSTLOG=$(git -C "$GPROJ" log --format=%s -1 cc/obj-900829-proof 2>&1)
+REMOTELOG=$(git -C "$GWT/.proof-remote.git" log --format=%s -1 cc/obj-900829-proof 2>&1)
+echo "host branch tip: $HOSTLOG | remote branch tip: $REMOTELOG"
+[ "$rc" -eq 0 ] && [ "$HOSTLOG" = 'jail commit' ] && [ "$REMOTELOG" = 'jail commit' ] && ok 'jailed commit + push -u landed on the host branch and the remote' \
+  || bad 'git commit/push did not work inside the jail'
+
+row 16 'git config, hooks/ and the admin redirect files are READ-ONLY in the jail'
+out=$(SCRIPT="cd /workspace; git config core.fsmonitor 'touch /tmp/pwn' && echo CONFIG-WRITTEN; touch '$GCOMMON/hooks/post-checkout' && echo HOOK-WRITTEN; echo x > '$GCOMMON/worktrees/cc-worktree-900829proof/commondir' && echo COMMONDIR-WRITTEN; true" run_jail_git with 2>&1); rc=$?
+echo "$out"; echo "exit code: $rc"
+if printf '%s' "$out" | grep -qE 'CONFIG-WRITTEN|HOOK-WRITTEN|COMMONDIR-WRITTEN' || git -C "$GPROJ" config core.fsmonitor >/dev/null || [ -e "$GCOMMON/hooks/post-checkout" ]; then
+  bad 'jail could write git config / hooks / commondir'
+else
+  ok 'no hook, fsmonitor or commondir redirect can be planted for the control plane'
+fi
+
+row 17 'sibling cards are invisible, and an in-jail git worktree prune keeps this worktree'
+out=$(SCRIPT="ls '$GCOMMON/worktrees'; cd /workspace && git worktree prune && git status --short >/dev/null && echo STILL-OK" run_jail_git with 2>&1); rc=$?
+echo "$out"; echo "exit code: $rc"
+if [ "$rc" -eq 0 ] && printf '%s' "$out" | grep -q STILL-OK && ! printf '%s' "$out" | grep -q 'cc-worktree-900829sibling' \
+   && [ -d "$GCOMMON/worktrees/cc-worktree-900829proof" ] && [ -d "$GCOMMON/worktrees/cc-worktree-900829sibling" ]; then
+  ok 'only its own admin dir is visible; prune inside the jail removed nothing'
+else
+  bad 'sibling admin dir visible, or prune removed an admin dir'
+fi
+docker rm -f "$GJ" >/dev/null 2>&1 || true
+else
+  echo
+  echo 'SKIP rows 14-17 (obj 900829): passwordless sudo unavailable (or no git mount), so the'
+  echo 'worktree cannot be handed to the jail uid the way the root control plane does.'
+fi
 
 
 echo "==================== SUMMARY ===================="

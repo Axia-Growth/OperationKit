@@ -44,7 +44,7 @@ export function DiskLowBanner() {
     <div
       role="alert"
       className="mx-3 mt-2 flex items-center gap-2 rounded-md border border-line bg-surface-1 px-3 py-1.5 text-xs"
-      style={{ color: critical ? 'var(--ok-alarm)' : 'var(--ok-amber)' }}
+      style={{ color: critical ? 'var(--t-alarm)' : 'var(--t-amber)' }}
       title={`Checked ${new Date(disk.checkedAt).toLocaleString()}`}
     >
       <span className="h-1.5 w-1.5 shrink-0 rounded-full" style={{ background: 'currentColor' }} aria-hidden="true" />

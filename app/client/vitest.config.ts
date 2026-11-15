@@ -12,6 +12,7 @@ export default defineConfig({
   test: {
     globals: true,
     environment: 'jsdom',
+    setupFiles: ['./src/test/setup.ts'],
     // obj 900685: uncapped, vitest sizes its pool to the CPU count — 31
     // workers per run on the 32-core host, from every session that runs the
     // client suite. Same cap as app/server/vitest.config.ts.

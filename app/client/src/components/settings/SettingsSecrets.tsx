@@ -48,13 +48,8 @@ export function SettingsSecrets() {
     setParams(next, { replace: true })
   }
 
-  return (
-    <div>
-      {items.length > 1 && (
-        <div className="mb-4">
-          <Tabs items={items} value={view} onChange={select} />
-        </div>
-      )}
+  const body = (
+    <>
       {view === 'mine' && (
         <div className="max-w-3xl [&>section]:mt-0">
           {/* Same three promises as Shared (obj 900749): your own secrets are just as write-only. */}
@@ -64,6 +59,18 @@ export function SettingsSecrets() {
       )}
       {view === 'shared' && <SecretsPage embedded />}
       {view === 'test' && <TestCredentialsPage embedded />}
+    </>
+  )
+
+  return (
+    <div>
+      {items.length > 1 ? (
+        <Tabs items={items} value={view} onChange={select} label="Secret lists" panelClassName="mt-4">
+          {body}
+        </Tabs>
+      ) : (
+        body
+      )}
     </div>
   )
 }

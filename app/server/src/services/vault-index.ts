@@ -1,6 +1,6 @@
 import Database from 'better-sqlite3'
 import { readFileSync, readdirSync, statSync, existsSync } from 'node:fs'
-import { join } from 'node:path'
+import { join, sep } from 'node:path'
 import { knowledgeBaseRoot } from '../lib/knowledge-base-root.js'
 import { filterToWorkspaceScope } from '../lib/kb-workspace-scope.js'
 
@@ -240,6 +240,102 @@ function makeSnippet(file: string, terms: string[]): string {
   return (start > 0 ? '…' : '') + snippet + (start + SNIPPET_CHARS < text.length ? '…' : '')
 }
 
+export interface KeywordRow {
+  path: string
+  /** bm25 score: negative, lower = more relevant. */
+  score: number
+}
+
+/** The FTS MATCH expression for a query (terms + synonym expansion, OR-ed). Null when no usable terms. */
+function matchExpression(query: string): { match: string; expanded: string[] } | null {
+  const baseTerms = extractTerms(query.slice(0, 600))
+  if (baseTerms.length === 0) return null
+  const expanded = expandTerms(baseTerms)
+  // Quote each term as a bareword string so FTS5 never parses a term as an
+  // operator; OR them so a paraphrase matching on synonyms still ranks.
+  return { match: expanded.map((t) => `"${t.replace(/"/g, '')}"`).join(' OR '), expanded }
+}
+
+/**
+ * Keyword ranking (obj 900816): the FTS5 rows for `query`, workspace-walled,
+ * best first, up to `limit`. Used by the hybrid ranker; throws on index errors
+ * (callers decide the fallback).
+ */
+export function keywordRanked(query: string, workspace?: string | null, limit = 50): KeywordRow[] {
+  const root = knowledgeBaseRoot()
+  if (!existsSync(root)) return []
+  const m = matchExpression(query)
+  if (!m) return []
+  const db = getIndex(root)
+  if (!db) return []
+  // bm25() returns a negative score; lower (more negative) is more relevant.
+  // Boost title and tags columns over body. Over-fetch so the workspace wall
+  // below still leaves `limit` rows.
+  const rows = db
+    .prepare('SELECT path, bm25(docs, 10.0, 5.0, 1.0) AS score FROM docs WHERE docs MATCH ? ORDER BY score LIMIT ?')
+    .all(m.match, workspace ? limit * 6 : limit) as KeywordRow[]
+  // obj 900321 (C13): a workspace argument is a WALL, not a -2.0 bm25 nudge.
+  // Out-of-scope docs are removed BEFORE ranking, so no score, stem or synonym
+  // expansion can promote another workspace's note into the result set.
+  const ranked = workspace ? filterToWorkspaceScope(rows, workspace, root) : rows
+  ranked.sort((a, b) => a.score - b.score)
+  return ranked.slice(0, limit)
+}
+
+/**
+ * Docs that contain each exact token as a phrase (obj 900816): card numbers,
+ * IDs, slugs, quoted phrases. FTS tokenises the token the same way it
+ * tokenised the docs, so "obj-900816" matches the adjacent tokens obj, 900816.
+ * Returns path → how many distinct tokens matched. Never throws.
+ */
+export function exactPhraseMatches(tokens: string[], workspace?: string | null, perToken = 30): Map<string, number> {
+  const out = new Map<string, number>()
+  try {
+    const root = knowledgeBaseRoot()
+    if (!existsSync(root) || tokens.length === 0) return out
+    const db = getIndex(root)
+    if (!db) return out
+    const stmt = db.prepare('SELECT path FROM docs WHERE docs MATCH ? ORDER BY bm25(docs, 10.0, 5.0, 1.0) LIMIT ?')
+    // IDs often live only in the FILE NAME (decisions/2026-11-11-obj900510-….md),
+    // so the path is matched too — relative to the root, so the root's own
+    // folder names never match.
+    const byPath = db.prepare("SELECT path FROM docs WHERE path LIKE ? ESCAPE '\\' LIMIT 200")
+    const rootLen = root.endsWith(sep) ? root.length : root.length + 1
+    for (const t of tokens.slice(0, 8)) {
+      const pathHits = new Set<string>()
+      if (t.length >= 3) {
+        const like = `%${t.replace(/[\\%_]/g, (c) => `\\${c}`)}%`
+        for (const r of byPath.all(like) as { path: string }[]) {
+          if (r.path.slice(rootLen).toLowerCase().includes(t)) pathHits.add(r.path)
+        }
+      }
+      const words = t.toLowerCase().split(/[^\p{L}\p{N}]+/u).filter(Boolean)
+      let rows: { path: string }[] = []
+      if (words.length) {
+        try {
+          rows = stmt.all(`"${words.join(' ')}"`, perToken) as { path: string }[]
+        } catch { rows = [] }
+      }
+      for (const p of pathHits) if (!rows.some((r) => r.path === p)) rows.push({ path: p })
+      const scoped = workspace ? filterToWorkspaceScope(rows, workspace, root) : rows
+      for (const r of scoped) out.set(r.path, (out.get(r.path) ?? 0) + 1)
+    }
+  } catch {
+    // keyword index unavailable — no exact tier
+  }
+  return out
+}
+
+/** Snippet around the first occurrence of any term (exported for the hybrid ranker). */
+export function snippetFor(file: string, terms: string[]): string {
+  return makeSnippet(file, terms)
+}
+
+/** Query terms incl. synonyms, for snippet placement. */
+export function snippetTerms(query: string): string[] {
+  return matchExpression(query)?.expanded ?? []
+}
+
 /**
  * Semantic search over the vault via FTS5 (BM25 + Porter stemming + synonym
  * expansion). Returns [] on any failure or empty result so the caller can fall
@@ -247,37 +343,11 @@ function makeSnippet(file: string, terms: string[]): string {
  */
 export function searchVaultIndex(query: string, workspace?: string | null): VaultHit[] {
   try {
-    const root = knowledgeBaseRoot()
-    if (!existsSync(root)) return []
-    const baseTerms = extractTerms(query.slice(0, 600))
-    if (baseTerms.length === 0) return []
-    const db = getIndex(root)
-    if (!db) return []
-
-    const expanded = expandTerms(baseTerms)
-    // Quote each term as a bareword string so FTS5 never parses a term as an
-    // operator; OR them so a paraphrase matching on synonyms still ranks.
-    const match = expanded.map((t) => `"${t.replace(/"/g, '')}"`).join(' OR ')
-
-    // bm25() returns a negative score; lower (more negative) is more relevant.
-    // Boost title and tags columns over body.
-    const rows = db
-      .prepare(
-        'SELECT path, bm25(docs, 10.0, 5.0, 1.0) AS score ' +
-          'FROM docs WHERE docs MATCH ? ORDER BY score LIMIT 30'
-      )
-      .all(match) as { path: string; score: number }[]
-    if (rows.length === 0) return []
-
-    // obj 900321 (C13): a workspace argument is a WALL, not a -2.0 bm25 nudge.
-    // Out-of-scope docs are removed BEFORE ranking, so no score, stem or synonym
-    // expansion can promote another workspace's note into the result set.
-    const ranked = workspace ? filterToWorkspaceScope(rows, workspace, root) : rows
+    const ranked = keywordRanked(query, workspace, MAX_HITS)
     if (ranked.length === 0) return []
-    ranked.sort((a, b) => a.score - b.score)
-
+    const expanded = snippetTerms(query)
     const hits: VaultHit[] = []
-    for (const r of ranked.slice(0, MAX_HITS)) {
+    for (const r of ranked) {
       try {
         hits.push({ path: r.path, snippet: makeSnippet(r.path, expanded) })
       } catch {
