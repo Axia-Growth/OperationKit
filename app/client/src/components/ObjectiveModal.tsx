@@ -1,6 +1,6 @@
 import { memo, useState, useEffect, useRef, type FormEvent, type ChangeEvent } from 'react'
 import { X, Plus, Check } from 'lucide-react'
-import { Modal, useConfirm } from './ui'
+import { Button, IconButton, Input, Modal, RowButton, Textarea, cn, useConfirm } from './ui'
 import { useAuth } from '../context/AuthContext'
 import { useWorkspaces } from '../hooks/useWorkspaces'
 import { api } from '../lib/api'
@@ -19,6 +19,8 @@ import { validateOwnerBot, OWNER_BOT_MAX_LENGTH } from '@operationkit/shared'
 import { FooterActions } from './objective-modal/FooterActions'
 import { parseDuplicateError, cardHref, type DuplicateCard } from '../lib/duplicateGuard'
 import { Select } from './ui/Select'
+import { ModelPicker } from './ModelPicker'
+import { friendlyError } from '../lib/format'
 
 interface ObjectiveModalProps {
   objective: Objective | null
@@ -50,7 +52,14 @@ function ObjectiveModalImpl({ objective, workspace, onClose, onCreate, onUpdate,
     objective ? objective.project_id ?? null : defaultProjectId
   )
   const [loading, setLoading] = useState(false)
-  const [error, setError] = useState('')
+  const [error, setErrorText] = useState('')
+  const [errorDetail, setErrorDetail] = useState('')
+  const setError = (msg: string) => { setErrorText(msg); setErrorDetail('') }
+  const showError = (err: unknown) => {
+    const f = friendlyError(err)
+    setErrorText(f.message)
+    setErrorDetail(f.detail)
+  }
   // obj 64: a create refused as a same-title duplicate (409 duplicate_24h) — shown
   // with a link to the existing card and a "Create anyway" (force: true) action.
   const [duplicate, setDuplicate] = useState<DuplicateCard | null>(null)
@@ -160,7 +169,7 @@ function ObjectiveModalImpl({ objective, workspace, onClose, onCreate, onUpdate,
       setCreatingProject(false)
       setNewProjectName('')
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Could not create project')
+      showError(err)
     } finally {
       setProjectBusy(false)
     }
@@ -236,7 +245,7 @@ function ObjectiveModalImpl({ objective, workspace, onClose, onCreate, onUpdate,
     } catch (err) {
       const dup = isEdit ? null : parseDuplicateError(err)
       if (dup) setDuplicate(dup)
-      else setError(err instanceof Error ? err.message : 'Operation failed')
+      else showError(err)
     } finally {
       setLoading(false)
       setUploading(false)
@@ -246,8 +255,8 @@ function ObjectiveModalImpl({ objective, workspace, onClose, onCreate, onUpdate,
   async function handleDelete() {
     if (!objective) return
     if (!(await confirm({
-      title: 'Delete this objective?',
-      message: 'This permanently removes the objective and its session history. This cannot be undone.',
+      title: 'Delete this card?',
+      message: 'This permanently removes the card and its run history. This cannot be undone.',
       confirmLabel: 'Delete',
       danger: true,
     }))) return
@@ -256,7 +265,7 @@ function ObjectiveModalImpl({ objective, workspace, onClose, onCreate, onUpdate,
       await onDelete(objective.id)
       onClose()
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Delete failed')
+      showError(err)
     } finally {
       setLoading(false)
     }
@@ -278,24 +287,28 @@ function ObjectiveModalImpl({ objective, workspace, onClose, onCreate, onUpdate,
       onClose={onClose}
       variant="center"
       labelledBy="objective-modal-title"
-      panelClassName="max-w-xl"
+      size="lg"
     >
       <div className="p-5 sm:p-6">
         <div className="mb-4 flex items-center justify-between">
           <h2 id="objective-modal-title" className="text-lg font-semibold tracking-tight text-fg-0">
-            {isEdit ? 'Edit Objective' : 'New Objective'}
+            {isEdit ? 'Edit card' : 'New card'}
           </h2>
-          <button
-            onClick={onClose}
-            aria-label="Close"
-            className="rounded-md p-1.5 text-fg-2 transition-colors duration-fast ease-out hover:bg-surface-3 hover:text-fg-0"
-          >
+          <IconButton label="Close" onClick={onClose} className="-mr-1.5 text-fg-2">
             <X className="h-4 w-4" />
-          </button>
+          </IconButton>
         </div>
 
         {error && (
-          <div className="mb-4 rounded-md border border-flag-blocked/30 bg-flag-blocked/10 px-3 py-2 text-base text-flag-blocked">{error}</div>
+          <div className="mb-4 rounded-md border border-flag-blocked/30 bg-flag-blocked/10 px-3 py-2 text-base text-flag-blocked">
+            {error}
+            {errorDetail && (
+              <details className="mt-1 text-xs text-fg-3">
+                <summary className="cursor-pointer">Details</summary>
+                {errorDetail}
+              </details>
+            )}
+          </div>
         )}
 
         {duplicate && (
@@ -312,15 +325,15 @@ function ObjectiveModalImpl({ objective, workspace, onClose, onCreate, onUpdate,
               {duplicate.status ? ` (${duplicate.status})` : ''}. Not created.
             </p>
             <div className="mt-2 flex gap-2">
-              <button
+              <Button
                 type="button"
+                size="xs"
                 data-testid="create-anyway"
                 disabled={loading}
                 onClick={() => { void submit(true) }}
-                className="rounded-md border border-line px-2.5 py-1 text-xs font-medium text-fg-0 hover:bg-surface-3 disabled:opacity-50"
               >
                 Create anyway
-              </button>
+              </Button>
             </div>
           </div>
         )}
@@ -328,12 +341,13 @@ function ObjectiveModalImpl({ objective, workspace, onClose, onCreate, onUpdate,
         <form onSubmit={handleSubmit} className="space-y-4">
           <div>
             <label className={labelCls}>Title</label>
-            <textarea
+            <Textarea
               ref={titleRef}
               value={title}
               onChange={e => setTitle(e.target.value)}
               rows={1}
-              className={`${fieldCls} resize-none overflow-y-auto`}
+              aria-label="Title"
+              className={cn(fieldCls, 'resize-none overflow-y-auto')}
               placeholder="What needs to be done?"
               autoFocus
               required
@@ -341,14 +355,15 @@ function ObjectiveModalImpl({ objective, workspace, onClose, onCreate, onUpdate,
           </div>
 
           <div>
-            <label className={labelCls}>Description / Instructions</label>
-            <textarea
+            <label className={labelCls}>Description / instructions</label>
+            <Textarea
               ref={descRef}
               value={description}
               onChange={e => setDescription(e.target.value)}
               rows={5}
-              className={`${fieldCls} resize-none overflow-y-auto`}
-              placeholder="Detailed context and instructions for the AI session…"
+              aria-label="Description / instructions"
+              className={cn(fieldCls, 'resize-none overflow-y-auto')}
+              placeholder="Detailed context and instructions for the bot…"
             />
           </div>
 
@@ -374,7 +389,7 @@ function ObjectiveModalImpl({ objective, workspace, onClose, onCreate, onUpdate,
             <label className={labelCls}>Project</label>
             {creatingProject ? (
               <div className="flex items-center gap-2">
-                <input
+                <Input
                   value={newProjectName}
                   onChange={e => setNewProjectName(e.target.value)}
                   onKeyDown={e => {
@@ -386,23 +401,21 @@ function ObjectiveModalImpl({ objective, workspace, onClose, onCreate, onUpdate,
                   autoFocus
                   className={fieldCls}
                 />
-                <button
-                  type="button"
+                <IconButton
                   onClick={() => void handleCreateProject()}
                   disabled={projectBusy || !newProjectName.trim()}
-                  aria-label="Create project"
-                  className="rounded-md p-2 text-fg-2 transition-colors duration-fast ease-out hover:bg-surface-3 hover:text-fg-0 disabled:opacity-40"
+                  label="Create project"
+                  className="shrink-0 text-fg-2"
                 >
                   <Check className="h-4 w-4" />
-                </button>
-                <button
-                  type="button"
+                </IconButton>
+                <IconButton
                   onClick={() => { setCreatingProject(false); setNewProjectName('') }}
-                  aria-label="Cancel new project"
-                  className="rounded-md p-2 text-fg-2 transition-colors duration-fast ease-out hover:bg-surface-3 hover:text-fg-0"
+                  label="Cancel new project"
+                  className="shrink-0 text-fg-2"
                 >
                   <X className="h-4 w-4" />
-                </button>
+                </IconButton>
               </div>
             ) : (
               <div className="flex items-center gap-2">
@@ -416,16 +429,16 @@ function ObjectiveModalImpl({ objective, workspace, onClose, onCreate, onUpdate,
                     <option key={proj.id} value={proj.id}>{proj.name}</option>
                   ))}
                 </Select>
-                <button
+                <Button
                   type="button"
                   onClick={() => { setCreatingProject(true); setNewProjectName('') }}
                   aria-label="New project"
                   title="Create a project in this workspace"
-                  className="inline-flex shrink-0 items-center gap-1 rounded-md border border-line px-2.5 py-2 text-sm text-fg-2 transition-colors duration-fast ease-out hover:border-line-strong hover:text-fg-0"
+                  leftIcon={<Plus className="h-3.5 w-3.5" />}
+                  className="shrink-0 gap-1 px-2.5"
                 >
-                  <Plus className="h-3.5 w-3.5" />
                   New
-                </button>
+                </Button>
               </div>
             )}
           </div>
@@ -434,15 +447,12 @@ function ObjectiveModalImpl({ objective, workspace, onClose, onCreate, onUpdate,
           {models.length > 0 && (
             <div>
               <label className={labelCls}>Model</label>
-              <Select className="w-full"
+              <ModelPicker
+                models={models}
                 value={model || defaultModel}
                 aria-label="Model"
                 onChange={v => setModel(v)}
-              >
-                {models.map(m => (
-                  <option key={m.id} value={m.id}>{m.label}</option>
-                ))}
-              </Select>
+              />
             </div>
           )}
 
@@ -450,7 +460,7 @@ function ObjectiveModalImpl({ objective, workspace, onClose, onCreate, onUpdate,
               on the needs_agent webhook so the General can route the wake. */}
           <div>
             <label htmlFor="objective-owner-bot" className={labelCls}>Owner bot</label>
-            <input
+            <Input
               id="objective-owner-bot"
               type="text"
               value={ownerBot}
@@ -465,7 +475,7 @@ function ObjectiveModalImpl({ objective, workspace, onClose, onCreate, onUpdate,
           {/* Assignee picker — admin-only, multi-owner ordered chip list */}
           {isAdmin && users.length > 0 && (
             <div>
-              <label className={labelCls}>Assign To</label>
+              <label className={labelCls}>Assign to</label>
               {assignedUserIds.length > 0 && (
                 <div className="mb-2 flex flex-wrap gap-1.5">
                   {assignedUserIds.map((uid, idx) => {
@@ -481,14 +491,13 @@ function ObjectiveModalImpl({ objective, workspace, onClose, onCreate, onUpdate,
                             primary
                           </span>
                         )}
-                        <button
-                          type="button"
+                        <RowButton
                           aria-label={`Remove ${u?.username ?? uid}`}
                           onClick={() => setAssignedUserIds(ids => ids.filter(id => id !== uid))}
-                          className="ml-0.5 text-fg-3 hover:text-fg-0 transition-colors duration-fast ease-out"
+                          className="ml-0.5 rounded-sm text-fg-3 hover:text-fg-0"
                         >
                           <X className="h-3 w-3" />
-                        </button>
+                        </RowButton>
                       </span>
                     )
                   })}
@@ -516,6 +525,7 @@ function ObjectiveModalImpl({ objective, workspace, onClose, onCreate, onUpdate,
           {/* Delegator mode — admin-only */}
           {isAdmin && (
             <div className="flex items-center gap-2">
+              {/* raw-control: native checkbox; there is no Checkbox primitive yet. */}
               <input
                 id="delegate-mode"
                 type="checkbox"
@@ -531,7 +541,8 @@ function ObjectiveModalImpl({ objective, workspace, onClose, onCreate, onUpdate,
 
           {/* File attachments */}
           <div>
-            <label className={labelCls}>Attach Files</label>
+            <label className={labelCls}>Attach files</label>
+            {/* raw-control: the native file picker (styled via file:). */}
             <input
               type="file"
               multiple
@@ -543,14 +554,13 @@ function ObjectiveModalImpl({ objective, workspace, onClose, onCreate, onUpdate,
                 {pendingFiles.map(f => (
                   <li key={f.name} className="flex items-center gap-2 text-sm text-fg-2">
                     <span className="truncate">{f.name}</span>
-                    <button
-                      type="button"
+                    <RowButton
                       onClick={() => removeFile(f.name)}
                       aria-label={`Remove ${f.name}`}
-                      className="shrink-0 text-fg-3 hover:text-fg-0 transition-colors duration-fast ease-out"
+                      className="shrink-0 rounded-sm text-fg-3 hover:text-fg-0"
                     >
                       <X className="h-3 w-3" />
-                    </button>
+                    </RowButton>
                   </li>
                 ))}
               </ul>

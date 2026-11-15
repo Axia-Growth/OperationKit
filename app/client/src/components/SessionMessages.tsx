@@ -1,9 +1,12 @@
 import { useEffect, useRef, useState } from 'react'
+import { Bot, Brain, ChevronRight, FilePen, FileText, Info, Search, SquareTerminal, Wrench, type LucideIcon } from 'lucide-react'
 import type { SessionMessage } from '@operationkit/shared'
 import { renderMarkdown } from '../lib/markdown'
+import { formatCost, formatDuration } from '../lib/format'
 import { cleanupOrphanMermaid, renderMermaidIn } from '../lib/mermaid'
 import { ObjectiveProposalCard } from './ObjectiveProposalCard'
 import { SenderTag } from './design/primitives'
+import { isEditableDocPath } from '../lib/docPaths'
 
 // ── Objective-proposal block splitter ──
 
@@ -36,7 +39,7 @@ function splitObjectiveProposals(text: string): MsgSegment[] {
 
 interface CollapsibleDetailsProps {
   label: React.ReactNode
-  icon?: string
+  icon?: LucideIcon
   colorScheme: 'emerald' | 'blue' | 'purple' | 'gray'
   previewLines?: number
   children: string
@@ -65,7 +68,7 @@ const BLOCK_HEADER = 'flex w-full items-center gap-2 px-3 py-2 text-left text-xs
 const BLOCK_BODY =
   'border-t border-line-soft bg-surface-1 px-3 py-2.5 text-xs leading-relaxed text-fg-2 font-mono overflow-x-auto whitespace-pre-wrap break-words max-h-80 overflow-y-auto'
 
-export function CollapsibleDetails({ label, icon, colorScheme, previewLines = 5, children, defaultExpanded = false, statusDot, meta }: CollapsibleDetailsProps) {
+export function CollapsibleDetails({ label, icon: Icon, colorScheme, previewLines = 5, children, defaultExpanded = false, statusDot, meta }: CollapsibleDetailsProps) {
   const [expanded, setExpanded] = useState(defaultExpanded)
   const scheme = schemeClasses[colorScheme]
   const lines = children.split('\n')
@@ -79,10 +82,10 @@ export function CollapsibleDetails({ label, icon, colorScheme, previewLines = 5,
         className={`${BLOCK_HEADER} transition-colors duration-fast ease-out hover:bg-surface-3`}
       >
         {statusDot ?? <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${scheme.dot}`} />}
-        {icon && <span className="shrink-0 text-xs opacity-80">{icon}</span>}
+        {Icon && <Icon aria-hidden="true" className="h-3.5 w-3.5 shrink-0 text-fg-3" />}
         <span className={`truncate font-mono font-medium ${scheme.text}`}>{label}</span>
         {meta}
-        <span className={`${meta ? '' : 'ml-auto'} shrink-0 text-xs text-fg-3 transition-transform ${expanded ? 'rotate-90' : ''}`}>{'▸'}</span>
+        <ChevronRight aria-hidden="true" className={`${meta ? '' : 'ml-auto'} h-3.5 w-3.5 shrink-0 text-fg-3 transition-transform ${expanded ? 'rotate-90' : ''}`} />
       </button>
       {(expanded || hasMore) && (
         <pre className={BLOCK_BODY}>
@@ -115,9 +118,9 @@ export function ResultCard({ text, cost, duration }: { text?: string; cost?: num
           <div className="cc-prose break-words" dangerouslySetInnerHTML={{ __html: renderMarkdown(text) }} />
         )}
         {(cost != null || duration != null) && (
-          <div className="mt-2 flex gap-4 font-mono text-xs text-fg-3">
-            {cost != null && <span>${cost.toFixed(4)}</span>}
-            {duration != null && <span>{(duration / 1000).toFixed(1)}s</span>}
+          <div className="mt-2 flex gap-4 text-xs text-fg-3">
+            {cost != null && <span>{formatCost(cost)}</span>}
+            {duration != null && <span>{formatDuration(duration)}</span>}
           </div>
         )}
       </div>
@@ -187,20 +190,16 @@ function ToolStatusDot({ status }: { status: ToolStatus }) {
 function ToolMeta({ cost, duration }: { cost?: number; duration?: number }) {
   if (cost == null && duration == null) return null
   return (
-    <span className="ml-auto flex shrink-0 items-center gap-2 font-mono text-xs text-fg-3">
-      {duration != null && <span>{(duration / 1000).toFixed(1)}s</span>}
-      {cost != null && <span>${cost.toFixed(4)}</span>}
+    <span className="ml-auto flex shrink-0 items-center gap-2 text-xs text-fg-3">
+      {duration != null && <span>{formatDuration(duration)}</span>}
+      {cost != null && <span>{formatCost(cost)}</span>}
     </span>
   )
 }
 
 // ── Tool-specific summaries ──
 
-function isEditableDocPath(p: string): boolean {
-  return /^\/home\/operator\/.+\.md$/.test(p)
-}
-
-function getToolSummary(msg: SessionMessage): { label: string; icon: string; filePath?: string } {
+function getToolSummary(msg: SessionMessage): { label: string; icon: LucideIcon; filePath?: string } {
   const name = msg.toolName || 'Tool'
   const input = msg.toolInput || ''
   const result = msg.toolResult || ''
@@ -208,35 +207,38 @@ function getToolSummary(msg: SessionMessage): { label: string; icon: string; fil
   switch (name) {
     case 'Bash': {
       const cmd = input.length > 80 ? input.slice(0, 80) + '...' : input
-      return { label: `Bash: ${cmd}`, icon: '⚙️' }
+      return { label: `Bash: ${cmd}`, icon: SquareTerminal }
     }
     case 'Read': {
       const p = input.match(/[\w/.-]+\.\w+/)?.[0] || input.slice(0, 60)
-      return { label: `Read: ${p}`, icon: '📄', filePath: p }
+      return { label: `Read: ${p}`, icon: FileText, filePath: p }
     }
     case 'Write': {
       const p = input.match(/[\w/.-]+\.\w+/)?.[0] || input.slice(0, 60)
-      return { label: `Write: ${p}`, icon: '✏️', filePath: p }
+      return { label: `Write: ${p}`, icon: FilePen, filePath: p }
     }
     case 'Edit': {
       const p = input.match(/[\w/.-]+\.\w+/)?.[0] || 'file'
       const added = (result.match(/\n\+/g) || []).length
       const removed = (result.match(/\n-/g) || []).length
       const diffSummary = (added || removed) ? ` (+${added}/-${removed})` : ''
-      return { label: `Edit: ${p}${diffSummary}`, icon: '✏️', filePath: p }
+      return { label: `Edit: ${p}${diffSummary}`, icon: FilePen, filePath: p }
     }
     case 'Grep': {
       const pattern = input.match(/"([^"]+)"/)?.[1] || input.slice(0, 40)
       const resultLines = result.trim().split('\n').filter(Boolean)
-      return { label: `Grep: "${pattern}" (${resultLines.length} results)`, icon: '🔍' }
+      return { label: `Grep: "${pattern}" (${resultLines.length} results)`, icon: Search }
     }
     case 'Glob': {
       const pattern = input.match(/"([^"]+)"/)?.[1] || input.slice(0, 40)
       const resultLines = result.trim().split('\n').filter(Boolean)
-      return { label: `Glob: ${pattern} (${resultLines.length} files)`, icon: '🔍' }
+      return { label: `Glob: ${pattern} (${resultLines.length} files)`, icon: Search }
     }
+    case 'Agent':
+    case 'Task':
+      return { label: name, icon: Bot }
     default:
-      return { label: name, icon: '🔧' }
+      return { label: name, icon: Wrench }
   }
 }
 
@@ -266,7 +268,7 @@ function DiffBody({ text }: { text: string }) {
   )
 }
 
-function EditDiffCollapsible({ label, icon, text, statusDot, meta }: { label: React.ReactNode; icon?: string; text: string; statusDot?: React.ReactNode; meta?: React.ReactNode }) {
+function EditDiffCollapsible({ label, icon: Icon, text, statusDot, meta }: { label: React.ReactNode; icon?: LucideIcon; text: string; statusDot?: React.ReactNode; meta?: React.ReactNode }) {
   const [expanded, setExpanded] = useState(false)
   const lines = text.split('\n')
   const previewLines = 5
@@ -280,11 +282,11 @@ function EditDiffCollapsible({ label, icon, text, statusDot, meta }: { label: Re
         className={`${BLOCK_HEADER} transition-colors duration-fast ease-out hover:bg-surface-3`}
       >
         {statusDot ?? <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-status-done" />}
-        {icon && <span className="shrink-0 text-xs opacity-80">{icon}</span>}
+        {Icon && <Icon aria-hidden="true" className="h-3.5 w-3.5 shrink-0 text-fg-3" />}
         <span className="truncate font-mono font-medium text-fg-1">{label}</span>
         {meta}
         {hasMore && !expanded && <span className={`${meta ? '' : 'ml-auto'} shrink-0 font-mono text-xs text-fg-3`}>+{lines.length - previewLines}</span>}
-        <span className={`${(hasMore && !expanded) || meta ? '' : 'ml-auto'} shrink-0 text-xs text-fg-3 transition-transform ${expanded ? 'rotate-90' : ''}`}>{'▸'}</span>
+        <ChevronRight aria-hidden="true" className={`${(hasMore && !expanded) || meta ? '' : 'ml-auto'} h-3.5 w-3.5 shrink-0 text-fg-3 transition-transform ${expanded ? 'rotate-90' : ''}`} />
       </button>
       {expanded ? (
         <DiffBody text={text} />
@@ -298,7 +300,7 @@ function EditDiffCollapsible({ label, icon, text, statusDot, meta }: { label: Re
 // ── Tool Call Message ──
 
 function ToolCallMessage({ msg }: { msg: SessionMessage }) {
-  const { label, icon, filePath } = getToolSummary(msg)
+  const { label, icon: Icon, filePath } = getToolSummary(msg)
   const result = msg.toolResult || ''
   const truncated = result.length > 10000 ? result.slice(0, 10000) + '\n... (truncated)' : result
   const status = toolStatus(msg)
@@ -321,7 +323,7 @@ function ToolCallMessage({ msg }: { msg: SessionMessage }) {
   if (toolName === 'Edit' && result) {
     return (
       <div className="my-1">
-        <EditDiffCollapsible label={renderedLabel} icon={icon} text={truncated} statusDot={dot} meta={meta} />
+        <EditDiffCollapsible label={renderedLabel} icon={Icon} text={truncated} statusDot={dot} meta={meta} />
       </div>
     )
   }
@@ -329,13 +331,13 @@ function ToolCallMessage({ msg }: { msg: SessionMessage }) {
   return (
     <div className="my-1">
       {result ? (
-        <CollapsibleDetails label={renderedLabel} icon={icon} colorScheme="emerald" statusDot={dot} meta={meta}>
+        <CollapsibleDetails label={renderedLabel} icon={Icon} colorScheme="emerald" statusDot={dot} meta={meta}>
           {truncated}
         </CollapsibleDetails>
       ) : (
         <div className={`${BLOCK} flex items-center gap-2 px-3 py-2 text-xs transition-colors duration-fast ease-out hover:border-line-soft`}>
           {dot}
-          {icon && <span className="shrink-0 text-xs opacity-80">{icon}</span>}
+          {Icon && <Icon aria-hidden="true" className="h-3.5 w-3.5 shrink-0 text-fg-3" />}
           <span className="truncate font-mono font-medium text-fg-1">{renderedLabel}</span>
           {meta}
         </div>
@@ -386,7 +388,7 @@ function ToolGroup({ tools }: { tools: SessionMessage[] }) {
           </span>
         )}
         <span className="truncate font-mono text-fg-3">{summary}</span>
-        <span className={`ml-auto shrink-0 text-xs text-fg-3 transition-transform ${expanded ? 'rotate-90' : ''}`}>{'▸'}</span>
+        <ChevronRight aria-hidden="true" className={`ml-auto h-3.5 w-3.5 shrink-0 text-fg-3 transition-transform ${expanded ? 'rotate-90' : ''}`} />
       </button>
       {expanded && (
         <div className="ml-2 mt-1 space-y-1 border-l border-line pl-3">
@@ -474,7 +476,7 @@ export function GroupedMessages({ messages, initialCap = 100 }: GroupedMessagesP
           if (text.length > 80) {
             return (
               <div key={group.key} className="my-1">
-                <CollapsibleDetails label="System" icon="ℹ️" colorScheme="blue">
+                <CollapsibleDetails label="System" icon={Info} colorScheme="blue">
                   {text}
                 </CollapsibleDetails>
               </div>
@@ -494,7 +496,7 @@ export function GroupedMessages({ messages, initialCap = 100 }: GroupedMessagesP
             const cleanText = text.replace(/<\/?(?:thinking|planning)>/g, '').trim()
             return (
               <div key={group.key} className="my-1">
-                <CollapsibleDetails label="Thinking" icon="🧠" colorScheme="purple">
+                <CollapsibleDetails label="Thinking" icon={Brain} colorScheme="purple">
                   {cleanText}
                 </CollapsibleDetails>
               </div>

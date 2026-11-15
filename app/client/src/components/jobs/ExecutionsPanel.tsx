@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import {
-  AlertTriangle, CheckCircle2, ChevronRight, CircleSlash, Clock, ExternalLink, Loader2, PauseCircle, Workflow, X, XCircle,
+  AlertTriangle, CheckCircle2, ChevronRight, CircleSlash, Clock, ExternalLink, History, Loader2, PauseCircle, Workflow, X, XCircle,
 } from 'lucide-react'
 import type { FlowRunDetailResponse, FlowRunSummary, FlowStepSummary } from '../../../../shared/flow/api'
 import type {
@@ -8,7 +8,8 @@ import type {
 } from '../../../../shared/job-executions'
 import { fetchFlowRun } from '../../hooks/useFlows'
 import { Listbox, ListboxItem } from '@ui-sdk/react/listbox'
-import { Alert, Badge, Button, Modal, cn } from '../ui'
+import { Alert, Badge, Button, EmptyState, IconButton, Modal, Skeleton, SkeletonText, cn } from '../ui'
+import { formatCost, formatDateTime, formatDuration, friendlyError, humanize } from '../../lib/format'
 
 /**
  * Jobs → Executions (obj 900676) — every recorded run of a routine or workflow, and
@@ -36,40 +37,29 @@ const STATUS_META: Record<JobExecutionStatus, { label: string; tone: 'verify' | 
 }
 
 const STATUS_TEXT: Record<string, string> = {
-  verify: 'text-signal-verify',
-  alarm: 'text-signal-alarm',
+  verify: 'text-success',
+  alarm: 'text-danger',
   info: 'text-status-working',
-  amber: 'text-signal-amber',
+  amber: 'text-warning',
   neutral: 'text-fg-3',
 }
 
 const LEVEL_DOT: Record<JobExecutionLogEntry['level'], string> = {
   info: 'bg-fg-3',
-  success: 'bg-signal-verify',
-  warn: 'bg-signal-amber',
-  error: 'bg-signal-alarm',
+  success: 'bg-success',
+  warn: 'bg-warning',
+  error: 'bg-danger',
 }
 
 export function ExecutionStatusBadge({ status }: { status: JobExecutionStatus }) {
   const m = STATUS_META[status] ?? STATUS_META.running
-  return <Badge tone={m.tone} mono>{m.label}</Badge>
+  return <Badge tone={m.tone}>{m.label}</Badge>
 }
 
-/** "Nov 12, 06:03:12" in the viewer's zone; the UTC ISO stamp is the tooltip. */
-export function formatStamp(iso: string | null | undefined): string {
-  if (!iso) return '—'
-  const t = Date.parse(iso)
-  if (Number.isNaN(t)) return '—'
-  return new Date(t).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false })
-}
-
-export function formatDuration(ms: number | null | undefined): string {
-  if (ms == null || !Number.isFinite(ms)) return '—'
-  if (ms < 1000) return `${Math.round(ms)}ms`
-  if (ms < 60_000) return `${(ms / 1000).toFixed(1)}s`
-  const m = Math.floor(ms / 60_000)
-  if (m < 60) return `${m}m ${Math.round((ms % 60_000) / 1000)}s`
-  return `${Math.floor(m / 60)}h ${m % 60}m`
+/** Relative time with the absolute local time as the tooltip. */
+function Stamp({ at, className }: { at: string | null | undefined; className?: string }) {
+  const t = formatDateTime(at)
+  return <span className={className} title={t.title}>{t.label}</span>
 }
 
 function span(a: string | null, b: string | null): number | null {
@@ -97,7 +87,7 @@ export function flowRunToExecution(r: FlowRunSummary): JobExecutionSummary {
     started_at: r.created_at,
     ended_at: r.ended_at,
     duration_ms: span(started, r.ended_at),
-    reason: r.error ? [r.error.type, r.error.title].filter(Boolean).join(': ') : r.status === 'succeeded' && r.goal_met === 0 ? 'goal not met' : null,
+    reason: r.error ? r.error.title || humanize(r.error.type) : r.status === 'succeeded' && r.goal_met === 0 ? 'Goal not met' : null,
     objective_id: null,
     objective_title: null,
     flow_id: r.flow_id,
@@ -107,7 +97,8 @@ export function flowRunToExecution(r: FlowRunSummary): JobExecutionSummary {
   }
 }
 
-const SOURCE_LABEL: Record<string, string> = { cron: 'schedule', 'run-now': 'run now', manual: 'manual', unknown: '' }
+const SOURCE_LABEL: Record<string, string> = { cron: 'schedule', schedule: 'schedule', 'run-now': 'run now', manual: 'manual', unknown: '' }
+const sourceLabel = (s: string): string => SOURCE_LABEL[s] ?? humanize(s).toLowerCase()
 
 function pickFocus(list: JobExecutionSummary[], target: ExecutionsTarget): string | null {
   const f = target.focus
@@ -157,7 +148,7 @@ export function ExecutionsPanel({
       setError(null)
       setSelected(cur => (cur && next.some(e => e.key === cur) ? cur : pickFocus(next, target)))
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Failed to load executions')
+      setError(e instanceof Error ? e.message : 'Could not load runs')
       setList(cur => cur ?? [])
     }
     // target identity changes on every parent render; its fields are what matter.
@@ -186,28 +177,39 @@ export function ExecutionsPanel({
     >
       <div className="flex shrink-0 items-center justify-between gap-3 border-b border-line px-4 py-3">
         <div className="min-w-0">
-          <div className="text-xs font-semibold uppercase tracking-eyebrow text-fg-3">Executions</div>
+          <div className="text-xs font-semibold uppercase tracking-eyebrow text-fg-3">Runs</div>
           <h2 id="executions-title" className="truncate text-lg font-semibold text-fg-0" title={target.title}>{target.title}</h2>
         </div>
-        <button
-          type="button"
-          onClick={onClose}
-          className="rounded-md p-1 text-fg-2 hover:bg-surface-3 hover:text-fg-0"
-          aria-label="Close"
-        >
-          <X className="h-4 w-4" />
-        </button>
+        <IconButton label="Close" onClick={onClose}>
+          <X aria-hidden="true" className="h-4 w-4" />
+        </IconButton>
       </div>
 
-      {error && <Alert tone="alarm" title="Could not load executions" className="m-3">{error}</Alert>}
+      {error && <Alert tone="alarm" title="Could not load runs" className="m-3"><ErrorBody error={error} /></Alert>}
 
       <div className="flex min-h-0 flex-1 flex-col sm:flex-row">
         {/* Run list */}
         <nav aria-label="Runs" className="max-h-[38vh] shrink-0 overflow-y-auto border-b border-line sm:max-h-none sm:w-[300px] sm:border-b-0 sm:border-r">
           {list == null ? (
-            <div className="flex items-center gap-2 p-4 text-sm text-fg-2"><Loader2 className="h-4 w-4 animate-spin" /> Loading runs…</div>
+            <div className="space-y-1 p-2" role="status" aria-busy="true" aria-label="Loading runs" data-testid="executions-skeleton">
+              {Array.from({ length: 5 }).map((_, i) => (
+                <div key={i} className="flex items-center gap-2 rounded-md px-2 py-2">
+                  <Skeleton className="h-4 w-4 shrink-0 rounded-full" />
+                  <div className="flex min-w-0 flex-1 flex-col gap-1.5">
+                    <Skeleton className="h-3 w-3/5" />
+                    <Skeleton className="h-2.5 w-2/5" />
+                  </div>
+                </div>
+              ))}
+            </div>
           ) : list.length === 0 ? (
-            <div className="p-4 text-sm text-fg-2">No runs recorded yet. A run appears here the moment it fires.</div>
+            <EmptyState
+              compact
+              icon={<History className="h-5 w-5" aria-hidden="true" />}
+              title="No runs yet"
+              description="A run appears here the moment it fires."
+              className="px-4"
+            />
           ) : (
             // UI SDK listbox (obj 900819): one tab stop, Up/Down/Home/End and
             // typeahead move the selection, and the selection drives the log.
@@ -247,11 +249,11 @@ export function ExecutionsPanel({
 function ExecutionRow({ e, active }: { e: JobExecutionSummary; active: boolean }) {
   const m = STATUS_META[e.status] ?? STATUS_META.running
   const Icon = m.icon
-  const src = SOURCE_LABEL[e.source] ?? e.source
+  const src = sourceLabel(e.source)
   return (
     <ListboxItem
       value={e.key}
-      label={`${formatStamp(e.started_at)} ${m.label}`}
+      label={`${formatDateTime(e.started_at).label} ${m.label}`}
       data-testid={`execution-${e.key}`}
       className={cn(
         'flex w-full cursor-pointer items-start gap-2.5 border-b border-line px-3 py-2.5 text-left outline-none hover:bg-surface-3',
@@ -261,7 +263,7 @@ function ExecutionRow({ e, active }: { e: JobExecutionSummary; active: boolean }
     >
       <Icon className={cn('mt-0.5 h-4 w-4 shrink-0', STATUS_TEXT[m.tone], e.status === 'running' && 'animate-spin')} strokeWidth={1.75} />
       <span className="min-w-0 flex-1">
-        <span className="block font-mono text-sm text-fg-0" title={e.started_at}>{formatStamp(e.started_at)}</span>
+        <Stamp className="block text-sm text-fg-0" at={e.started_at} />
         <span className="block text-xs text-fg-2">
           <span className={STATUS_TEXT[m.tone]}>{m.label}</span>
           {e.duration_ms != null && e.status !== 'skipped' ? ` in ${formatDuration(e.duration_ms)}` : ''}
@@ -306,12 +308,12 @@ function ExecutionDetail({
     if (routineId != null) {
       getJson<JobExecutionDetailResponse>(`/api/admin/routines/${routineId}/executions/${encodeURIComponent(e.key)}`)
         .then(d => { if (!cancelled) setDetail(d) })
-        .catch(err => { if (!cancelled) setError(err instanceof Error ? err.message : 'Failed to load the run') })
+        .catch(err => { if (!cancelled) setError(err instanceof Error ? err.message : 'Could not load the run') })
     }
     if (e.flow_id != null && e.flow_run_id != null) {
       fetchFlowRun(e.flow_id, e.flow_run_id)
         .then(d => { if (!cancelled) setFlowRun(d) })
-        .catch(err => { if (!cancelled) setError(err instanceof Error ? err.message : 'Failed to load the workflow run') })
+        .catch(err => { if (!cancelled) setError(err instanceof Error ? err.message : 'Could not load the workflow run') })
     }
     return () => { cancelled = true }
   }, [routineId, refresh, e.key, e.flow_id, e.flow_run_id])
@@ -321,17 +323,17 @@ function ExecutionDetail({
     <div className="space-y-4" data-testid="execution-detail">
       <header className="flex flex-wrap items-center gap-2">
         <ExecutionStatusBadge status={e.status} />
-        <span className="font-mono text-sm text-fg-0" title={e.started_at}>{formatStamp(e.started_at)}</span>
+        <Stamp className="text-sm text-fg-0" at={e.started_at} />
         <span className="text-xs text-fg-2">
           {e.status === 'skipped' ? 'nothing ran' : `took ${e.ended_at ? formatDuration(e.duration_ms) : '…'}`}
-          {SOURCE_LABEL[e.source] ? ` · ${SOURCE_LABEL[e.source]}` : ''}
-          {e.cost_usd ? ` · $${e.cost_usd.toFixed(2)}` : ''}
+          {sourceLabel(e.source) ? ` · ${sourceLabel(e.source)}` : ''}
+          {e.cost_usd ? ` · ${formatCost(e.cost_usd)}` : ''}
           {e.exit_code != null ? ` · exit ${e.exit_code}` : ''}
         </span>
         <span className="ml-auto flex gap-2">
           {objectiveId != null && onOpenSession && (
             <Button variant="secondary" size="sm" onClick={() => onOpenSession(objectiveId)} leftIcon={<ExternalLink className="h-3.5 w-3.5" />}>
-              Open session #{objectiveId}
+              Open card #{objectiveId}
             </Button>
           )}
           {e.flow_id != null && onOpenDiagram && (
@@ -350,7 +352,7 @@ function ExecutionDetail({
         </Alert>
       )}
 
-      {error && <Alert tone="alarm" title="Could not load this run">{error}</Alert>}
+      {error && <Alert tone="alarm" title="Could not load this run"><ErrorBody error={error} /></Alert>}
 
       {detail && detail.log.length > 0 && <Timeline entries={detail.log} />}
 
@@ -368,14 +370,17 @@ function ExecutionDetail({
           </h4>
           {detail.output
             ? <pre data-testid="execution-output" className="max-h-[50vh] overflow-auto whitespace-pre-wrap break-words rounded-md border border-line bg-surface-0 p-3 font-mono text-xs leading-relaxed text-fg-1">{detail.output}</pre>
-            : <p className="text-sm text-fg-3">{e.status === 'running' ? 'The script is still running.' : e.routine_run_id == null ? 'Output was not kept for runs before execution history.' : 'No output.'}</p>}
+            : <p className="text-sm text-fg-3">{e.status === 'running' ? 'The script is still running.' : e.routine_run_id == null ? 'Output was not kept for runs from before run history started.' : 'No output.'}</p>}
         </div>
       )}
 
       {flowRun && <FlowSteps run={flowRun} />}
 
       {!detail && !flowRun && !error && (
-        <div className="flex items-center gap-2 text-sm text-fg-2"><Loader2 className="h-4 w-4 animate-spin" /> Loading the run…</div>
+        <div className="space-y-3" role="status" aria-busy="true" aria-label="Loading the run">
+          <Skeleton className="h-4 w-1/3" />
+          <SkeletonText lines={4} />
+        </div>
       )}
     </div>
   )
@@ -390,8 +395,8 @@ function Timeline({ entries }: { entries: JobExecutionLogEntry[] }) {
           <li key={i} className="relative">
             <span className={cn('absolute -left-[21px] top-1.5 h-2 w-2 rounded-full ring-2 ring-surface-1', LEVEL_DOT[l.level])} aria-hidden />
             <div className="flex flex-wrap items-baseline gap-x-2">
-              <span className={cn('text-sm font-medium', l.level === 'error' ? 'text-signal-alarm' : l.level === 'warn' ? 'text-signal-amber' : 'text-fg-0')}>{l.label}</span>
-              {l.at && <span className="font-mono text-xs text-fg-3" title={l.at}>{formatStamp(l.at)}</span>}
+              <span className={cn('text-sm font-medium', l.level === 'error' ? 'text-danger' : l.level === 'warn' ? 'text-warning' : 'text-fg-0')}>{l.label}</span>
+              {l.at && <Stamp className="text-xs text-fg-3" at={l.at} />}
             </div>
             {l.detail && <p className="mt-0.5 whitespace-pre-wrap break-words text-sm leading-snug text-fg-2">{l.detail}</p>}
           </li>
@@ -423,7 +428,7 @@ function FlowSteps({ run }: { run: FlowRunDetailResponse }) {
         <Workflow className="h-3.5 w-3.5" /> Workflow run #{run.run.id} · v{run.run.version} · {steps.length} {steps.length === 1 ? 'step' : 'steps'}
       </h4>
       {run.run.error && (
-        <Alert tone="alarm" title={`${run.run.error.type}${run.run.error.node_id ? ` at ${run.run.error.node_id}` : ''}`} className="mb-2">
+        <Alert tone="alarm" title={`${humanize(run.run.error.type)}${run.run.error.node_id ? ` at step ${run.run.error.node_id}` : ''}`} className="mb-2">
           {run.run.error.title}
         </Alert>
       )}
@@ -435,8 +440,8 @@ function FlowSteps({ run }: { run: FlowRunDetailResponse }) {
         </ol>
       )}
       {run.waits.length > 0 && (
-        <p className="mt-2 flex items-center gap-1.5 text-sm text-signal-amber">
-          <Clock className="h-3.5 w-3.5" /> Parked on {run.waits.map(w => `${w.node_id} (${w.reason})`).join(', ')} — resolve it from the workflow diagram.
+        <p className="mt-2 flex items-center gap-1.5 text-sm text-warning">
+          <Clock className="h-3.5 w-3.5" /> Waiting on {run.waits.map(w => `${w.node_id} (${humanize(w.reason).toLowerCase()})`).join(', ')} — resolve it from the workflow diagram.
         </p>
       )}
     </div>
@@ -463,25 +468,36 @@ function FlowStepRow({ step: s }: { step: FlowStepSummary }) {
           {s.iteration > 0 && <span className="text-fg-3"> [{s.iteration}]</span>}
           {s.attempt > 1 && <span className="text-fg-3"> · attempt {s.attempt}</span>}
         </span>
-        {s.simulated && <Badge tone="neutral" mono>{s.simulated}</Badge>}
-        {s.effect && s.effect !== 'read' && <Badge tone="neutral" mono>{s.effect}</Badge>}
-        <Badge tone={stepTone(s.status)} mono>{s.status}</Badge>
-        <span className="w-16 shrink-0 text-right font-mono text-xs text-fg-3">{formatDuration(span(s.started_at, s.ended_at))}</span>
+        {s.simulated && <Badge tone="neutral">{humanize(s.simulated)}</Badge>}
+        {s.effect && s.effect !== 'read' && <Badge tone="neutral">{humanize(s.effect)}</Badge>}
+        <Badge tone={stepTone(s.status)}>{humanize(s.status)}</Badge>
+        <span className="w-16 shrink-0 text-right text-xs text-fg-3">{formatDuration(span(s.started_at, s.ended_at))}</span>
       </button>
       {open && hasBody && (
         <div className="space-y-2 border-t border-line px-3 py-2">
           {s.error && (
-            <p className="text-sm text-signal-alarm">
-              {[s.error.type, s.error.title].filter(Boolean).join(': ')}
+            <p className="text-sm text-danger">
+              {s.error.title || humanize(s.error.type)}
               {s.error.detail ? <span className="block whitespace-pre-wrap text-fg-2">{s.error.detail}</span> : null}
             </p>
           )}
           {input && <JsonBlock label="Input" body={input} />}
           {output && <JsonBlock label="Output" body={output} />}
-          {s.cost_usd > 0 && <p className="font-mono text-xs text-fg-3">cost ${s.cost_usd.toFixed(4)}</p>}
+          {s.cost_usd > 0 && <p className="text-xs text-fg-3">Cost {formatCost(s.cost_usd)}</p>}
         </div>
       )}
     </li>
+  )
+}
+
+/** A plain sentence for a failure, with the technical detail collapsed. */
+function ErrorBody({ error }: { error: string }) {
+  const f = friendlyError(error)
+  return (
+    <>
+      {f.message}
+      {f.detail && <details className="mt-1 text-xs text-fg-3"><summary>Details</summary>{f.detail}</details>}
+    </>
   )
 }
 

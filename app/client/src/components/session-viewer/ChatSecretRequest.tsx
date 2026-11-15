@@ -130,7 +130,7 @@ export function SecretForm({
 function SavedLine({ name, scope, workspace }: { name: string; scope: SecretRequestScope; workspace: string }) {
   return (
     <div role="status" className="flex items-start gap-2 text-sm text-fg-1">
-      <Lock className="mt-0.5 h-3.5 w-3.5 shrink-0 text-signal-verify" aria-hidden />
+      <Lock className="mt-0.5 h-3.5 w-3.5 shrink-0 text-success" aria-hidden />
       <span>
         <span className="font-mono font-semibold text-fg-0">{name}</span> saved to {scopeSummary(scope, workspace)}.
         {' '}The value is hidden for good; the agent is told only the name and is resuming.

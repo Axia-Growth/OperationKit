@@ -6,7 +6,8 @@
  */
 import { useCallback, useEffect, useState } from 'react'
 import { api } from '../../lib/api'
-import { Button } from '../ui'
+import { Button, SettingsSection } from '../ui'
+import { formatDateTime } from '../../lib/format'
 
 export interface RotationFlag {
   id: number
@@ -24,23 +25,19 @@ export function RotationFlagsList({ flags, onResolve, resolving }: {
 }) {
   if (flags.length === 0) return null
   return (
-    <section
-      aria-label="Secrets to rotate later"
+    <SettingsSection
+      level={3}
+      title={<span className="text-status-review">Rotate later · {flags.length}</span>}
+      description="Pasted into a card chat, saved to the store and already in use. Rotate when convenient, then mark it done."
       className="mb-4 rounded-lg border border-status-review/30 bg-status-review/5 p-4"
     >
-      <div className="text-xs font-medium uppercase tracking-eyebrow text-status-review">
-        Rotate later · {flags.length}
-      </div>
-      <p className="mt-1 text-xs text-fg-2">
-        Pasted into a card chat, saved to the store and already in use. Rotate when convenient, then mark it done.
-      </p>
-      <ul className="mt-3 divide-y divide-line">
+      <ul className="divide-y divide-line">
         {flags.map(f => (
           <li key={f.id} className="flex flex-wrap items-center justify-between gap-2 py-2">
             <div className="min-w-0">
               <span className="font-mono text-sm font-medium text-fg-0">{f.key}</span>
               <span className="ml-2 text-xs text-fg-2">
-                {f.workspace}{f.objective_id ? ` · card #${f.objective_id}` : ''} · {f.created_at.slice(0, 10)}
+                {f.workspace}{f.objective_id ? ` · card #${f.objective_id}` : ''} · <span title={formatDateTime(f.created_at).title}>{formatDateTime(f.created_at).label}</span>
               </span>
             </div>
             <Button size="md" variant="secondary" loading={resolving === f.id} onClick={() => onResolve(f.id)}>
@@ -49,7 +46,7 @@ export function RotationFlagsList({ flags, onResolve, resolving }: {
           </li>
         ))}
       </ul>
-    </section>
+    </SettingsSection>
   )
 }
 

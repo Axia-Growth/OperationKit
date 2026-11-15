@@ -17,10 +17,10 @@ import { execFile } from 'child_process'
 import { getDb } from '../db/index.js'
 import type { Objective } from '@operationkit/shared'
 import { isMoneyPath } from './merge-lane.js'
+import { resolveHarnessRepo } from '../lib/install-defaults.js'
 
 export { isMoneyPath }
 
-const HARNESS_REPO = process.env.HARNESS_REPO || 'your-org/operationkit'
 const AUTO_MERGE_SETTING = 'auto_merge_enabled'
 
 /** Owner-controlled switch. Reads the `settings` KV table; defaults OFF. */
@@ -101,6 +101,8 @@ export function decideAutoMerge(i: AutoMergeInputs): AutoMergeDecision {
 }
 
 function githubRepoFor(obj: Pick<Objective, 'project'>): string {
+  // obj 900803: HARNESS_REPO env → settings → '' (no built-in repo).
+  const HARNESS_REPO = resolveHarnessRepo()
   const project = (obj.project || '').trim()
   if (project.includes('/')) return project
   if (!project) return HARNESS_REPO
@@ -221,6 +223,10 @@ export async function evaluateAutoMerge(
   }
 
   // action === 'merge'
+  if (!repo) {
+    logDecision(obj, decision, 'not merged — no GitHub repo resolved (set HARNESS_REPO or the project repo)')
+    return decision
+  }
   try {
     await ghMerge(obj.pr_number as number, repo)
     logDecision(obj, decision, `MERGED via gh pr merge --squash --repo ${repo}`)

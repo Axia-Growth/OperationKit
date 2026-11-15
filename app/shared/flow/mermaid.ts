@@ -76,39 +76,39 @@ export function definitionToMermaid(def: FlowDefinition, options: MermaidOptions
     switch (n.kind) {
       case 'trigger': {
         const sched = n.schedule as { cron?: unknown } | undefined
-        lines.push(`⏰ trigger · ${str(n.on) ?? '?'}`)
+        lines.push(`trigger · ${str(n.on) ?? '?'}`)
         if (sched && typeof sched.cron === 'string') lines.push(sched.cron)
         else if (n.event) lines.push(String(n.event))
         open = '(['; close = '])'
         break
       }
       case 'tool':
-        lines.push(`🔧 tool · ${str(n.tool) ?? '?'}`, join(effectLine(n), attempts))
+        lines.push(`tool · ${str(n.tool) ?? '?'}`, join(effectLine(n), attempts))
         break
       case 'mcp':
-        lines.push(`🔌 MCP · ${str(n.connector) ?? '?'}.${str(n.tool) ?? '?'}`, join(effectLine(n), attempts))
+        lines.push(`MCP · ${str(n.connector) ?? '?'}.${str(n.tool) ?? '?'}`, join(effectLine(n), attempts))
         break
       case 'llm': {
         const it = typeof n.max_iterations === 'number' ? n.max_iterations : 1
-        lines.push(`🧠 LLM · ${n.id}`,
+        lines.push(`LLM · ${n.id}`,
           join(str(n.model) ? `model ${n.model}` : undefined, `${it} iteration${it === 1 ? '' : 's'}`,
             typeof n.budget_usd === 'number' ? `$${n.budget_usd} cap` : undefined))
         open = '{{'; close = '}}'
         break
       }
       case 'agent':
-        lines.push(`🤖 agent session → card · ${n.id}`,
+        lines.push(`agent session → card · ${n.id}`,
           join(str(n.agent), typeof n.budget_usd === 'number' ? `$${n.budget_usd} cap` : undefined))
         open = '[['; close = ']]'
         break
       case 'branch':
-        lines.push(`🔀 branch · ${n.id}`)
+        lines.push(`branch · ${n.id}`)
         open = '{'; close = '}'
         break
       case 'check': {
         const asserts = Array.isArray(n.assert) ? (n.assert as { why?: unknown }[]) : []
         const why = asserts.map((a) => a && a.why).find((w): w is string => typeof w === 'string')
-        lines.push(`✔ check · ${why ?? `${asserts.length} assert${asserts.length === 1 ? '' : 's'}`}`)
+        lines.push(`check · ${why ?? `${asserts.length} assert${asserts.length === 1 ? '' : 's'}`}`)
         if (n.on_fail) lines.push(`on fail: ${String(n.on_fail)}`)
         open = '{'; close = '}'
         break
@@ -119,15 +119,15 @@ export function definitionToMermaid(def: FlowDefinition, options: MermaidOptions
           : n.for !== undefined ? `for ${String(n.for)}`
             : n.until !== undefined ? `until ${String(n.until)}`
               : n.event !== undefined ? `event ${String(n.event)}` : '?'
-        lines.push(`⏳ wait · ${mode}`)
+        lines.push(`wait · ${mode}`)
         open = '('; close = ')'
         break
       }
       case 'loop': // only reached for a loop that is not on the trigger's path
-        lines.push(`🔁 loop · for each ${str(n.as) ?? '?'}`)
+        lines.push(`loop · for each ${str(n.as) ?? '?'}`)
         break
       case 'end':
-        lines.push('⏹ end')
+        lines.push('end')
         open = '(['; close = '])'
         break
       default:
@@ -154,7 +154,7 @@ export function definitionToMermaid(def: FlowDefinition, options: MermaidOptions
       if (n.kind === 'loop' && an.owner.has(id)) {
         const conc = typeof n.concurrency === 'number' && n.concurrency > 1 ? `${n.concurrency} parallel` : undefined
         const title = [n.label ? String(n.label) : undefined,
-          [`🔁 loop · for each ${str(n.as) ?? '?'}`, typeof n.max_items === 'number' ? `max ${n.max_items}` : undefined, conc]
+          [`loop · for each ${str(n.as) ?? '?'}`, typeof n.max_items === 'number' ? `max ${n.max_items}` : undefined, conc]
             .filter(Boolean).join(' · ')]
           .filter(Boolean).map((l) => esc(short(l!))).join('<br/>')
         out.push(`${indent}subgraph ${mermaidNodeId(id)} ["${title}"]`)

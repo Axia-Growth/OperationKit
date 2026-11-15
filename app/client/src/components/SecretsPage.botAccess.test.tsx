@@ -65,9 +65,11 @@ const { apiMock, ApiErrorMock } = vi.hoisted(() => {
 
 vi.mock('../lib/api', () => ({ api: apiMock, ApiError: ApiErrorMock }))
 vi.mock('../context/AuthContext', () => ({ useAuth: () => ({ user: { id: 1, role: 'admin', username: 'operator' } }) }))
-vi.mock('./ui', () => ({
+// Real primitives (DataTable, RowActions, Field…); only the portal Modal and the
+// confirm dialog are stubbed so the test drives the page inline.
+vi.mock('./ui', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('./ui')>()),
   Modal: ({ children }: { children: React.ReactNode }) => <div role="dialog">{children}</div>,
-  Skeleton: () => <div />,
   useConfirm: () => ({ confirm: vi.fn(() => Promise.resolve(true)), confirmDialog: null }),
 }))
 
@@ -88,8 +90,10 @@ describe('Secrets — security strip, bot access, search (obj 900749)', () => {
     await flush()
   })
 
-  const rowFor = (key: string) =>
-    Array.from(container.querySelectorAll('[data-testid="secret-row"]')).find(r => r.textContent?.includes(key)) as HTMLElement
+  // Desktop rows of the ui/DataTable (group header rows carry no scope badge).
+  const tableRows = () =>
+    Array.from(container.querySelectorAll('table tbody tr')).filter(r => r.querySelector('[data-testid="secret-scope-badge"]'))
+  const rowFor = (key: string) => tableRows().find(r => r.textContent?.includes(key)) as HTMLElement
   const button = (label: string) =>
     Array.from(container.querySelectorAll('button')).find(b => b.textContent?.trim() === label) as HTMLButtonElement | undefined
 
@@ -142,10 +146,25 @@ describe('Secrets — security strip, bot access, search (obj 900749)', () => {
     expect(apiMock.del).toHaveBeenCalledWith('/secrets/bot-access/APIFY_API_TOKEN')
   })
 
+  it('row actions live in a "⋯" menu with Delete last, and Delete acts on the row scope', async () => {
+    const { click } = await import('../test/render')
+    const trigger = rowFor('APIFY_API_TOKEN').querySelector('[aria-label="Actions for APIFY_API_TOKEN"]')!
+    await click(trigger)
+    const menu = document.getElementById(trigger.getAttribute('aria-controls') ?? '') ?? document
+    const items = Array.from(menu.querySelectorAll<HTMLElement>('[role="menuitem"]'))
+    expect(items.map(i => i.textContent?.trim())).toEqual(['History', 'Edit', 'Bot access', 'Delete'])
+    await click(items[items.length - 1]!)
+    await flush()
+    expect(apiMock.del).toHaveBeenCalledTimes(1)
+    const url = String(apiMock.del.mock.calls[0]![0])
+    expect(url).toContain('workspace=operationkit')
+    expect(url).toContain('key=APIFY_API_TOKEN')
+  })
+
   it('search narrows by name and says "x of N"', async () => {
     flushSync(() => setValue(container.querySelector('[data-testid="secret-search"]') as HTMLInputElement, 'apify'))
     await flush()
-    expect(container.querySelectorAll('[data-testid="secret-row"]').length).toBe(1)
+    expect(tableRows().length).toBe(1)
     expect(container.querySelector('[data-testid="secret-count"]')!.textContent).toContain('1 of 3 secrets')
     flushSync(() => setValue(container.querySelector('[data-testid="secret-search"]') as HTMLInputElement, 'nomatch'))
     await flush()

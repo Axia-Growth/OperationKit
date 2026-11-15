@@ -1,37 +1,29 @@
 /**
- * Secrets table row — extracted from SecretsPage.tsx.
+ * Secrets table columns + row menu — extracted from SecretsPage.tsx.
  *
  * obj 900749: the Value cell reads as write-only (lock + mask, no action can
  * reveal it), the version rides with "Updated" instead of its own column, and
  * a Bot access cell shows whether bots may use this NAME through the broker
  * (Off = default-deny; Never = seat/server-only; else the allowed hosts).
+ *
+ * Polish F5 (obj 900806): the list is a ui/DataTable. This file supplies its
+ * columns and the row "⋯" menu (History / Edit / Bot access, Delete last).
  */
 import { Lock } from 'lucide-react'
+import { formatDateTime } from '../../lib/format'
 import type { SecretSummary } from '@operationkit/shared'
+import type { Column } from '../ui/DataTable'
+import { RowActions, type RowAction } from '../ui/RowActions'
 import {
   BADGE_BASE, MASK, SCOPE_HINTS, SCOPE_TONES, scopeBadgeLabel,
 } from './scope'
 import type { BotAccessStatus } from './botAccess'
 
-/** Number of columns the table renders (group headers + empty rows span it). */
-export const SECRET_TABLE_COLUMNS = 7
-
-interface RowProps {
-  secret: SecretSummary
-  groupHeader: string | null
-  orgName: (slug: string | null) => string
-  userName: (id: number | null) => string
-  /** null = bot access not loaded / not shown to this caller. */
-  botAccess: BotAccessStatus | null
-  onBotAccess?: () => void
-  onHistory: () => void
-  onEdit: () => void
-  onDelete: () => void
-}
-
-/** 'YYYY-MM-DD HH:MM' from either an ISO string or SQLite's 'YYYY-MM-DD HH:MM:SS' (UTC). */
-export function fmtTime(t: string | null | undefined): string {
-  return t ? t.slice(0, 16).replace('T', ' ') : '—'
+/** Relative time ("5 minutes ago") with the local absolute time in the tooltip. */
+export function TimeText({ at }: { at: string | null | undefined }) {
+  if (!at) return <>—</>
+  const { label, title } = formatDateTime(at)
+  return <span title={title}>{label}</span>
 }
 
 function BotAccessCell({ status, onClick }: { status: BotAccessStatus | null; onClick?: () => void }) {
@@ -44,57 +36,108 @@ function BotAccessCell({ status, onClick }: { status: BotAccessStatus | null; on
     : <span data-bot-access="off" title="No bot can use this secret (default)" className="text-xs text-fg-3">Off</span>
   if (!onClick) return chip
   return (
-    <button type="button" onClick={onClick} data-testid="secret-bot-access" className="rounded hover:underline focus:outline-none focus-visible:ring-1 focus-visible:ring-accent">
+    <button type="button" onClick={onClick} data-testid="secret-bot-access" className="rounded hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/50">
       {chip}
     </button>
   )
 }
 
-export function SecretRow({ secret: s, groupHeader, orgName, userName, botAccess, onBotAccess, onHistory, onEdit, onDelete }: RowProps) {
-  return (
-    <>
-      {groupHeader && (
-        <tr className="border-b border-border bg-surface-overlay/60">
-          <td colSpan={SECRET_TABLE_COLUMNS} className="px-3 py-1.5 text-xs uppercase tracking-eyebrow text-fg-3">
-            {groupHeader}
-          </td>
-        </tr>
-      )}
-      <tr data-testid="secret-row" className="border-b border-border last:border-b-0 hover:bg-surface-overlay/40">
-        <td className="px-3 py-2">
-          <span
-            data-testid="secret-scope-badge"
-            data-scope={s.scopeType}
-            title={SCOPE_HINTS[s.scopeType]}
-            className={`${BADGE_BASE} ${SCOPE_TONES[s.scopeType]}`}
-          >
-            {scopeBadgeLabel(s, orgName, userName)}
-          </span>
-        </td>
-        <td className="px-3 py-2">
+interface ColumnDeps {
+  orgName: (slug: string | null) => string
+  userName: (id: number | null) => string
+  /** null = bot access not loaded / not shown to this caller. */
+  botAccess: (s: SecretSummary) => BotAccessStatus | null
+  /** undefined = this row's bot access cannot be edited. */
+  onBotAccess: (s: SecretSummary) => (() => void) | undefined
+}
+
+/** Scope · Name · Value · Bot access · Updated · Last used. */
+export function secretColumns({ orgName, userName, botAccess, onBotAccess }: ColumnDeps): Column<SecretSummary>[] {
+  return [
+    {
+      key: 'scope',
+      header: 'Scope',
+      cell: s => (
+        <span
+          data-testid="secret-scope-badge"
+          data-scope={s.scopeType}
+          title={SCOPE_HINTS[s.scopeType]}
+          className={`${BADGE_BASE} ${SCOPE_TONES[s.scopeType]}`}
+        >
+          {scopeBadgeLabel(s, orgName, userName)}
+        </span>
+      ),
+    },
+    {
+      key: 'name',
+      header: 'Name',
+      cell: s => (
+        <>
           <div className="font-mono text-xs text-fg-1">{s.key}</div>
           {s.description && (
             <div data-testid="secret-description" className="mt-0.5 max-w-xs truncate text-xs text-fg-3" title={s.description}>
               {s.description}
             </div>
           )}
-        </td>
-        <td className="px-3 py-2 font-mono text-fg-3" aria-label="value hidden, write-only" title="Write-only: never shown after saving">
-          <span className="inline-flex items-center gap-1"><Lock aria-hidden className="h-3 w-3" />{MASK}</span>
-        </td>
-        <td className="px-3 py-2"><BotAccessCell status={botAccess} onClick={onBotAccess} /></td>
-        <td className="px-3 py-2 text-fg-3 text-xs whitespace-nowrap" data-testid="secret-updated">
-          <span className="text-fg-2">v{s.version}</span> · {fmtTime(s.updatedAt)}
-        </td>
-        <td className="px-3 py-2 text-fg-3 text-xs whitespace-nowrap" data-testid="secret-last-used">
-          {s.lastUsedAt ? fmtTime(s.lastUsedAt) : <span className="text-fg-3">never</span>}
-        </td>
-        <td className="px-3 py-2 text-right space-x-2 whitespace-nowrap">
-          <button onClick={onHistory} className="text-xs text-fg-2 hover:underline">History</button>
-          <button onClick={onEdit} className="text-xs text-accent hover:underline">Edit</button>
-          <button onClick={onDelete} className="text-xs text-signal-alarm hover:underline">Delete</button>
-        </td>
-      </tr>
-    </>
-  )
+        </>
+      ),
+    },
+    {
+      key: 'value',
+      header: 'Value',
+      mono: true,
+      cell: () => (
+        <span
+          role="img"
+          aria-label="value hidden, write-only"
+          title="Write-only: never shown after saving"
+          className="inline-flex items-center gap-1 font-mono text-fg-3"
+        >
+          <Lock aria-hidden className="h-3 w-3" />{MASK}
+        </span>
+      ),
+    },
+    {
+      key: 'bot',
+      header: <span title="Which hosts a bot may send this secret to. Off = no bot can use it.">Bot access</span>,
+      cell: s => <BotAccessCell status={botAccess(s)} onClick={onBotAccess(s)} />,
+    },
+    {
+      key: 'updated',
+      header: 'Updated',
+      className: 'whitespace-nowrap',
+      cell: s => (
+        <span data-testid="secret-updated" className="text-xs text-fg-3">
+          <span className="text-fg-2">v{s.version}</span> · <TimeText at={s.updatedAt} />
+        </span>
+      ),
+    },
+    {
+      key: 'used',
+      header: 'Last used',
+      className: 'whitespace-nowrap',
+      cell: s => (
+        <span data-testid="secret-last-used" className="text-xs text-fg-3">
+          {s.lastUsedAt ? <TimeText at={s.lastUsedAt} /> : 'never'}
+        </span>
+      ),
+    },
+  ]
+}
+
+/** The row "⋯" menu. Delete is last and in danger text; it confirms on its own. */
+export function SecretRowActions({ secret, onBotAccess, onHistory, onEdit, onDelete }: {
+  secret: SecretSummary
+  onBotAccess?: () => void
+  onHistory: () => void
+  onEdit: () => void
+  onDelete: () => void
+}) {
+  const actions: RowAction[] = [
+    { label: 'History', onSelect: onHistory },
+    { label: 'Edit', onSelect: onEdit },
+    ...(onBotAccess ? [{ label: 'Bot access', onSelect: onBotAccess }] : []),
+    { label: 'Delete', onSelect: onDelete, danger: true },
+  ]
+  return <RowActions label={`Actions for ${secret.key}`} actions={actions} />
 }

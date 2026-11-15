@@ -1,4 +1,7 @@
 import { useState } from 'react'
+import { ArrowRight } from 'lucide-react'
+import { friendlyError, humanize } from '../lib/format'
+import { Button, RowButton } from './ui'
 
 interface ObjectiveProposal {
   title: string
@@ -9,8 +12,8 @@ interface ObjectiveProposal {
 }
 
 const PRIORITY_CLASSES: Record<string, string> = {
-  high: 'bg-signal-alarm/10 border-signal-alarm/30 text-signal-alarm',
-  medium: 'bg-signal-amber/10 border-signal-amber/30 text-signal-amber',
+  high: 'bg-danger/10 border-danger/30 text-danger',
+  medium: 'bg-warning/10 border-warning/30 text-warning',
   low: 'bg-surface-3 border-line text-fg-2',
 }
 
@@ -18,32 +21,52 @@ const DESC_LIMIT = 120
 
 export function ObjectiveProposalCard({ raw }: { raw: string }) {
   const [status, setStatus] = useState<'idle' | 'loading' | 'success' | 'error'>('idle')
-  const [errorMsg, setErrorMsg] = useState<string | null>(null)
+  const [errorMsg, setErrorMsg] = useState<{ message: string; detail: string } | null>(null)
   const [expanded, setExpanded] = useState(false)
 
   let proposal: ObjectiveProposal | null = null
   let parseError: string | null = null
+  let parsedFields: [string, string][] = []
 
   try {
     const parsed = JSON.parse(raw) as unknown
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+      parsedFields = Object.entries(parsed as Record<string, unknown>).map(([k, v]) => [
+        humanize(k),
+        typeof v === 'string' ? v : v == null ? '—' : JSON.stringify(v),
+      ])
+    }
     if (
       typeof parsed !== 'object' ||
       parsed === null ||
       typeof (parsed as Record<string, unknown>).title !== 'string'
     ) {
-      throw new Error('Missing required field: title')
+      throw new Error('This suggestion has no title.')
     }
     proposal = parsed as ObjectiveProposal
   } catch (e) {
-    parseError = e instanceof Error ? e.message : 'Invalid JSON'
+    parseError = e instanceof SyntaxError ? 'This suggestion could not be read.' : e instanceof Error ? e.message : 'This suggestion could not be read.'
   }
 
   if (parseError || !proposal) {
     return (
-      <div className="my-2 rounded-lg border border-signal-alarm/30 bg-signal-alarm/10 px-4 py-3 text-base">
-        <div className="font-medium text-signal-alarm mb-1">Invalid objective proposal</div>
+      <div className="my-2 rounded-lg border border-danger/30 bg-danger/10 px-4 py-3 text-base">
+        <div className="font-medium text-danger mb-1">This card suggestion is incomplete</div>
         <div className="text-xs text-fg-2">{parseError}</div>
-        <pre className="mt-2 font-mono text-xs text-fg-3 overflow-x-auto whitespace-pre-wrap break-words">{raw}</pre>
+        {parsedFields.length > 0 && (
+          <dl className="mt-2 grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-xs">
+            {parsedFields.map(([label, value]) => (
+              <div key={label} className="contents">
+                <dt className="text-fg-3">{label}</dt>
+                <dd className="min-w-0 break-words text-fg-1">{value}</dd>
+              </div>
+            ))}
+          </dl>
+        )}
+        <details className="mt-2 text-xs text-fg-3">
+          <summary className="cursor-pointer">Details</summary>
+          <pre className="mt-1 font-mono text-xs text-fg-3 overflow-x-auto whitespace-pre-wrap break-words">{raw}</pre>
+        </details>
       </div>
     )
   }
@@ -74,11 +97,11 @@ export function ObjectiveProposalCard({ raw }: { raw: string }) {
       })
       if (!res.ok) {
         const body = (await res.json().catch(() => ({}))) as { error?: string }
-        throw new Error(body.error ?? `HTTP ${res.status}`)
+        throw new Error(body.error ? `HTTP ${res.status}: ${body.error}` : `HTTP ${res.status}`)
       }
       setStatus('success')
     } catch (e) {
-      setErrorMsg(e instanceof Error ? e.message : 'Failed to create objective')
+      setErrorMsg(friendlyError(e))
       setStatus('error')
     }
   }
@@ -93,7 +116,7 @@ export function ObjectiveProposalCard({ raw }: { raw: string }) {
         <span
           className={`inline-flex items-center rounded-full border px-2 py-0.5 text-xs shrink-0 ${priorityCls}`}
         >
-          {priority}
+          {humanize(priority)}
         </span>
       </div>
 
@@ -111,12 +134,13 @@ export function ObjectiveProposalCard({ raw }: { raw: string }) {
       <div className="text-xs text-fg-2 leading-relaxed">
         {visibleDesc}
         {isLong && (
-          <button
+          <RowButton
             onClick={() => setExpanded(e => !e)}
-            className="ml-1 text-accent-hover hover:underline text-xs"
+            aria-expanded={expanded}
+            className="ml-1 rounded-sm text-xs text-accent-hover hover:underline"
           >
             {expanded ? 'show less' : 'show more'}
-          </button>
+          </RowButton>
         )}
       </div>
 
@@ -124,21 +148,32 @@ export function ObjectiveProposalCard({ raw }: { raw: string }) {
         {status === 'success' ? (
           <a
             href="/"
-            className="rounded-md border border-signal-verify/30 bg-signal-verify/10 px-3 py-1.5 text-xs font-medium text-signal-verify transition-colors hover:bg-signal-verify/20"
+            className="inline-flex items-center gap-1 rounded-md border border-success/30 bg-success/10 px-3 py-1.5 text-xs font-medium text-success transition-colors hover:bg-success/20"
           >
-            View on board →
+            View on board
+            <ArrowRight aria-hidden="true" className="h-3.5 w-3.5" />
           </a>
         ) : (
-          <button
+          <Button
+            type="button"
+            size="sm"
+            variant="primary"
             onClick={handleCreate}
-            disabled={status === 'loading'}
-            className="rounded-md bg-accent px-3 py-1.5 text-xs font-medium text-accent-fg transition-colors hover:bg-accent-hover disabled:opacity-50 disabled:cursor-not-allowed"
+            loading={status === 'loading'}
           >
-            {status === 'loading' ? 'Creating…' : 'Create Objective'}
-          </button>
+            {status === 'loading' ? 'Creating…' : 'Create card'}
+          </Button>
         )}
         {status === 'error' && errorMsg && (
-          <span className="text-xs text-signal-alarm">{errorMsg}</span>
+          <div className="text-xs text-danger">
+            Could not create the card. {errorMsg.message}
+            {errorMsg.detail && (
+              <details className="mt-1 text-xs text-fg-3">
+                <summary className="cursor-pointer">Details</summary>
+                {errorMsg.detail}
+              </details>
+            )}
+          </div>
         )}
       </div>
     </div>

@@ -2,6 +2,8 @@ import { useEffect, useState } from 'react'
 import { isHttpUrl } from './designReview'
 import { Select } from '../components/ui/Select'
 import { SegmentedControl } from '../components/ui/SegmentedControl'
+import { Skeleton, SkeletonText } from '../components/ui/Skeleton'
+import { Button, Input } from '../components/ui'
 
 const VIEWPORTS = [
   { key: 'desktop', label: 'Desktop' },
@@ -52,14 +54,17 @@ export function DesignCanvas({
           className="cc-design-url"
           onSubmit={e => { e.preventDefault(); load() }}
         >
-          <input
+          <Input
+            size="sm"
             value={draft}
             onChange={e => setDraft(e.target.value)}
             placeholder="Paste a preview URL"
+            aria-label="Preview URL"
             spellCheck={false}
+            className="flex-1 font-mono"
           />
-          <button type="submit">Load</button>
-          <button type="button" onClick={refresh} disabled={!src}>Refresh</button>
+          <Button type="submit" size="sm">Load</Button>
+          <Button type="button" size="sm" onClick={refresh} disabled={!src}>Refresh</Button>
         </form>
         {seedUrls.length > 0 && (
           <Select
@@ -88,7 +93,15 @@ export function DesignCanvas({
         )}
         {src && (
           <>
-            {loading && <div className="cc-design-loading">Loading preview…</div>}
+            {loading && (
+              <div className="cc-design-loading" role="status" aria-busy="true" aria-label="Loading preview" data-testid="design-canvas-skeleton">
+                <div className="flex w-full max-w-3xl flex-col gap-4 p-6">
+                  <Skeleton className="h-8 w-1/3" />
+                  <Skeleton className="h-40 w-full rounded-md" />
+                  <SkeletonText lines={3} />
+                </div>
+              </div>
+            )}
             <iframe
               key={`${src}#${frameKey}`}
               title="Design canvas"

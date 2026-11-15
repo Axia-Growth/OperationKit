@@ -32,16 +32,7 @@ export interface SessionViewerProps {
   onEdit?: (objective: Objective) => void
 }
 
-export const VIEWER_STATUS_ACTIONS: Record<string, { label: string; target: ObjectiveStatus; variant: 'primary' | 'secondary' }[]> = {
-  queue:     [{ label: 'Start',      target: 'working', variant: 'primary' }],
-  ai_review: [{ label: 'Force Done', target: 'done',    variant: 'primary' }],
-  review:    [
-    { label: 'Done',   target: 'done',    variant: 'primary' },
-    { label: 'Rework', target: 'working', variant: 'secondary' },
-  ],
-  done:      [{ label: 'Re-Open',    target: 'working', variant: 'secondary' }],
-  cancelled: [{ label: 'Re-Open',    target: 'queue',   variant: 'secondary' }],
-}
+// Status moves live in lib/statusActions.ts (the one map the board card uses too).
 
 export interface UploadedFile {
   originalName: string

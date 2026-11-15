@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect, type FormEvent } from 'react'
 import { Plus, Check, X, Building2 } from 'lucide-react'
 import { FilterDropdown, DropdownOption } from './FilterDropdown'
+import { Button, IconButton, Input } from './ui'
 
 export interface OrgChoice {
   slug: string
@@ -149,7 +150,8 @@ export function OrgSwitcher({
             <div className="mt-1 border-t border-line-soft px-2 pb-1 pt-1.5">
               {creating ? (
                 <form onSubmit={submit} className="flex items-center gap-1">
-                  <input
+                  <Input
+                    size="xs"
                     ref={inputRef}
                     value={draft}
                     onChange={e => setDraft(e.target.value)}
@@ -158,34 +160,37 @@ export function OrgSwitcher({
                     }}
                     placeholder="New workspace name"
                     aria-label="New workspace name"
-                    className="min-w-0 flex-1 rounded-md border border-line bg-surface-2 px-2 py-1 text-xs text-fg-0 placeholder:text-fg-3 focus:border-accent focus:outline-none"
+                    className="h-7 flex-1"
                   />
-                  <button
+                  <IconButton
+                    size="sm"
                     type="submit"
                     disabled={busy || !draft.trim()}
-                    aria-label="Create workspace"
-                    className="rounded-md p-1.5 text-fg-2 transition-colors duration-fast ease-out hover:bg-surface-3 hover:text-fg-0 disabled:opacity-40"
+                    label="Create workspace"
+                    className="text-fg-2"
                   >
                     <Check className="h-3.5 w-3.5" />
-                  </button>
-                  <button
-                    type="button"
+                  </IconButton>
+                  <IconButton
+                    size="sm"
                     onClick={() => { setCreating(false); setError(null) }}
-                    aria-label="Cancel"
-                    className="rounded-md p-1.5 text-fg-2 transition-colors duration-fast ease-out hover:bg-surface-3 hover:text-fg-0"
+                    label="Cancel"
+                    className="text-fg-2"
                   >
                     <X className="h-3.5 w-3.5" />
-                  </button>
+                  </IconButton>
                 </form>
               ) : (
-                <button
+                <Button
                   type="button"
+                  size="xs"
+                  variant="ghost"
                   onClick={() => { setDraft(''); setError(null); setCreating(true) }}
-                  className="inline-flex w-full items-center gap-1.5 rounded-md px-1.5 py-1 text-xs text-fg-2 transition-colors duration-fast ease-out hover:bg-surface-3 hover:text-fg-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/50"
+                  leftIcon={<Plus className="h-3.5 w-3.5" />}
+                  className="h-7 w-full justify-start gap-1.5 px-1.5 font-normal text-fg-2"
                 >
-                  <Plus className="h-3.5 w-3.5" />
                   New workspace
-                </button>
+                </Button>
               )}
               {error && (
                 <div className="mt-1.5 rounded-md border border-line bg-surface-2 px-2 py-1 text-xs text-[color:var(--ok-alarm)]">

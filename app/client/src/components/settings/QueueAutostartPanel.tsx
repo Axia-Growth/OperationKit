@@ -13,6 +13,7 @@ import { api, ApiError } from '../../lib/api'
 import { useWorkspaces } from '../../hooks/useWorkspaces'
 import { Alert, Badge, Card, Skeleton, cn } from '../ui'
 import { Switch } from '../ui/Switch'
+import { formatDateTime } from '../../lib/format'
 
 export interface QueueAutostartWorkspace {
   workspace: string
@@ -103,7 +104,7 @@ export function QueueAutostartPanel() {
                   )}
                   {on && on.ceiling_policy === 'observe' && <Badge tone="info">Unbudgeted starts allowed</Badge>}
                   {envLocked && <Badge tone="neutral">Set by server env</Badge>}
-                  {on && <span className="font-mono text-xs text-fg-3">since {on.enabled_at} UTC</span>}
+                  {on && <span className="text-xs text-fg-3" title={formatDateTime(on.enabled_at).title}>since {formatDateTime(on.enabled_at).label}</span>}
                   <Switch
                     checked={!!on}
                     onChange={v => void toggle(ws, v)}

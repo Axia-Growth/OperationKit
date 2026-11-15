@@ -1,4 +1,4 @@
-// Onboarding checklist row: "Set up your knowledge base" (obj 900556).
+// Onboarding checklist row: "Set up your Context" (obj 900556).
 // Done once a setup run has finished and filed at least one page
 // (GET /api/kb-setup/status → step_done).
 import { useEffect, useState } from 'react'
@@ -9,7 +9,7 @@ import { cn } from '../ui'
 
 export const KB_SETUP_STEP = {
   id: 'knowledge_base',
-  title: 'Set up your knowledge base',
+  title: 'Set up your Context',
   body: 'Drop in your existing documents, spreadsheets, decks and notes. The setup agent files them into people, companies, projects, decisions, processes, products and a glossary.',
   href: '/knowledge/setup',
 } as const
@@ -22,9 +22,12 @@ export interface KbSetupStepProps {
   /** Override the done state (skips the status fetch). */
   done?: boolean
   className?: string
+  /** Filled accent CTA while not done. Off when the page already has its one
+      filled primary (obj 900807); the link then renders as a secondary button. */
+  primary?: boolean
 }
 
-export function KbSetupStep({ index = 4, workspace, done: doneProp, className }: KbSetupStepProps) {
+export function KbSetupStep({ index = 4, workspace, done: doneProp, className, primary = true }: KbSetupStepProps) {
   const navigate = useNavigate()
   const [fetched, setFetched] = useState(false)
   const ws = workspace && workspace !== 'all' ? workspace : ''
@@ -42,7 +45,7 @@ export function KbSetupStep({ index = 4, workspace, done: doneProp, className }:
   return (
     <div className={cn('flex items-start gap-3 rounded-lg border border-line bg-surface-2 p-4', className)} data-step-id={KB_SETUP_STEP.id}>
       {done
-        ? <CheckCircle2 className="mt-0.5 h-5 w-5 shrink-0 text-signal-verify" aria-label="Done" />
+        ? <CheckCircle2 className="mt-0.5 h-5 w-5 shrink-0 text-success" aria-label="Done" />
         : <Circle className="mt-0.5 h-5 w-5 shrink-0 text-fg-3" aria-label="Not done" />}
       <div className="min-w-0 flex-1">
         <p className="font-mono text-xs uppercase tracking-eyebrow text-fg-3">Step {index}</p>
@@ -59,7 +62,7 @@ export function KbSetupStep({ index = 4, workspace, done: doneProp, className }:
           }}
           className={cn(
             'mt-3 inline-flex min-h-[44px] items-center gap-1.5 rounded-md border px-3 text-sm font-medium transition-colors sm:min-h-[32px]',
-            done
+            done || !primary
               ? 'border-line bg-surface-1 text-fg-1 hover:border-line-strong hover:text-fg-0'
               : 'border-transparent bg-accent text-accent-fg hover:bg-accent-hover',
           )}

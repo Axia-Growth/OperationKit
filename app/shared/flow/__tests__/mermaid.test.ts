@@ -22,9 +22,9 @@ describe('definitionToMermaid', () => {
 
   it('distinguishes kind, effect and approval state', () => {
     const out = definitionToMermaid(KITCHEN_SINK)
-    expect(out).toContain('n_summarise{{"🧠 LLM · summarise') // llm = hexagon
-    expect(out).toContain('n_deep_dive[["🤖 agent session → card') // agent = subroutine box
-    expect(out).toContain('n_score{"🔀 branch · score"}')
+    expect(out).toContain('n_summarise{{"LLM · summarise') // llm = hexagon
+    expect(out).toContain('n_deep_dive[["agent session → card') // agent = subroutine box
+    expect(out).toContain('n_score{"branch · score"}')
     expect(out).toContain('SPEND · approval each run')
     expect(out).toMatch(/subgraph n_graph \[.*\]\n\s+direction TB\n\s+subgraph n_subgraph/)
     expect(out).toContain('class n_file_report spend')
@@ -53,6 +53,6 @@ describe('definitionToMermaid', () => {
     d.nodes.push({ id: 'orphan', kind: 'loop', as: 'x', body: ['ghost'] })
     const out = definitionToMermaid(d)
     expect(out.startsWith('flowchart TD\n')).toBe(true)
-    expect(out).toContain('n_orphan["🔁 loop · for each x"]')
+    expect(out).toContain('n_orphan["loop · for each x"]')
   })
 })

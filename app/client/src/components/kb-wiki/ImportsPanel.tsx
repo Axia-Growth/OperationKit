@@ -106,7 +106,7 @@ export function ImportsPanel({
   const act = async (job: ImportJobSummary, action: 'start' | 'pause' | 'cancel') => {
     if (action === 'cancel' && !(await confirm({
       title: 'Stop this import?',
-      message: 'Chats already imported stay in the wiki, and your original file is kept. The rest will not be read.',
+      message: 'Chats already imported stay in your Context, and your original file is kept. The rest will not be read.',
       confirmLabel: 'Stop import',
       cancelLabel: 'Keep going',
       danger: true,
@@ -183,7 +183,7 @@ export function ImportsPanel({
           compact
           icon={<MessagesSquare className="h-5 w-5" aria-hidden="true" />}
           title="No chats or calls imported yet"
-          description="Your past AI chats and meeting transcripts hold decisions, people and to-dos. Import them and they become wiki pages with links back to the exact message."
+          description="Your past AI chats and meeting transcripts hold decisions, people and to-dos. Import them and they become Context pages with links back to the exact message."
         />
       )}
 
@@ -218,7 +218,7 @@ export function ImportsPanel({
                       aria-label={`${p.finished} of ${p.of} processed`}
                     >
                       <div
-                        className={cn('h-full rounded-full transition-[width] duration-slow ease-out', job.status === 'failed' ? 'bg-signal-alarm' : job.status === 'done' ? 'bg-signal-verify' : 'bg-accent')}
+                        className={cn('h-full rounded-full transition-[width] duration-slow ease-out', job.status === 'failed' ? 'bg-danger' : job.status === 'done' ? 'bg-success' : 'bg-accent')}
                         style={{ width: `${p.pct}%` }}
                       />
                     </div>
@@ -226,12 +226,12 @@ export function ImportsPanel({
                       {p.finished} of {p.of} processed
                       {job.counts.done > 0 && ` · ${job.counts.done} imported`}
                       {job.counts.skipped > 0 && ` · ${job.counts.skipped} skipped as small talk`}
-                      {job.counts.failed > 0 && <span className="text-signal-alarm"> · {job.counts.failed} failed</span>}
+                      {job.counts.failed > 0 && <span className="text-danger"> · {job.counts.failed} failed</span>}
                     </div>
                   </div>
                 )}
 
-                {job.status === 'failed' && job.error && <p className="pl-6 text-sm text-signal-alarm">{job.error}</p>}
+                {job.status === 'failed' && job.error && <p className="pl-6 text-sm text-danger">{job.error}</p>}
 
                 <div className="flex flex-wrap gap-1.5 pl-6">
                   {job.status === 'running' && (

@@ -9,8 +9,10 @@ import { useState, useEffect, useCallback, useRef } from 'react'
 import { Link } from 'react-router-dom'
 import { Info } from 'lucide-react'
 import { api } from '../lib/api'
+import { formatBytes, formatCost, formatDateTime, formatDuration } from '../lib/format'
 import { MODELS_SETTINGS_ROUTE } from '../lib/routes'
 import { CostModule } from './CostModule'
+import { BuildFooter } from './settings/BuildFooter'
 import {
   PageContainer,
   PageHeader,
@@ -86,55 +88,23 @@ export const SPEND_DISCLAIMER =
 /** Host numbers older than this are flagged stale (the poll is every 5s). */
 export const HOST_STALE_MS = 30_000
 
-function formatBytes(bytes: number): string {
-  if (bytes === 0) return '0 B'
-  const k = 1024
-  const sizes = ['B', 'KB', 'MB', 'GB', 'TB']
-  const i = Math.floor(Math.log(bytes) / Math.log(k))
-  return `${(bytes / Math.pow(k, i)).toFixed(1)} ${sizes[i]}`
-}
-
 function formatTokens(tokens: number): string {
   if (tokens >= 1_000_000) return `${(tokens / 1_000_000).toFixed(1)}M`
   if (tokens >= 1_000) return `${(tokens / 1_000).toFixed(1)}K`
   return `${tokens}`
 }
 
-function formatUptime(seconds: number): string {
-  const days = Math.floor(seconds / 86400)
-  const hours = Math.floor((seconds % 86400) / 3600)
-  const mins = Math.floor((seconds % 3600) / 60)
-  if (days > 0) return `${days}d ${hours}h ${mins}m`
-  if (hours > 0) return `${hours}h ${mins}m`
-  return `${mins}m`
-}
-
-function formatTimeAgo(iso: string): string {
-  const diff = Date.now() - new Date(iso).getTime()
-  const mins = Math.floor(diff / 60000)
-  if (mins < 1) return 'just now'
-  if (mins < 60) return `${mins}m ago`
-  const hours = Math.floor(mins / 60)
-  if (hours < 24) return `${hours}h ${mins % 60}m ago`
-  return `${Math.floor(hours / 24)}d ago`
-}
-
 function formatTimeUntil(iso: string): string {
   const diff = new Date(iso).getTime() - Date.now()
   if (diff <= 0) return 'now'
-  const mins = Math.floor(diff / 60000)
-  if (mins < 60) return `${mins} min`
-  const hours = Math.floor(mins / 60)
-  if (hours < 24) return `${hours} hr ${mins % 60} min`
-  const days = Math.floor(hours / 24)
-  return `${days}d ${hours % 24} hr`
+  return formatDuration(diff)
 }
 
 // Usage-bar fill follows the signal-token thresholds (track = surface-3).
 function barFill(percent: number): string {
-  if (percent >= 90) return 'bg-signal-alarm'
-  if (percent >= 70) return 'bg-signal-amber'
-  return 'bg-signal-verify'
+  if (percent >= 90) return 'bg-danger'
+  if (percent >= 70) return 'bg-warning'
+  return 'bg-success'
 }
 
 function UsageBar({ percent }: { percent: number }) {
@@ -159,9 +129,9 @@ export function CpuDetail({ cpu }: { cpu: SystemData['cpu'] }) {
   const b = cpu.breakdown
   if (parts.length === 0 && !b) return null
   return (
-    <div data-testid="cpu-detail" className="mt-1 font-mono text-xs text-fg-3">
+    <div data-testid="cpu-detail" className="mt-1 text-xs text-fg-3">
       {parts.length > 0 && <div>{parts.join(' · ')}</div>}
-      {b && <div>Sessions {b.sessions}% · Kernel {b.kernel}% · Server/other {b.other}%</div>}
+      {b && <div>Bots {b.sessions}% · Kernel {b.kernel}% · Server/other {b.other}%</div>}
     </div>
   )
 }
@@ -179,8 +149,8 @@ function MetricCard({
   return (
     <Card>
       <div className="text-xs uppercase tracking-eyebrow text-fg-3 font-semibold">{label}</div>
-      <div className="mt-1 font-mono text-2xl font-semibold tabular-nums text-fg-0">{value}</div>
-      {sub && <div className="mt-0.5 font-mono text-xs text-fg-3">{sub}</div>}
+      <div className="mt-1 text-2xl font-semibold tabular-nums text-fg-0">{value}</div>
+      {sub && <div className="mt-0.5 text-xs text-fg-3">{sub}</div>}
     </Card>
   )
 }
@@ -261,7 +231,7 @@ export function SystemPage() {
       <PageHeader
         title="System"
         description="AI usage, estimated spend and host health for this install."
-        actions={<Badge tone="neutral" mono>auto-refresh · 5s</Badge>}
+        actions={<Badge tone="neutral">auto-refresh · 5s</Badge>}
       />
 
       <div className="space-y-6">
@@ -276,10 +246,10 @@ export function SystemPage() {
             ))
           ) : (
             <>
-              <MetricCard label="Active" value={totalActiveSessions} sub="sessions" />
-              <MetricCard label="Today" value={totalSessionsToday} sub="sessions" />
+              <MetricCard label="Active" value={totalActiveSessions} sub="bot runs" />
+              <MetricCard label="Today" value={totalSessionsToday} sub="bot runs" />
               <MetricCard label="Tokens" value={formatTokens(totalTokensToday)} sub="today" />
-              <MetricCard label="Est. spend" value={`$${totalCostToday.toFixed(2)}`} sub="today, at token prices" />
+              <MetricCard label="Est. cost" value={formatCost(totalCostToday)} sub="today, at token prices" />
             </>
           )}
         </div>
@@ -299,10 +269,10 @@ export function SystemPage() {
             naming it, the per-account cards visibly under-sum the headline and the
             numbers read as inconsistent. Surface it so the math closes. */}
         {!loading && untracked.sessions > 0 && (
-          <div className="font-mono text-xs text-fg-3">
-            Today’s totals include {untracked.sessions} in-progress session
-            {untracked.sessions === 1 ? '' : 's'} not yet attributed to an account
-            {' · '}${untracked.cost.toFixed(2)}
+          <div className="text-xs text-fg-3">
+            Today’s totals include {untracked.sessions} bot run
+            {untracked.sessions === 1 ? '' : 's'} in progress, not yet attributed to an account
+            {' · '}{formatCost(untracked.cost)}
             {' · '}{formatTokens(untracked.tokens)} tokens
           </div>
         )}
@@ -325,9 +295,9 @@ export function SystemPage() {
               eyebrow="Server"
               actions={
                 <span className="flex items-center gap-2">
-                  {hostStale && <Badge tone="amber" mono>stale</Badge>}
+                  {hostStale && <Badge tone="amber">stale</Badge>}
                   {hostAgeMs != null && (
-                    <span data-testid="host-updated" className="font-mono text-xs text-fg-3">
+                    <span data-testid="host-updated" className="text-xs text-fg-3">
                       updated {Math.round(hostAgeMs / 1000)}s ago
                     </span>
                   )}
@@ -347,10 +317,10 @@ export function SystemPage() {
                 <div>
                   <div className="mb-2 flex items-baseline justify-between">
                     <span className="text-base text-fg-2">CPU</span>
-                    <span className="font-mono text-base font-medium text-fg-0">{system.cpu.usagePercent}%</span>
+                    <span className="text-base font-medium tabular-nums text-fg-0">{system.cpu.usagePercent}%</span>
                   </div>
                   <UsageBar percent={system.cpu.usagePercent} />
-                  <div className="mt-1.5 font-mono text-xs text-fg-3">
+                  <div className="mt-1.5 text-xs text-fg-3">
                     {system.cpu.cores} cores &middot; Load {system.cpu.loadAvg.join(' / ')}
                   </div>
                   <CpuDetail cpu={system.cpu} />
@@ -358,29 +328,29 @@ export function SystemPage() {
                 <div>
                   <div className="mb-2 flex items-baseline justify-between">
                     <span className="text-base text-fg-2">Memory</span>
-                    <span className="font-mono text-base font-medium text-fg-0">{system.memory.usagePercent}%</span>
+                    <span className="text-base font-medium tabular-nums text-fg-0">{system.memory.usagePercent}%</span>
                   </div>
                   <UsageBar percent={system.memory.usagePercent} />
-                  <div className="mt-1.5 font-mono text-xs text-fg-3">
+                  <div className="mt-1.5 text-xs text-fg-3">
                     {formatBytes(system.memory.used)} / {formatBytes(system.memory.total)}
                   </div>
                 </div>
                 <div>
                   <div className="mb-2 flex items-baseline justify-between">
                     <span className="text-base text-fg-2">Disk</span>
-                    <span className="font-mono text-base font-medium text-fg-0">{system.disk.usagePercent}%</span>
+                    <span className="text-base font-medium tabular-nums text-fg-0">{system.disk.usagePercent}%</span>
                   </div>
                   <UsageBar percent={system.disk.usagePercent} />
-                  <div className="mt-1.5 font-mono text-xs text-fg-3">
+                  <div className="mt-1.5 text-xs text-fg-3">
                     {formatBytes(system.disk.used)} / {formatBytes(system.disk.total)}
                   </div>
                 </div>
                 <div>
                   <div className="mb-2 flex items-baseline justify-between">
                     <span className="text-base text-fg-2">Uptime</span>
-                    <span className="font-mono text-base font-medium text-fg-0">{formatUptime(system.uptime)}</span>
+                    <span className="text-base font-medium tabular-nums text-fg-0">{formatDuration(system.uptime * 1000)}</span>
                   </div>
-                  <div className="mt-1 font-mono text-xs text-fg-3">
+                  <div className="mt-1 text-xs text-fg-3">
                     {system.processCount} processes visible to the server
                   </div>
                 </div>
@@ -393,24 +363,24 @@ export function SystemPage() {
         <Link
           to={MODELS_SETTINGS_ROUTE}
           data-testid="manage-ai-accounts"
-          className="inline-flex min-h-[44px] items-center rounded-md text-sm font-medium text-accent-hover underline-offset-2 transition-colors duration-fast ease-out hover:text-accent hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/50 sm:min-h-[32px]"
+          className="inline-flex min-h-[44px] items-center rounded-md text-sm font-medium text-accent underline-offset-2 transition-colors duration-fast ease-out hover:text-accent-hover hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/50 sm:min-h-[32px]"
         >
-          Manage AI accounts in Settings &gt; Models
+          Manage AI accounts in Settings → Models
         </Link>
 
         {/* Queue */}
         {accounts && accounts.queue.length > 0 && (
-          <Alert tone="amber" title={`Queued Sessions (${accounts.queue.length})`}>
+          <Alert tone="amber" title={`Queued bot runs (${accounts.queue.length})`}>
             <div className="space-y-1">
               {accounts.queue.map((q, i) => (
                 <div key={i}>
-                  Objective <span className="font-mono">#{q.objectiveId}</span> &middot; queued{' '}
-                  <span className="font-mono">{formatTimeAgo(q.queuedAt)}</span>
+                  Card #{q.objectiveId} &middot; queued{' '}
+                  <span title={formatDateTime(q.queuedAt).title}>{formatDateTime(q.queuedAt).label}</span>
                 </div>
               ))}
             </div>
             {accounts.earliestReset && (
-              <div className="mt-2 font-mono text-xs text-fg-3">
+              <div className="mt-2 text-xs text-fg-3">
                 Next account available in {formatTimeUntil(accounts.earliestReset)}
               </div>
             )}
@@ -418,6 +388,8 @@ export function SystemPage() {
         )}
 
       </div>
+      {/* Which build is running (obj 720210) — moved here from every Settings tab (polish F5). */}
+      <BuildFooter />
     </PageContainer>
   )
 }

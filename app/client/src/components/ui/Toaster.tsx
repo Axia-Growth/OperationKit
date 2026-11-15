@@ -1,3 +1,4 @@
+import { X } from 'lucide-react'
 import {
   createToaster,
   Toast as SdkToast,
@@ -27,7 +28,7 @@ export const toast = createToaster()
 
 /** Dot colour per SDK toast type (data-type on the toast). */
 const DOT =
-  'bg-status-working group-data-[type=success]:bg-signal-verify group-data-[type=warning]:bg-signal-amber group-data-[type=error]:bg-signal-alarm group-data-[type=loading]:bg-fg-3'
+  'bg-status-working group-data-[type=success]:bg-success group-data-[type=warning]:bg-warning group-data-[type=error]:bg-danger group-data-[type=loading]:bg-fg-3'
 
 export function Toaster({
   toaster = toast,
@@ -56,9 +57,9 @@ export function Toaster({
           </div>
           <ToastClose
             aria-label="Dismiss"
-            className="-mr-1 -mt-1 h-6 w-6 shrink-0 rounded text-fg-3 transition-colors duration-fast hover:bg-surface-4 hover:text-fg-1 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60"
+            className="-mr-1 -mt-1 grid h-6 w-6 shrink-0 place-items-center rounded text-fg-3 transition-colors duration-fast hover:bg-surface-4 hover:text-fg-1 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60"
           >
-            ×
+            <X aria-hidden="true" className="h-3.5 w-3.5" />
           </ToastClose>
         </SdkToast>
       )}

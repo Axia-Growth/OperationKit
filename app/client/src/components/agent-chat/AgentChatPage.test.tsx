@@ -81,7 +81,7 @@ describe('AgentChatPage', () => {
     await mount('/chat/demo-assistant')
     await settle()
     expect(host.textContent).toContain('Personal assistant (demo)')
-    expect(host.textContent).toContain('Answers with Demo (no AI account) · scripted')
+    expect(host.textContent).toContain('Answers with Demo (no AI account) · Scripted')
     const by = host.querySelector('[data-testid="answered-by"]')
     expect(by?.textContent).toContain('Answered by Demo (no AI account)')
     expect(by?.textContent).toContain('scripted')

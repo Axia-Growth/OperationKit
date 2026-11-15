@@ -7,6 +7,7 @@
 #   sudo bash install/backup.sh restore DIR  --config client.conf --yes
 #   sudo bash install/backup.sh verify       --config client.conf [--snapshot latest|<id>]
 #   sudo bash install/backup.sh install-cron --config client.conf
+#   sudo bash install/backup.sh status       --config client.conf   (read-only: is the nightly job the one running?)
 #   (every action takes --dry-run)
 #
 # `run` writes one folder, INSTALL_DIR/backups/<label>-<UTC time>/ (mode 700):
@@ -15,7 +16,9 @@
 #   data.tar.gz        the rest of state/data: Claude/Codex seat logins
 #                      (cc-accounts), uploads, branding
 #   home.tar.gz        state/home: projects, notes, agent memory (not for
-#                      --label pre-update, which only needs what an update can break)
+#                      --label pre-update, which only needs what an update can break,
+#                      and not with BACKUP_HOME="offsite" when the run sends off-site:
+#                      see below)
 #   secrets.tar.gz     secrets/ (stack.env holds the key that decrypts the
 #                      secrets stored in the database — a restore needs both)
 #   client.conf, install.env, MANIFEST (commit, image, sizes, sha256)
@@ -25,6 +28,19 @@
 # to any S3-compatible bucket (Backblaze B2, AWS S3, Wasabi…), keeping
 # BACKUP_KEEP_DAILY daily, BACKUP_KEEP_WEEKLY weekly and BACKUP_KEEP_MONTHLY
 # monthly copies (defaults 7 / 4 / 6).
+#
+# BACKUP_HOME="offsite" is for a server whose state/home is large (tens of GB):
+# re-compressing all of it into home.tar.gz every night is slow, keeps
+# BACKUP_KEEP_LOCAL full copies on the same disk, and defeats restic's
+# de-duplication (a fresh gzip stream shares almost no chunks with yesterday's).
+# With it, a nightly run that sends off-site leaves home.tar.gz out of the local
+# folder and gives state/home to restic AS A FOLDER, in its own snapshot (tag
+# operationkit-home): after the first night only what changed is uploaded. The
+# folder's MANIFEST records that snapshot's id, so `fetch` brings back the home
+# that belongs with that database, `restore` puts it back, and `verify` checks it
+# is there. Any run that does NOT send off-site (manual, --no-offsite, no
+# BACKUP_TARGET) still writes home.tar.gz, so a local folder is never missing it
+# silently. Default "archive" = the behaviour above, unchanged.
 #
 # `verify` is the restore test: it downloads the newest off-server snapshot
 # (or, with no BACKUP_TARGET, takes the newest backup folder on this server)
@@ -53,12 +69,12 @@ while [ $# -gt 0 ]; do
     --snapshot) shift; SNAPSHOT=${1:-latest} ;;
     --yes) YES=1 ;;
     --dry-run) DRY_RUN=1 ;;
-    -h|--help) sed -n '2,39p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    -h|--help) sed -n '2,55p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) die "unknown argument: $1 (see --help)" ;;
   esac
   shift
 done
-case "$ACTION" in run|list|fetch|restore|verify|install-cron) ;; *) sed -n '2,10p' "$0" | sed 's/^# \{0,1\}//'; exit 2 ;; esac
+case "$ACTION" in run|list|fetch|restore|verify|install-cron|status) ;; *) sed -n '2,11p' "$0" | sed 's/^# \{0,1\}//'; exit 2 ;; esac
 [ -n "$CONFIG" ] || die "--config <file> is required"
 [ -f "$CONFIG" ] || die "config file not found: $CONFIG"
 CONFIG=$(cd "$(dirname "$CONFIG")" && pwd)/$(basename "$CONFIG")
@@ -71,6 +87,12 @@ BACKUPS=$OK_DIR/backups
 DB=$OK_STATE/data/command-center.db
 TARGET=$(conf BACKUP_TARGET)
 KEEP_DAILY=$(conf BACKUP_KEEP_DAILY 7); KEEP_WEEKLY=$(conf BACKUP_KEEP_WEEKLY 4); KEEP_MONTHLY=$(conf BACKUP_KEEP_MONTHLY 6)
+HOME_MODE=$(conf BACKUP_HOME archive)
+# restic's `forget` groups by host AND paths unless told otherwise. Every nightly
+# folder has its own path (nightly-<time>), so each snapshot was a group of one
+# and the keep-daily/weekly/monthly policy never removed anything: the repository
+# only grew. Group by host + tags instead — the snapshots of one kind share both.
+FORGET_GROUP=(--group-by 'host,tags')
 
 # ── restic (off-server copies) ────────────────────────────────────────────────
 # The repository password and bucket keys go through the environment and a
@@ -135,32 +157,50 @@ prune_local() { # LABEL KEEP
 }
 
 do_run() {
-  local ts dir commit image
+  local ts dir commit image home_how sends=0 host
   ts=$(date -u +%Y%m%dT%H%M%SZ)
+  # Two runs in the same second must never share (and mix) one folder.
+  while [ -e "$BACKUPS/$LABEL-$ts" ]; do sleep 1; ts=$(date -u +%Y%m%dT%H%M%SZ); done
   dir=$BACKUPS/$LABEL-$ts
+  host="ok-$(conf CLIENT_SLUG)"
+  [ -n "$TARGET" ] && [ "$OFFSITE" -eq 1 ] && [ "$LABEL" = nightly ] && sends=1
+  # How state/home is kept by THIS run: in the folder (archive), as its own
+  # restic snapshot (offsite), or not at all (pre-update: an update never writes it).
+  home_how=archive
+  if [ "$LABEL" = pre-update ]; then home_how=none
+  elif [ "$HOME_MODE" = offsite ]; then
+    if [ "$sends" -eq 1 ]; then home_how=offsite
+    elif [ "$LABEL" = nightly ]; then
+      warn "BACKUP_HOME=\"offsite\" but this run sends nothing off the server ($([ -z "$TARGET" ] && echo 'BACKUP_TARGET is empty' || echo '--no-offsite')): home goes into home.tar.gz instead, so it is not left out"
+    fi
+  fi
   step "Backup $LABEL → $dir"
   if [ ! -f "$DB" ]; then
     [ "$DRY_RUN" -eq 1 ] || die "no database at $DB — is Operation Kit installed under $OK_DIR?"
     warn "no database at $DB yet (fine for a dry run)"
   fi
   if [ "$DRY_RUN" -eq 1 ]; then
-    log "  [dry-run] would write database, data$([ "$LABEL" = pre-update ] || echo ', home'), secrets and config into $dir"
-    [ -z "$TARGET" ] || [ "$OFFSITE" -eq 0 ] || [ "$LABEL" != nightly ] || log "  [dry-run] would send it to $TARGET with restic"
+    log "  [dry-run] would write database, data$([ "$home_how" = archive ] && echo ', home'), secrets and config into $dir"
+    [ "$sends" -eq 0 ] || log "  [dry-run] would send it to $TARGET with restic"
+    [ "$home_how" != offsite ] || log "  [dry-run] would send $OK_STATE/home to $TARGET as its own restic snapshot (BACKUP_HOME=offsite)"
     return 0
   fi
   install -d -m 700 "$BACKUPS"; install -d -m 700 "$dir"
   snapshot_db "$dir/command-center.db"
   tar_dir "$OK_STATE/data" "$dir/data.tar.gz" --exclude='./command-center.db' --exclude='./command-center.db-*' --exclude='./.backup-tmp'
   log "  data (seat logins, uploads, branding): $(du -h "$dir/data.tar.gz" | cut -f1)"
-  if [ "$LABEL" != pre-update ]; then
+  if [ "$home_how" = archive ]; then
     tar_dir "$OK_STATE/home" "$dir/home.tar.gz"
     log "  home (projects, notes, memory): $(du -h "$dir/home.tar.gz" | cut -f1)"
+  elif [ "$home_how" = offsite ]; then
+    log "  home (projects, notes, memory): sent to $TARGET as its own snapshot below (BACKUP_HOME=offsite)"
   fi
   tar_dir "$OK_SECRETS" "$dir/secrets.tar.gz"
   cp "$CONFIG" "$dir/client.conf"
   [ -f "$OK_SETTINGS_ENV" ] && cp "$OK_SETTINGS_ENV" "$dir/install.env"
   commit=$(repo_sha); image=$(docker image inspect -f '{{.Id}}' operationkit-app:local 2>/dev/null || echo none)
-  { echo "label=$LABEL"; echo "created=$ts"; echo "commit=$commit"; echo "image=$image"
+  { echo "label=$LABEL"; echo "created=$ts"; echo "commit=$commit"; echo "image=$image"; echo "home=$home_how"
+    [ "$home_how" != offsite ] || echo "home_path=$OK_STATE/home"
     (cd "$dir" && sha256sum -- *.db *.tar.gz client.conf); } > "$dir/MANIFEST"
   chmod -R go-rwx "$dir"
   log "  done: $(du -sh "$dir" | cut -f1) in $dir"
@@ -170,15 +210,26 @@ do_run() {
     pre-update) prune_local pre-update 5 ;;
   esac
 
-  if [ -n "$TARGET" ] && [ "$OFFSITE" -eq 1 ] && [ "$LABEL" = nightly ]; then
+  if [ "$sends" -eq 1 ]; then
     step "Off-server copy → $TARGET"
     restic_env
     restic cat config >/dev/null 2>&1 || { restic init >/dev/null; log "  new encrypted backup repository created"; }
-    restic backup --quiet --host "ok-$(conf CLIENT_SLUG)" --tag operationkit --tag "$LABEL" "$dir"
     local prune=(); [ "$(date +%u)" = 7 ] && prune=(--prune)   # the slow repack only on Sundays
-    restic forget --quiet --host "ok-$(conf CLIENT_SLUG)" --tag operationkit \
-      --keep-daily "$KEEP_DAILY" --keep-weekly "$KEEP_WEEKLY" --keep-monthly "$KEEP_MONTHLY" "${prune[@]+"${prune[@]}"}"
-    log "  sent (restic snapshot $(restic snapshots --json --latest 1 --host "ok-$(conf CLIENT_SLUG)" | jq -r '.[-1].short_id // "?"'))"
+    local keep=(--keep-daily "$KEEP_DAILY" --keep-weekly "$KEEP_WEEKLY" --keep-monthly "$KEEP_MONTHLY")
+    if [ "$home_how" = offsite ]; then
+      # First, so the folder that is sent next can name it: fetch/restore/verify
+      # then always pair a database with the home taken the same night.
+      local home_snap
+      restic backup --quiet --host "$host" --tag operationkit-home --tag "$LABEL" "$OK_STATE/home"
+      home_snap=$(restic snapshots --json --latest 1 --host "$host" --tag operationkit-home | jq -r '.[-1].id // empty')
+      [ -n "$home_snap" ] || die "the home snapshot was sent but restic does not list it — run: sudo bash $OK_LIB_DIR/backup.sh list --config $CONFIG"
+      echo "home_snapshot=$home_snap" >> "$dir/MANIFEST"
+      log "  home sent (restic snapshot ${home_snap:0:8}; only what changed since the last one is uploaded)"
+      restic forget --quiet --host "$host" --tag operationkit-home "${FORGET_GROUP[@]}" "${keep[@]}"
+    fi
+    restic backup --quiet --host "$host" --tag operationkit --tag "$LABEL" "$dir"
+    restic forget --quiet --host "$host" --tag operationkit "${FORGET_GROUP[@]}" "${keep[@]}" "${prune[@]+"${prune[@]}"}"
+    log "  sent (restic snapshot $(restic snapshots --json --latest 1 --host "$host" --tag operationkit | jq -r '.[-1].short_id // "?"'))"
   elif [ -z "$TARGET" ] && [ "$LABEL" = nightly ]; then
     warn "BACKUP_TARGET is empty: this backup is on the SAME server as the data. Set an off-server target (INSTALL.md, Backups)."
   fi
@@ -206,16 +257,26 @@ do_restore() {
   docker ps -aq --filter 'name=^ok-jail-' | xargs -r docker rm -f >/dev/null
 
   log "  moving the current data aside to $aside"
+  # Where this backup keeps home: home.tar.gz in the folder, or a home/ folder
+  # that `fetch` downloaded from its BACKUP_HOME=offsite snapshot.
+  local home_src=
+  if [ -f "$src/home.tar.gz" ]; then home_src=archive; elif [ -d "$src/home" ]; then home_src=folder; fi
   mv "$OK_STATE/data" "$aside/data"; mv "$OK_SECRETS" "$aside/secrets"
-  [ -f "$src/home.tar.gz" ] && mv "$OK_STATE/home" "$aside/home"
+  [ -z "$home_src" ] || mv "$OK_STATE/home" "$aside/home"
 
   install -d -m 755 "$OK_STATE/data"; install -d -m 700 "$OK_SECRETS"
   tar -C "$OK_STATE/data" -xzf "$src/data.tar.gz"
   install -m 644 "$src/command-center.db" "$DB"
   tar -C "$OK_SECRETS" -xzf "$src/secrets.tar.gz"; chmod 700 "$OK_SECRETS"; chmod 600 "$OK_SECRETS"/* 2>/dev/null || true
-  if [ -f "$src/home.tar.gz" ]; then install -d -m 777 "$OK_STATE/home"; tar -C "$OK_STATE/home" -xzf "$src/home.tar.gz"
-  else log "  home: not in this backup (pre-update backups skip it) — kept as it was"; fi
-  log "  restored database, data$([ -f "$src/home.tar.gz" ] && echo ', home'), secrets"
+  case "$home_src" in
+    archive) install -d -m 777 "$OK_STATE/home"; tar -C "$OK_STATE/home" -xzf "$src/home.tar.gz" ;;
+    # A move, not a copy: home can be tens of GB and both sit under INSTALL_DIR.
+    folder) mv "$src/home" "$OK_STATE/home"; chmod 777 "$OK_STATE/home"; log "  home: moved into place from $src/home" ;;
+    *) if grep -q '^home=offsite$' "$src/MANIFEST" 2>/dev/null; then
+         log "  home: this folder's home is in its off-site snapshot (BACKUP_HOME=offsite), not on this server — kept as it was. To restore it too: backup.sh fetch, then restore the fetched folder"
+       else log "  home: not in this backup (pre-update backups skip it) — kept as it was"; fi ;;
+  esac
+  log "  restored database, data$([ -n "$home_src" ] && echo ', home'), secrets"
 
   log "  starting the app"
   dc up -d command-center >/dev/null
@@ -234,11 +295,43 @@ do_fetch() {
   restic restore "$SNAPSHOT" --host "ok-$(conf CLIENT_SLUG)" --tag operationkit --target "$into" >/dev/null
   found=$(find "$into" -name command-center.db -printf '%h\n' | head -1)
   [ -n "$found" ] || die "the downloaded snapshot holds no backup folder"
+  # BACKUP_HOME=offsite: the folder names the home snapshot taken the same night.
+  # Download it next to the database as home/, which `restore` moves into place.
+  local home_snap home_path
+  home_snap=$(sed -n 's/^home_snapshot=//p' "$found/MANIFEST" 2>/dev/null | head -1)
+  if [ -n "$home_snap" ]; then
+    home_path=$(sed -n 's/^home_path=//p' "$found/MANIFEST" | head -1)
+    [ -n "$home_path" ] || die "$found/MANIFEST names home snapshot $home_snap but not the folder it holds (home_path)"
+    log "  downloading home (restic snapshot ${home_snap:0:8}) — it can be large, this may take a while"
+    install -d -m 700 "$found/home"
+    restic restore "$home_snap:$home_path" --target "$found/home" >/dev/null \
+      || die "could not download home snapshot $home_snap — the database folder is in $found; retry: sudo bash $OK_LIB_DIR/backup.sh fetch --config $CONFIG --snapshot $SNAPSHOT"
+    log "  home: $(du -sh "$found/home" | cut -f1) in $found/home"
+  elif grep -q '^home=offsite$' "$found/MANIFEST" 2>/dev/null; then
+    die "$found/MANIFEST says home was sent off-site but names no home snapshot — that night's home upload did not finish; fetch an older one: backup.sh list, then fetch --snapshot <id>"
+  fi
   log "  downloaded. Put it back with:"
   log "    sudo bash $OK_LIB_DIR/backup.sh restore $found --config $CONFIG --yes"
 }
 
 # ── verify (restore test) ─────────────────────────────────────────────────────
+# verify_home FOLDER — a BACKUP_HOME=offsite folder: the home snapshot it names
+# must be in the repository and hold files. It is not downloaded (tens of GB);
+# `restic check` above already proves the repository it lives in is sound.
+verify_home() {
+  local src=$1 snap path when entries
+  snap=$(sed -n 's/^home_snapshot=//p' "$src/MANIFEST" | head -1)
+  path=$(sed -n 's/^home_path=//p' "$src/MANIFEST" | head -1)
+  if [ -z "$TARGET" ]; then log "  NOTE  home was sent off-site (BACKUP_HOME=offsite) — set BACKUP_TARGET to check it"; return 0; fi
+  if [ -z "$snap" ]; then fail "home: the backup says home went off-site but names no home snapshot (that night's home upload did not finish)"; return 0; fi
+  when=$(restic snapshots --json --host "ok-$(conf CLIENT_SLUG)" --tag operationkit-home "$snap" 2>/dev/null | jq -r '.[0].time // empty' 2>/dev/null || true)
+  if [ -z "$when" ]; then fail "home: snapshot ${snap:0:8} named by this backup is not in the repository (forgotten, or the upload failed)"; return 0; fi
+  # With a folder named, restic ls lists that folder only (not recursive), so this stays small.
+  entries=$( (restic ls "$snap" "$path" 2>/dev/null || true) | grep -c "^$path/" || true)
+  if [ "${entries:-0}" -gt 0 ]; then pass "home: off-site snapshot ${snap:0:8} (${when%%.*}) is in the repository, $entries entries in $path"
+  else fail "home: off-site snapshot ${snap:0:8} holds nothing under $path"; fi
+}
+
 do_verify() {
   local src where line integrity rows f out
   if [ -n "$TARGET" ]; then
@@ -275,6 +368,7 @@ do_verify() {
       [ -e "$f" ] || continue
       if tar -tzf "$f" >/dev/null 2>&1; then pass "$(basename "$f") opens"; else fail "$(basename "$f") is not a readable archive"; fi
     done
+    if grep -q '^home=offsite$' "$src/MANIFEST" 2>/dev/null; then verify_home "$src"; fi
     integrity=; rows=
     if out=$(db_inspect "$src/command-center.db"); then
       while IFS= read -r line; do
@@ -313,6 +407,44 @@ do_list() {
   fi
 }
 
+# ── status (read-only) ────────────────────────────────────────────────────────
+# Is THIS script the nightly backup, and is it actually running? Prints the
+# schedule, where copies go, how home is kept, the newest nightly folder and its
+# age, and any other backup job on the server. Changes nothing, talks to no
+# bucket. update.sh prints it at the end of every update.
+do_status() {
+  local cron_file=${OK_CRON_FILE:-/etc/cron.d/operationkit-backup} at newest age_h other
+  step "Backups: $(site_label)"
+  if grep -q 'backup.sh run --label nightly' "$cron_file" 2>/dev/null; then
+    at=$(awk '!/^#/ && /backup.sh run --label nightly/ {printf "%02d:%02d", $2, $1; exit}' "$cron_file")
+    log "  nightly job:  $at server time ($cron_file → install/backup.sh run --label nightly)"
+  else
+    warn "no built-in nightly job ($cron_file is missing) — schedule it: sudo bash $OK_LIB_DIR/backup.sh install-cron --config $CONFIG"
+  fi
+  if [ -n "$TARGET" ]; then log "  off-server:   $TARGET (restic; keeps $KEEP_DAILY daily / $KEEP_WEEKLY weekly / $KEEP_MONTHLY monthly)"
+  else log "  off-server:   none — copies stay on this server only (set BACKUP_TARGET)"; fi
+  case "$HOME_MODE:$([ -n "$TARGET" ] && echo t)" in
+    offsite:t) log "  home:         its own restic snapshot each night, not archived locally (BACKUP_HOME=offsite)" ;;
+    offsite:)  log "  home:         archived into each nightly folder (BACKUP_HOME=offsite is waiting for BACKUP_TARGET)" ;;
+    *)         log "  home:         archived into each nightly folder as home.tar.gz (BACKUP_HOME=archive)" ;;
+  esac
+  newest=$(find "$BACKUPS" -mindepth 1 -maxdepth 1 -type d -name 'nightly-*' 2>/dev/null | sort | tail -1)
+  if [ -z "$newest" ]; then
+    warn "no nightly backup folder in $BACKUPS yet"
+  else
+    age_h=$(( ($(date +%s) - $(stat -c %Y "$newest")) / 3600 ))
+    if [ "$age_h" -gt 36 ]; then warn "newest nightly backup is ${age_h}h old: $(basename "$newest") — the nightly job is not running (log: $OK_DIR/logs/backup.log)"
+    else log "  newest:       $(basename "$newest") (${age_h}h ago, home=$(sed -n 's/^home=//p' "$newest/MANIFEST" 2>/dev/null | head -1))"; fi
+  fi
+  other=$(other_backup_jobs)
+  if [ -n "$other" ]; then
+    warn "other backup jobs still active on this server (switch them off once the built-in one is proven — INSTALL.md \"Switching from a hand-made backup\"):"
+    while IFS= read -r at; do warn "    $at"; done <<<"$other"
+  else
+    log "  other jobs:   none"
+  fi
+}
+
 # ── install-cron ──────────────────────────────────────────────────────────────
 do_install_cron() {
   # OK_CRON_FILE: test hook only (install/test/b2-setup-test.sh runs without root).
@@ -331,6 +463,18 @@ do_install_cron() {
   log "  nightly at $at ($(timedatectl show -p Timezone --value 2>/dev/null || echo 'server time')), log: $OK_DIR/logs/backup.log"
   if [ -n "$TARGET" ]; then log "  off-server: $TARGET (encrypted with restic; keeps $KEEP_DAILY daily / $KEEP_WEEKLY weekly / $KEEP_MONTHLY monthly)"
   else warn "BACKUP_TARGET is empty — backups stay on this server only. Set it for an off-server copy (INSTALL.md, Backups)."; fi
+  if [ "$HOME_MODE" = offsite ]; then
+    if [ -n "$TARGET" ]; then log "  home: sent off-site as its own restic snapshot each night, not archived into the local folder (BACKUP_HOME=offsite)"
+    else warn "BACKUP_HOME=\"offsite\" needs BACKUP_TARGET — until it is set, home is archived into each nightly folder"; fi
+  fi
+  # This job is THE nightly backup. Name any other one so it can be switched off.
+  local other
+  other=$(other_backup_jobs)
+  if [ -n "$other" ]; then
+    warn "another backup job is active on this server besides $cron_file:"
+    while IFS= read -r line; do warn "    $line"; done <<<"$other"
+    warn "  this nightly job already does the local copy and the off-site send, so switch the other one off to avoid two backups a night (systemctl disable --now <timer> / remove the cron line). INSTALL.md: \"Switching from a hand-made backup\""
+  fi
 }
 
 case "$ACTION" in
@@ -340,4 +484,5 @@ case "$ACTION" in
   list) do_list ;;
   verify) do_verify ;;
   install-cron) do_install_cron ;;
+  status) do_status ;;
 esac

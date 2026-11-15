@@ -139,9 +139,11 @@ function BotRow({
         onPointerCancel={press.onPointerCancel}
         aria-current={active ? 'page' : undefined}
         className={cn(
-          'flex min-h-[56px] w-full items-center gap-3 rounded-lg px-2.5 py-2 text-left transition-colors duration-fast',
+          'flex min-h-[56px] w-full items-center gap-3 rounded-lg px-2.5 py-2 text-left',
           'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/50',
-          active ? 'bg-surface-3' : 'hover:bg-surface-2',
+          // obj 900865: the picked row lights up in the same frame as the new
+          // bot's header (no fade-in); only the row you left, and hover, fade.
+          active ? 'bg-surface-3' : 'transition-colors duration-fast hover:bg-surface-2',
         )}
       >
         <AgentAvatar agent={agent} />
@@ -201,7 +203,7 @@ function PinnedTile({
 }) {
   const press = useLongPress(onMenu)
   return (
-    <li className="min-w-0">
+    <li className="min-w-0" data-bot-tile={agent.slug}>
       <button
         onClick={() => {
           if (press.fired.current) return
@@ -328,6 +330,7 @@ export function BotSidebar({
   data,
   active,
   onPick,
+  onPrefetch,
   isAdmin,
   onDemo,
   demoBusy,
@@ -338,6 +341,12 @@ export function BotSidebar({
   data: AgentsResponse
   active: string | null
   onPick: (slug: string) => void
+  /**
+   * The person is about to open this bot (pointer over it, keyboard focus on
+   * it, a finger down on it): warm its conversation so the click paints at
+   * once (obj 900865). Optional; the list works the same without it.
+   */
+  onPrefetch?: (slug: string) => void
   isAdmin: boolean
   onDemo: (on: boolean) => void
   demoBusy: boolean
@@ -360,6 +369,13 @@ export function BotSidebar({
   useEffect(() => {
     if (filter.startsWith('section:') && !sections.some(s => `section:${s.id}` === filter)) setFilter('all')
   }, [filter, sections])
+  // One delegated listener for every row and pinned tile (they carry data-bot).
+  const warm = (e: { target: EventTarget | null }) => {
+    if (!onPrefetch || !(e.target instanceof Element)) return
+    const el = e.target.closest<HTMLElement>('[data-bot],[data-bot-tile]')
+    const slug = el?.dataset.bot ?? el?.dataset.botTile
+    if (slug && slug !== active) onPrefetch(slug)
+  }
   const view = useMemo(() => buildSidebarView(data.agents, state, filter, query), [data.agents, state, filter, query])
 
   // Hook errors surface as the same toast as the menu's own messages.
@@ -596,7 +612,13 @@ export function BotSidebar({
         </div>
       </div>
 
-      <nav aria-label="Bots" className="flex-1 overflow-y-auto px-2 pb-3">
+      <nav
+        aria-label="Bots"
+        className="flex-1 overflow-y-auto px-2 pb-3"
+        onPointerOver={warm}
+        onPointerDown={warm}
+        onFocus={warm}
+      >
         {view.rail.length > 0 && (
           <section aria-label="Pinned bots" className="px-1 pb-2 pt-1">
             <ul className="grid grid-cols-4 gap-x-1 gap-y-2">

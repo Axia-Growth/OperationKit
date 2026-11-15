@@ -9,10 +9,11 @@
  *   POST /api/alerts/ack-all                 mark all read
  */
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
-import { BellOff } from 'lucide-react'
+import { Bell, BellOff } from 'lucide-react'
 import { Popover, PopoverContent, PopoverTrigger } from '@ui-sdk/react/popover'
 import type { Alert } from '@operationkit/shared'
 import { api } from '../lib/api'
+import { formatAbsoluteTime, formatDateTime, humanize } from '../lib/format'
 import { cn } from './ui/cn'
 import { Tabs } from './ui/Tabs'
 
@@ -28,26 +29,13 @@ const FILTER_TABS: { key: Filter; label: string }[] = [
 /** Only severities that change what you do get a label; "normal" stays quiet. */
 const SEVERITY: Record<Alert['severity'], { label: string | null; text: string; dot: string }> = {
   normal:    { label: null,     text: 'text-fg-0',          dot: 'bg-accent' },
-  high:      { label: 'High',   text: 'text-signal-amber',  dot: 'bg-signal-amber' },
-  emergency: { label: 'Urgent', text: 'text-signal-alarm',  dot: 'bg-signal-alarm' },
+  high:      { label: 'High',   text: 'text-warning',  dot: 'bg-warning' },
+  emergency: { label: 'Urgent', text: 'text-danger',  dot: 'bg-danger' },
 }
 
 /** Alert timestamps are SQLite UTC without a zone suffix. */
 function parseTs(iso: string): number {
   return new Date(/[zZ]|[+-]\d\d:?\d\d$/.test(iso) ? iso : iso.replace(' ', 'T') + 'Z').getTime()
-}
-
-export function formatRelative(iso: string, now = Date.now()): string {
-  const ms = now - parseTs(iso)
-  if (!Number.isFinite(ms) || ms < 0) return 'just now'
-  const sec = Math.floor(ms / 1000)
-  if (sec < 60) return 'just now'
-  const min = Math.floor(sec / 60)
-  if (min < 60) return `${min}m ago`
-  const hr = Math.floor(min / 60)
-  if (hr < 24) return `${hr}h ago`
-  const days = Math.floor(hr / 24)
-  return `${days}d ago`
 }
 
 export type DayGroup = 'Today' | 'Yesterday' | 'Earlier'
@@ -149,7 +137,7 @@ export function AlertBell() {
         className="relative flex items-center justify-center rounded-md p-1.5 text-fg-2 outline-none transition-colors duration-fast ease-out hover:bg-surface-3 hover:text-fg-0 focus-visible:ring-2 focus-visible:ring-accent/60"
         aria-label={unreadCount > 0 ? `Notifications, ${unreadCount} unread` : 'Notifications'}
       >
-        <BellIcon className="h-5 w-5" />
+        <Bell aria-hidden="true" className="h-5 w-5" />
         {unreadCount > 0 && (
           <span className="absolute -right-0.5 -top-0.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-[var(--t-alarm)] px-1 font-mono text-xs font-medium leading-none text-surface-0">
             {unreadCount > 99 ? '99+' : unreadCount}
@@ -248,16 +236,16 @@ function NotificationRow({ alert, onMarkRead }: { alert: Alert; onMarkRead: (id:
               )}
               <span className="break-words">{alert.title}</span>
             </div>
-            <span className="shrink-0 font-mono text-xs text-fg-3" title={alert.created_at}>
-              {formatRelative(alert.created_at)}
+            <span className="shrink-0 text-xs text-fg-3" title={formatDateTime(alert.created_at).title}>
+              {formatDateTime(alert.created_at).label}
             </span>
           </div>
           {alert.message && (
             <p className="mt-0.5 line-clamp-2 whitespace-pre-wrap break-words text-xs leading-snug text-fg-2">{alert.message}</p>
           )}
           <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
-            <span className="font-mono text-fg-3">{alert.source}</span>
-            {alert.email_sent_at && <span className="text-fg-3" title={`Emailed at ${alert.email_sent_at}`}>emailed</span>}
+            <span className="text-fg-3" title={alert.source}>{humanize(alert.source)}</span>
+            {alert.email_sent_at && <span className="text-fg-3" title={`Emailed ${formatAbsoluteTime(alert.email_sent_at)}`}>emailed</span>}
             <span className="ml-auto flex items-center gap-3">
               {alert.url && (
                 <a
@@ -285,10 +273,3 @@ function NotificationRow({ alert, onMarkRead }: { alert: Alert; onMarkRead: (id:
   )
 }
 
-function BellIcon({ className }: { className?: string }) {
-  return (
-    <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
-      <path strokeLinecap="round" strokeLinejoin="round" d="M14.857 17.082a23.848 23.848 0 005.454-1.31A8.967 8.967 0 0118 9.75v-.7V9A6 6 0 006 9v.75a8.967 8.967 0 01-2.312 6.022c1.733.64 3.56 1.085 5.455 1.31m5.714 0a24.255 24.255 0 01-5.714 0m5.714 0a3 3 0 11-5.714 0" />
-    </svg>
-  )
-}

@@ -34,6 +34,8 @@ import {
 } from '../services/followup-queue.js'
 import { appendVisibleError } from '../services/unanswered-followup.js'
 import { decideDelegatedApproval, recordDelegatedApproval } from '../services/delegated-approvals.js'
+import { chatBotForDeclared } from '../services/bots/register-chat-bot.js'
+import { listAgents } from '../services/agent-chat/engine.js'
 import { logActivity } from './feed.js'
 
 // Default cap on the non-incremental first-open payload: the most recent N
@@ -382,7 +384,7 @@ router.post('/:id/message', async (req: AuthRequest, res) => {
   // No `approval` field = unchanged behaviour. A claimed approval with no
   // active grant for this bot × this card's workspace × this action is REFUSED
   // (default deny), not quietly delivered as a plain bot message.
-  const delegation = decideDelegatedApproval(db, req, objective, req.body ?? {}, String(message))
+  const delegation = decideDelegatedApproval(db, req, objective, req.body ?? {}, String(message), undefined, declared => chatBotForDeclared(declared, listAgents().agents, db)?.bot ?? null)
   if (delegation.kind === 'denied') {
     res.status(delegation.status).json({ error: delegation.error, code: delegation.code })
     return

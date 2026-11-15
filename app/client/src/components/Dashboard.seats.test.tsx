@@ -61,7 +61,7 @@ describe('System page — no seat widgets (obj 900495)', () => {
     expect(host.querySelector('[data-testid^="seat-"]')).toBeNull()
     expect(host.textContent).not.toMatch(/Subscription seats|Manage seats|Add Claude seat|Rate Limit History|available/i)
     const link = host.querySelector('[data-testid="manage-ai-accounts"]') as HTMLAnchorElement
-    expect(link.textContent).toBe('Manage AI accounts in Settings > Models')
+    expect(link.textContent).toBe('Manage AI accounts in Settings → Models')
     expect(link.getAttribute('href')).toBe(MODELS_SETTINGS_ROUTE)
   })
 })

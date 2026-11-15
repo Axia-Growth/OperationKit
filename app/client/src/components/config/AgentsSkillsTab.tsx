@@ -1,5 +1,5 @@
 /**
- * Roster of every agent and skill — the Registry tab of the Agents & Skills page
+ * Roster of every bot and skill — the Registry tab of the Bots & skills page
  * (/agents). Extracted from ConfigPage.tsx.
  *
  * obj 900684: GET /admin/agents now returns every source of agents the app knows
@@ -11,7 +11,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import { ExternalLink, FileCode2, Sparkles } from 'lucide-react'
 import {
-  Card, Button, Badge, EmptyState, Skeleton, cn,
+  Card, Button, Badge, EmptyState, Skeleton, SegmentedControl, cn,
 } from '../ui'
 import { api } from '../../lib/api'
 import { formatBytes, formatName } from './config-form'
@@ -48,11 +48,11 @@ interface SkillInfo {
 }
 
 export const SOURCE_LABEL: Record<AgentSource, string> = {
-  persona: 'persona',
-  chat: 'chat agent',
-  builtin: 'built-in',
-  registry: 'no file',
-  'starter-pack': 'starter pack',
+  persona: 'Instructions file',
+  chat: 'Chat bot',
+  builtin: 'Built-in',
+  registry: 'No file',
+  'starter-pack': 'Starter pack',
 }
 
 export const agentId = (a: AgentInfo) => a.id ?? a.slug
@@ -130,7 +130,7 @@ export function AgentsSkillsTab() {
     const a = agents.find(x => agentId(x) === id)
     if (a?.definition) setFileContent(a.definition)
     else if (a?.file_path) loadFile(a.file_path)
-    else if (a && a.source && a.source !== 'persona') setFileContent('There is no definition file for this agent on this install.')
+    else if (a && a.source && a.source !== 'persona') setFileContent('There is no definition file for this bot on this install.')
     else loadFile(`agents/${a?.slug ?? id}.md`)
   }
   function selectAgentBySlug(slug: string) {
@@ -191,38 +191,42 @@ export function AgentsSkillsTab() {
   const items = viewMode === 'agents' ? agents : skills
 
   // A clickable cross-link chip that switches the selection to another node.
-  const LinkChip = ({ label, onClick, tone = 'neutral' as const }: { label: string; onClick: () => void; tone?: 'neutral' | 'info' | 'accent' }) => (
+  const LinkChip = ({ label, title, onClick, tone = 'neutral' as const }: { label: string; title?: string; onClick: () => void; tone?: 'neutral' | 'info' | 'accent' }) => (
     <button
       onClick={onClick}
+      title={title}
       className="transition-transform hover:scale-[1.03] focus:outline-none focus:ring-1 focus:ring-accent rounded-full"
     >
-      <Badge tone={tone} mono>{label}</Badge>
+      <Badge tone={tone}>{label}</Badge>
     </button>
   )
+  const agentLabel = (slug: string) => {
+    const a = agentForSlug(agents, slug)
+    return a ? a.label || formatName(a.name) : formatName(slug)
+  }
 
   return (
     <div className="grid grid-cols-1 gap-4 lg:grid-cols-[320px_minmax(0,1fr)]">
       {/* Browser column */}
       <Card inset>
-        <div className="flex border-b border-line">
-          {(['agents', 'skills'] as const).map(m => (
-            <button
-              key={m}
-              onClick={() => setViewMode(m)}
-              className={cn(
-                'flex-1 px-4 py-2.5 text-xs font-medium capitalize transition-colors',
-                viewMode === m
-                  ? 'border-b-2 border-accent text-accent'
-                  : 'text-fg-3 hover:text-fg-1',
-              )}
-            >
-              {m} ({m === 'agents' ? agents.length : skills.length})
-            </button>
-          ))}
+        {/* Agents / Skills filters this one list (obj 900807): the page's
+            single tab row is above, so this is a SegmentedControl, not a
+            third tab style. */}
+        <div className="border-b border-line p-2">
+          <SegmentedControl
+            label="Show"
+            value={viewMode}
+            onChange={k => setViewMode(k === 'skills' ? 'skills' : 'agents')}
+            className="flex w-full [&>*]:flex-1 [&>*]:justify-center"
+            items={[
+              { key: 'agents', label: 'Bots', count: agents.length },
+              { key: 'skills', label: 'Skills', count: skills.length },
+            ]}
+          />
         </div>
         <div className="max-h-[60vh] space-y-0.5 overflow-y-auto p-2">
           {items.length === 0 && (
-            <EmptyState compact icon={<FileCode2 className="h-5 w-5" />} title={`No ${viewMode}`} />
+            <EmptyState compact icon={<FileCode2 className="h-5 w-5" />} title={viewMode === 'agents' ? 'No bots' : 'No skills'} />
           )}
           {viewMode === 'agents' && agents.map(agent => (
             <button
@@ -241,14 +245,14 @@ export function AgentsSkillsTab() {
                   <Badge tone={agent.source === 'registry' ? 'verify' : 'info'}>{SOURCE_LABEL[agent.source]}</Badge>
                 ) : (
                   <Badge tone={agent.kind === 'executive' ? 'accent' : 'neutral'}>
-                    {agent.kind === 'executive' ? 'executive' : 'routing-only'}
+                    {agent.kind === 'executive' ? 'Executive' : 'Routing only'}
                   </Badge>
                 )}
               </div>
               {agent.source && agent.source !== 'persona' && agent.description && (
                 <div className="mt-0.5 line-clamp-2 text-xs text-fg-3">{agent.description}</div>
               )}
-              <div className="mt-0.5 flex items-center gap-2 font-mono text-xs text-fg-3">
+              <div className="mt-0.5 flex items-center gap-2 text-xs text-fg-3">
                 {agent.size > 0 && <span>{formatBytes(agent.size)}</span>}
                 <span>· {skillsForAgent(agent.slug).length} {skillsForAgent(agent.slug).length === 1 ? 'skill' : 'skills'}</span>
                 {!agent.assignable && <span className="text-flag-blocked">· not assignable</span>}
@@ -272,14 +276,14 @@ export function AgentsSkillsTab() {
               >
                 <div className="flex items-center justify-between gap-2">
                   <span className="text-sm font-medium">{formatName(skill.parent ? skill.name.slice(skill.parent.length + 1) : skill.name)}</span>
-                  {skill.parent && <Badge tone="neutral">sub-skill</Badge>}
-                  {rs?.needs_improvement && <Badge tone="verify">needs work</Badge>}
+                  {skill.parent && <Badge tone="neutral">Sub-skill</Badge>}
+                  {rs?.needs_improvement && <Badge tone="verify">Needs work</Badge>}
                 </div>
                 {skill.description && (
                   <div className="mt-0.5 line-clamp-2 text-xs text-fg-3">{skill.description}</div>
                 )}
-                <div className="mt-1 flex flex-wrap items-center gap-2 font-mono text-xs text-fg-3">
-                  <span>{consumers.length} agent{consumers.length !== 1 ? 's' : ''}</span>
+                <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-fg-3">
+                  <span>{consumers.length} bot{consumers.length !== 1 ? 's' : ''}</span>
                   {typeof rs?.usage_count === 'number' && <span>· {rs.usage_count} uses</span>}
                   {!!rs?.failure_count && <span className="text-flag-blocked">· {rs.failure_count} fails</span>}
                 </div>
@@ -295,7 +299,7 @@ export function AgentsSkillsTab() {
           <EmptyState
             icon={<Sparkles className="h-5 w-5" />}
             title="Nothing selected"
-            description="Pick an agent or skill to see its wiring, usage, and cross-links."
+            description="Pick a bot or skill to see its skills, usage, and links."
           />
         ) : selected.type === 'agent' ? (
           (() => {
@@ -304,15 +308,15 @@ export function AgentsSkillsTab() {
             return (
               <div className="p-4 space-y-4">
                 <div className="flex flex-wrap items-center gap-2">
-                  <Badge tone="info">agent</Badge>
+                  <Badge tone="info">Bot</Badge>
                   {agent?.source && agent.source !== 'persona' && (
                     <Badge tone={agent.source === 'registry' ? 'verify' : 'info'}>{SOURCE_LABEL[agent.source]}</Badge>
                   )}
                   <Badge tone={agent?.kind === 'executive' ? 'accent' : 'neutral'}>
-                    {agent?.kind === 'executive' ? 'executive' : 'routing-only / sub-agent'}
+                    {agent?.kind === 'executive' ? 'Executive' : 'Routing only / helper'}
                   </Badge>
                   <Badge tone={agent?.assignable ? 'accent' : 'neutral'}>
-                    {agent?.assignable ? 'assignable' : 'not assignable'}
+                    {agent?.assignable ? 'Assignable' : 'Not assignable'}
                   </Badge>
                   <h3 className="font-display text-lg font-semibold text-fg-0">
                     {agent?.label || formatName(selected.key)}
@@ -327,15 +331,15 @@ export function AgentsSkillsTab() {
                 {agent?.open_href && (
                   <a
                     href={agent.open_href}
-                    className="inline-flex items-center gap-1 text-xs text-accent-hover underline-offset-2 hover:text-accent hover:underline"
+                    className="inline-flex items-center gap-1 text-xs text-accent underline-offset-2 hover:text-accent-hover hover:underline"
                   >
                     Open in Bots <ExternalLink className="h-3 w-3" />
                   </a>
                 )}
                 {agent?.kind === 'routing-only' && (agent.source ?? 'persona') === 'persona' && (
                   <p className="text-xs text-fg-3">
-                    Normally invoked via the CLAUDE.md routing table or spawned as a sub-agent.
-                    Still selectable as an objective's primary agent.
+                    Normally called by another bot as a helper.
+                    You can still pick it as the main bot on a card.
                   </p>
                 )}
                 <div>
@@ -344,12 +348,12 @@ export function AgentsSkillsTab() {
                   </div>
                   {agentSkills.length === 0 ? (
                     <p className="text-xs text-fg-3">
-                      This agent declares no <code className="font-mono text-fg-2">skills:</code> in its frontmatter.
+                      This bot lists no skills in its file.
                     </p>
                   ) : (
                     <div className="flex flex-wrap gap-1.5">
                       {agentSkills.map(s => (
-                        <LinkChip key={s} label={s} tone="accent" onClick={() => {
+                        <LinkChip key={s} label={formatName(s)} title={s} tone="accent" onClick={() => {
                           const match = skills.find(sk => sk.dirname === s || sk.name === s)
                           selectSkill(match ? match.dirname : s)
                           setViewMode('skills')
@@ -369,28 +373,28 @@ export function AgentsSkillsTab() {
             return (
               <div className="p-4 space-y-4">
                 <div className="flex flex-wrap items-center gap-2">
-                  <Badge tone="accent">skill</Badge>
-                  {rs?.parent && <Badge tone="neutral">sub-skill of {rs.parent}</Badge>}
-                  {rs?.needs_improvement && <Badge tone="verify">needs work</Badge>}
+                  <Badge tone="accent">Skill</Badge>
+                  {rs?.parent && <Badge tone="neutral">Sub-skill of {formatName(rs.parent)}</Badge>}
+                  {rs?.needs_improvement && <Badge tone="verify">Needs work</Badge>}
                   <h3 className="font-display text-lg font-semibold text-fg-0">{formatName(selected.key)}</h3>
                 </div>
                 {rs?.description && <p className="text-xs leading-relaxed text-fg-2">{rs.description}</p>}
                 <div className="flex flex-wrap gap-4 text-xs text-fg-2">
-                  <span><span className="font-mono text-fg-0">{rs?.usage_count ?? 0}</span> uses</span>
-                  <span><span className={cn('font-mono', rs?.failure_count ? 'text-flag-blocked' : 'text-fg-0')}>{rs?.failure_count ?? 0}</span> failures</span>
+                  <span><span className="text-fg-0">{rs?.usage_count ?? 0}</span> uses</span>
+                  <span><span className={cn(rs?.failure_count ? 'text-flag-blocked' : 'text-fg-0')}>{rs?.failure_count ?? 0}</span> failures</span>
                 </div>
                 <div>
                   <div className="mb-1.5 text-xs font-medium uppercase tracking-eyebrow text-fg-3">
-                    Consuming agents ({consumers.length})
+                    Bots using it ({consumers.length})
                   </div>
                   {consumers.length === 0 ? (
                     <p className="text-xs text-fg-3">
-                      No agent declares this skill — it is routed by slug or reached through a parent skill.
+                      No bot lists this skill — it is picked by name or reached through a parent skill.
                     </p>
                   ) : (
                     <div className="flex flex-wrap gap-1.5">
                       {consumers.map(a => (
-                        <LinkChip key={a} label={a} tone="info" onClick={() => { selectAgentBySlug(a); setViewMode('agents') }} />
+                        <LinkChip key={a} label={agentLabel(a)} title={a} tone="info" onClick={() => { selectAgentBySlug(a); setViewMode('agents') }} />
                       ))}
                     </div>
                   )}
@@ -404,11 +408,11 @@ export function AgentsSkillsTab() {
                     Tools reached ({rs?.tools?.length ?? 0})
                   </div>
                   {!rs?.tools?.length ? (
-                    <p className="text-xs text-fg-3">Declares no tools.</p>
+                    <p className="text-xs text-fg-3">Uses no tools.</p>
                   ) : (
                     <div className="flex flex-wrap gap-1.5">
                       {rs.tools.map(t => (
-                        <Badge key={t} tone="neutral">{t}</Badge>
+                        <span key={t} title={t}><Badge tone="neutral">{formatName(t)}</Badge></span>
                       ))}
                     </div>
                   )}
@@ -420,7 +424,7 @@ export function AgentsSkillsTab() {
                     </div>
                     <div className="flex flex-wrap gap-1.5">
                       {rs.subskills.map(s => (
-                        <LinkChip key={s} label={s} tone="accent" onClick={() => selectSkill(s)} />
+                        <LinkChip key={s} label={formatName(s)} title={s} tone="accent" onClick={() => selectSkill(s)} />
                       ))}
                     </div>
                   </div>

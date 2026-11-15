@@ -25,6 +25,7 @@ import {
 import { api, ApiError } from '../../lib/api'
 import { inputCls } from './config-form'
 import { Select } from '../ui/Select'
+import { formatDateTime, humanize } from '../../lib/format'
 
 const RESOURCE_SCOPE_LABELS: Record<ResourceScopeType, string> = {
   global: 'Global',
@@ -37,15 +38,15 @@ const RESOURCE_SCOPE_LABELS: Record<ResourceScopeType, string> = {
 function scopeLabel(a: ResourceAssignment): string {
   switch (a.scopeType) {
     case 'global':
-      return 'global'
+      return 'Everywhere'
     case 'workspace':
-      return `workspace: ${a.workspace ?? '—'}`
+      return `Workspace: ${a.workspace ?? '—'}`
     case 'project':
-      return `project: ${a.workspace ?? '—'} / ${a.project ?? '—'}`
+      return `Project: ${a.workspace ?? '—'} / ${a.project ?? '—'}`
     case 'user':
-      return `user: ${a.userId ?? '—'}`
+      return `User #${a.userId ?? '—'}`
     default:
-      return a.scopeType
+      return humanize(a.scopeType as string)
   }
 }
 
@@ -164,13 +165,14 @@ export function AssignmentsTab() {
         <div className="mt-3 flex flex-wrap items-end gap-3">
           {/* Resource type toggle */}
           <div>
-            <label className="mb-1 block text-xs uppercase tracking-eyebrow text-fg-3">Resource</label>
-            <div className="inline-flex rounded-md border border-line bg-surface-1 p-0.5">
+            <span id="assign-resource-label" className="mb-1 block text-xs uppercase tracking-eyebrow text-fg-3">Resource</span>
+            <div role="group" aria-labelledby="assign-resource-label" className="inline-flex rounded-md border border-line bg-surface-1 p-0.5">
               {(['agent', 'skill'] as ResourceType[]).map(rt => (
                 <button
                   key={rt}
                   type="button"
                   onClick={() => setResourceType(rt)}
+                  aria-pressed={resourceType === rt}
                   className={cn(
                     'rounded px-3 py-1.5 text-sm capitalize transition-colors',
                     resourceType === rt ? 'bg-surface-2 text-fg-0 shadow-pop ring-1 ring-line' : 'text-fg-2 hover:text-fg-0',
@@ -184,7 +186,7 @@ export function AssignmentsTab() {
 
           {/* Resource picker */}
           <div>
-            <label className="mb-1 block text-xs uppercase tracking-eyebrow text-fg-3">
+            <label htmlFor={resourceType === 'agent' ? 'assign-agent' : 'assign-skill'} className="mb-1 block text-xs uppercase tracking-eyebrow text-fg-3">
               {resourceType === 'agent' ? 'Agent' : 'Skill name'}
             </label>
             {resourceType === 'agent' ? (
@@ -192,6 +194,7 @@ export function AssignmentsTab() {
                 <Skeleton className="h-8 w-48" />
               ) : (
                 <Select
+                  id="assign-agent"
                   aria-label="Agent"
                   value={agentId}
                   onChange={v => setAgentId(v)}
@@ -204,6 +207,7 @@ export function AssignmentsTab() {
             ) : (
               <input
                 type="text"
+                id="assign-skill"
                 value={skillId}
                 onChange={e => setSkillId(e.target.value)}
                 placeholder="e.g. campaign-audit"
@@ -214,8 +218,9 @@ export function AssignmentsTab() {
 
           {/* Scope type */}
           <div>
-            <label className="mb-1 block text-xs uppercase tracking-eyebrow text-fg-3">Scope</label>
+            <label htmlFor="assign-scope" className="mb-1 block text-xs uppercase tracking-eyebrow text-fg-3">Scope</label>
             <Select
+              id="assign-scope"
               aria-label="Scope"
               value={scopeType}
               onChange={v => setScopeType(v as ResourceScopeType)}
@@ -228,8 +233,9 @@ export function AssignmentsTab() {
 
           {needsWorkspace && (
             <div>
-              <label className="mb-1 block text-xs uppercase tracking-eyebrow text-fg-3">Workspace</label>
+              <label htmlFor="assign-workspace" className="mb-1 block text-xs uppercase tracking-eyebrow text-fg-3">Workspace</label>
               <Select
+                id="assign-workspace"
                 aria-label="Workspace"
                 value={workspace}
                 onChange={v => setWorkspace(v)}
@@ -244,9 +250,10 @@ export function AssignmentsTab() {
 
           {needsProject && (
             <div>
-              <label className="mb-1 block text-xs uppercase tracking-eyebrow text-fg-3">Project / repo</label>
+              <label htmlFor="assign-project" className="mb-1 block text-xs uppercase tracking-eyebrow text-fg-3">Project / repo</label>
               <input
                 type="text"
+                id="assign-project"
                 value={project}
                 onChange={e => setProject(e.target.value)}
                 placeholder="e.g. my-app"
@@ -257,9 +264,10 @@ export function AssignmentsTab() {
 
           {needsUser && (
             <div>
-              <label className="mb-1 block text-xs uppercase tracking-eyebrow text-fg-3">User ID</label>
+              <label htmlFor="assign-user" className="mb-1 block text-xs uppercase tracking-eyebrow text-fg-3">User ID</label>
               <input
                 type="number"
+                id="assign-user"
                 value={userId}
                 onChange={e => setUserId(e.target.value)}
                 placeholder="e.g. 5"
@@ -311,8 +319,8 @@ export function AssignmentsTab() {
               {assignments.map(a => (
                 <tr key={a.id} className="border-b border-line last:border-b-0 hover:bg-surface-3">
                   <td className="px-4 py-2 font-mono text-fg-1">{a.resourceId}</td>
-                  <td className="px-4 py-2 font-mono text-xs text-fg-2">{scopeLabel(a)}</td>
-                  <td className="px-4 py-2 text-xs text-fg-3">{a.createdAt?.slice(0, 16).replace('T', ' ')}</td>
+                  <td className="px-4 py-2 text-xs text-fg-2">{scopeLabel(a)}</td>
+                  <td className="px-4 py-2 text-xs text-fg-3"><span title={formatDateTime(a.createdAt).title}>{formatDateTime(a.createdAt).label}</span></td>
                   <td className="px-4 py-2 text-right">
                     <Button variant="danger" size="sm" onClick={() => handleDelete(a)} leftIcon={<Trash2 className="h-3.5 w-3.5" />}>
                       Remove

@@ -20,6 +20,8 @@ process.env.JWT_SECRET = 'test-secret-repo-reg'
 process.env.WORKSPACES_JSON_PATH = WS_JSON
 
 const { initDb, getDb } = await import('../db/index.js')
+// obj 900803: a fresh DB no longer seeds the author's workspaces — this suite uses them.
+const { seedLegacyWorkspaces } = await import('../__fixtures__/legacy-workspaces.js')
 const { default: adminWorkspacesRouter } = await import('./admin-workspaces.js')
 const { invalidateWorkspacesCache } = await import('../services/workspaces.js')
 const { resolveWorkdir, loadDbRepoPaths } = await import('../services/prompt-builder-workdir.js')
@@ -52,6 +54,7 @@ async function post(p: string, body: unknown) {
 
 beforeAll(async () => {
   initDb()
+  await seedLegacyWorkspaces(getDb())
   const app = express()
   app.use(express.json())
   app.use(cookieParser())

@@ -54,8 +54,8 @@ export const BADGE_BASE =
 export const SCOPE_TONES: Record<SecretScopeType, string> = {
   global: 'border-[color:var(--accent-line)] bg-surface-2 text-accent-hover',
   workspace: 'border-status-working/40 bg-surface-2 text-status-working',
-  user: 'border-signal-verify/30 bg-signal-verify/10 text-signal-verify',
-  workspace_user: 'border-signal-amber/30 bg-signal-amber/10 text-signal-amber',
+  user: 'border-success/30 bg-success/10 text-success',
+  workspace_user: 'border-warning/30 bg-warning/10 text-warning',
 }
 
 /** Reading order for the all-scopes list: broadest blast radius first. */

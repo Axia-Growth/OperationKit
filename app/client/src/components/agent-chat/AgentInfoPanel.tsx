@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { readCache, writeCache } from './chat-cache'
 import { api } from '../../lib/api'
 import { Button, SkeletonText, cn } from '../ui'
 import { AgentAvatar } from './ChatItems'
@@ -26,12 +27,13 @@ const REACH: Array<{ tools: string[]; text: (a: ChatAgentInfo) => string }> = [
   {
     tools: ['search', 'list_folders', 'read_file'],
     text: a => (a.knowledge_folders.length
-      ? `Reads your knowledge base folders: ${a.knowledge_folders.join(', ')}`
-      : 'Reads your knowledge base'),
+      ? `Reads your Context folders: ${a.knowledge_folders.join(', ')}`
+      : 'Reads your Context'),
   },
   { tools: ['write_doc', 'file_answer'], text: () => 'Saves notes into those folders — each save shows up in the conversation' },
   { tools: ['list_objectives', 'get_objective', 'board_briefing'], text: () => 'Reads the board cards you can see' },
   { tools: ['create_objective'], text: () => 'Files bigger jobs as board cards for the team’s coding tools' },
+  { tools: ['bot_messages'], text: () => 'Messages other bots in the same workspace and brings their replies back here' },
   { tools: ['email'], text: () => 'Reads your inbox and writes email drafts — nothing is sent until you press Send' },
   { tools: ['calendar'], text: () => 'Reads your calendar and drafts invites — nothing is added until you press Add' },
   { tools: ['mcp'], text: () => 'Uses the MCP servers connected for this workspace in Settings → Integrations' },
@@ -61,7 +63,9 @@ const MAX_POLLS = 15
  * few times, so the panel updates without a reload.
  */
 function useAgentDetail(slug: string, onLoaded?: (a: ChatAgentInfo) => void) {
-  const [detail, setDetail] = useState<ChatAgentInfo | null>(null)
+  // obj 900865: a bot whose info was opened before paints it at once, then refreshes.
+  const cacheKey = `agent-detail:${slug}`
+  const [detail, setDetail] = useState<ChatAgentInfo | null>(() => readCache<ChatAgentInfo>(cacheKey) ?? null)
   const [error, setError] = useState<string | null>(null)
   useEffect(() => {
     let cancelled = false
@@ -72,6 +76,7 @@ function useAgentDetail(slug: string, onLoaded?: (a: ChatAgentInfo) => void) {
         const r = await api.get<{ agent?: ChatAgentInfo }>(`/agent-chat/agents/${encodeURIComponent(slug)}`)
         if (cancelled) return
         if (r?.agent && r.agent.slug === slug) {
+          writeCache(cacheKey, r.agent)
           setDetail(r.agent)
           setError(null)
           onLoaded?.(r.agent)

@@ -8,7 +8,7 @@
 import { useEffect, useState } from 'react'
 import type { IntegrationBuildSummary } from '@operationkit/shared'
 import { api } from '../../lib/api'
-import { Badge, Card } from '../ui'
+import { Badge, Button, Card, SectionHeader } from '../ui'
 import { useNavigate } from '../../context/nav'
 
 export function BuiltIntegrationsSection({
@@ -40,12 +40,12 @@ export function BuiltIntegrationsSection({
   if (builds.length === 0) return null
   return (
     <section aria-labelledby="built-integrations-title" className="space-y-3" data-testid="built-integrations">
-      <div>
-        <h3 id="built-integrations-title" className="font-display text-lg font-semibold text-fg-0">Built with the Integrations bot</h3>
-        <p className="mt-0.5 text-sm leading-relaxed text-fg-2">
-          Tools agents in this workspace can use. Keys live in Settings → Secrets under the names shown.
-        </p>
-      </div>
+      <SectionHeader
+        headingId="built-integrations-title"
+        className="mb-0"
+        title="Built with the Integrations bot"
+        description="Tools agents in this workspace can use. Keys live in Settings → Secrets under the names shown."
+      />
       {builds.map(b => (
         <Card inset key={b.id} className="p-4 sm:p-5" data-testid={`built-${b.ref}`}>
           <div className="flex flex-wrap items-start justify-between gap-3">
@@ -62,13 +62,9 @@ export function BuiltIntegrationsSection({
                 {b.secret_names.map(n => <code key={n} className="rounded bg-surface-3 px-1 font-mono text-fg-2">{n}</code>)}
               </div>
             </div>
-            <button
-              type="button"
-              onClick={() => navigate(`/o/${b.objective_id}`)}
-              className="min-h-[36px] rounded-md px-2 text-sm text-fg-2 underline-offset-2 hover:text-fg-0 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/50"
-            >
+            <Button type="button" variant="ghost" size="sm" onClick={() => navigate(`/o/${b.objective_id}`)}>
               Built on card #{b.objective_id}
-            </button>
+            </Button>
           </div>
         </Card>
       ))}

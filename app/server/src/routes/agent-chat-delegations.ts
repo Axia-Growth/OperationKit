@@ -5,6 +5,7 @@
  *   GET    /api/agent-chat/agents/:slug/delegations       admin: list + options
  *   POST   /api/agent-chat/agents/:slug/delegations       owner: issue a grant
  *   DELETE /api/agent-chat/agents/:slug/delegations/:id   owner: revoke
+ *   POST   /api/agent-chat/agents/:slug/registry          owner: register this bot (obj 900862)
  *
  * Issuing and revoking are the OWNER's browser click only: an admin signed in
  * with the httpOnly cookie. An agent key, a legacy API key and a Bearer JWT
@@ -14,7 +15,11 @@
  *
  * The grant is issued for the REGISTRY bot this chat bot speaks as
  * (services/bots/bot-registry.ts), because that is the name a bot puts on the
- * approval message. A chat bot with no registry identity cannot hold a grant.
+ * approval message. Every chat bot has one with no manual step (obj 900862,
+ * services/bots/register-chat-bot.ts `chatBotIdentity`): one the stored
+ * registry does not know gets an identity derived from its file on each read
+ * (nothing is written). Only when none can be derived does the page fall back
+ * to the owner's one-click register — never a hand-edited settings row.
  */
 import { Router, type Response } from 'express'
 import type { DelegationGrantsResponse } from '@operationkit/shared'
@@ -22,7 +27,8 @@ import type { AuthRequest } from '../middleware/auth.js'
 import { getDb } from '../db/index.js'
 import { findAgent } from '../services/agent-chat/engine.js'
 import type { ChatAgent } from '../services/agent-chat/agent-defs.js'
-import { botForAgentSlug, resolveBot, type BotDefinition } from '../services/bots/bot-registry.js'
+import type { BotDefinition } from '../services/bots/bot-registry.js'
+import { chatBotIdentity, registerChatBot, registrationOptions, type ChatBotIdentity } from '../services/bots/register-chat-bot.js'
 import { listWorkspaces } from '../services/workspaces.js'
 import { authenticatedViaCookie } from '../lib/message-provenance.js'
 import {
@@ -60,17 +66,17 @@ function agentOr404(req: AuthRequest, res: Response): ChatAgent | null {
   return a
 }
 
-/** The registry bot a chat bot speaks as: its slug first, then its names. */
+/**
+ * The bot identity a chat bot holds grants under: the registry bot it speaks
+ * as (its slug first, then its names), else one derived automatically from its
+ * file (obj 900862) — so every bot can hold a grant with no registry step.
+ */
+export function botIdentityFor(a: Pick<ChatAgent, 'slug' | 'name' | 'file_name'>): ChatBotIdentity | null {
+  return chatBotIdentity(a, getDb())
+}
+
 export function registryBotFor(a: Pick<ChatAgent, 'slug' | 'name' | 'file_name'>): BotDefinition | null {
-  const db = getDb()
-  const bySlug = botForAgentSlug(a.slug, db)
-  if (bySlug) return bySlug
-  for (const name of [a.name, a.file_name]) {
-    if (!name) continue
-    const r = resolveBot(name, db)
-    if (r.ok) return r.bot
-  }
-  return null
+  return botIdentityFor(a)?.bot ?? null
 }
 
 function workspaceOptions(): { slug: string; name: string }[] {
@@ -82,18 +88,24 @@ function workspaceOptions(): { slug: string; name: string }[] {
 }
 
 function payload(req: AuthRequest, a: ChatAgent): DelegationGrantsResponse {
-  const bot = registryBotFor(a)
+  const identity = botIdentityFor(a)
+  const bot = identity?.bot ?? null
   if (!bot) {
+    const canManage = isOwnerBrowserSession(req)
     return {
       bot: null,
-      bot_unavailable_reason: `${a.name} is not in the bot registry, so its messages cannot be matched to a grant. Add it to the registry (settings.bot_registry or settings.bot_agent_slugs) first.`,
+      bot_unavailable_reason: canManage
+        ? `${a.name} isn't registered as a bot yet, so its approvals can't be matched to a grant. Register it below — one click, no settings to edit.`
+        : `${a.name} isn't registered as a bot yet, so its approvals can't be matched to a grant. The owner can register it here, signed in in the browser.`,
       workspace_options: [],
       grants: [],
-      can_manage: false,
+      can_manage: canManage,
+      registration: registrationOptions(a, getDb()),
     }
   }
   return {
     bot: { id: bot.id, name: bot.name },
+    ...(identity?.auto ? { bot_auto: { linked: identity.linked } } : {}),
     workspace_options: workspaceOptions(),
     grants: listGrantsForBot(getDb(), bot.id),
     can_manage: isOwnerBrowserSession(req),
@@ -153,6 +165,35 @@ router.post('/agents/:slug/delegations', (req: AuthRequest, res) => {
     if (delegationError(res, err)) return
     throw err
   }
+})
+
+/**
+ * Register this chat bot in the bot registry (obj 900862) — the owner's one
+ * click that replaces hand-editing settings.bot_registry / bot_agent_slugs.
+ * Body: { bot?: string } — an existing registry bot to link to; omitted/null =
+ * a new bot named after this chat bot. Owner (cookie) only, like a grant.
+ */
+router.post('/agents/:slug/registry', (req: AuthRequest, res) => {
+  if (!ownerOr403(req, res)) return
+  const a = agentOr404(req, res)
+  if (!a) return
+  const body = (req.body ?? {}) as Record<string, unknown>
+  const r = registerChatBot(getDb(), a, body.bot)
+  if (!r.ok) {
+    res.status(r.status).json({ error: r.error, code: r.code })
+    return
+  }
+  try {
+    logActivity({
+      project: 'operationkit',
+      event_type: 'decision',
+      title: r.linked
+        ? `${req.user!.username} registered ${a.name} (${a.slug}) as the bot "${r.bot.id}"`
+        : `${req.user!.username} registered ${a.name} (${a.slug}) as a new bot "${r.bot.id}"`,
+      metadata: { kind: 'bot_registered', bot: r.bot.id, slug: a.slug, linked: r.linked, actor: req.user!.username },
+    })
+  } catch { /* best-effort */ }
+  res.status(201).json({ ...payload(req, a), registered: { id: r.bot.id, name: r.bot.name, linked: r.linked } })
 })
 
 router.delete('/agents/:slug/delegations/:id', (req: AuthRequest, res) => {

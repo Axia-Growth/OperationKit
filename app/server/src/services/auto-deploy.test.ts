@@ -8,9 +8,12 @@ import path from 'path'
 // would spawn a real self-deploy.
 const TMP_DB = path.join(os.tmpdir(), `cc-autodeploy-test-${process.pid}.db`)
 process.env.DB_PATH = TMP_DB
+// obj 900803: no built-in harness repo any more — configure it like an install does.
+process.env.HARNESS_REPO = 'your-org/operationkit'
 
 const { initDb, getDb } = await import('../db/index.js')
-const { shouldAutoDeploy, isAutoDeployEnabled, SELF_REPO } = await import('./auto-deploy.js')
+const { shouldAutoDeploy, isAutoDeployEnabled, selfRepo } = await import('./auto-deploy.js')
+const SELF_REPO = selfRepo()
 
 beforeAll(() => {
   if (fs.existsSync(TMP_DB)) fs.unlinkSync(TMP_DB)

@@ -8,7 +8,13 @@ export interface Crumb {
 
 /* PageHeader — page title + '/'-separated breadcrumb trail + right-aligned
    actions slot. (The old caret separator doubled as the default logo glyph; obj 900543.) Wraps
-   cleanly on mobile (actions drop below the title). */
+   cleanly on mobile (actions drop below the title).
+
+   Breadcrumb rule (obj 900807): the trail starts with the SECTION (the nav
+   or account-menu name: Context, Agents & Skills, System…), then the page.
+   Never the product name, never a slug or id, and plain text — monospace is
+   for code. A top-level page needs no trail: its title already is the
+   section. */
 export function PageHeader({
   title,
   breadcrumbs,
@@ -25,7 +31,7 @@ export function PageHeader({
   return (
     <header className={cn('mb-5 flex flex-col gap-3 sm:mb-6', className)}>
       {breadcrumbs && breadcrumbs.length > 0 && (
-        <nav aria-label="Breadcrumb" className="flex flex-wrap items-center gap-1.5 font-mono text-xs text-fg-3">
+        <nav aria-label="Breadcrumb" className="flex flex-wrap items-center gap-1.5 text-xs text-fg-3">
           {breadcrumbs.map((c, i) => (
             <span key={i} className="inline-flex items-center gap-1.5">
               {i > 0 && <span className="text-fg-3" aria-hidden="true">/</span>}

@@ -10,67 +10,6 @@
   color: var(--fg-0);
 }
 
-/* Tailwind still ships hardcoded dark hex. Remap the utilities we actually
-   use so light/dark tokens on this tree follow --surface/--fg without touching
-   the production board. */
-.cc-ws .bg-surface-0, .cc-ws .bg-surface { background-color: var(--surface-0) !important; }
-.cc-ws .bg-surface-1, .cc-ws .bg-surface-raised { background-color: var(--surface-1) !important; }
-.cc-ws .bg-surface-2, .cc-ws .bg-surface-overlay { background-color: var(--surface-2) !important; }
-.cc-ws .bg-surface-3 { background-color: var(--surface-3) !important; }
-.cc-ws .bg-surface-4 { background-color: var(--surface-4) !important; }
-.cc-ws .bg-surface-0\/70 { background-color: color-mix(in srgb, var(--surface-0) 70%, transparent) !important; }
-.cc-ws .text-fg-0 { color: var(--fg-0) !important; }
-.cc-ws .text-fg-1 { color: var(--fg-1) !important; }
-.cc-ws .text-fg-2 { color: var(--fg-2) !important; }
-.cc-ws .text-fg-3 { color: var(--fg-3) !important; }
-.cc-ws .border-line, .cc-ws .border-border { border-color: var(--line) !important; }
-.cc-ws .border-line-soft { border-color: var(--line-soft) !important; }
-.cc-ws .border-line-strong { border-color: var(--line-strong) !important; }
-.cc-ws .bg-accent { background-color: var(--accent) !important; }
-.cc-ws .text-accent { color: var(--accent-text) !important; }
-.cc-ws .text-accent-fg { color: var(--accent-fg) !important; }
-.cc-ws .hover\:bg-accent-hover:hover { background-color: var(--accent-hover) !important; }
-.cc-ws .hover\:bg-accent:hover { background-color: var(--accent-hover) !important; }
-.cc-ws .text-status-planning { color: var(--t-planning) !important; }
-.cc-ws .text-status-queue { color: var(--t-queue) !important; }
-.cc-ws .text-status-working { color: var(--t-working) !important; }
-.cc-ws .text-status-ai { color: var(--t-ai) !important; }
-.cc-ws .text-status-review { color: var(--t-review) !important; }
-.cc-ws .text-status-human { color: var(--t-human) !important; }
-.cc-ws .text-status-done { color: var(--t-done) !important; }
-.cc-ws .bg-status-planning { background-color: var(--st-planning) !important; }
-.cc-ws .bg-status-queue { background-color: var(--st-queue) !important; }
-.cc-ws .bg-status-working { background-color: var(--st-working) !important; }
-.cc-ws .bg-status-ai { background-color: var(--st-ai) !important; }
-.cc-ws .bg-status-review { background-color: var(--st-review) !important; }
-.cc-ws .bg-status-human { background-color: var(--st-human) !important; }
-.cc-ws .bg-status-done { background-color: var(--st-done) !important; }
-.cc-ws .hover\:bg-surface-3:hover { background-color: var(--surface-3) !important; }
-.cc-ws .hover\:bg-surface-4:hover { background-color: var(--surface-4) !important; }
-.cc-ws .hover\:text-fg-0:hover { color: var(--fg-0) !important; }
-.cc-ws .hover\:text-accent:hover { color: var(--accent-text) !important; }
-
-.cc-ws-topbar {
-  height: 56px;
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 0 16px;
-  border-bottom: 1px solid var(--line);
-  background: var(--surface-1);
-}
-
-.cc-ws-mark {
-  width: 28px;
-  height: 28px;
-  border-radius: 8px;
-  background: var(--accent);
-  color: var(--accent-fg);
-  font: 700 15px/28px var(--font-brand);
-  text-align: center;
-  flex: 0 0 auto;
-}
-
 .cc-ws-col {
   min-width: min(280px, 100%);
   display: flex;
@@ -79,13 +18,15 @@
      used to paint lanes lavender-grey, which made the board look muddy). */
   background: var(--surface-lane);
   border: 1px solid var(--line-soft);
-  border-radius: 14px;
+  /* Radii from the scale (polish F4): lanes are panels (xl = 12px),
+     cards are cards (lg = 8px). */
+  border-radius: 12px;
 }
 
 .cc-ws-card {
   background: var(--surface-1);
   border: 1px solid var(--line);
-  border-radius: 10px;
+  border-radius: 8px;
   transition: border-color 110ms ease-out, box-shadow 110ms ease-out;
 }
 
@@ -168,7 +109,6 @@
 }
 .cc-ws-workers-state {
   flex: 0 0 auto;
-  font-family: var(--font-mono);
   font-size: 12px;
   color: var(--fg-3);
 }
@@ -221,37 +161,6 @@
   flex: 1 1 240px;
   min-width: 0;
   gap: 6px;
-}
-.cc-design-url input {
-  flex: 1;
-  min-width: 0;
-  border: 1px solid var(--line);
-  background: var(--surface-2);
-  color: var(--fg-0);
-  border-radius: 6px;
-  padding: 6px 8px;
-  font: 12px/1.3 ui-monospace, monospace;
-}
-.cc-design-url button,
-.cc-design-pins-head button {
-  border: 1px solid var(--line);
-  background: var(--surface-2);
-  color: var(--fg-1);
-  border-radius: 6px;
-  padding: 6px 10px;
-  font-size: 12px;
-}
-.cc-design-url button:disabled {
-  opacity: 0.45;
-  cursor: not-allowed;
-}
-.cc-design-pins-head button:not(:disabled) {
-  border-color: var(--accent);
-  color: var(--fg-0);
-}
-.cc-design-pins-head button:not(:disabled) {
-  background: var(--accent);
-  color: var(--accent-fg);
 }
 .cc-design-toolbar select {
   max-width: 180px;
@@ -342,22 +251,5 @@
   white-space: nowrap;
   font-size: 12px;
   color: var(--fg-2);
-}
-.cc-design-pin-meta button {
-  border: 0;
-  background: transparent;
-  color: var(--fg-3);
-  font-size: 16px;
-  line-height: 1;
-}
-.cc-design-pins textarea {
-  width: 100%;
-  border: 1px solid var(--line);
-  border-radius: 6px;
-  background: var(--surface-1);
-  color: var(--fg-0);
-  font-size: 12px;
-  padding: 6px;
-  resize: vertical;
 }
 .cc-design-pin-text { margin: 0; font-size: 12px; color: var(--fg-1); }

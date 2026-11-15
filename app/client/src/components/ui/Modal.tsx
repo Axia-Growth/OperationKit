@@ -17,6 +17,18 @@ import { cn } from './cn'
    ───────────────────────────────────────────────────────── */
 
 type Variant = 'center' | 'sheet'
+/* Shared overlay widths (polish F4, #900805). Every centered overlay picks one
+   of these instead of its own max-w: sm = small forms, md = default dialogs,
+   lg = the card editor, the card search and the command palette. */
+export type ModalSize = 'sm' | 'md' | 'lg'
+export const MODAL_WIDTH: Record<ModalSize, string> = {
+  sm: 'max-w-md',
+  md: 'max-w-lg',
+  lg: 'max-w-xl',
+}
+/* `top` pins a launcher (palette, search) near the top so its height can grow
+   with results without the panel jumping around the vertical centre. */
+const TOP_PLACEMENT = 'top-[12vh] bottom-auto mt-0'
 
 const FOCUSABLE =
   'a[href],button:not([disabled]),textarea:not([disabled]),input:not([disabled]),select:not([disabled]),[tabindex]:not([tabindex="-1"])'
@@ -31,6 +43,8 @@ export function Modal({
   className,
   panelClassName,
   closeOnBackdrop = true,
+  size = 'md',
+  placement = 'center',
 }: {
   open: boolean
   onClose: () => void
@@ -43,6 +57,10 @@ export function Modal({
   /** Extra classes on the panel (sizing, etc.). */
   panelClassName?: string
   closeOnBackdrop?: boolean
+  /** Width of a `center` panel, from the shared scale. */
+  size?: ModalSize
+  /** `top` = a launcher anchored near the top of the viewport. */
+  placement?: 'center' | 'top'
 }) {
   // Parents pass inline closures, so onClose changes identity on every render
   // (the board re-renders every ~3s for live sessions). Read it through a ref
@@ -97,7 +115,11 @@ export function Modal({
           'fixed z-50 m-0 overflow-y-auto border border-line bg-surface-1 p-0 text-fg-0 shadow-float outline-none',
           isSheet
             ? 'cc-sheet-in sm:cc-drawer-in inset-x-0 bottom-0 top-auto max-h-[88vh] w-full max-w-none rounded-t-2xl sm:inset-y-0 sm:left-auto sm:right-0 sm:h-full sm:max-h-none sm:w-[440px] sm:rounded-none sm:rounded-l-2xl sm:border-y-0 sm:border-r-0'
-            : 'cc-pop-in inset-0 m-auto h-fit max-h-[88vh] w-[calc(100%-2rem)] max-w-lg rounded-xl',
+            : cn(
+                'cc-pop-in inset-0 m-auto h-fit max-h-[88vh] w-[calc(100%-2rem)] rounded-xl',
+                MODAL_WIDTH[size],
+                placement === 'top' && TOP_PLACEMENT,
+              ),
           panelClassName,
         )}
       >

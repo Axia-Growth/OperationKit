@@ -6,6 +6,7 @@ import { Link } from 'react-router-dom'
 import { Plus, ChevronRight } from 'lucide-react'
 import {
   Card, CardHeader, Button, Badge, Alert, Skeleton, useConfirm, cn,
+  Field, Input, Checkbox, SettingsSection, RowActions,
 } from '../ui'
 import { useWorkspaces } from '../../hooks/useWorkspaces'
 import {
@@ -16,10 +17,10 @@ import {
   type ObjectiveVisibility,
 } from '@operationkit/shared'
 import { api } from '../../lib/api'
-import { inputCls, SectionLabel } from './config-form'
 import type { EmailOutcome } from '../../lib/email'
 import { generateTempPassword } from '../../lib/tempPassword'
 import { Select } from '../ui/Select'
+import { humanize } from '../../lib/format'
 
 interface AdminUser extends User {
   workspaces: WorkspaceMembership[]
@@ -206,39 +207,40 @@ export function UsersTab() {
       {confirmDialog}
       {/* Create user */}
       <Card inset>
-        <CardHeader title="Create user" eyebrow="Manage" />
+        <CardHeader title="Create user" />
         <form onSubmit={createUser} className="space-y-3 p-4">
-          <div className="flex flex-col gap-2 sm:flex-row">
-            <input
-              type="text" placeholder="username" value={newUsername}
-              onChange={e => setNewUsername(e.target.value)} className={cn(inputCls, 'sm:flex-1')}
-            />
-            <div className="flex flex-1 gap-2">
-              <input
-                type="text" placeholder="temp password (8+ chars)" value={newPassword}
-                onChange={e => setNewPassword(e.target.value)} className={cn(inputCls, 'flex-1 font-mono')}
-              />
-              <Button type="button" variant="secondary" size="sm" className="shrink-0" onClick={() => setNewPassword(generateTempPassword())}>
-                Generate
-              </Button>
-            </div>
-            <input
-              type="email" placeholder="sign-in email (optional)" value={newEmail} aria-label="Sign-in email"
-              onChange={e => setNewEmail(e.target.value)} className={cn(inputCls, 'sm:flex-1')}
-            />
-            <Select value={newRole} onChange={v => setNewRole(v as UserRole)} aria-label="Role">
-              <option value="member">member</option>
-              <option value="admin">admin</option>
-            </Select>
-            <Button type="submit" variant="primary" size="sm" className="shrink-0" disabled={creating}>
-              {creating ? 'Creating…' : 'Create'}
-            </Button>
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+            <Field label="Username" id="new-user-username">
+              <Input value={newUsername} onChange={e => setNewUsername(e.target.value)} autoComplete="off" />
+            </Field>
+            <Field
+              label="Temporary password"
+              id="new-user-password"
+              hint="8+ characters"
+              action={
+                <Button type="button" variant="ghost" size="xs" onClick={() => setNewPassword(generateTempPassword())}>
+                  Generate
+                </Button>
+              }
+            >
+              <Input value={newPassword} onChange={e => setNewPassword(e.target.value)} className="font-mono" autoComplete="off" />
+            </Field>
+            <Field label="Sign-in email" id="new-user-email" optional>
+              <Input type="email" placeholder="name@company.com" value={newEmail} onChange={e => setNewEmail(e.target.value)} />
+            </Field>
+            <Field label="Role" id="new-user-role">
+              <Select value={newRole} onChange={v => setNewRole(v as UserRole)} className="w-full">
+                <option value="member">Member</option>
+                <option value="admin">Admin</option>
+              </Select>
+            </Field>
           </div>
           {emailReady === true && newEmail.trim() && (
-            <label className="flex items-center gap-2 text-xs text-fg-2">
-              <input type="checkbox" checked={emailInvite} onChange={e => setEmailInvite(e.target.checked)} className="accent-[var(--accent)]" />
-              Email the invite (sign-in link + temporary password) to {newEmail.trim()}
-            </label>
+            <Checkbox
+              checked={emailInvite}
+              onChange={e => setEmailInvite(e.target.checked)}
+              label={<>Email the invite (sign-in link + temporary password) to {newEmail.trim()}</>}
+            />
           )}
           {emailReady === false && (
             <p className="text-xs text-fg-3" data-testid="email-not-configured-hint">
@@ -246,21 +248,32 @@ export function UsersTab() {
               <Link to="/setup/email" className="text-accent hover:underline">Set up email</Link>
             </p>
           )}
-          {error && <Alert tone="alarm">{error}</Alert>}
+          {error && <Alert tone="alarm" title={error} />}
           {emailed && (
-            <Alert tone="verify" title={emailed.what === 'invite' ? <>Invite emailed to {emailed.to}</> : <>Temporary password emailed to {emailed.to}</>}>
+            <Alert
+              tone="verify"
+              title={emailed.what === 'invite' ? <>Invite emailed to {emailed.to}</> : <>Temporary password emailed to {emailed.to}</>}
+              action={<Button type="button" variant="ghost" size="xs" onClick={() => setEmailed(null)}>Dismiss</Button>}
+            >
               <span className="font-mono">{emailed.username}</span> will be asked to choose a new password at first sign-in.
-              <button type="button" onClick={() => setEmailed(null)} className="ml-2 text-signal-verify underline">dismiss</button>
             </Alert>
           )}
           {revealed && (
-            <Alert tone="amber" title={<>Password set for <span className="font-mono">{revealed.username}</span></>}>
+            <Alert
+              tone="amber"
+              title={<>Password set for <span className="font-mono">{revealed.username}</span></>}
+              action={<Button type="button" variant="ghost" size="xs" onClick={() => setRevealed(null)}>Dismiss</Button>}
+            >
               <div className="mt-1 font-mono text-fg-0">{revealed.password}</div>
               <div className="mt-1">Copy this now — it will not be shown again. Share with the user over a secure channel.</div>
-              {revealed.emailError && <div className="mt-1 text-signal-alarm">Email was not sent: {revealed.emailError}</div>}
-              <button type="button" onClick={() => setRevealed(null)} className="mt-1 text-signal-amber underline">dismiss</button>
+              {revealed.emailError && <div className="mt-1 text-danger">Email was not sent: {revealed.emailError}</div>}
             </Alert>
           )}
+          <div className="flex justify-end">
+            <Button type="submit" variant="primary" size="sm" disabled={creating}>
+              {creating ? 'Creating…' : 'Create user'}
+            </Button>
+          </div>
         </form>
       </Card>
 
@@ -271,10 +284,15 @@ export function UsersTab() {
         const isOpen = expanded === user.id
         return (
           <Card key={user.id} inset>
-            <button onClick={() => setExpanded(isOpen ? null : user.id)} className="flex w-full items-center gap-3 px-4 py-3 text-left">
+            <button
+              type="button"
+              onClick={() => setExpanded(isOpen ? null : user.id)}
+              aria-expanded={isOpen}
+              className="flex w-full items-center gap-3 rounded-lg px-4 py-3 text-left outline-none focus-visible:ring-2 focus-visible:ring-accent/50"
+            >
               <ChevronRight className={cn('h-4 w-4 shrink-0 text-fg-3 transition-transform', isOpen && 'rotate-90')} />
               <span className="text-sm font-medium text-fg-0">{user.username}</span>
-              <Badge tone={user.role === 'admin' ? 'accent' : 'neutral'}>{user.role}</Badge>
+              <Badge tone={user.role === 'admin' ? 'accent' : 'neutral'}>{humanize(user.role)}</Badge>
               {user.email && <span className="hidden truncate text-xs text-fg-2 sm:inline">{user.email}</span>}
               <span className="ml-auto text-xs text-fg-3">
                 {memberships.length} workspace{memberships.length === 1 ? '' : 's'}
@@ -282,85 +300,94 @@ export function UsersTab() {
             </button>
 
             {isOpen && (
-              <div className="space-y-4 border-t border-line p-4">
-                {/* Global role + actions */}
-                <div className="flex flex-wrap items-center gap-2 text-xs">
-                  <span className="text-fg-3">Global role:</span>
-                  <Select aria-label="Global role" value={user.role} onChange={v => setUserRole(user, v as UserRole)}>
-                    <option value="member">member</option>
-                    <option value="admin">admin</option>
-                  </Select>
-                  <div className="ml-auto flex gap-2">
-                    <Button size="sm" variant="secondary" onClick={() => resetPassword(user)}>Reset password</Button>
-                    <Button size="sm" variant="danger" onClick={() => deleteUser(user)}>Delete user</Button>
-                  </div>
+              <div className="space-y-5 border-t border-line p-4">
+                {/* Global role + password */}
+                <div className="flex flex-wrap items-end gap-3">
+                  <Field label="Global role" id={`user-role-${user.id}`}>
+                    <Select value={user.role} onChange={v => setUserRole(user, v as UserRole)}>
+                      <option value="member">Member</option>
+                      <option value="admin">Admin</option>
+                    </Select>
+                  </Field>
+                  <Button variant="secondary" onClick={() => resetPassword(user)}>Reset password</Button>
                 </div>
 
                 {/* Sign-in email (obj 720332) */}
-                <div className="flex flex-wrap items-center gap-2 text-xs">
-                  <label htmlFor={`user-email-${user.id}`} className="text-fg-3">Sign-in email:</label>
-                  <input
-                    id={`user-email-${user.id}`} type="email" placeholder="name@company.com"
-                    value={emailDraft[user.id] ?? user.email ?? ''}
-                    onChange={e => setEmailDraft(d => ({ ...d, [user.id]: e.target.value }))}
-                    className={cn(inputCls, 'min-w-0 flex-1')}
-                  />
-                  <Button
-                    size="sm" variant="secondary" loading={savingEmail === user.id}
-                    disabled={(emailDraft[user.id] ?? user.email ?? '') === (user.email ?? '')}
-                    onClick={() => saveEmail(user)}
-                  >
-                    Save email
-                  </Button>
-                  <p className="w-full text-xs text-fg-3">
-                    Behind Cloudflare Access, signing in at the Cloudflare door with this email opens the app as this user.
-                  </p>
-                </div>
+                <Field
+                  label="Sign-in email"
+                  id={`user-email-${user.id}`}
+                  hint="Behind Cloudflare Access, signing in at the Cloudflare door with this email opens the app as this user."
+                >
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Input
+                      type="email" placeholder="name@company.com"
+                      value={emailDraft[user.id] ?? user.email ?? ''}
+                      onChange={e => setEmailDraft(d => ({ ...d, [user.id]: e.target.value }))}
+                      className="min-w-0 flex-1 basis-56"
+                    />
+                    <Button
+                      variant="secondary" loading={savingEmail === user.id}
+                      disabled={(emailDraft[user.id] ?? user.email ?? '') === (user.email ?? '')}
+                      onClick={() => saveEmail(user)}
+                    >
+                      Save email
+                    </Button>
+                  </div>
+                </Field>
 
                 {/* Memberships */}
-                <section>
-                  <SectionLabel>Workspace access</SectionLabel>
+                <SettingsSection title="Workspace access" level={3}>
                   <div className="space-y-2">
                     {memberships.map(m => (
                       <div key={m.workspace} className="space-y-2 rounded-md border border-line bg-surface-1 p-3">
-                        <div className="flex items-center justify-between">
+                        <div className="flex items-center justify-between gap-2">
                           <span className="text-sm font-medium text-fg-0">{m.workspace}</span>
-                          <button onClick={() => revokeWorkspace(user, m.workspace)} className="text-xs text-signal-alarm hover:underline">Revoke</button>
+                          <RowActions
+                            label={`Actions for ${m.workspace}`}
+                            actions={[{ label: 'Revoke access', danger: true, onSelect: () => void revokeWorkspace(user, m.workspace) }]}
+                          />
                         </div>
-                        <div className="flex flex-wrap gap-4 text-xs">
-                          <label className="flex items-center gap-2">
-                            <span className="text-fg-3">Role:</span>
-                            <Select aria-label="Workspace role" value={m.role} onChange={v => updateMembership(user, m.workspace, { role: v as UserRole })}>
-                              <option value="member">member</option>
-                              <option value="admin">admin</option>
+                        <div className="flex flex-wrap gap-4">
+                          <Field label="Role" id={`ws-role-${user.id}-${m.workspace}`}>
+                            <Select value={m.role} onChange={v => updateMembership(user, m.workspace, { role: v as UserRole })}>
+                              <option value="member">Member</option>
+                              <option value="admin">Admin</option>
                             </Select>
-                          </label>
-                          <label className="flex items-center gap-2">
-                            <span className="text-fg-3">Sees:</span>
-                            <Select aria-label="Objective visibility" value={m.objective_visibility}
+                          </Field>
+                          <Field label="Sees" id={`ws-visibility-${user.id}-${m.workspace}`}>
+                            <Select value={m.objective_visibility}
                                     onChange={v => updateMembership(user, m.workspace, { objective_visibility: v as ObjectiveVisibility })}>
-                              <option value="own">own objectives</option>
-                              <option value="all">all in workspace</option>
+                              <option value="own">Own cards</option>
+                              <option value="all">All in workspace</option>
                             </Select>
-                          </label>
+                          </Field>
                         </div>
                       </div>
                     ))}
                     {memberships.length === 0 && <p className="text-xs text-fg-3">No workspace access — grant one below.</p>}
                   </div>
-                </section>
 
-                {/* Grant */}
-                {ungranted.length > 0 && (
-                  <div className="flex flex-wrap items-center gap-2">
-                    <span className="text-xs uppercase tracking-eyebrow text-fg-3">Grant:</span>
-                    {ungranted.map(ws => (
-                      <Button key={ws} size="sm" variant="secondary" leftIcon={<Plus className="h-3.5 w-3.5" />} onClick={() => grantWorkspace(user, ws)}>
-                        {ws}
-                      </Button>
-                    ))}
-                  </div>
-                )}
+                  {/* Grant */}
+                  {ungranted.length > 0 && (
+                    <div className="mt-3 flex flex-wrap items-center gap-2">
+                      <span className="text-sm text-fg-2">Grant access:</span>
+                      {ungranted.map(ws => (
+                        <Button key={ws} size="sm" variant="secondary" leftIcon={<Plus className="h-3.5 w-3.5" />} onClick={() => grantWorkspace(user, ws)}>
+                          {ws}
+                        </Button>
+                      ))}
+                    </div>
+                  )}
+                </SettingsSection>
+
+                {/* Danger zone — kept away from the everyday controls above */}
+                <SettingsSection
+                  title="Delete user"
+                  level={3}
+                  danger
+                  description={<>Permanently deletes {user.username}. This cannot be undone.</>}
+                  actions={<Button size="sm" variant="danger" onClick={() => deleteUser(user)}>Delete user</Button>}
+                />
               </div>
             )}
           </Card>

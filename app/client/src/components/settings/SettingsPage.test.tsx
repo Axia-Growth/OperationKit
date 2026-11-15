@@ -70,15 +70,25 @@ describe('SettingsPage tabs', () => {
     expect(labels).toEqual(['API & MCP', 'Integrations', 'Secrets'])
   })
 
-  it('shows the running build commit from /api/health in the footer (obj 720210)', async () => {
-    const fetchMock = vi.fn(async () => new Response(JSON.stringify({ status: 'ok', commit: '4212de2abcde' }), { status: 200 }))
-    vi.stubGlobal('fetch', fetchMock)
-    try {
-      mount('/settings/api-mcp')
-      await vi.waitFor(() => expect(container.querySelector('[data-testid="build-footer"]')?.textContent).toContain('4212de2abcde'))
-      expect(fetchMock).toHaveBeenCalledWith('/api/health', expect.anything())
-    } finally {
-      vi.unstubAllGlobals()
+  it('has no build footer — it moved to System (polish F5, obj 900806)', () => {
+    mount('/settings/api-mcp')
+    expect(container.querySelector('[data-testid="build-footer"]')).toBeNull()
+    expect(container.textContent).not.toContain('Build unknown')
+  })
+
+  it('wraps every tab in ONE content-width container (polish F5, obj 900806)', () => {
+    for (const tab of ['models', 'api-mcp', 'integrations', 'secrets', 'workspaces']) {
+      // MemoryRouter reads initialEntries once, so each tab gets a fresh root.
+      flushSync(() => root.unmount())
+      root = createRoot(container)
+      mount(`/settings/${tab}`)
+      const content = container.querySelector('[data-testid="settings-content"]')
+      expect(content, tab).not.toBeNull()
+      expect(content!.textContent).toContain(`${tab}-pane`)
+      // The width is the page container's; the wrapper never sets its own cap.
+      expect(content!.className).not.toMatch(/max-w-/)
+      expect(container.querySelector('.max-w-\\[1200px\\]')).not.toBeNull()
+      expect(container.querySelector('.max-w-\\[1600px\\]')).toBeNull()
     }
   })
 

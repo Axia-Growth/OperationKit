@@ -134,6 +134,13 @@ BACKUP_KEEP_LOCAL="7"
 BACKUP_KEEP_DAILY="7"
 BACKUP_KEEP_WEEKLY="4"
 BACKUP_KEEP_MONTHLY="6"
+# How state/home (projects, notes, agent memory, the knowledge base) is kept.
+#   archive  every nightly folder holds home.tar.gz (fine up to a few GB)
+#   offsite  with BACKUP_TARGET set: home goes to restic as a folder in its own
+#            snapshot, so only what changed uploads each night, and the local
+#            nightly folders stay small. For a large home (tens of GB). A run
+#            that sends nothing off-site still writes home.tar.gz.
+BACKUP_HOME="archive"
 
 # ── Server ────────────────────────────────────────────────────────────────────
 # Where everything is stored on the server. Change only if the client asks.

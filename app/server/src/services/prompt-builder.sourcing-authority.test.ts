@@ -260,7 +260,9 @@ describe('buildPlannerPrompt — a plan must not bake in a refusal', () => {
 
   it('tells the planner sourcing is sanctioned and not to plan a permission ask', () => {
     expect(prompt).toMatch(/Public-web sourcing .* is sanctioned work/i)
-    expect(prompt).toMatch(/do not write a plan step that asks Operator for permission to scrape/i)
+    // obj 900803: the owner is the install's own (first admin / setting), never a built-in name.
+    expect(prompt).toMatch(/do not write a plan step that asks (?:the owner|[A-Z][\w.-]*) for permission to scrape/i)
+    expect(prompt).not.toMatch(/\bMike\b/)
     expect(prompt).toMatch(/technical step to plan for/i)
   })
 })

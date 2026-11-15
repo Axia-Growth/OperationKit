@@ -246,8 +246,119 @@ export function applyInstallSlugs(bots: BotDefinition[], map: Record<string, str
  */
 export function listBots(db?: Database): BotDefinition[] {
   const base = baseBots(db)
+  const additions = readRegistryAdditions(db)
+  const withAdditions = additions.length ? applyRegistryAdditions(base, additions) : base
   const map = readInstallSlugMap(db)
-  return Object.keys(map).length ? applyInstallSlugs(base, map) : base
+  return Object.keys(map).length ? applyInstallSlugs(withAdditions, map) : withAdditions
+}
+
+/**
+ * Bots registered from the app (obj 900862).
+ *
+ * `settings.bot_registry_additions` holds a JSON array of
+ * `{ id, name?, aliases?, agent_slugs? }`. It is written by the owner's
+ * one-click "Register this bot" on a bot's settings page
+ * (`services/bots/register-chat-bot.ts`), so nobody has to hand-edit
+ * `settings.bot_registry` or `settings.bot_agent_slugs` for a grant to work.
+ *
+ * ADDITIVE, like `bot_agent_slugs`, and unlike `bot_registry` (which replaces
+ * the built-in list):
+ *  - an entry whose `id` resolves to a bot already in the list LINKS to it: its
+ *    aliases and chat slugs are added to that bot;
+ *  - any other entry appends a NEW bot.
+ * An alias or slug another bot already answers to stays with that bot (first
+ * owner wins), so a row here can never reroute an existing bot's name or
+ * thread. A malformed row is ignored with a warning, never fatal.
+ */
+export const BOT_REGISTRY_ADDITIONS_SETTING = 'bot_registry_additions'
+
+export interface RegistryAddition {
+  id: string
+  name?: string
+  aliases?: string[]
+  agent_slugs?: string[]
+}
+
+/** Parse the additions row: `[]` when unset, null when it is not a JSON array. Bad entries are dropped. */
+export function parseRegistryAdditions(raw: string | null | undefined): RegistryAddition[] | null {
+  if (!raw || !raw.trim()) return []
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(raw)
+  } catch {
+    return null
+  }
+  if (!Array.isArray(parsed)) return null
+  const out: RegistryAddition[] = []
+  for (const item of parsed) {
+    const e = (item ?? {}) as Partial<RegistryAddition>
+    if (typeof e.id !== 'string' || !e.id.trim() || !validateOwnerBot(e.id).ok) {
+      console.warn(`[bots] settings.${BOT_REGISTRY_ADDITIONS_SETTING}: ignoring an entry with an invalid id ${JSON.stringify(e.id)}`)
+      continue
+    }
+    out.push({
+      id: e.id.trim(),
+      name: typeof e.name === 'string' && e.name.trim() ? e.name.trim() : undefined,
+      aliases: Array.isArray(e.aliases) ? e.aliases.filter((a): a is string => typeof a === 'string' && !!a.trim()).map(a => a.trim()) : [],
+      agent_slugs: Array.isArray(e.agent_slugs) ? e.agent_slugs.filter(isValidChatSlug) : [],
+    })
+  }
+  return out
+}
+
+/** The stored additions (`[]` when unset or unreadable). */
+export function readRegistryAdditions(db?: Database): RegistryAddition[] {
+  if (!db) return []
+  let raw: string | null = null
+  try {
+    raw = (db.prepare('SELECT value FROM settings WHERE key = ?').get(BOT_REGISTRY_ADDITIONS_SETTING) as { value: string } | undefined)?.value ?? null
+  } catch {
+    return []
+  }
+  const list = parseRegistryAdditions(raw)
+  if (!list) {
+    console.warn(`[bots] settings.${BOT_REGISTRY_ADDITIONS_SETTING} is not a JSON array — ignoring it`)
+    return []
+  }
+  return list
+}
+
+/** Index of the bot a chat slug routes to — the order `botForAgentSlug` uses — or -1. */
+export function slugOwnerIndex(bots: BotDefinition[], slug: string): number {
+  const k = registryKey(slug)
+  return bots.findIndex(b => b.agent_slugs.some(x => registryKey(x) === k) || registryKey(b.id) === k || registryKey(b.name) === k)
+}
+
+/** Fold registry additions into a bot list (see BOT_REGISTRY_ADDITIONS_SETTING). Never removes or reroutes. */
+export function applyRegistryAdditions(bots: BotDefinition[], additions: RegistryAddition[]): BotDefinition[] {
+  const out = bots.map(b => ({ ...b, aliases: [...b.aliases], agent_slugs: [...b.agent_slugs] }))
+  for (const add of additions) {
+    let idx = findBotIndex(out, add.id)
+    if (idx < 0) {
+      const name = add.name ?? add.id
+      // A new bot's display name must not already answer for another bot.
+      if (findBotIndex(out, name) >= 0) {
+        console.warn(`[bots] settings.${BOT_REGISTRY_ADDITIONS_SETTING}: "${name}" already names another bot — not adding ${add.id}`)
+        continue
+      }
+      out.push({ id: add.id, name, aliases: [], agent_slugs: [] })
+      idx = out.length - 1
+    }
+    const bot = out[idx]
+    for (const alias of add.aliases ?? []) {
+      const held = findBotIndex(out, alias)
+      if (held < 0) bot.aliases.push(alias) // held by this bot already = nothing to do; by another = first owner wins
+    }
+    for (const slug of add.agent_slugs ?? []) {
+      const held = slugOwnerIndex(out, slug)
+      if (held >= 0 && held !== idx) {
+        console.warn(`[bots] settings.${BOT_REGISTRY_ADDITIONS_SETTING}: "${slug}" already belongs to ${out[held].id} — not adding it to ${bot.id}`)
+        continue
+      }
+      if (!bot.agent_slugs.some(s => registryKey(s) === registryKey(slug))) bot.agent_slugs.push(slug)
+    }
+  }
+  return out
 }
 
 function baseBots(db?: Database): BotDefinition[] {

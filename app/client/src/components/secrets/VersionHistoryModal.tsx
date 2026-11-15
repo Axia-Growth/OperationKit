@@ -4,7 +4,8 @@
  */
 import { useEffect, useState } from 'react'
 import { api } from '../../lib/api'
-import { Modal, useConfirm } from '../ui'
+import { X } from 'lucide-react'
+import { Alert, Button, DataTable, IconButton, Modal, SectionHeader, useConfirm, type Column } from '../ui'
 import type {
   SecretSummary,
   SecretVersionSummary,
@@ -12,6 +13,7 @@ import type {
 } from '@operationkit/shared'
 import { SCOPE_LABELS, scopeQuery, type Scope } from './scope'
 import { AuditLogPanel } from './AuditLogPanel'
+import { formatDateTime } from '../../lib/format'
 
 interface VersionHistoryProps {
   /** The ROW's scope — history and rollback always address the row itself. */
@@ -57,18 +59,46 @@ export function VersionHistoryModal({ scope, secretKey, onClose, onRolledBack }:
     }
   }
 
+  const columns: Column<SecretVersionSummary>[] = [
+    {
+      key: 'version',
+      header: 'Version',
+      cell: v => (
+        <span className="text-fg-1">
+          v{v.version}
+          {v.version === versions[0]?.version && <span className="ml-1 text-xs uppercase text-accent">current</span>}
+        </span>
+      ),
+    },
+    {
+      key: 'by',
+      header: 'Changed by',
+      cell: v => (
+        <span className="text-fg-2">
+          {v.changedBy ?? '—'}
+          {/* obj 719065: an agent-relayed value names the relaying agent */}
+          {v.via && <span className="mt-0.5 block text-xs leading-snug text-fg-3">via {v.via}</span>}
+        </span>
+      ),
+    },
+    {
+      key: 'when',
+      header: 'When',
+      mono: true,
+      cell: v => <span title={formatDateTime(v.changedAt).title}>{formatDateTime(v.changedAt).label}</span>,
+    },
+  ]
+
   return (
-    <Modal open onClose={onClose} variant="center" labelledBy="secret-history-title" panelClassName="max-w-2xl bg-surface-raised">
+    <Modal open onClose={onClose} variant="center" labelledBy="secret-history-title" panelClassName="max-w-2xl bg-surface-1">
       <div className="p-6">
         <div className="mb-4 flex items-center justify-between">
           <h2 id="secret-history-title" className="text-lg font-semibold text-fg-0">
             Version history — <span className="font-mono text-lg">{secretKey}</span>
           </h2>
-          <button onClick={onClose} className="text-fg-3 hover:text-fg-1" type="button">
-            <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
-            </svg>
-          </button>
+          <IconButton label="Close" onClick={onClose} className="-mr-2 text-fg-3">
+            <X className="h-5 w-5" aria-hidden />
+          </IconButton>
         </div>
 
         <p className="mb-3 text-xs text-fg-3">
@@ -77,47 +107,25 @@ export function VersionHistoryModal({ scope, secretKey, onClose, onRolledBack }:
           {scope.userId != null && <span className="text-fg-2"> · user #{scope.userId}</span>}
         </p>
 
-        {error && (
-          <div className="mb-3 rounded bg-signal-alarm/10 px-3 py-2 text-base text-signal-alarm">{error}</div>
-        )}
+        {error && <Alert tone="alarm" title={error} className="mb-3" />}
 
-        {loading ? (
-          <div className="text-base text-fg-3">Loading…</div>
-        ) : versions.length === 0 ? (
-          <div className="text-base text-fg-3">No version history.</div>
-        ) : (
-          <table className="w-full text-base">
-            <thead className="border-b border-border">
-              <tr className="text-left text-xs text-fg-2">
-                <th className="py-2 font-medium">Version</th>
-                <th className="py-2 font-medium">Changed by</th>
-                <th className="py-2 font-medium">When</th>
-                <th className="py-2 font-medium text-right">Action</th>
-              </tr>
-            </thead>
-            <tbody>
-              {versions.map((v, i) => (
-                <tr key={v.version} className="border-b border-border last:border-b-0">
-                  <td className="py-2 text-fg-1">v{v.version}{i === 0 && <span className="ml-1 text-xs uppercase text-accent">current</span>}</td>
-                  <td className="py-2 text-fg-2">
-                    {v.changedBy ?? '—'}
-                    {/* obj 719065: an agent-relayed value names the relaying agent */}
-                    {v.via && <div className="mt-0.5 text-xs leading-snug text-fg-3">via {v.via}</div>}
-                  </td>
-                  <td className="py-2 text-fg-3 text-xs">{v.changedAt?.slice(0, 16).replace('T', ' ')}</td>
-                  <td className="py-2 text-right">
-                    {i !== 0 && (
-                      <button onClick={() => handleRollback(v.version)} className="text-xs text-accent hover:underline">Roll back</button>
-                    )}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        )}
+        <DataTable
+          aria-label={`Versions of ${secretKey}`}
+          columns={columns}
+          rows={versions}
+          rowKey={v => v.version}
+          loading={loading}
+          loadingRows={3}
+          empty={{ title: 'No version history' }}
+          rowActionsAlways
+          // The newest version is current; every older one can be re-applied.
+          rowActions={v => (v.version === versions[0]?.version ? null : (
+            <Button size="sm" variant="ghost" onClick={() => void handleRollback(v.version)}>Roll back</Button>
+          ))}
+        />
 
         {/* obj 900498 — this secret's own audit trail (who rotated / used / tried to reveal it). */}
-        <h3 className="mb-2 mt-5 text-xs font-medium uppercase tracking-eyebrow text-fg-3">Activity</h3>
+        <SectionHeader title="Activity" level={3} className="mb-2 mt-5" />
         <AuditLogPanel scopeQuery={q} secretKey={secretKey} pageSize={20} />
       </div>
       {confirmDialog}

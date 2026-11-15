@@ -59,7 +59,16 @@ export interface ChatMessageRow {
   provider: string | null
   model: string | null
   tool_name: string | null
-  meta: { draft_id?: number; objective_id?: number; provider_label?: string; ok?: boolean } | null
+  meta: {
+    draft_id?: number
+    objective_id?: number
+    provider_label?: string
+    ok?: boolean
+    /** A bot-to-bot conversation this row belongs to or points at (obj 900859). */
+    bot_conversation_id?: number
+    bot_message_id?: number
+    kind?: string
+  } | null
   /** Images attached to this message (obj 900157). Metadata only — never bytes. */
   images: StoredImage[]
   created_at: string
@@ -282,6 +291,95 @@ export function systemPromptFor(agent: ChatAgent, ctx: { username: string; now: 
   return parts.filter(p => p !== '').join('\n')
 }
 
+// ── the model + tool loop (shared by a chat turn and a bot wake, obj 900859) ──
+
+/** One row the loop wants recorded: an assistant answer, a tool line or an error line. */
+export type LoopRecord = Omit<ChatMessageRow, 'id' | 'created_at' | 'images'>
+
+export type LoopResult =
+  | { kind: 'answered'; text: string; step: number }
+  | { kind: 'failed'; message: string; step: number }
+  /** No AI seat could take the call. NOTHING was recorded for it — the caller decides. */
+  | { kind: 'unavailable'; error: ProviderUnavailableError; step: number }
+
+/**
+ * Ask the provider, run the tool calls it makes (up to MAX_STEPS rounds), and
+ * record each tool line and the final answer through `record`. Extracted from
+ * runTurn unchanged so a chat turn and a bot-to-bot wake (bot-wake.ts) run the
+ * SAME loop under the SAME tool gates — the wake is not a second, laxer path.
+ */
+export async function runModelLoop(p: {
+  provider: ChatProvider
+  system: string
+  convo: ChatMessage[]
+  tools: ReturnType<typeof toolSpecsFor>
+  agent: ChatAgent
+  ctx: ToolContext
+  mcpTools: McpToolSet
+  signal?: AbortSignal
+  record: (m: LoopRecord) => void
+}): Promise<LoopResult> {
+  const { provider, convo, ctx, mcpTools, record } = p
+  for (let step = 0; step < MAX_STEPS; step++) {
+    let out
+    try {
+      out = await provider.complete({ system: p.system, messages: convo, tools: p.tools, agent: p.agent, signal: p.signal })
+    } catch (err) {
+      if (err instanceof ProviderUnavailableError) return { kind: 'unavailable', error: err, step }
+      const msg = err instanceof ProviderError ? err.message : `The AI provider failed: ${err instanceof Error ? err.message : String(err)}`
+      record({ role: 'error', content: msg.slice(0, 500), provider: provider.id, model: provider.model, tool_name: null, meta: { provider_label: provider.label } })
+      return { kind: 'failed', message: msg.slice(0, 500), step }
+    }
+
+    if (out.toolCalls.length === 0) {
+      const text = (out.content ?? '').trim() || '(no reply)'
+      record({
+        role: 'assistant',
+        content: text,
+        provider: provider.id,
+        model: provider.model,
+        tool_name: null,
+        meta: { provider_label: provider.label },
+      })
+      return { kind: 'answered', text, step }
+    }
+
+    convo.push({ role: 'assistant', content: out.content ?? null, tool_calls: out.toolCalls })
+    for (const c of out.toolCalls) {
+      let args: Record<string, unknown> = {}
+      try { args = JSON.parse(c.function.arguments || '{}') } catch { /* bad JSON → empty args, the tool reports what is missing */ }
+      let resultForModel: unknown
+      try {
+        const r = mcpTools.targets.has(c.function.name)
+          ? await runMcpTool(ctx.workspace, mcpTools, c.function.name, args)
+          : await runChatTool(ctx, c.function.name, args)
+        resultForModel = r.result
+        record({
+          role: 'tool',
+          content: r.summary,
+          provider: provider.id,
+          model: provider.model,
+          tool_name: c.function.name,
+          meta: {
+            ok: true,
+            ...(r.draft_id ? { draft_id: r.draft_id } : {}),
+            ...(r.objective_id ? { objective_id: r.objective_id } : {}),
+            ...(r.bot_conversation_id ? { bot_conversation_id: r.bot_conversation_id } : {}),
+          },
+        })
+      } catch (err) {
+        const msg = err instanceof ToolUseError ? err.message : `Tool failed: ${err instanceof Error ? err.message : String(err)}`
+        resultForModel = { error: msg }
+        record({ role: 'tool', content: msg, provider: provider.id, model: provider.model, tool_name: c.function.name, meta: { ok: false } })
+      }
+      convo.push({ role: 'tool', tool_call_id: c.id, name: c.function.name, content: JSON.stringify(resultForModel) })
+    }
+  }
+  const message = `Stopped after ${MAX_STEPS} steps without a final answer. Try a more specific request.`
+  record({ role: 'error', content: message, provider: provider.id, model: provider.model, tool_name: null, meta: null })
+  return { kind: 'failed', message, step: MAX_STEPS }
+}
+
 // ── a turn ──
 
 const inFlight = new Set<string>()
@@ -342,7 +440,7 @@ export async function runTurn(input: TurnInput): Promise<{ messages: ChatMessage
       try { seedDemoKnowledge(env) } catch { /* the to-do tools report a missing file */ }
     }
     const connectors = resolveConnectors({ demo, now })
-    const ctx: ToolContext = { userId, username: input.username, workspace: workspaceFor(userId, agent.slug), agent, kbRoot: knowledgeRoot(env), connectors, now, web: { env, signal: input.signal, ...input.webDeps } }
+    const ctx: ToolContext = { userId, username: input.username, workspace: workspaceFor(userId, agent.slug), agent, kbRoot: knowledgeRoot(env), connectors, now, web: { env, signal: input.signal, ...input.webDeps }, lane }
 
     let providerId: ChatProviderId | null = null
     let provider: ChatProvider
@@ -387,66 +485,29 @@ export async function runTurn(input: TurnInput): Promise<{ messages: ChatMessage
       { role: 'user', content: userContentForModel(userRow, provider.supportsImages) },
     ]
 
-    for (let step = 0; step < MAX_STEPS; step++) {
-      let out
-      try {
-        out = await provider.complete({ system, messages: convo, tools, agent, signal: input.signal })
-      } catch (err) {
-        if (err instanceof ProviderUnavailableError) {
-          // Nothing ran yet: take the message back so a retry is clean. After a
-          // tool step, keep what happened so far and say so in the history.
-          if (step === 0) {
-            deleteMessage(userRow.id)
-            created.length = 0
-          } else {
-            created.push(add({ role: 'error', content: err.message, provider: provider.id, model: provider.model, tool_name: null, meta: { provider_label: provider.label } }))
-          }
-          throw new ChatUnavailableError(err.message, err.reason, created)
-        }
-        const msg = err instanceof ProviderError ? err.message : `The AI provider failed: ${err instanceof Error ? err.message : String(err)}`
-        created.push(add({ role: 'error', content: msg.slice(0, 500), provider: provider.id, model: provider.model, tool_name: null, meta: { provider_label: provider.label } }))
-        return { messages: created }
+    const loop = await runModelLoop({
+      provider,
+      system,
+      convo,
+      tools,
+      agent,
+      ctx,
+      mcpTools,
+      signal: input.signal,
+      record: m => { created.push(add(m)) },
+    })
+    if (loop.kind === 'unavailable') {
+      const err = loop.error
+      // Nothing ran yet: take the message back so a retry is clean. After a
+      // tool step, keep what happened so far and say so in the history.
+      if (loop.step === 0) {
+        deleteMessage(userRow.id)
+        created.length = 0
+      } else {
+        created.push(add({ role: 'error', content: err.message, provider: provider.id, model: provider.model, tool_name: null, meta: { provider_label: provider.label } }))
       }
-
-      if (out.toolCalls.length === 0) {
-        created.push(add({
-          role: 'assistant',
-          content: (out.content ?? '').trim() || '(no reply)',
-          provider: provider.id,
-          model: provider.model,
-          tool_name: null,
-          meta: { provider_label: provider.label },
-        }))
-        return { messages: created }
-      }
-
-      convo.push({ role: 'assistant', content: out.content ?? null, tool_calls: out.toolCalls })
-      for (const c of out.toolCalls) {
-        let args: Record<string, unknown> = {}
-        try { args = JSON.parse(c.function.arguments || '{}') } catch { /* bad JSON → empty args, the tool reports what is missing */ }
-        let resultForModel: unknown
-        try {
-          const r = mcpTools.targets.has(c.function.name)
-            ? await runMcpTool(ctx.workspace, mcpTools, c.function.name, args)
-            : await runChatTool(ctx, c.function.name, args)
-          resultForModel = r.result
-          created.push(add({
-            role: 'tool',
-            content: r.summary,
-            provider: provider.id,
-            model: provider.model,
-            tool_name: c.function.name,
-            meta: { ok: true, ...(r.draft_id ? { draft_id: r.draft_id } : {}), ...(r.objective_id ? { objective_id: r.objective_id } : {}) },
-          }))
-        } catch (err) {
-          const msg = err instanceof ToolUseError ? err.message : `Tool failed: ${err instanceof Error ? err.message : String(err)}`
-          resultForModel = { error: msg }
-          created.push(add({ role: 'tool', content: msg, provider: provider.id, model: provider.model, tool_name: c.function.name, meta: { ok: false } }))
-        }
-        convo.push({ role: 'tool', tool_call_id: c.id, name: c.function.name, content: JSON.stringify(resultForModel) })
-      }
+      throw new ChatUnavailableError(err.message, err.reason, created)
     }
-    created.push(add({ role: 'error', content: `Stopped after ${MAX_STEPS} steps without a final answer. Try a more specific request.`, provider: provider.id, model: provider.model, tool_name: null, meta: null }))
     return { messages: created }
   } finally {
     inFlight.delete(key)

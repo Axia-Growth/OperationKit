@@ -15,6 +15,8 @@ export * from './types-mcp-servers.js'
 export * from './types-integrations.js'
 export * from './brand-color.js'
 export * from './delegation.js'
+export * from './ownership.js'
+export * from './board-triage.js'
 
 // Type-aware transitions live in `./workflow.ts` to keep this file focused on
 // the data shape. Re-exported here so `@operationkit/shared` callers can get

@@ -7,6 +7,7 @@
  *   POST /api/flows                           create a workflow / a new draft version from okflow/1 JSON,
  *                                             OR "New workflow" from a goal: {workspace, goal, name?,
  *                                             end_condition?, builder?: {max_iterations}} → a builder card (B6)
+ *   PATCH /api/flows/:id {notes?, tools?}     edit a workflow's Notes + Tools (obj 900868; not versioned)
  *   POST /api/flows/validate {definition}     validate okflow/1 JSON without saving it (B6)
  *   POST /api/flows/:id/versions {definition} draft a new version of an existing workflow (B6); every
  *                                             validation error at once; agent drafts count against
@@ -84,6 +85,7 @@ import { autoPauseThreshold } from '../services/routine-auto-pause.js'
 import { definitionToMermaid } from '../../../shared/flow/mermaid.js'
 import { nodeStatusFromSteps } from '../../../shared/flow/run-status.js'
 import { diffFlowNodes } from '../../../shared/flow/diff.js'
+import { parseFlowDetails, readFlowTools, type FlowDetailsPatch } from '../../../shared/flow/details.js'
 import { redactLive } from '../services/live-redaction.js'
 import type { FlowDefinition } from '../../../shared/flow/types.js'
 import {
@@ -324,12 +326,26 @@ function summarize(db: Database.Database, flow: FlowRow): FlowSummary {
     created_by: flow.created_by,
     created_at: flow.created_at,
     updated_at: flow.updated_at,
+    notes: flow.notes ?? null,
+    tools: readFlowTools(flow.tools_json),
     trigger: trig ? { on: trig.on, cron: trig.schedule?.cron ?? null } : null,
     node_count: def?.nodes?.length ?? 0,
     kinds,
     routine: routineInfo(db, flow.id),
     last_run: last ? runSummary(last, flow) : null,
   }
+}
+
+/** Write Notes / Tools (obj 900868). Only the fields present in the patch change. */
+function applyFlowDetails(db: Database.Database, flowId: number, patch: FlowDetailsPatch): boolean {
+  const sets: string[] = []
+  const params: (string | null)[] = []
+  if (patch.notes !== undefined) { sets.push('notes = ?'); params.push(patch.notes) }
+  if (patch.tools !== undefined) { sets.push('tools_json = ?'); params.push(patch.tools.length ? JSON.stringify(patch.tools) : null) }
+  if (!sets.length) return false
+  db.prepare(`UPDATE flow_definitions SET ${sets.join(', ')}, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id = ?`)
+    .run(...params, flowId)
+  return true
 }
 
 /**
@@ -453,10 +469,15 @@ router.get('/:id', (req: AuthRequest, res) => {
 })
 
 router.post('/', async (req: AuthRequest, res) => {
-  const body = (req.body ?? {}) as { workspace?: unknown; definition?: unknown; goal?: unknown }
+  const body = (req.body ?? {}) as { workspace?: unknown; definition?: unknown; goal?: unknown; notes?: unknown; tools?: unknown }
   const def = body.definition
   if (def === undefined && body.goal !== undefined) {
     await createFromGoal(req, res)
+    return
+  }
+  const details = parseFlowDetails(body)
+  if (!details.ok) {
+    res.status(400).json({ error: details.error })
     return
   }
   if (!def || typeof def !== 'object' || Array.isArray(def)) {
@@ -485,6 +506,7 @@ router.post('/', async (req: AuthRequest, res) => {
     res.status(status).json({ error: saved.reason, reason: saved.reason, errors: saved.errors ?? [] })
     return
   }
+  applyFlowDetails(db, saved.flowId, details.value)
   const before = getFlowRow(db, saved.flowId)?.objective_id ?? null
   const actingUser = req.user && req.user.id > 0 ? req.user.id : null
   const objectiveId = ensureFlowHomeCard(db, saved.flowId, actingUser)
@@ -530,6 +552,7 @@ function parseEndCondition(raw: unknown): { ok: true; value: EndCondition | null
 async function createFromGoal(req: AuthRequest, res: Response): Promise<void> {
   const body = (req.body ?? {}) as {
     workspace?: unknown; goal?: unknown; name?: unknown; end_condition?: unknown; builder?: unknown; max_iterations?: unknown
+    notes?: unknown; tools?: unknown
   }
   const g = body.goal as { statement?: unknown; end_condition?: unknown } | string
   const statement = typeof g === 'string' ? g : g && typeof g === 'object' && !Array.isArray(g) && typeof g.statement === 'string' ? g.statement : ''
@@ -548,6 +571,11 @@ async function createFromGoal(req: AuthRequest, res: Response): Promise<void> {
   }
   if (body.name !== undefined && (typeof body.name !== 'string' || body.name.length > FLOW_NAME_MAX_CHARS)) {
     res.status(400).json({ error: `name must be a string of at most ${FLOW_NAME_MAX_CHARS} characters` })
+    return
+  }
+  const details = parseFlowDetails(body)
+  if (!details.ok) {
+    res.status(400).json({ error: details.error })
     return
   }
   const rawMax = (body.builder as { max_iterations?: unknown } | undefined)?.max_iterations ?? body.max_iterations
@@ -579,6 +607,7 @@ async function createFromGoal(req: AuthRequest, res: Response): Promise<void> {
   const made = await createWorkflowFromGoal(db, {
     workspace, goal: statement.trim(), ...(typeof body.name === 'string' && body.name.trim() ? { name: body.name } : {}),
     endCondition: ec.value, ...(maxIterations ? { maxIterations } : {}), createdBy: actor, createdByUserId: actingUser,
+    notes: details.value.notes ?? null, tools: details.value.tools ?? [],
   })
   const obj = db.prepare('SELECT * FROM objectives WHERE id = ?').get(made.objectiveId) as Objective | undefined
   if (obj) broadcast({ type: 'objective_updated', payload: obj })
@@ -605,6 +634,36 @@ async function createFromGoal(req: AuthRequest, res: Response): Promise<void> {
     flow: summarize(db, getFlowRow(db, made.flowId)!),
   })
 }
+
+/**
+ * Edit a workflow's Notes and Tools (obj 900868). Body: `{notes?, tools?}`;
+ * absent = unchanged, `notes: ''` / `tools: []` clears. These describe the
+ * workflow; they never touch a version, so nothing is re-tested or re-published.
+ */
+router.patch('/:id', (req: AuthRequest, res) => {
+  const flow = loadFlowFor(req, res)
+  if (!flow) return
+  const body = (req.body ?? {}) as { notes?: unknown; tools?: unknown }
+  const details = parseFlowDetails(body)
+  if (!details.ok) {
+    res.status(400).json({ error: details.error })
+    return
+  }
+  if (details.value.notes === undefined && details.value.tools === undefined) {
+    res.status(400).json({ error: 'nothing to update: send notes and/or tools' })
+    return
+  }
+  const db = getDb()
+  applyFlowDetails(db, flow.id, details.value)
+  try {
+    logActivity({
+      project: 'flows', workspace: flow.workspace, event_type: 'decision',
+      title: `Workflow '${flow.name}': notes/tools updated`,
+      metadata: { kind: 'flow_details_updated', flow_id: flow.id, actor: actorOf(req), fields: Object.keys(details.value) },
+    })
+  } catch { /* activity is best-effort */ }
+  res.json({ ok: true, flow: summarize(db, getFlowRow(db, flow.id)!) })
+})
 
 /** Validate okflow/1 JSON without saving it. Free: never counts as a builder iteration. */
 router.post('/validate', (req: AuthRequest, res) => {

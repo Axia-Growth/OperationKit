@@ -11,9 +11,9 @@ const TONE: Record<Tone, string> = {
   // no lavender or greige fill (QA r2 #5, QA r3 #1)
   neutral: 'border-line bg-surface-2 text-fg-2',
   accent: 'border-[color:var(--accent-line)] bg-surface-2 text-accent-hover',
-  verify: 'border-signal-verify/30 bg-signal-verify/10 text-signal-verify',
-  amber: 'border-signal-amber/30 bg-signal-amber/10 text-signal-amber',
-  alarm: 'border-signal-alarm/30 bg-signal-alarm/10 text-signal-alarm',
+  verify: 'border-success/30 bg-success/10 text-success',
+  amber: 'border-warning/30 bg-warning/10 text-warning',
+  alarm: 'border-danger/30 bg-danger/10 text-danger',
   info: 'border-status-working/40 bg-surface-2 text-status-working',
 }
 
@@ -56,7 +56,7 @@ const STATUS: Record<PipelineStatus, { label: string; dot: string; text: string;
   review:   { label: 'In Review',dot: 'bg-status-review',   text: 'text-status-review',   ring: 'border-status-review/30' },
   human:    { label: 'Needs You',dot: 'bg-accent',          text: 'text-accent-hover',    ring: 'border-[color:var(--accent-line)]' },
   done:     { label: 'Done',     dot: 'bg-status-done',     text: 'text-status-done',     ring: 'border-status-done/30' },
-  blocked:  { label: 'Blocked',  dot: 'bg-signal-alarm',    text: 'text-signal-alarm',    ring: 'border-signal-alarm/30' },
+  blocked:  { label: 'Blocked',  dot: 'bg-danger',    text: 'text-danger',    ring: 'border-danger/30' },
 }
 
 export function StatusPill({ status, className }: { status: PipelineStatus; className?: string }) {

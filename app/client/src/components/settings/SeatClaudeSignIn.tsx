@@ -15,7 +15,8 @@
  */
 import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react'
 import { api, ApiError } from '../../lib/api'
-import { Alert, Button, Skeleton, cn } from '../../components/ui'
+import { ExternalLink } from 'lucide-react'
+import { Alert, Button, Field, Input, Skeleton, cn } from '../../components/ui'
 
 export type ClaudeSignInOutcome = 'healthy' | 'unparked' | 'parked' | 'rate_limited' | 'inconclusive' | 'skipped'
 
@@ -31,28 +32,20 @@ function replyLost(err: unknown): boolean {
   return err.status === 0 || err.status === 502 || err.status === 503 || err.status === 504
 }
 
-const LINK_BUTTON =
-  'inline-flex min-h-[44px] select-none items-center justify-center gap-2 rounded-md border border-transparent bg-accent px-4 ' +
-  'text-sm font-medium tracking-tight text-accent-fg transition-colors duration-fast ease-out hover:bg-accent-hover ' +
-  'active:bg-accent-press focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/50 sm:min-h-[36px]'
-
-const INPUT =
-  'min-h-[44px] w-full rounded-md border border-line bg-surface-1 px-3 font-mono text-sm text-fg-0 outline-none ' +
-  'transition-colors duration-fast ease-out placeholder:text-fg-3 hover:border-line-strong focus:border-accent ' +
-  'focus-visible:ring-2 focus-visible:ring-accent/40 disabled:cursor-not-allowed disabled:opacity-45 sm:min-h-[36px]'
+// One primary per view (polish F5): the sign-in link is the primary until it has
+// been opened; then "Connect seat" (the next step) takes the accent.
+const LINK_BASE =
+  'inline-flex min-h-[44px] select-none items-center justify-center gap-2 rounded-md border px-4 ' +
+  'text-sm font-medium tracking-tight transition-colors duration-fast ease-out ' +
+  'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/50 sm:min-h-[36px]'
+const LINK_PRIMARY = LINK_BASE + ' border-transparent bg-accent text-accent-fg hover:bg-accent-hover active:bg-accent-press'
+const LINK_SECONDARY = LINK_BASE + ' border-line bg-surface-2 text-fg-0 hover:border-line-strong hover:bg-surface-3'
 
 function fmtTime(iso: string): string {
   const d = new Date(iso)
   return Number.isNaN(d.getTime()) ? iso : d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
 }
 
-function ExternalIcon() {
-  return (
-    <svg viewBox="0 0 16 16" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="1.6" aria-hidden="true">
-      <path d="M9 3h4v4M13 3L7.5 8.5M11 9.5V13H3V5h3.5" strokeLinecap="round" strokeLinejoin="round" />
-    </svg>
-  )
-}
 
 export function SeatClaudeSignIn<S>({
   seatId,
@@ -191,32 +184,30 @@ export function SeatClaudeSignIn<S>({
             <span className="font-mono text-fg-3">1.</span> Open Claude and sign in with the subscription account (Pro, Max or Team).
           </p>
           <div className="flex flex-wrap items-center gap-3">
-            <a href={link?.url} target="_blank" rel="noopener noreferrer" className={LINK_BUTTON} onClick={() => setOpened(true)}>
-              Sign in with Claude <ExternalIcon />
+            <a href={link?.url} target="_blank" rel="noopener noreferrer" className={opened ? LINK_SECONDARY : LINK_PRIMARY} onClick={() => setOpened(true)}>
+              Sign in with Claude <ExternalLink aria-hidden="true" className="h-3.5 w-3.5" />
             </a>
             {link && <span className="text-xs text-fg-3">Link works until {fmtTime(link.expiresAt)}</span>}
           </div>
         </li>
-        <li className="space-y-2">
-          <label htmlFor={codeId} className="block text-fg-1">
-            <span className="font-mono text-fg-3">2.</span> Claude shows an <span className="text-fg-0">Authentication code</span>. Copy it and paste it here.
-          </label>
-          <input
+        <li>
+          <Field
             id={codeId}
-            type="text"
-            autoComplete="off"
-            autoCapitalize="off"
-            spellCheck={false}
-            className={cn(INPUT, opened && !code && 'border-line-strong')}
-            value={code}
-            onChange={e => setCode(e.target.value)}
-            placeholder="Paste the authentication code"
-            disabled={finishing}
-            aria-describedby={`${codeId}-hint`}
-          />
-          <p id={`${codeId}-hint`} className="text-xs leading-relaxed text-fg-3">
-            The code works once. We swap it for a one-year subscription token, store it encrypted and never show it again.
-          </p>
+            labelClassName="font-normal"
+            label={<><span className="font-mono text-fg-3">2.</span> Claude shows an <span className="text-fg-0">Authentication code</span>. Copy it and paste it here.</>}
+            hint="The code works once. We swap it for a one-year subscription token, store it encrypted and never show it again."
+          >
+            <Input
+              type="text"
+              autoComplete="off"
+              autoCapitalize="off"
+              spellCheck={false}
+              className={cn('font-mono', opened && !code && 'border-line-strong')}
+              value={code}
+              onChange={e => setCode(e.target.value)}
+              disabled={finishing}
+            />
+          </Field>
         </li>
       </ol>
 
@@ -224,9 +215,7 @@ export function SeatClaudeSignIn<S>({
         <p className="text-xs text-fg-3" aria-live="polite">Signing in and running a small test turn. This can take up to a minute.</p>
       )}
       {error && (
-        <Alert tone="alarm">
-          {error.text}
-        </Alert>
+        <Alert tone="alarm" title={error.text} />
       )}
       <div className="flex flex-wrap gap-2">
         {error?.dead ? (
@@ -234,7 +223,7 @@ export function SeatClaudeSignIn<S>({
         ) : error?.retry ? (
           <Button type="button" variant="primary" loading={finishing} onClick={() => void send(lastPaste.current)}>Try again</Button>
         ) : (
-          <Button type="submit" variant="primary" loading={finishing}>{finishing ? 'Connecting…' : seatId ? 'Reconnect seat' : 'Connect seat'}</Button>
+          <Button type="submit" variant={opened ? 'primary' : 'secondary'} loading={finishing}>{finishing ? 'Connecting…' : seatId ? 'Reconnect seat' : 'Connect seat'}</Button>
         )}
         <Button type="button" variant="ghost" onClick={cancel} disabled={finishing}>Cancel</Button>
       </div>

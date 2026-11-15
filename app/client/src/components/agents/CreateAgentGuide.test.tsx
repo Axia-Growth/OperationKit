@@ -37,15 +37,17 @@ afterEach(() => {
 const links = () => Object.fromEntries([...container.querySelectorAll('a')].map(a => [a.textContent, a.getAttribute('href')]))
 
 describe('CreateAgentGuide (obj 900672)', () => {
-  it('names the three things in one line each', async () => {
+  it('names the four things in one line each, per the glossary', async () => {
     agents = [{ slug: DEV_BOT_SLUG, name: 'Acme Dev' }]
     root.render(<MemoryRouter><CreateAgentGuide /></MemoryRouter>)
     await settle()
     const text = container.textContent ?? ''
-    expect(text).toContain('Make a new bot, agent or skill')
-    expect(text).toMatch(/Bot — someone you chat with/)
-    expect(text).toMatch(/Agent — a worker that picks up board cards/)
-    expect(text).toMatch(/Skill — how-to steps an agent follows/)
+    expect(text).toContain('Make a new bot or skill')
+    expect(text).toMatch(/Bot — an AI teammate you chat with and assign cards to/)
+    expect(text).toMatch(/Outside agent — a third-party AI program/)
+    expect(text).toMatch(/Tool — /)
+    expect(text).not.toMatch(/Agent — a worker/)
+    expect(text).toMatch(/Skill — how-to steps a bot follows/)
   })
 
   it('with the Dev bot installed, links open its conversation with the request typed in', async () => {
@@ -54,7 +56,7 @@ describe('CreateAgentGuide (obj 900672)', () => {
     await settle()
     const l = links()
     expect(l['Create a bot']).toBe(devBotLink('bot'))
-    expect(l['Create an agent']).toBe(devBotLink('agent'))
+    expect(l['Create an agent']).toBeUndefined()
     expect(l['Create a skill']).toBe(devBotLink('skill'))
     expect(new URL(`http://x${l['Create a skill']}`).searchParams.get('prompt')).toBe(CREATE_PROMPTS.skill)
     expect(l['Browse templates']).toBe('/agents?tab=templates')

@@ -5,6 +5,8 @@
 import type { RefObject } from 'react'
 import type { ObjectiveStatus } from '@operationkit/shared'
 import { ThreadTimeline } from '../ThreadTimeline'
+import { MessageSquare } from 'lucide-react'
+import { EmptyState } from '../ui/EmptyState'
 import { ThinkingIndicator } from '../design/primitives'
 import type { ConnState } from '../ConnStatusPill'
 import type { NeedsSecretItem } from '@operationkit/shared'
@@ -47,9 +49,6 @@ export function ThreadPane({
             <div className="text-base text-fg-2">Session starting…</div>
           </div>
         )}
-        {!threadHasContent && !isActive && (
-          <div className="mt-8 text-center text-base text-fg-3">No session output</div>
-        )}
         {/* Collapsed thread: visible anchors + lazily-expandable action gaps. */}
         <ThreadTimeline
           objectiveId={objectiveId}
@@ -60,6 +59,15 @@ export function ThreadPane({
           onConnState={onConnState}
           pendingEcho={pendingEcho}
           onEchoLanded={onEchoLanded}
+          emptyState={isActive ? undefined : (
+            <EmptyState
+              compact
+              icon={<MessageSquare className="h-5 w-5" aria-hidden="true" />}
+              title="No session output yet"
+              description="When a session runs on this card, its messages show up here."
+              className="mt-8"
+            />
+          )}
         />
         {/* Optimistic echo of the just-sent follow-up (OK-13). Mirrors the
             `followup` user bubble in SessionMessages.tsx so it reads identically

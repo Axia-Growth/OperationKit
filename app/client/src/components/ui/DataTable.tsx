@@ -1,4 +1,4 @@
-import { useMemo, useState, type ReactNode } from 'react'
+import { Fragment, useMemo, useState, type ReactNode } from 'react'
 import { ChevronUp, ChevronDown, ChevronsUpDown, Table as TableIcon } from 'lucide-react'
 import { cn } from './cn'
 import { EmptyState } from './EmptyState'
@@ -56,6 +56,14 @@ interface DataTableProps<T> {
   className?: string
   /** Skeleton row count while loading. */
   loadingRows?: number
+  /** Group consecutive rows under a header row (rows should arrive grouped). */
+  groupBy?: (row: T) => string
+  /** Header content for a group key (default: the key). */
+  groupHeader?: (key: string) => ReactNode
+  /** Keep row actions visible instead of fading in on hover — use with a "⋯" RowActions menu. */
+  rowActionsAlways?: boolean
+  /** Accessible name for the table. */
+  'aria-label'?: string
 }
 
 const alignCls = (a?: 'left' | 'right' | 'center') =>
@@ -73,7 +81,16 @@ export function DataTable<T>({
   initialSort,
   className,
   loadingRows = 5,
+  groupBy,
+  groupHeader,
+  rowActionsAlways,
+  'aria-label': ariaLabel,
 }: DataTableProps<T>) {
+  const groupStartsAt = (list: T[], i: number): string | null => {
+    if (!groupBy) return null
+    const k = groupBy(list[i]!)
+    return i === 0 || groupBy(list[i - 1]!) !== k ? k : null
+  }
   const [sort, setSort] = useState<{ key: string; dir: SortDir } | null>(initialSort ?? null)
 
   const sorted = useMemo(() => {
@@ -118,7 +135,7 @@ export function DataTable<T>({
     <div className={cn('min-w-0', className)}>
       {/* ── DESKTOP: real table ── */}
       <div className="hidden overflow-hidden rounded-lg border border-line bg-surface-2 sm:block">
-        <table className="w-full border-collapse text-sm">
+        <table className="w-full border-collapse text-sm" aria-label={ariaLabel}>
           <thead className="sticky top-0 z-[1] bg-surface-0">
             <tr className="border-b border-line">
               {columns.map((col) => {
@@ -176,9 +193,22 @@ export function DataTable<T>({
                     {rowActions && <td className="px-3 py-3" />}
                   </tr>
                 ))
-              : sorted.map((row) => (
+              : sorted.map((row, i) => {
+                  const group = groupStartsAt(sorted, i)
+                  return (
+                  <Fragment key={rowKey(row)}>
+                  {group != null && (
+                    <tr className="border-b border-line-soft bg-surface-0">
+                      <th
+                        scope="colgroup"
+                        colSpan={columns.length + (rowActions ? 1 : 0)}
+                        className="px-3 pb-1.5 pt-3 text-left text-xs font-semibold uppercase tracking-eyebrow text-fg-3"
+                      >
+                        {groupHeader ? groupHeader(group) : group}
+                      </th>
+                    </tr>
+                  )}
                   <tr
-                    key={rowKey(row)}
                     onClick={onRowClick ? () => onRowClick(row) : undefined}
                     onKeyDown={
                       onRowClick
@@ -211,14 +241,22 @@ export function DataTable<T>({
                       </td>
                     ))}
                     {rowActions && (
-                      <td className="px-3 py-2.5 text-right">
-                        <div className="flex items-center justify-end gap-1 opacity-0 transition-opacity duration-fast group-hover:opacity-100 group-focus-within:opacity-100">
+                      <td className="px-3 py-2.5 text-right" onClick={(e) => e.stopPropagation()}>
+                        <div
+                          className={cn(
+                            'flex items-center justify-end gap-1',
+                            !rowActionsAlways &&
+                              'opacity-0 transition-opacity duration-fast group-hover:opacity-100 group-focus-within:opacity-100',
+                          )}
+                        >
                           {rowActions(row)}
                         </div>
                       </td>
                     )}
                   </tr>
-                ))}
+                  </Fragment>
+                  )
+                })}
           </tbody>
         </table>
       </div>
@@ -233,12 +271,18 @@ export function DataTable<T>({
                 <Skeleton className="h-3 w-2/3" />
               </div>
             ))
-          : sorted.map((row) => {
+          : sorted.map((row, idx) => {
               const title = mobileTitle ? mobileTitle(row) : columns[0]?.cell(row)
               const rest = columns.filter((c, i) => !c.hideOnMobile && !(i === 0 && !mobileTitle))
+              const group = groupStartsAt(sorted, idx)
               return (
+                <Fragment key={rowKey(row)}>
+                {group != null && (
+                  <p className="mt-2 px-1 text-xs font-semibold uppercase tracking-eyebrow text-fg-3 first:mt-0">
+                    {groupHeader ? groupHeader(group) : group}
+                  </p>
+                )}
                 <div
-                  key={rowKey(row)}
                   onClick={onRowClick ? () => onRowClick(row) : undefined}
                   onKeyDown={
                     onRowClick
@@ -259,6 +303,11 @@ export function DataTable<T>({
                 >
                   <div className="mb-2 flex items-start justify-between gap-2">
                     <div className="min-w-0 text-base font-medium text-fg-0">{title}</div>
+                    {rowActions && rowActionsAlways && (
+                      <div className="-mr-2 -mt-2 flex shrink-0 items-center" onClick={(e) => e.stopPropagation()}>
+                        {rowActions(row)}
+                      </div>
+                    )}
                   </div>
                   <dl className="flex flex-col gap-1.5">
                     {rest.map((col) => (
@@ -272,12 +321,13 @@ export function DataTable<T>({
                       </div>
                     ))}
                   </dl>
-                  {rowActions && (
+                  {rowActions && !rowActionsAlways && (
                     <div className="mt-3 flex items-center gap-2 border-t border-line-soft pt-3 [&>*]:flex-1">
                       {rowActions(row)}
                     </div>
                   )}
                 </div>
+                </Fragment>
               )
             })}
       </div>

@@ -5,7 +5,7 @@
  */
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { api, ApiError } from '../../lib/api'
-import { Alert, Button, Spinner } from '../../components/ui'
+import { Alert, Button, SectionHeader, Spinner } from '../../components/ui'
 
 export const LOGIN_POLL_MS = 3000
 
@@ -117,7 +117,7 @@ export function SeatDeviceLogin<S>({
 
   return (
     <div className="space-y-3 rounded-md border border-line bg-surface-1 p-4" aria-live="polite">
-      <p className="text-sm font-medium text-fg-0">Sign in to {engine}</p>
+      <SectionHeader level={3} title={`Sign in to ${engine}`} className="mb-0" />
 
       {phase === 'starting' && (
         <div className="flex items-center gap-2 text-sm text-fg-2">

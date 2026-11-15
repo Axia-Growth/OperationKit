@@ -38,7 +38,7 @@ describe('WorkspaceGraph — full screen', () => {
     const dialog = document.querySelector<HTMLElement>('[role="dialog"]')!
     expect(dialog).toBeTruthy()
     expect(dialog.getAttribute('aria-modal')).toBe('true')
-    expect(document.getElementById(dialog.getAttribute('aria-labelledby')!)?.textContent).toBe('Knowledge base graph, full screen')
+    expect(document.getElementById(dialog.getAttribute('aria-labelledby')!)?.textContent).toBe('Context graph, full screen')
     // The graph moved into the dialog; focus starts on its exit button.
     expect(dialog.querySelectorAll('g[data-rel]')).toHaveLength(2)
     expect(document.activeElement?.getAttribute('aria-label')).toBe('Exit full screen')

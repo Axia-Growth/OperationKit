@@ -30,7 +30,9 @@ vi.mock('../lib/api', () => ({
     del: vi.fn(() => Promise.resolve()),
   },
 }))
-vi.mock('./ui', () => ({
+// Keep the real primitives (Button, IconButton, Input, …); stub only these.
+vi.mock('./ui', async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
   Modal: ({ children }: { children: React.ReactNode }) => <div role="dialog">{children}</div>,
   useConfirm: () => ({ confirm: vi.fn(), confirmDialog: null }),
 }))

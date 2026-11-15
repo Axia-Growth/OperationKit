@@ -14,11 +14,14 @@ import path from 'path'
 
 const TMP_DB = path.join(os.tmpdir(), `cc-repo-scope-test-${process.pid}-${Date.now()}.db`)
 process.env.DB_PATH = TMP_DB
+// obj 900803: no built-in harness repo any more — configure it like an install does.
+process.env.HARNESS_REPO = 'your-org/operationkit'
 
 const { initDb, getDb } = await import('../db/index.js')
 const { repoForObjective, objectiveIsForRepo, classifyObjectiveRepo } = await import('./objective-prs.js')
-const { selectAgedEarnedStatusTargets, selfHealHarnessStatus, discoverAndBackfillPR, PR_LINKAGE_REPO } =
+const { selectAgedEarnedStatusTargets, selfHealHarnessStatus, discoverAndBackfillPR, prLinkageRepo } =
   await import('./pr-linkage.js')
+const PR_LINKAGE_REPO = prLinkageRepo()
 
 const HARNESS = 'your-org/operationkit'
 const EXAMPLE3 = 'EXAMPLE2/example3-platform'

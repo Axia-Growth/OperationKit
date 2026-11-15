@@ -74,7 +74,7 @@ function WaitRow({ flowId, runId, wait: w, onChanged }: { flowId: number; runId:
   if (w.reason === 'approval') {
     return (
       <div className="space-y-2" data-testid="flow-wait-approval">
-        {header(<ShieldQuestion className="h-4 w-4 text-signal-amber" />, 'Owner approval')}
+        {header(<ShieldQuestion className="h-4 w-4 text-warning" />, 'Owner approval')}
         {w.approval?.prompt && <p className="text-sm text-fg-0">{w.approval.prompt}</p>}
         {w.next && (
           <div className="space-y-1">
@@ -118,7 +118,7 @@ function WaitRow({ flowId, runId, wait: w, onChanged }: { flowId: number; runId:
   if (w.reason === 'unknown_outcome') {
     return (
       <div className="space-y-2" data-testid="flow-wait-unknown">
-        {header(<ShieldQuestion className="h-4 w-4 text-signal-alarm" />, 'Confirm: did this step happen?')}
+        {header(<ShieldQuestion className="h-4 w-4 text-danger" />, 'Confirm: did this step happen?')}
         <p className="text-fg-2">
           The engine stopped while <span className="font-mono">{w.node_id}</span> was in flight. It is not re-run automatically, so it cannot send twice.
         </p>

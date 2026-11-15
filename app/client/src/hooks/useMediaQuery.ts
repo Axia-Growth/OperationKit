@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 
-/** Matches `board.css` mobile stack (`max-width: 767px`). */
+/** The board's mobile stack breakpoint (`max-width: 767px`). */
 export const BOARD_MOBILE_QUERY = '(max-width: 767px)'
 
 // jsdom (and very old browsers) have no matchMedia: treat every query as false.

@@ -231,6 +231,9 @@ export interface BuilderBriefInput {
   workspace: string
   goal: string
   endCondition: unknown | null
+  /** obj 900868 — the owner's notes and the tools/integrations they want used. */
+  notes?: string | null
+  preferredTools?: string[]
   maxIterations: number
   tools: BriefTool[]
   okit: 'ok' | 'unavailable'
@@ -269,6 +272,19 @@ export function builderBrief(b: BuilderBriefInput): string {
       'None given. **Propose one**: at least one deterministic `assert` (an expression over `steps.<id>.output…`), optional `judge`.',
       'Put it in the draft\'s `goal.end_condition` and state it in your summary so the owner can confirm it before publishing.',
       'Once the owner confirms it, you may not change it without them.',
+    )
+  }
+  if (b.notes) {
+    lines.push('', '## Notes from the owner', '', b.notes)
+  }
+  if (b.preferredTools && b.preferredTools.length) {
+    lines.push(
+      '',
+      '## Tools to use',
+      '',
+      'The owner wants this workflow to use these tools or integrations. Prefer them. If one is not in the Tool registry or the workspace connectors below, say so in your summary instead of quietly using something else:',
+      '',
+      ...b.preferredTools.map((t) => `- ${t}`),
     )
   }
   lines.push(
@@ -344,6 +360,9 @@ export interface CreateFromGoalInput {
   name?: string
   endCondition?: unknown
   maxIterations?: number
+  /** obj 900868 — optional Notes + Tools, stored on the flow and shown to the builder. */
+  notes?: string | null
+  tools?: string[]
   createdBy: string
   createdByUserId: number | null
 }
@@ -373,12 +392,16 @@ export async function createWorkflowFromGoal(db: Database.Database, input: Creat
     const slug = uniqueFlowSlug(db, input.workspace, slugifyFlowName(name))
     const maxIter = input.maxIterations ?? null
     const r = db.prepare(
-      'INSERT INTO flow_definitions (slug, workspace, name, created_by, goal_statement, builder_max_iterations) VALUES (?, ?, ?, ?, ?, ?)',
-    ).run(slug, input.workspace, name, input.createdBy, input.goal, maxIter)
+      'INSERT INTO flow_definitions (slug, workspace, name, created_by, goal_statement, builder_max_iterations, notes, tools_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+    ).run(
+      slug, input.workspace, name, input.createdBy, input.goal, maxIter,
+      input.notes || null, input.tools && input.tools.length ? JSON.stringify(input.tools) : null,
+    )
     const flowId = Number(r.lastInsertRowid)
     const maxIterations = builderMaxIterations(db, flowId)
     const description = builderBrief({
       flowId, slug, name, workspace: input.workspace, goal: input.goal, endCondition: input.endCondition ?? null,
+      notes: input.notes ?? null, preferredTools: input.tools ?? [],
       maxIterations, tools, okit, connectors, flowsEnabled: enabled,
     })
     const o = db.prepare(

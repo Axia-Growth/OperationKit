@@ -16,7 +16,7 @@ import type {
   McpServerSummary,
 } from '@operationkit/shared'
 import { api, ApiError } from '../../lib/api'
-import { Alert, Badge, Button, CopyButton, Modal, cn } from '../ui'
+import { Alert, Badge, Button, CopyButton, Field, Input, Modal, cn } from '../ui'
 import { errorHint, errorTitle, nameFromUrl } from './mcpServerCopy'
 import { McpToolList } from './McpToolList'
 import { Select } from '../ui/Select'
@@ -27,9 +27,6 @@ const SOURCE_TABS: { key: Source; label: string }[] = [
   { key: 'catalog', label: 'From the catalog' },
 ]
 
-const INPUT =
-  'min-h-[44px] w-full rounded-md border border-line bg-surface-1 px-3 text-sm text-fg-0 outline-none transition-colors duration-fast ease-out placeholder:text-fg-3 hover:border-line-strong focus:border-accent focus-visible:ring-2 focus-visible:ring-accent/40 sm:min-h-[36px]'
-const LABEL = 'mb-1 block text-xs font-medium text-fg-1'
 
 function errText(err: unknown, fallback: string): string {
   if (err instanceof ApiError) return (err.body as { error?: string } | null)?.error || err.message || fallback
@@ -207,11 +204,9 @@ export function ConnectMcpServerDialog({
               </div>
             )}
 
-            <div>
-              <label htmlFor={`${titleId}-url`} className={LABEL}>Server URL</label>
+            <Field id={`${titleId}-url`} label="Server URL" hint="Streamable HTTP or SSE. Must be a public https address.">
               <div className="flex gap-2">
-                <input
-                  id={`${titleId}-url`}
+                <Input
                   type="url"
                   inputMode="url"
                   autoComplete="off"
@@ -219,35 +214,28 @@ export function ConnectMcpServerDialog({
                   value={url}
                   onChange={e => { setCatalogId(null); onUrl(e.target.value) }}
                   placeholder="https://mcp.example.com/mcp"
-                  className={cn(INPUT, 'font-mono')}
+                  className="font-mono"
                 />
                 <Button type="button" variant="secondary" loading={busy === 'detect'} disabled={!url.trim()} onClick={() => void runDetect()}>
                   Detect
                 </Button>
               </div>
-              <p className="mt-1 text-xs leading-relaxed text-fg-3">
-                Streamable HTTP or SSE. Must be a public https address.
-              </p>
-            </div>
+            </Field>
 
             <div className="grid gap-3 sm:grid-cols-2">
-              <div>
-                <label htmlFor={`${titleId}-name`} className={LABEL}>Name</label>
-                <input
-                  id={`${titleId}-name`}
+              <Field id={`${titleId}-name`} label="Name">
+                <Input
                   value={name}
                   onChange={e => { setName(e.target.value); setNameTouched(true) }}
                   placeholder="e.g. Docs search"
-                  className={INPUT}
                   maxLength={80}
                 />
-              </div>
-              <div>
-                <label htmlFor={`${titleId}-ws`} className={LABEL}>Workspace</label>
-                <Select className="w-full" id={`${titleId}-ws`} value={workspace} onChange={v => setWorkspace(v)}>
+              </Field>
+              <Field id={`${titleId}-ws`} label="Workspace">
+                <Select className="w-full" value={workspace} onChange={v => setWorkspace(v)}>
                   {workspaces.map(w => <option key={w.value} value={w.value}>{w.label}</option>)}
                 </Select>
-              </div>
+              </Field>
             </div>
             <p className="-mt-2 text-xs leading-relaxed text-fg-3">
               Only cards and chat bots in this workspace will see the server and its credentials.
@@ -283,10 +271,8 @@ export function ConnectMcpServerDialog({
             )}
 
             {(detect || error) && (
-              <div>
-                <label htmlFor={`${titleId}-auth`} className={LABEL}>Authentication</label>
+              <Field id={`${titleId}-auth`} label="Authentication">
                 <Select className="w-full"
-                  id={`${titleId}-auth`}
                   value={auth ?? ''}
                   onChange={v => setAuth((v || null) as McpServerAuthType | null)}
                 >
@@ -295,28 +281,25 @@ export function ConnectMcpServerDialog({
                   <option value="api_key">API key / bearer token</option>
                   <option value="oauth" disabled={!(detect?.ok && detect.auth === 'oauth')}>OAuth (sign in)</option>
                 </Select>
-              </div>
+              </Field>
             )}
 
             {auth === 'api_key' && (
               <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_minmax(0,2fr)]">
-                <div>
-                  <label htmlFor={`${titleId}-hdr`} className={LABEL}>Header</label>
-                  <input id={`${titleId}-hdr`} value={headerName} onChange={e => setHeaderName(e.target.value)} className={cn(INPUT, 'font-mono')} spellCheck={false} />
-                </div>
-                <div>
-                  <label htmlFor={`${titleId}-key`} className={LABEL}>API key or token</label>
-                  <input
-                    id={`${titleId}-key`}
+                <Field id={`${titleId}-hdr`} label="Header">
+                  <Input value={headerName} onChange={e => setHeaderName(e.target.value)} className="font-mono" spellCheck={false} />
+                </Field>
+                <Field id={`${titleId}-key`} label="API key or token">
+                  <Input
                     type="password"
                     autoComplete="off"
                     spellCheck={false}
                     value={apiKey}
                     onChange={e => setApiKey(e.target.value)}
                     placeholder="Paste the key"
-                    className={cn(INPUT, 'font-mono')}
+                    className="font-mono"
                   />
-                </div>
+                </Field>
                 <p className="text-xs leading-relaxed text-fg-3 sm:col-span-2">
                   With the Authorization header a bare key is sent as <code className="font-mono">Bearer &lt;key&gt;</code>.
                 </p>
@@ -340,14 +323,12 @@ export function ConnectMcpServerDialog({
                   <p className="font-mono text-xs text-fg-2">{detect.scopes_supported.join(' ')}</p>
                 )}
                 <div className="grid gap-3 sm:grid-cols-2">
-                  <div>
-                    <label htmlFor={`${titleId}-cid`} className={LABEL}>Client ID</label>
-                    <input id={`${titleId}-cid`} value={clientId} onChange={e => setClientId(e.target.value)} className={cn(INPUT, 'font-mono')} spellCheck={false} autoComplete="off" />
-                  </div>
-                  <div>
-                    <label htmlFor={`${titleId}-csec`} className={LABEL}>Client secret (optional)</label>
-                    <input id={`${titleId}-csec`} type="password" value={clientSecret} onChange={e => setClientSecret(e.target.value)} className={cn(INPUT, 'font-mono')} spellCheck={false} autoComplete="off" />
-                  </div>
+                  <Field id={`${titleId}-cid`} label="Client ID">
+                    <Input value={clientId} onChange={e => setClientId(e.target.value)} className="font-mono" spellCheck={false} autoComplete="off" />
+                  </Field>
+                  <Field id={`${titleId}-csec`} label="Client secret" optional>
+                    <Input type="password" value={clientSecret} onChange={e => setClientSecret(e.target.value)} className="font-mono" spellCheck={false} autoComplete="off" />
+                  </Field>
                 </div>
               </div>
             )}

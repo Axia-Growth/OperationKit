@@ -16,6 +16,10 @@ import { chooseOption } from '../../test/render'
 const OPTIONS = [{ slug: 'growth', name: 'Growth' }, { slug: 'ops', name: 'Ops' }]
 let grants: DelegationGrant[] = []
 let canManage = true
+// obj 900862: false = the bot is not in the registry yet (one-click Register).
+let registered = true
+// obj 900862: the server derived the identity automatically (no register step).
+let auto: { linked: boolean } | null = null
 let requests: { url: string; method: string; body: Record<string, unknown> | null }[] = []
 let host: HTMLDivElement
 let root: Root
@@ -30,18 +34,35 @@ function g(over: Partial<DelegationGrant>): DelegationGrant {
 }
 
 function payload(): DelegationGrantsResponse {
-  return { bot: { id: 'Grok: CTO', name: 'CTO' }, workspace_options: OPTIONS, grants, can_manage: canManage }
+  if (!registered) {
+    return {
+      bot: null,
+      bot_unavailable_reason: "CTO isn't registered as a bot yet, so its approvals can't be matched to a grant. Register it below — one click, no settings to edit.",
+      workspace_options: [],
+      grants: [],
+      can_manage: canManage,
+      registration: {
+        new_bot_id: 'Example CTO',
+        existing: [{ id: 'Operation Kit', name: 'Operation Kit' }, { id: 'Grok: CTO', name: 'CTO' }],
+        suggested: 'Grok: CTO',
+      },
+    }
+  }
+  return { bot: { id: 'Grok: CTO', name: 'CTO' }, ...(auto ? { bot_auto: auto } : {}), workspace_options: OPTIONS, grants, can_manage: canManage }
 }
 
 beforeEach(() => {
   grants = []
   canManage = true
+  registered = true
+  auto = null
   requests = []
   vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
     const body = init?.body ? JSON.parse(String(init.body)) : null
     const method = init?.method ?? 'GET'
     requests.push({ url, method, body })
-    if (method === 'POST') grants = [g({ workspace: body.workspace, actions: body.actions, expires_at: body.expires_at }), ...grants]
+    if (method === 'POST' && url.endsWith('/registry')) registered = true
+    else if (method === 'POST') grants = [g({ workspace: body.workspace, actions: body.actions, expires_at: body.expires_at }), ...grants]
     if (method === 'DELETE') {
       const id = Number(url.split('/').pop())
       grants = grants.map(x => (x.id === id ? { ...x, state: 'revoked', revoked_at: '2026-11-14 13:00:00', revoked_by: 'owner' } : x))
@@ -144,5 +165,57 @@ describe('DelegationSection', () => {
     expect(requests).toHaveLength(0)
     expect(host.textContent).toContain('Only the owner can set this.')
     expect(host.querySelector('[role="switch"]')).toBeNull()
+  })
+
+  // obj 900862 — a bot the registry doesn't know: one click registers it and
+  // the grant form opens, so the owner never edits a settings row.
+  it('an unregistered bot shows "Register this bot" (pre-selected link); one click registers and opens the grant form', async () => {
+    registered = false
+    await render()
+    expect(host.textContent).toContain("isn't registered as a bot yet")
+    expect(host.textContent).not.toContain('settings.bot_registry')
+    expect(host.querySelector('[role="switch"]')).toBeNull()
+    expect(fieldFor('Register CTO as')!.textContent).toContain('Existing bot: CTO (Grok: CTO) · suggested')
+
+    await click(button('Register this bot')!)
+    const reg = requests.find(r => r.method === 'POST')!
+    expect(reg.url).toBe('/api/agent-chat/agents/acme-cto/registry')
+    expect(reg.body).toEqual({ bot: 'Grok: CTO' })
+    expect(host.textContent).toContain('Registered CTO.')
+    expect(host.textContent).toContain('Grants are held by the registered bot CTO (Grok: CTO)')
+    // Straight into the form: workspace, the three actions, an expiry.
+    expect(theSwitch().getAttribute('aria-checked')).toBe('true')
+    expect(button('Grant')).toBeDefined()
+    expect(checkbox('Merge')).toBeDefined()
+    expect(checkbox('Prod migration')).toBeDefined()
+    expect(checkbox('Deploy')).toBeDefined()
+    expect(fieldFor('Expires after')).not.toBeNull()
+  })
+
+  it('the owner can register it as a NEW bot instead', async () => {
+    registered = false
+    await render()
+    await chooseOption(fieldFor('Register CTO as'), 'A new bot named “Example CTO”')
+    await click(button('Register this bot')!)
+    expect(requests.find(r => r.method === 'POST')!.body).toEqual({ bot: null })
+  })
+
+  it('without owner rights an unregistered bot shows the reason but no Register control', async () => {
+    registered = false
+    canManage = false
+    await render()
+    expect(host.textContent).toContain("isn't registered as a bot yet")
+    expect(button('Register this bot')).toBeUndefined()
+  })
+
+  it('an automatically registered bot (obj 900862) says so, shows no Register control, and the grant form works straight away', async () => {
+    auto = { linked: true }
+    await render()
+    expect(host.textContent).toContain('Registered automatically as CTO')
+    expect(host.textContent).toContain('No setup needed')
+    expect(button('Register this bot')).toBeUndefined()
+    expect(requests.some(r => r.url.includes('/registry'))).toBe(false)
+    await click(theSwitch())
+    expect(button('Grant')).toBeTruthy()
   })
 })

@@ -191,7 +191,7 @@ describe('JobsBoard — per-run executions (obj 900676)', () => {
     await settle()
     const p = panel()!
     expect(p.querySelector('[data-testid="execution-rr-1"]')?.getAttribute('class')).toContain('bg-surface-selected')
-    const open = buttons(p, 'Open session #300')[0]
+    const open = buttons(p, 'Open card #300')[0]
     expect(open).toBeTruthy()
     open.click()
     await settle()

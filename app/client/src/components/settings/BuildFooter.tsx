@@ -1,6 +1,9 @@
 /**
  * Which build is running (obj 720210): the commit from /api/health, so a
- * support conversation can start from "Settings → bottom of the page".
+ * support conversation can start from "System → bottom of the page".
+ * Polish F5 (obj 900806): it lives on System, not on every Settings tab, and
+ * it renders nothing when the commit is unknown — "Build unknown" told nobody
+ * anything.
  */
 import { useEffect, useState } from 'react'
 
@@ -16,14 +19,11 @@ export function BuildFooter() {
     return () => { live = false }
   }, [])
 
+  // Still loading, or the server does not know its commit: show nothing.
+  if (!commit) return null
   return (
     <footer className="mt-10 border-t border-line-soft pt-4 text-xs text-fg-2" data-testid="build-footer">
-      Build{' '}
-      {commit === undefined ? (
-        <span className="inline-block h-3 w-20 animate-pulse rounded bg-surface-3 align-middle" aria-label="Loading build" />
-      ) : (
-        <span className="select-all font-mono text-fg-1">{commit ?? 'unknown'}</span>
-      )}
+      Build <span className="select-all font-mono text-fg-1">{commit}</span>
     </footer>
   )
 }

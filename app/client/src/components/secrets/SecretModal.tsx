@@ -25,7 +25,8 @@
  */
 import { useCallback, useMemo, useState, type FormEvent } from 'react'
 import { api, ApiError } from '../../lib/api'
-import { Modal } from '../ui'
+import { Check, X } from 'lucide-react'
+import { Alert, Button, Checkbox, Field, IconButton, Input, Modal } from '../ui'
 import type {
   SecretScopeType,
   SecretSummary,
@@ -233,40 +234,35 @@ export function SecretModal({ principals, initialScope, editing, onClose, onSave
   }
 
   return (
-    <Modal open onClose={onClose} variant="center" labelledBy="secret-title" panelClassName="max-w-lg bg-surface-raised">
+    <Modal open onClose={onClose} variant="center" labelledBy="secret-title" panelClassName="max-w-lg bg-surface-1">
       <div className="p-6">
         <div className="mb-4 flex items-center justify-between">
           <h2 id="secret-title" className="text-lg font-semibold text-fg-0">
             {isEdit ? 'Edit secret' : 'New secret'}
           </h2>
-          <button onClick={onClose} className="text-fg-3 hover:text-fg-1" type="button">
-            <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
-            </svg>
-          </button>
+          <IconButton label="Close" onClick={onClose} className="-mr-2 text-fg-3">
+            <X className="h-5 w-5" aria-hidden />
+          </IconButton>
         </div>
 
-        {error && (
-          <div className="mb-3 rounded bg-signal-alarm/10 px-3 py-2 text-base text-signal-alarm">{error}</div>
-        )}
+        {error && <Alert tone="alarm" title={error} className="mb-3" />}
 
         {/* Partial-failure report. Per-organization truth: what landed, what did
             not, and why — never a blanket "created". */}
         {fanout && (
-          <div
+          <Alert
+            tone="amber"
             data-testid="modal-fanout-results"
-            className="mb-3 rounded border border-signal-amber/30 bg-signal-amber/10 px-3 py-2"
+            className="mb-3"
+            title={fanout.some(r => r.ok)
+              ? `Created in ${fanout.filter(r => r.ok).length} of ${fanout.length} workspaces — ${fanout.filter(r => !r.ok).length} failed.`
+              : `Not created — all ${fanout.length} workspaces failed.`}
           >
-            <p className="text-base font-medium text-signal-amber">
-              {fanout.some(r => r.ok)
-                ? `Created in ${fanout.filter(r => r.ok).length} of ${fanout.length} workspaces — ${fanout.filter(r => !r.ok).length} failed.`
-                : `Not created — all ${fanout.length} workspaces failed.`}
-            </p>
             <ul className="mt-1.5 space-y-1">
               {fanout.map(r => (
                 <li key={r.slug} data-testid={`fanout-${r.ok ? 'ok' : 'fail'}-${r.slug}`} className="flex gap-2 text-xs leading-relaxed">
-                  <span className={`flex-none font-medium ${r.ok ? 'text-signal-verify' : 'text-signal-alarm'}`}>
-                    {r.ok ? '✓' : '✕'}
+                  <span className={`flex-none font-medium ${r.ok ? 'text-success' : 'text-danger'}`}>
+                    {r.ok ? <Check aria-label="Succeeded" className="mt-0.5 h-3.5 w-3.5" /> : <X aria-label="Failed" className="mt-0.5 h-3.5 w-3.5" />}
                   </span>
                   <span className="text-fg-2">
                     {r.name}
@@ -278,75 +274,67 @@ export function SecretModal({ principals, initialScope, editing, onClose, onSave
             <p className="mt-1.5 text-xs text-fg-3">
               The failed workspaces are still selected — re-enter the value and submit again to retry just those.
             </p>
-          </div>
+          </Alert>
         )}
 
-        <form onSubmit={handleSubmit} className="space-y-3">
-          <div>
-            <label className="mb-1 block text-xs text-fg-2">Key {isEdit && <span className="text-fg-3">(locked)</span>}</label>
-            <input
+        <form onSubmit={handleSubmit} className="space-y-4">
+          <Field id="secret-key" label={<>Key{isEdit && <span className="ml-1.5 font-normal text-fg-3">(locked)</span>}</>}>
+            <Input
               type="text"
               value={key}
               onChange={e => setKey(e.target.value)}
               disabled={isEdit}
               placeholder="e.g. OPENAI_API_KEY"
-              className="w-full rounded border border-border bg-surface px-2 py-1.5 font-mono text-base text-fg-0 outline-none focus:border-accent disabled:opacity-50"
+              className="font-mono"
             />
-          </div>
+          </Field>
 
           {/* The modal carries its OWN scope pickers, so a secret can be created
               at any scope from any view — and an existing one re-scoped. */}
-          <div className="rounded border border-border bg-surface p-3">
-            <div>
-              <label htmlFor="secret-scope-type" className="mb-1 block text-xs uppercase tracking-eyebrow text-fg-3">Scope</label>
+          <div className="space-y-3 rounded-md border border-line bg-surface p-3">
+            <Field
+              id="secret-scope-type"
+              label="Scope"
+              // Inline, always-visible — not a hover tooltip. This sentence is
+              // the whole reason "Organization" is no longer ambiguous.
+              hint={<span data-testid="modal-scope-hint">{(isEdit ? SCOPE_HINTS : SCOPE_HINTS_CREATE)[scopeType]}</span>}
+            >
               <Select
-                id="secret-scope-type"
                 value={scopeType}
                 onChange={v => { setScopeType(v as SecretScopeType); setFanout(null) }}
-                aria-describedby="secret-scope-hint"
               >
                 {scopeOptions.map(s => (
                   <option key={s} value={s}>{SCOPE_LABELS[s]}</option>
                 ))}
               </Select>
-              {/* Inline, always-visible — not a hover tooltip. This sentence is
-                  the whole reason "Organization" is no longer ambiguous. */}
-              <p id="secret-scope-hint" data-testid="modal-scope-hint" className="mt-1.5 text-xs leading-relaxed text-fg-3">
-                {(isEdit ? SCOPE_HINTS : SCOPE_HINTS_CREATE)[scopeType]}
-              </p>
-            </div>
+            </Field>
 
             {needsWorkspace && (multiOrg ? (
-              <fieldset className="mt-3">
-                <legend className="mb-1 text-xs uppercase tracking-eyebrow text-fg-3">
-                  Workspaces <span className="normal-case tracking-normal text-fg-3">(pick one or more)</span>
+              <fieldset>
+                <legend className="mb-1.5 text-sm font-medium text-fg-1">
+                  Workspaces <span className="font-normal text-fg-3">(pick one or more)</span>
                 </legend>
                 {orgs.length === 0 ? (
-                  <p className="rounded border border-dashed border-border px-3 py-4 text-center text-xs text-fg-3">
+                  <p className="rounded border border-dashed border-line px-3 py-4 text-center text-xs text-fg-3">
                     No workspaces available to you.
                   </p>
                 ) : (
                   <>
                     <div
                       data-testid="modal-scope-organizations"
-                      className="max-h-48 overflow-y-auto rounded border border-border bg-surface-raised"
+                      className="max-h-48 overflow-y-auto rounded-md border border-line bg-surface-1"
                     >
                       {orgs.map(o => {
                         const checked = workspaces.includes(o.slug)
                         return (
-                          <label
+                          <Checkbox
                             key={o.slug}
-                            className={`flex min-h-[44px] cursor-pointer items-center gap-2.5 border-b border-border px-3 text-base last:border-b-0 transition-colors duration-fast ease-out hover:bg-surface-overlay/60 ${checked ? 'text-fg-0' : 'text-fg-2'}`}
-                          >
-                            <input
-                              type="checkbox"
-                              checked={checked}
-                              onChange={() => toggleOrg(o.slug)}
-                              data-testid={`modal-org-checkbox-${o.slug}`}
-                              className="h-4 w-4 flex-none accent-accent outline-none focus-visible:ring-2 focus-visible:ring-accent"
-                            />
-                            <span className="truncate">{o.name}</span>
-                          </label>
+                            checked={checked}
+                            onChange={() => toggleOrg(o.slug)}
+                            data-testid={`modal-org-checkbox-${o.slug}`}
+                            label={<span className={`block truncate ${checked ? 'text-fg-0' : 'text-fg-2'}`}>{o.name}</span>}
+                            className="flex min-h-[44px] w-full items-center border-b border-line px-3 last:border-b-0 hover:bg-surface-2/60 sm:min-h-[44px]"
+                          />
                         )
                       })}
                     </div>
@@ -356,22 +344,22 @@ export function SecretModal({ principals, initialScope, editing, onClose, onSave
                           ? 'No workspaces selected.'
                           : `${workspaces.length} of ${orgs.length} selected — ${workspaces.length} secret ${workspaces.length === 1 ? 'row' : 'rows'} will be created, one per workspace.`}
                       </p>
-                      <button
+                      <Button
                         type="button"
+                        variant="ghost"
+                        size="xs"
                         onClick={() => { setFanout(null); setWorkspaces(workspaces.length === orgs.length ? [] : orgs.map(o => o.slug)) }}
-                        className="ml-auto flex-none rounded px-1.5 py-1 text-xs text-accent transition-colors duration-fast ease-out hover:bg-surface-overlay hover:text-accent-hover"
+                        className="ml-auto flex-none"
                       >
                         {workspaces.length === orgs.length ? 'Clear all' : 'Select all'}
-                      </button>
+                      </Button>
                     </div>
                   </>
                 )}
               </fieldset>
             ) : (
-              <div className="mt-3">
-                <label htmlFor="secret-scope-org" className="mb-1 block text-xs uppercase tracking-eyebrow text-fg-3">Workspace</label>
+              <Field id="secret-scope-org" label="Workspace">
                 <Select
-                  id="secret-scope-org"
                   value={workspaces[0] || ''}
                   onChange={v => setWorkspaces(v ? [v] : [])}
                 >
@@ -380,14 +368,12 @@ export function SecretModal({ principals, initialScope, editing, onClose, onSave
                     <option key={o.slug} value={o.slug}>{o.name}</option>
                   ))}
                 </Select>
-              </div>
+              </Field>
             ))}
 
             {needsUser && (
-              <div className="mt-3">
-                <label htmlFor="secret-scope-user" className="mb-1 block text-xs uppercase tracking-eyebrow text-fg-3">User</label>
+              <Field id="secret-scope-user" label="User">
                 <Select
-                  id="secret-scope-user"
                   value={userId}
                   onChange={v => setUserId(v)}
                 >
@@ -396,70 +382,67 @@ export function SecretModal({ principals, initialScope, editing, onClose, onSave
                     <option key={u.id} value={String(u.id)}>{u.username}</option>
                   ))}
                 </Select>
-              </div>
+              </Field>
             )}
             {scopeChanged && (
-              <p className="mt-1 text-xs text-accent">
+              <p className="text-xs text-accent">
                 Moving from {SCOPE_LABELS[initialScope.scopeType]} — the value is carried over untouched.
               </p>
             )}
           </div>
 
-          <div>
-            <label htmlFor="secret-description" className="mb-1 block text-xs text-fg-2">
-              Description <span className="text-fg-3">(optional)</span>
-            </label>
-            <input
-              id="secret-description"
+          <Field
+            id="secret-description"
+            label="Description"
+            optional
+            hint="Visible to anyone who can see this secret. Never put the value here."
+          >
+            <Input
               type="text"
               value={description}
               maxLength={500}
               onChange={e => setDescription(e.target.value)}
               data-testid="modal-description"
-              placeholder="What is this for? e.g. Stripe live key — billing worker"
-              className="w-full rounded border border-border bg-surface px-2 py-1.5 text-base text-fg-0 outline-none focus:border-accent"
+              placeholder="What is this for? e.g. Stripe live key — billing bot"
             />
-            <p className="mt-1 text-xs text-fg-3">Visible to anyone who can see this secret. Never put the value here.</p>
-          </div>
+          </Field>
 
-          <div>
-            <label htmlFor="secret-value" className="mb-1 block text-xs text-fg-2">
-              {isEdit ? 'New value (rotate)' : 'Value'}
-            </label>
+          <Field
+            id="secret-value"
+            label={isEdit ? 'New value (rotate)' : 'Value'}
+            hint={<>
+              Stored encrypted. The value is never returned by the API or shown again.
+              {isEdit && ' Rotating saves a new version; the old one stays in History (encrypted) so you can roll back.'}
+              {isEdit && ' Leave it blank to change only the scope or description.'}
+            </>}
+          >
             {isEdit && (
               <div
                 data-testid="modal-current-value"
-                className="mb-1.5 flex items-center justify-between rounded border border-dashed border-border bg-surface px-2 py-1.5 text-xs text-fg-3"
+                className="flex items-center justify-between rounded-md border border-dashed border-line bg-surface px-2 py-1.5 text-xs text-fg-3"
               >
                 <span>Current value: <span className="font-mono">{'••••••••'}</span> (v{editing?.version})</span>
                 <span className="text-xs">write-only — never shown</span>
               </div>
             )}
-            <input
-              id="secret-value"
+            <Input
               type="password"
               autoComplete="new-password"
               spellCheck={false}
               value={value}
               onChange={e => setValue(e.target.value)}
               data-testid="modal-value"
-              placeholder={isEdit ? 'type a new value to rotate' : 'secret value'}
-              className="w-full rounded border border-border bg-surface px-2 py-1.5 font-mono text-base text-fg-0 outline-none focus:border-accent"
+              className="font-mono"
             />
-            <p className="mt-1 text-xs text-fg-3">
-              Stored encrypted. The value is never returned by the API or shown again.
-              {isEdit && ' Rotating saves a new version; the old one stays in History (encrypted) so you can roll back.'}
-              {isEdit && ' Leave it blank to change only the scope or description.'}
-            </p>
-          </div>
+          </Field>
 
           <div className="flex justify-end gap-2 pt-2">
-            <button type="button" onClick={onClose} className="rounded px-3 py-1.5 text-base text-fg-2 hover:bg-surface-overlay">Cancel</button>
-            <button
+            <Button type="button" variant="ghost" onClick={onClose}>Cancel</Button>
+            <Button
               type="submit"
+              variant="primary"
               disabled={saving}
               data-testid="modal-submit"
-              className="rounded bg-accent px-3 py-1.5 text-base font-medium text-accent-fg transition-colors duration-fast ease-out hover:bg-accent-hover disabled:cursor-not-allowed disabled:opacity-50"
             >
               {saving
                 ? 'Saving...'
@@ -468,7 +451,7 @@ export function SecretModal({ principals, initialScope, editing, onClose, onSave
                   : multiOrg && workspaces.length > 1
                     ? `Create in ${workspaces.length} workspaces`
                     : 'Create'}
-            </button>
+            </Button>
           </div>
         </form>
       </div>

@@ -13,7 +13,7 @@ vi.mock('../lib/api', () => ({
   searchObjectivesAi: (...a: unknown[]) => searchObjectivesAi(...a),
   ApiError: class extends Error { status = 0 },
 }))
-vi.mock('../hooks/useWorkspaces', () => ({ useWorkspaces: () => ({ shortOf: (w: string) => w.toUpperCase() }) }))
+vi.mock('../hooks/useWorkspaces', () => ({ useWorkspaces: () => ({ labelOf: (w: string) => w.toUpperCase() }) }))
 
 const { ObjectiveSearchPanel } = await import('./ObjectiveSearchPanel')
 
@@ -43,7 +43,7 @@ describe('ObjectiveSearchPanel on UI SDK Command + Dialog', () => {
     await render(<ObjectiveSearchPanel open workspace={'acme' as never} onClose={vi.fn()} onSelect={vi.fn()} />)
     const dialog = document.querySelector('[role="dialog"]')!
     expect(dialog.getAttribute('aria-modal')).toBe('true')
-    expect(document.getElementById(dialog.getAttribute('aria-labelledby')!)?.textContent).toBe('Search objectives')
+    expect(document.getElementById(dialog.getAttribute('aria-labelledby')!)?.textContent).toBe('Search cards')
     await vi.waitFor(() => expect(document.activeElement).toBe(input()))
   })
 

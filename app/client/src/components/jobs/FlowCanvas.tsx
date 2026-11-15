@@ -8,8 +8,15 @@ import { useBoardTheme } from '../../preview/BoardShell'
 import type { FlowNodeRunStatus } from '../../../../shared/flow/types'
 import type { FlowNodeChange } from '../../../../shared/flow/diff'
 import { buildFlowGraph, type FlowNodeData, type FlowRFNode } from '../../lib/flow-graph'
-import { cn } from '../ui'
+import { cn, EmptyState } from '../ui'
+import { Workflow } from 'lucide-react'
 import { EFFECT_STYLE, KIND_TINT, STATUS_STYLE } from './flow-colors'
+import { FLOW_KIND_ICON } from './flow-icons'
+
+function KindIcon({ kind }: { kind: string }) {
+  const Icon = FLOW_KIND_ICON[kind]
+  return Icon ? <Icon aria-hidden="true" className="h-3.5 w-3.5 shrink-0 text-fg-2" /> : null
+}
 
 /**
  * Read-only workflow canvas, viewer V2 (card B7, docs/design/WORKFLOWS.md §6.2).
@@ -78,7 +85,7 @@ const FlowStepNode = memo(function FlowStepNode({ data }: NodeProps<FlowRFNode>)
       <Handle type="target" position={Position.Top} isConnectable={false} isConnectableStart={false} isConnectableEnd={false} className={HIDDEN_HANDLE} />
       <ChangeTag change={d.change} author={d.changeAuthor} />
       {d.label && <div className="truncate text-xs font-medium text-fg-2">{d.label}</div>}
-      <div className="truncate text-sm font-semibold text-fg-0">{d.title}</div>
+      <div className="flex min-w-0 items-center gap-1.5 text-sm font-semibold text-fg-0"><KindIcon kind={d.kind} /><span className="truncate">{d.title}</span></div>
       <div className="flex min-w-0 items-center gap-1.5 text-xs text-fg-2">
         {eff && (
           <span className="shrink-0 rounded px-1 font-mono text-xs font-semibold" style={{ color: eff.border, border: `1px solid ${eff.border}` }}>
@@ -110,8 +117,9 @@ const FlowLoopNode = memo(function FlowLoopNode({ data }: NodeProps<FlowRFNode>)
       <Handle type="target" position={Position.Top} isConnectable={false} isConnectableStart={false} isConnectableEnd={false} className={HIDDEN_HANDLE} />
       <ChangeTag change={d.change} author={d.changeAuthor} />
       <div className="min-w-0 px-3 pt-1.5">
-        <div className="truncate text-sm font-semibold text-fg-0" title={d.label ? `${d.label} — ${d.title}` : d.title}>
-          {d.label ? `${d.label} — ` : ''}{d.title}
+        <div className="flex min-w-0 items-center gap-1.5 text-sm font-semibold text-fg-0" title={d.label ? `${d.label} — ${d.title}` : d.title}>
+          <KindIcon kind="loop" />
+          <span className="truncate">{d.label ? `${d.label} — ` : ''}{d.title}</span>
         </div>
         <div className="flex min-w-0 items-center gap-1.5 text-xs text-fg-2">
           <span className="shrink-0">{d.lines.join(' · ')}</span>
@@ -174,7 +182,15 @@ export function FlowCanvas({
   const viewport = { x: Math.max(PAD, (width - graph.width * zoom) / 2), y: PAD, zoom }
 
   if (graph.nodes.length === 0) {
-    return <div className="flex h-40 items-center justify-center rounded-lg border border-line text-xs text-fg-3">No nodes to draw.</div>
+    return (
+      <EmptyState
+        compact
+        icon={<Workflow className="h-5 w-5" aria-hidden="true" />}
+        title="Nothing to draw yet"
+        description="This workflow has no steps. Add a trigger and a step to see it here."
+        className={cn('rounded-lg border border-line', className)}
+      />
+    )
   }
   return (
     <div ref={wrapRef} className={cn('ok-flow overflow-hidden rounded-lg border border-line bg-surface-0', className)} style={{ height }} data-testid="flow-canvas">
@@ -224,12 +240,12 @@ export function FlowCanvasLegend() {
   const sw = 'inline-block h-3 w-3 rounded-sm border-2'
   return (
     <div className="flex flex-wrap gap-x-4 gap-y-1.5 text-xs text-fg-2" data-testid="flow-canvas-legend">
-      <span className={item}>⏰ trigger</span>
-      <span className={item}>🔧 tool</span>
-      <span className={item}>🔌 MCP connector</span>
-      <span className={item}><span className={sw} style={{ background: KIND_TINT.llm!.bg, borderColor: KIND_TINT.llm!.accent }} />🧠 LLM</span>
-      <span className={item}><span className={sw} style={{ borderColor: KIND_TINT.agent!.accent, borderStyle: 'double' }} />🤖 agent</span>
-      <span className={item}><span className={sw} style={{ borderStyle: 'dashed' }} />🔁 loop group</span>
+      <span className={item}><KindIcon kind="trigger" />trigger</span>
+      <span className={item}><KindIcon kind="tool" />tool</span>
+      <span className={item}><KindIcon kind="mcp" />MCP connector</span>
+      <span className={item}><span className={sw} style={{ background: KIND_TINT.llm!.bg, borderColor: KIND_TINT.llm!.accent }} /><KindIcon kind="llm" />LLM</span>
+      <span className={item}><span className={sw} style={{ borderColor: KIND_TINT.agent!.accent, borderStyle: 'double' }} /><KindIcon kind="agent" />agent</span>
+      <span className={item}><span className={sw} style={{ borderStyle: 'dashed' }} /><KindIcon kind="loop" />loop group</span>
       {Object.entries(EFFECT_STYLE).map(([k, v]) => (
         <span key={k} className={item}><span className={sw} style={{ background: v.bg, borderColor: v.border }} />{v.text}</span>
       ))}

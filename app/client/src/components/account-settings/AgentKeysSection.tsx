@@ -20,6 +20,12 @@ import { Button } from '../../components/ui/Button'
 import { Skeleton } from '../../components/ui/Skeleton'
 import { cn } from '../../components/ui/cn'
 import { SegmentedControl } from '../../components/ui/SegmentedControl'
+import { Alert } from '../ui/Alert'
+import { Checkbox, Field, Input } from '../ui/Field'
+import { SectionHeader } from '../ui/SettingsSection'
+import { RowActions } from '../ui/RowActions'
+import { EmptyState } from '../ui/EmptyState'
+import { Plus } from 'lucide-react'
 import { useWorkspaces } from '../../hooks/useWorkspaces'
 import { fmtDate } from './helpers'
 import {
@@ -183,14 +189,15 @@ export function AgentKeysSection() {
     }
     if (catalogue.kind === 'failed') {
       return (
-        <div role="alert" className="flex flex-wrap items-center gap-2">
-          <span className="text-xs text-signal-alarm">
-            {catalogue.message} This is not the same as having none — nothing was changed.
-          </span>
-          <Button type="button" size="sm" variant="secondary" onClick={() => void loadCatalogue()}>
-            Retry
-          </Button>
-        </div>
+        <Alert
+          tone="alarm"
+          title={`${catalogue.message} This is not the same as having none — nothing was changed.`}
+          action={
+            <Button type="button" size="sm" variant="secondary" onClick={() => void loadCatalogue()}>
+              Retry
+            </Button>
+          }
+        />
       )
     }
     if (catalogue.options.length === 0) {
@@ -318,36 +325,36 @@ export function AgentKeysSection() {
   const revoked = (keys ?? []).filter(k => k.revoked_at)
 
   return (
-    <section className="mt-6 rounded-lg border border-border bg-surface-raised p-5" aria-labelledby="agent-keys-heading">
-      <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-        <div>
-          <h2 id="agent-keys-heading" className="text-lg font-semibold text-fg-0">Agent keys</h2>
-          <p className="mt-1 text-xs font-medium uppercase tracking-eyebrow text-fg-3">
-            MCP &middot; scoped tool connection for one bot
-          </p>
-          <p className="mt-1 max-w-prose text-xs text-fg-2">
-            One key per bot. Each is its own identity — cards it creates say who made them — and it can
+    <section className="mt-6 rounded-lg border border-line bg-surface-1 p-5" aria-labelledby="agent-keys-heading">
+      <SectionHeader
+        headingId="agent-keys-heading"
+        className="mb-1"
+        title="Agent keys"
+        description={
+          <>
+            One key per bot (MCP). Each is its own identity — cards it creates say who made them — and it can
             only do what you tick. Done and delete stay with you unless you grant them. A new key can
             use the connected accounts you are allowed to use; it never reaches anyone else&rsquo;s and
             never exceeds your own access.
-          </p>
-          <p className="mt-1 max-w-prose text-xs text-fg-2" data-testid="agent-key-secrets-copy">
-            Secrets: the key never sees a secret&rsquo;s value. When the bot needs a credential it uses a{' '}
-            <span className="text-fg-1">named secret through the secrets broker</span> (
-            <span className="font-mono">{'{{secret:NAME}}'}</span>, filled in server-side) — so store those in
-            Settings &rarr; Secrets under the names the bot asks for.
-          </p>
-        </div>
-        {!formOpen && (
-          <Button variant="primary" className="shrink-0" onClick={() => { setFormOpen(true); setIssued(null) }}>
-            New agent key
-          </Button>
-        )}
-      </div>
+          </>
+        }
+        actions={
+          !formOpen && (
+            // One primary per view (polish F5): while a key's editor is open, its Save is the primary.
+            <Button variant={editing === null ? 'primary' : 'secondary'} className="shrink-0" leftIcon={<Plus className="h-4 w-4" />} onClick={() => { setFormOpen(true); setIssued(null) }}>
+              New agent key
+            </Button>
+          )
+        }
+      />
+      <p className="mb-4 max-w-prose text-sm leading-relaxed text-fg-2" data-testid="agent-key-secrets-copy">
+        Secrets: the key never sees a secret&rsquo;s value. When the bot needs a credential it uses a{' '}
+        <span className="text-fg-1">named secret through the secrets broker</span> (
+        <span className="font-mono">{'{{secret:NAME}}'}</span>, filled in server-side) — so store those in
+        Settings → Secrets under the names the bot asks for.
+      </p>
 
-      {error && (
-        <div role="alert" className="mb-3 rounded bg-signal-alarm/10 px-3 py-2 text-base text-signal-alarm">{error}</div>
-      )}
+      {error && <Alert tone="alarm" title={error} className="mb-3" />}
 
       {issued && (
         <div className="mb-4 space-y-2 rounded-md border border-accent/40 bg-surface p-3">
@@ -355,14 +362,14 @@ export function AgentKeysSection() {
             <span className="font-semibold text-fg-0">{issued.label}</span> — copy this now. It will not be shown again.
           </p>
           <div className="flex flex-col gap-2 sm:flex-row">
-            <input
+            <Input
               readOnly
               aria-label={`API key for ${issued.label}`}
               value={issued.token}
               onFocus={e => e.currentTarget.select()}
-              className="min-h-[44px] w-full rounded border border-line bg-surface-1 px-2.5 py-2 font-mono text-base text-fg-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/50 sm:min-h-[36px]"
+              className="font-mono"
             />
-            <Button variant="primary" className="shrink-0" onClick={() => void copy()}>
+            <Button variant="secondary" className="shrink-0" onClick={() => void copy()}>
               {copied ? 'Copied' : 'Copy'}
             </Button>
             <Button variant="ghost" className="shrink-0" onClick={() => setIssued(null)}>
@@ -377,18 +384,15 @@ export function AgentKeysSection() {
           className="mb-5 space-y-4 rounded-md border border-line bg-surface-1 p-4"
           onSubmit={e => { e.preventDefault(); void create() }}
         >
-          <div>
-            <label htmlFor="agent-key-label" className="block text-xs font-medium text-fg-1">Label</label>
-            <input
-              id="agent-key-label"
+          <Field id="agent-key-label" label="Label" className="max-w-xl">
+            <Input
               autoFocus
               maxLength={80}
               value={label}
               onChange={e => setLabel(e.target.value)}
               placeholder="Grok: General"
-              className="mt-1 min-h-[44px] w-full rounded border border-line bg-surface px-2.5 py-2 text-base text-fg-0 placeholder:text-fg-3 transition-colors duration-base hover:border-line-strong focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/50 sm:min-h-[36px]"
             />
-          </div>
+          </Field>
 
           <fieldset>
             <legend className="text-xs font-medium text-fg-1">What it can do</legend>
@@ -396,27 +400,22 @@ export function AgentKeysSection() {
               {AGENT_SCOPES.map(s => {
                 const on = scopes.includes(s)
                 return (
-                  <label
+                  <Checkbox
                     key={s}
+                    checked={on}
+                    onChange={() => toggleScope(s)}
                     className={cn(
-                      'flex min-h-[44px] cursor-pointer items-start gap-2.5 rounded-md border px-2.5 py-2 transition-colors duration-base',
+                      'flex min-h-[44px] rounded-md border px-2.5 py-2 transition-colors duration-base sm:min-h-[44px]',
                       on ? 'border-line-strong bg-surface-2' : 'border-transparent hover:bg-surface-3',
                     )}
-                  >
-                    <input
-                      type="checkbox"
-                      checked={on}
-                      onChange={() => toggleScope(s)}
-                      className="mt-0.5 h-4 w-4 shrink-0 accent-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/50"
-                    />
-                    <span className="min-w-0">
+                    label={
                       <span className="flex items-center gap-1.5 font-mono text-xs text-fg-0">
                         {s}
                         {HUMAN_SIGNATURE.includes(s) && <Badge tone="amber">human</Badge>}
                       </span>
-                      <span className="block text-xs text-fg-2">{AGENT_SCOPE_DESCRIPTIONS[s]}</span>
-                    </span>
-                  </label>
+                    }
+                    description={AGENT_SCOPE_DESCRIPTIONS[s]}
+                  />
                 )
               })}
             </div>
@@ -461,11 +460,11 @@ export function AgentKeysSection() {
               A new key follows YOUR access: it can use the connected accounts you are allowed to use,
               and nothing else. Never anyone else&rsquo;s account, never more than you have right now —
               each use is re-checked against your access at that moment, so disconnecting an account or
-              narrowing it in Settings &rarr; Integrations takes effect immediately, with no key to edit.
+              narrowing it in Settings → Integrations takes effect immediately, with no key to edit.
             </p>
             <p className="mt-1 max-w-prose text-xs text-fg-2">
               This is about connected accounts only. It does not change what the key can DO on the board
-              (that is the tick list above — done and delete still stay with you). Settings &rarr; Secrets is
+              (that is the tick list above — done and delete still stay with you). Settings → Secrets is
               separate: the key never reads a secret value and only uses named secrets through the secrets
               broker. Tokens are never shown here or handed to the key.
             </p>
@@ -497,10 +496,12 @@ export function AgentKeysSection() {
           <Skeleton className="h-16 w-full" />
         </div>
       ) : active.length === 0 && revoked.length === 0 ? (
-        <div className="rounded-md border border-dashed border-line px-4 py-6 text-center">
-          <p className="text-base text-fg-1">No agent keys yet.</p>
-          <p className="mt-1 text-xs text-fg-2">Make one per outside agent — e.g. “Reporting bot” scoped to one workspace.</p>
-        </div>
+        <EmptyState
+          compact
+          title="No agent keys yet"
+          description="Make one per outside agent — e.g. “Reporting bot” scoped to one workspace."
+          className="rounded-md border border-dashed border-line"
+        />
       ) : (
         <ul className="divide-y divide-line-soft rounded-md border border-line">
           {[...active, ...revoked].map(k => (
@@ -561,9 +562,11 @@ export function AgentKeysSection() {
                 </p>
               </div>
               {!k.revoked_at && (
-                <div className="flex shrink-0 flex-wrap gap-2 self-start sm:self-center">
+                <div className="flex shrink-0 flex-wrap items-center gap-1 self-start sm:self-center">
                   <Button
                     variant="secondary"
+                    size="sm"
+                    aria-expanded={editing === k.id}
                     onClick={() => {
                       setEditing(editing === k.id ? null : k.id)
                       setDraftMode(modeOf(k.connectors))
@@ -576,9 +579,13 @@ export function AgentKeysSection() {
                   >
                     Integrations
                   </Button>
-                  <Button variant="danger" loading={revoking === k.id} onClick={() => void revoke(k)}>
-                    Revoke
-                  </Button>
+                  {/* Destructive, so behind the row "⋯" menu (still confirms first). */}
+                  <RowActions
+                    label={`Actions for ${k.label}`}
+                    actions={[
+                      { label: revoking === k.id ? 'Revoking…' : 'Revoke', onSelect: () => void revoke(k), danger: true, disabled: revoking === k.id },
+                    ]}
+                  />
                 </div>
               )}
             </li>

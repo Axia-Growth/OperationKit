@@ -131,7 +131,8 @@ describe('AgentWebhooksSection', () => {
     await flush()
     button(container, 'Edit webhook').click()
     await flush()
-    expect(container.textContent).toContain('HTTP 503')
+    expect(container.textContent).toContain('refused by the receiver')
+    expect(container.querySelector('[title="Status 503"]')).toBeTruthy()
     expect(container.textContent).toContain('#4242')
     expect(container.textContent).toContain('5 tries')
 
@@ -142,7 +143,7 @@ describe('AgentWebhooksSection', () => {
     button(container, 'Send test event').click()
     await flush()
     expect(apiMock.post).toHaveBeenCalledWith('/auth/agent-keys/7/webhook/test')
-    expect(container.textContent).toMatch(/Delivered — receiver answered 200/)
+    expect(container.textContent).toMatch(/Delivered — the receiver accepted the test event/)
   })
 
   // obj 900270: the needs_agent option is on every key (no label pilot) and saves.

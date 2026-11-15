@@ -4,6 +4,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { flushSync } from 'react-dom'
 import { createRoot, type Root } from 'react-dom/client'
 import { WorkspaceGraph } from './WorkspaceGraph'
+import { __resetKbResource } from '../../lib/kbResource'
 
 const GRAPH = {
   root: '/kb/garden',
@@ -44,6 +45,9 @@ describe('WorkspaceGraph', () => {
   })
 
   const nodes = () => [...host.querySelectorAll('g[data-rel]')].map(g => g.getAttribute('data-rel'))
+  // Links are drawn as a few <path>s grouped by look (obj 900867); each carries how many links it holds.
+  const linkPaths = () => [...host.querySelectorAll<SVGPathElement>('svg[aria-label^="Graph of"] path[data-link-count]')]
+  const links = () => linkPaths().reduce((n, p) => n + Number(p.getAttribute('data-link-count')), 0)
 
   it('loads the workspace graph and draws every page and connection', async () => {
     const open = vi.fn()
@@ -51,7 +55,8 @@ describe('WorkspaceGraph', () => {
     await flush()
     expect(fetchMock.mock.calls[0][0]).toBe('/api/kb-wiki/graph?workspace=garden')
     expect(nodes()).toHaveLength(4)
-    expect(host.querySelectorAll('svg[aria-label^="Graph of"] line')).toHaveLength(3)
+    expect(links()).toBe(3)
+    expect(linkPaths().length).toBeLessThanOrEqual(6)
     expect(host.textContent).toContain('4 pages · 3 connections')
     // Every node has a real position.
     for (const c of host.querySelectorAll('g[data-rel] circle')) expect(Number.isFinite(Number(c.getAttribute('cx')))).toBe(true)
@@ -61,6 +66,13 @@ describe('WorkspaceGraph', () => {
     expect(tom.getAttribute('aria-label')).toBe('Open Tom Whitfield (Person, 2 connections)')
     tom.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
     expect(open).toHaveBeenCalledWith('people/tom.md', '/kb/garden')
+
+    // Focusing a page lights its 2 links (one accent layer) and fades the third.
+    flushSync(() => tom.dispatchEvent(new FocusEvent('focusin', { bubbles: true })))
+    const accent = linkPaths().filter(p => p.getAttribute('class')?.includes('stroke-accent'))
+    expect(accent.reduce((n, p) => n + Number(p.getAttribute('data-link-count')), 0)).toBe(2)
+    expect(linkPaths().filter(p => p.getAttribute('class')?.includes('opacity-15')).reduce((n, p) => n + Number(p.getAttribute('data-link-count')), 0)).toBe(1)
+    expect(links()).toBe(3)
   })
 
   it('a tap on a dot opens that page (nearest dot wins)', async () => {
@@ -88,7 +100,7 @@ describe('WorkspaceGraph', () => {
     flushSync(() => (chip as HTMLButtonElement).click())
     expect(chip.getAttribute('aria-pressed')).toBe('false')
     expect(nodes()).not.toContain('sources/call.md')
-    expect(host.querySelectorAll('svg[aria-label^="Graph of"] line')).toHaveLength(1)
+    expect(links()).toBe(1)
 
     const box = host.querySelector<HTMLInputElement>('input[type="checkbox"]')!
     flushSync(() => box.click())
@@ -100,5 +112,89 @@ describe('WorkspaceGraph', () => {
     flushSync(() => root.render(<WorkspaceGraph workspace="empty" onOpenNote={() => {}} />))
     await flush()
     expect(host.textContent).toContain('Nothing to graph yet')
+  })
+})
+
+/** obj 900867 — a return visit to the graph is drawn from the cache: no skeleton, no re-layout. */
+describe('WorkspaceGraph — return visits', () => {
+  let host: HTMLDivElement
+  let root: Root
+  beforeEach(() => {
+    host = document.createElement('div')
+    document.body.appendChild(host)
+    root = createRoot(host)
+  })
+  afterEach(() => {
+    flushSync(() => root.unmount())
+    host.remove()
+    vi.unstubAllGlobals()
+  })
+  const positions = () => Object.fromEntries([...host.querySelectorAll('g[data-rel]')].map(g => {
+    const c = g.querySelector('circle:last-of-type')!
+    return [g.getAttribute('data-rel'), `${c.getAttribute('cx')},${c.getAttribute('cy')}`]
+  }))
+
+  it('draws the cached graph in the first frame, at the saved positions, before the server answers', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify(GRAPH), { status: 200 })))
+    flushSync(() => root.render(<WorkspaceGraph workspace="garden" onOpenNote={() => {}} />))
+    await flush()
+    const first = positions()
+    expect(Object.keys(first)).toHaveLength(4)
+    flushSync(() => root.unmount())
+
+    // Come back with the server slow to answer: the graph is on screen straight away.
+    let answer!: (r: Response) => void
+    const slow = vi.fn(() => new Promise<Response>(r => { answer = r }))
+    vi.stubGlobal('fetch', slow)
+    __resetKbResource() // a later visit, not a quick back-and-forth: it does re-ask the server
+    root = createRoot(host)
+    flushSync(() => root.render(<WorkspaceGraph workspace="garden" onOpenNote={() => {}} />))
+    expect(host.querySelector('[aria-busy="true"]')).toBeNull()
+    expect(positions()).toEqual(first)
+    await flush()
+    expect(slow).toHaveBeenCalledTimes(1)
+    expect(positions()).toEqual(first)
+    // Same graph from the server: nothing moves.
+    answer(new Response(JSON.stringify(GRAPH), { status: 200 }))
+    await flush()
+    expect(positions()).toEqual(first)
+  })
+
+  it('swaps in a changed graph from the server once it arrives', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify(GRAPH), { status: 200 })))
+    flushSync(() => root.render(<WorkspaceGraph workspace="garden" onOpenNote={() => {}} />))
+    await flush()
+    flushSync(() => root.unmount())
+    const grown = {
+      ...GRAPH,
+      nodes: [...GRAPH.nodes, { rel: 'people/ana.md', title: 'Ana', kind: 'person', degree: 1 }],
+      links: [...GRAPH.links, { a: 'people/ana.md', b: 'people/tom.md', kinds: ['related'], label: null, weight: 1 }],
+      counts: { ...GRAPH.counts, pages: 5, links: 4 },
+    }
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify(grown), { status: 200 })))
+    __resetKbResource() // time passes: the last fetch is no longer "a moment ago"
+    root = createRoot(host)
+    flushSync(() => root.render(<WorkspaceGraph workspace="garden" onOpenNote={() => {}} />))
+    expect(host.querySelectorAll('g[data-rel]')).toHaveLength(4) // cached first
+    await flush()
+    expect(host.querySelectorAll('g[data-rel]')).toHaveLength(5)
+    expect(host.textContent).toContain('5 pages · 4 connections')
+  })
+
+  it('lays a big graph out without blocking: a skeleton first, then every page', async () => {
+    const n = 260
+    const big = {
+      root: '/kb/big',
+      nodes: Array.from({ length: n }, (_, i) => ({ rel: `p/${i}.md`, title: `Page ${i}`, kind: 'topic', degree: i === 0 ? 0 : 1 })),
+      links: Array.from({ length: n - 1 }, (_, i) => ({ a: `p/${i}.md`, b: `p/${i + 1}.md`, kinds: ['related'], label: null, weight: 1 })),
+      counts: { pages: n, links: n - 1, isolated: 0, by_kind: { topic: n } },
+      truncated: false,
+    }
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify(big), { status: 200 })))
+    flushSync(() => root.render(<WorkspaceGraph workspace="big" onOpenNote={() => {}} />))
+    await flush()
+    expect(host.querySelector('[aria-busy="true"]')?.textContent).toContain(`Arranging ${n} pages`)
+    for (let i = 0; i < 400 && !host.querySelector('g[data-rel]'); i++) await flush()
+    expect(host.querySelectorAll('g[data-rel]')).toHaveLength(n)
   })
 })

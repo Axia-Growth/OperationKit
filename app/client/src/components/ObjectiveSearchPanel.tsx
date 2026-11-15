@@ -9,10 +9,16 @@ import {
   type ObjectiveAiSearchResult,
 } from '../lib/api'
 import { useWorkspaces } from '../hooks/useWorkspaces'
-import { NavIcon } from './nav-icons'
+import { Search } from 'lucide-react'
 import { STATUS_META, StatusDot } from './design/primitives'
 import { Modal } from './ui/Modal'
+import { EmptyState } from './ui/EmptyState'
+import { SearchX } from 'lucide-react'
+import { Spinner } from './ui/Button'
 import { SegmentedControl } from './ui/SegmentedControl'
+import { humanize } from '../lib/format'
+import { Button } from './ui/Button'
+import { WorkspaceChip } from './WorkspaceChip'
 
 /* ─────────────────────────────────────────────────────────
    Objective search (obj 702389)
@@ -54,7 +60,7 @@ function StatusBadge({ status }: { status: ObjectiveStatus }) {
 }
 
 export function ObjectiveSearchPanel({ open, workspace, onClose, onSelect }: ObjectiveSearchPanelProps) {
-  const { shortOf } = useWorkspaces()
+  const { labelOf } = useWorkspaces()
   const [mode, setMode] = useState<Mode>('keyword')
   const [query, setQuery] = useState('')
   const [loading, setLoading] = useState(false)
@@ -118,9 +124,9 @@ export function ObjectiveSearchPanel({ open, workspace, onClose, onSelect }: Obj
       if (seq !== seqRef.current) return
       setAiResults([])
       if (err instanceof ApiError && err.status === 502) {
-        setAiError('AI search unavailable (API key not configured)')
+        setAiError('AI search is not available yet. An AI account key has not been set up.')
       } else {
-        setAiError('AI search failed — try again')
+        setAiError('AI search did not work. Try again.')
       }
     } finally {
       if (seq === seqRef.current) setLoading(false)
@@ -163,9 +169,11 @@ export function ObjectiveSearchPanel({ open, workspace, onClose, onSelect }: Obj
       open
       onClose={onClose}
       labelledBy={titleId}
-      panelClassName="top-[10vh] bottom-auto mt-0 flex max-h-[72vh] max-w-xl flex-col overflow-hidden bg-surface-2"
+      size="lg"
+      placement="top"
+      panelClassName="flex max-h-[72vh] flex-col overflow-hidden bg-surface-2"
     >
-      <h2 id={titleId} className="sr-only">Search objectives</h2>
+      <h2 id={titleId} className="sr-only">Search cards</h2>
       <Command
         loop
         filter={false}
@@ -176,11 +184,11 @@ export function ObjectiveSearchPanel({ open, workspace, onClose, onSelect }: Obj
         className="flex min-h-0 flex-1 flex-col"
       >
         <div className="flex items-center gap-2 border-b border-line-soft px-3 py-2.5">
-          <NavIcon name="search" className="h-4 w-4 shrink-0 text-fg-3" />
+          {loading ? <Spinner className="h-4 w-4 text-fg-3" /> : <Search aria-hidden="true" className="h-4 w-4 shrink-0 text-fg-3" />}
           <CommandInput
             data-autofocus=""
-            aria-label={mode === 'keyword' ? 'Search objectives' : 'Describe the objective you are looking for'}
-            placeholder={mode === 'keyword' ? 'Search objectives (all stages)…' : 'Describe what you’re looking for, then Enter…'}
+            aria-label={mode === 'keyword' ? 'Search cards' : 'Describe the card you are looking for'}
+            placeholder={mode === 'keyword' ? 'Search cards (all stages)…' : 'Describe what you’re looking for, then Enter…'}
             onKeyDown={(e) => {
               // AI mode: Enter submits the query until results for it are shown.
               if (e.key === 'Enter' && mode === 'ai' && aiResults.length === 0) {
@@ -201,19 +209,29 @@ export function ObjectiveSearchPanel({ open, workspace, onClose, onSelect }: Obj
             onChange={(k) => switchMode(k as Mode)}
           />
           {mode === 'ai' && (
-            <button
+            <Button
               type="button"
+              size="xs"
+              variant="primary"
               onClick={() => void runAiSearch()}
-              disabled={loading || !query.trim()}
-              className="ml-auto inline-flex h-7 items-center rounded-md bg-accent px-2.5 text-sm font-medium text-accent-fg transition-colors duration-fast ease-out hover:bg-accent-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/50 disabled:opacity-40"
+              disabled={!query.trim()}
+              loading={loading}
+              className="ml-auto"
             >
-              {loading ? 'Searching…' : 'Search'}
-            </button>
+              {loading ? 'Searching' : 'Search'}
+            </Button>
           )}
         </div>
 
         <CommandStatus className={status ? `px-3 py-3 text-base ${aiError ? 'text-[color:var(--ok-alarm)]' : 'text-fg-3'}` : 'sr-only'}>
-          {status ?? `${results.length} ${results.length === 1 ? 'result' : 'results'}`}
+          {showEmpty ? (
+            <EmptyState
+              compact
+              icon={<SearchX className="h-5 w-5" aria-hidden="true" />}
+              title="No matches"
+              description={mode === 'ai' ? 'Try describing it differently.' : 'Try other words, or switch to AI search.'}
+            />
+          ) : (status ?? `${results.length} ${results.length === 1 ? 'result' : 'results'}`)}
         </CommandStatus>
 
         <CommandList className="min-h-0 flex-1 overflow-y-auto py-1">
@@ -230,11 +248,11 @@ export function ObjectiveSearchPanel({ open, workspace, onClose, onSelect }: Obj
                 <div className="flex items-center gap-2">
                   <StatusBadge status={r.status} />
                   <span className="min-w-0 flex-1 truncate text-base text-fg-0">{r.title || 'Untitled'}</span>
-                  <span className="shrink-0 text-xs uppercase text-fg-3 font-semibold tracking-eyebrow">{shortOf(r.workspace as Workspace)}</span>
+                  {r.workspace && <WorkspaceChip label={labelOf(r.workspace as Workspace)} className="max-w-[40%] shrink" />}
                 </div>
                 {(snippet || agent) && (
                   <div className="flex items-center gap-1.5 text-xs leading-snug text-fg-3">
-                    {agent && <span className="shrink-0 font-mono text-fg-2">{agent}</span>}
+                    {agent && <span className="shrink-0 text-fg-2" title={agent}>{humanize(agent)}</span>}
                     {agent && snippet && <span className="shrink-0 text-fg-3">·</span>}
                     {snippet && <span className="line-clamp-2">{snippet}</span>}
                   </div>

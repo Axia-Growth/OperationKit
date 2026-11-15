@@ -28,7 +28,8 @@ afterEach(() => {
 function mount(path = '/settings/secrets') {
   flushSync(() => root.render(<MemoryRouter initialEntries={[path]}><SettingsSecrets /></MemoryRouter>))
 }
-const tabs = () => Array.from(container.querySelectorAll('[role="tab"]')).map(t => t.textContent)
+// Secret lists is a SegmentedControl (radio group) since obj 900807 — Settings owns the one tab row.
+const tabs = () => Array.from(container.querySelectorAll('[role="radio"]')).map(t => t.textContent)
 
 describe('Settings → Secrets structure', () => {
   it('a plain member sees only their own secrets, with no admin sub-tabs', () => {
@@ -57,7 +58,7 @@ describe('Settings → Secrets structure', () => {
     auth.user = { id: 1, role: 'admin', workspaces: [] }
     mount('/settings/secrets?view=mine')
     expect(container.textContent).toContain('my-secrets')
-    const test = Array.from(container.querySelectorAll('[role="tab"]')).find(t => t.textContent === 'Test credentials') as HTMLElement
+    const test = Array.from(container.querySelectorAll('[role="radio"]')).find(t => t.textContent === 'Test credentials') as HTMLElement
     flushSync(() => test.click())
     await vi.waitFor(() => expect(container.textContent).toContain('test-creds'))
   })

@@ -45,6 +45,7 @@
 import { Router, type NextFunction, type Response } from 'express'
 import type { AgentScope } from '@operationkit/shared'
 import { requireAuth, type AuthRequest } from '../middleware/auth.js'
+import { resolveCorsOrigins } from '../lib/install-defaults.js'
 
 export const MCP_PATH = '/api/mcp'
 /** Header stamped on forwarded REST calls so attribution can tell MCP traffic apart. */
@@ -1434,9 +1435,7 @@ async function handleMessage(msg: JsonRpcMessage, req: AuthRequest, rest: RestCa
 }
 
 function allowedOrigins(): string[] {
-  return process.env.CORS_ORIGINS
-    ? process.env.CORS_ORIGINS.split(',')
-    : ['https://cc.example.com', 'http://localhost:5173', 'http://localhost:3002']
+  return resolveCorsOrigins()
 }
 
 /** Bearer-only auth through the shared requireAuth (cookies deliberately ignored). */

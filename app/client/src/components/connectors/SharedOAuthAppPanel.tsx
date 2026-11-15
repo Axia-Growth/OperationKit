@@ -12,7 +12,8 @@
  */
 import { useId, useState, type FormEvent } from 'react'
 import type { ConnectorSharedApp, ConnectorSummary } from '@operationkit/shared'
-import { Badge, Button } from '../ui'
+import { ChevronDown } from 'lucide-react'
+import { Badge, Button, Checkbox, Field, Input, useConfirm } from '../ui'
 import { useBranding } from '../../hooks/useBranding'
 
 export interface SharedAppInput {
@@ -22,9 +23,6 @@ export interface SharedAppInput {
   redirect_uri: string
   provider_label?: string
 }
-
-const INPUT =
-  'min-h-[44px] w-full rounded-md border border-line bg-surface-1 px-3 font-mono text-sm text-fg-0 outline-none transition-colors duration-fast ease-out placeholder:text-fg-3 hover:border-line-strong focus:border-accent focus-visible:ring-2 focus-visible:ring-accent/40 disabled:opacity-60 sm:min-h-[36px]'
 
 export function sharedAppStateLabel(s: ConnectorSharedApp): { text: string; tone: 'neutral' | 'amber' } {
   if (!s.enabled) return { text: 'Off', tone: 'neutral' }
@@ -50,6 +48,7 @@ export function SharedOAuthAppPanel({
   const ids = useId()
   const [open, setOpen] = useState(defaultOpen)
   const [busy, setBusy] = useState(false)
+  const { confirm, confirmDialog } = useConfirm()
   const [form, setForm] = useState<SharedAppInput>(() => ({
     enabled: s?.enabled ?? false,
     issuer: s?.issuer ?? '',
@@ -76,6 +75,14 @@ export function SharedOAuthAppPanel({
 
   async function remove() {
     if (!onRemove) return
+    // Destructive: asks first (polish F5, obj 900806).
+    const ok = await confirm({
+      title: `Remove the shared app for ${c.name}?`,
+      message: `${c.name} stops signing in through the third party's shared app. Anyone who connected through it will need to connect again.`,
+      confirmLabel: 'Remove',
+      danger: true,
+    })
+    if (!ok) return
     setBusy(true)
     try {
       if (await onRemove()) setForm({ enabled: false, issuer: '', client_id: '', redirect_uri: '', provider_label: '' })
@@ -85,10 +92,8 @@ export function SharedOAuthAppPanel({
   }
 
   const field = (key: 'issuer' | 'client_id' | 'redirect_uri' | 'provider_label', label: string, help: string, placeholder: string) => (
-    <div>
-      <label htmlFor={`${ids}-${key}`} className="mb-1 block text-xs font-medium text-fg-1">{label}</label>
-      <input
-        id={`${ids}-${key}`}
+    <Field id={`${ids}-${key}`} label={label} hint={help}>
+      <Input
         type="text"
         autoComplete="off"
         spellCheck={false}
@@ -96,10 +101,9 @@ export function SharedOAuthAppPanel({
         value={form[key] ?? ''}
         placeholder={placeholder}
         onChange={e => setForm(prev => ({ ...prev, [key]: e.target.value }))}
-        className={INPUT}
+        className="font-mono"
       />
-      <p className="mt-1 text-xs leading-relaxed text-fg-3">{help}</p>
-    </div>
+    </Field>
   )
 
   return (
@@ -121,10 +125,7 @@ export function SharedOAuthAppPanel({
             Only if you can't register your own {c.name} app. Not needed for a normal install.
           </span>
         </span>
-        <svg aria-hidden="true" viewBox="0 0 20 20" fill="currentColor"
-          className={`h-4 w-4 shrink-0 text-fg-3 transition-transform duration-fast ease-out ${open ? 'rotate-180' : ''}`}>
-          <path fillRule="evenodd" d="M5.23 7.21a.75.75 0 0 1 1.06.02L10 11.06l3.71-3.83a.75.75 0 1 1 1.08 1.04l-4.25 4.39a.75.75 0 0 1-1.08 0L5.21 8.27a.75.75 0 0 1 .02-1.06Z" clipRule="evenodd" />
-        </svg>
+        <ChevronDown aria-hidden="true" className={`h-4 w-4 shrink-0 text-fg-3 transition-transform duration-fast ease-out ${open ? 'rotate-180' : ''}`} />
       </button>
 
       {open && (
@@ -156,27 +157,25 @@ export function SharedOAuthAppPanel({
             {field('issuer', 'Issuer URL', "The third party's OAuth server. Must be https.", 'Paste from the third party you chose')}
             {field('client_id', 'Client ID', 'The client ID the third party gave you for its shared app.', 'Paste from the third party you chose')}
             {field('redirect_uri', 'Redirect URI', 'The redirect URI registered on the shared app. Must be https.', 'Paste from the third party you chose')}
-            <label className="flex items-start gap-2 text-sm text-fg-1">
-              <input
-                type="checkbox"
-                className="mt-0.5 h-4 w-4 accent-[color:var(--accent)]"
-                disabled={!editable || busy}
-                checked={form.enabled}
-                onChange={e => setForm(prev => ({ ...prev, enabled: e.target.checked }))}
-              />
-              <span>Use this shared app for {c.name} when this install has no app of its own</span>
-            </label>
+            <Checkbox
+              disabled={!editable || busy}
+              checked={form.enabled}
+              onChange={e => setForm(prev => ({ ...prev, enabled: e.target.checked }))}
+              label={`Use this shared app for ${c.name} when this install has no app of its own`}
+            />
             {editable && (
               <div className="flex flex-wrap gap-2">
                 <Button type="submit" variant="primary" loading={busy} disabled={!complete}>Save</Button>
                 {s.configured && onRemove && (
-                  <Button type="button" variant="danger" disabled={busy} onClick={() => void remove()}>Remove</Button>
+                  // Kept apart from Save (far end of the row); confirms first.
+                  <Button type="button" variant="danger" className="ml-auto" disabled={busy} onClick={() => void remove()}>Remove</Button>
                 )}
               </div>
             )}
           </form>
         </div>
       )}
+      {confirmDialog}
     </div>
   )
 }

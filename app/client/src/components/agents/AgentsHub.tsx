@@ -13,10 +13,17 @@
  * tab rendering the same registry, so there were two places to manage agents.
  * That tab is gone (/settings/agents-skills redirects here) and this page is
  * titled "Agents & Skills" in the nav and header — the one place.
+ *
+ * obj 900807 flattened it: there were three nested tab groups in three styles
+ * (Registry | Board layer | Templates → Roster | Assignments | Skill Graph →
+ * an Agents / Skills underline pair). Now there is ONE tab row; the roster's
+ * Agents / Skills choice is a filter (SegmentedControl), and the create guide
+ * can be collapsed.
  */
 import type { Workspace } from '@operationkit/shared'
+import { SkillGraphTab } from '../SkillGraph'
 import { useSearchParams } from 'react-router-dom'
-import { PageContainer, PageHeader, Tabs, type TabItem } from '../ui'
+import { Card, PageContainer, PageHeader, Tabs, type TabItem } from '../ui'
 import { AgentsPage } from '../AgentsPage'
 import { AgentTemplatesPage } from '../AgentTemplatesPage'
 import { SettingsAgents } from '../settings/SettingsAgents'
@@ -25,14 +32,18 @@ import { CreateAgentGuide } from './CreateAgentGuide'
 
 const TABS: TabItem[] = [
   { key: 'registry', label: 'Registry' },
-  { key: 'board', label: 'Board layer' },
+  { key: 'assignments', label: 'Assignments' },
+  { key: 'graph', label: 'Skill graph' },
+  { key: 'board', label: 'By project' },
   { key: 'templates', label: 'Templates' },
 ]
 
 const COPY: Record<AgentsTab, string> = {
-  registry: 'Every agent and skill on this install — including built-in and starter-pack agents — who can use them, and how they connect.',
-  board: 'Which agent, skill and tool files a project’s sessions actually run on.',
-  templates: 'Add a starter agent, or import and export agent files.',
+  registry: 'Every bot and skill on this install — including built-in and starter-pack bots — who can use them, and how they connect.',
+  assignments: 'Narrow a bot or skill to one workspace, project or user instead of it applying everywhere.',
+  graph: 'How bots, skills and tools connect.',
+  board: 'Which bot, skill and tool files a project’s cards actually run on.',
+  templates: 'Add a starter bot, or import and export bot files.',
 }
 
 /** Resolve the active tab. Old `/agents?project=…` links meant the board-layer view. */
@@ -53,11 +64,17 @@ export function AgentsHub({ workspace }: { workspace: Workspace }) {
 
   return (
     <PageContainer width="wide">
-      <PageHeader title="Agents & Skills" description={COPY[tab]} />
+      <PageHeader title="Bots & skills" description={COPY[tab]} />
       {/* One clear way in to creating something, on every tab (obj 900672). */}
       <CreateAgentGuide />
-      <Tabs items={TABS} value={tab} onChange={select} label="Agents and skills sections" panelClassName="mt-5">
-        {tab === 'registry' && <SettingsAgents showSetupPrompt={false} />}
+      <Tabs items={TABS} value={tab} onChange={select} label="Bots and skills sections" panelClassName="mt-5">
+        {tab === 'registry' && <SettingsAgents showSetupPrompt={false} view="roster" />}
+        {tab === 'assignments' && <SettingsAgents showSetupPrompt={false} view="assignments" />}
+        {tab === 'graph' && (
+          <Card inset className="h-[70vh] overflow-hidden">
+            <SkillGraphTab />
+          </Card>
+        )}
         {tab === 'board' && <AgentsPage workspace={workspace} embedded />}
         {tab === 'templates' && <AgentTemplatesPage embedded />}
       </Tabs>

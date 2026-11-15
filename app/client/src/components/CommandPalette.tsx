@@ -1,11 +1,15 @@
 import { useId } from 'react'
 import { Command, CommandEmpty, CommandInput, CommandItem, CommandList } from '@ui-sdk/react/command'
-import { NavIcon } from './nav-icons'
+import { Search } from 'lucide-react'
 import { Modal } from './ui/Modal'
+import { EmptyState } from './ui/EmptyState'
+import { SearchX } from 'lucide-react'
 
 interface PaletteItem {
   label: string
-  hint?: string
+  /** Extra words the row matches on (old names, synonyms). Never shown:
+      the palette lists plain page names, not URL paths (obj 900807). */
+  keywords?: string[]
   onSelect: () => void
 }
 
@@ -24,15 +28,17 @@ interface CommandPaletteProps {
 export function CommandPalette({ open, onClose, items }: CommandPaletteProps) {
   const titleId = useId()
   if (!open) return null
-  // Values must be unique; two rows can share a label (e.g. Settings).
-  const keyed = items.map((item, i) => ({ item, value: `${i}:${item.hint ?? item.label}` }))
+  // Values must be unique even if a caller repeats a label.
+  const keyed = items.map((item, i) => ({ item, value: `${i}:${item.label}` }))
 
   return (
     <Modal
       open
       onClose={onClose}
       labelledBy={titleId}
-      panelClassName="top-[12vh] bottom-auto mt-0 max-w-lg overflow-hidden bg-surface-2"
+      size="lg"
+      placement="top"
+      panelClassName="overflow-hidden bg-surface-2"
     >
       <h2 id={titleId} className="sr-only">Jump to a page</h2>
       <Command
@@ -45,27 +51,34 @@ export function CommandPalette({ open, onClose, items }: CommandPaletteProps) {
         }}
       >
         <div className="flex items-center gap-2 border-b border-line-soft px-3 py-2.5">
-          <NavIcon name="search" className="h-4 w-4 shrink-0 text-fg-3" />
+          <Search aria-hidden="true" className="h-4 w-4 shrink-0 text-fg-3" />
           <CommandInput
             data-autofocus=""
             aria-label="Jump to a page"
             placeholder="Jump to a page…"
             className="min-w-0 flex-1 bg-transparent text-base text-fg-0 placeholder-fg-3 outline-none"
           />
-          <kbd className="font-mono text-xs text-fg-3">esc</kbd>
+          <kbd className="font-sans text-xs text-fg-3">Esc</kbd>
         </div>
-        <CommandEmpty className="px-3 py-3 text-base text-fg-3 empty:p-0">No matches</CommandEmpty>
+        <CommandEmpty className="empty:hidden">
+          <EmptyState
+            compact
+            icon={<SearchX className="h-5 w-5" aria-hidden="true" />}
+            title="No matches"
+            description="No page by that name. Try a shorter word."
+            className="py-6"
+          />
+        </CommandEmpty>
         <CommandList className="max-h-[40vh] overflow-y-auto py-1">
           {keyed.map(({ item, value }) => (
             <CommandItem
               key={value}
               value={value}
               label={item.label}
-              keywords={item.hint ? [item.hint] : undefined}
+              keywords={item.keywords}
               className="flex cursor-pointer items-center justify-between gap-3 px-3 py-2 text-base text-fg-1 transition-colors duration-fast ease-out data-[highlighted]:bg-surface-3 data-[highlighted]:text-fg-0"
             >
               <span className="truncate">{item.label}</span>
-              {item.hint && <span className="shrink-0 font-mono text-xs text-fg-3">{item.hint}</span>}
             </CommandItem>
           ))}
         </CommandList>

@@ -331,13 +331,6 @@ describe('AgentKeysSection', () => {
     expect(container.textContent).toContain('all connectors (legacy)')
   })
 
-  it('revokes a key', async () => {
-    flushSync(() => root.render(<AgentKeysSection />))
-    await flush()
-    button(container, 'Revoke').click()
-    await flush()
-    expect(apiMock.del).toHaveBeenCalledWith('/auth/agent-keys/7')
-  })
 })
 
 /* obj 900819 — the two one-of-N choices on the new-key form are radio-style
@@ -353,6 +346,18 @@ describe('AgentKeysSection one-of-N choices (UI SDK segmented control)', () => {
   afterEach(cleanup)
 
   const group = (name: string) => byRole(document.body, 'radiogroup').find(g => g.getAttribute('aria-label') === name)!
+
+  // F5 (obj 900806): Revoke is destructive, so it lives behind the row "⋯" menu.
+  it('revokes a key from the row ⋯ menu', async () => {
+    apiMock.del.mockReset().mockResolvedValue({ ok: true })
+    await render(<AgentKeysSection />)
+    await flush()
+    expect(Array.from(document.querySelectorAll('button')).some(b => b.textContent?.trim() === 'Revoke')).toBe(false)
+    await click(document.querySelector('[aria-label="Actions for Grok: Example"]'))
+    await click(byRole(document, 'menuitem').find(i => i.textContent?.trim() === 'Revoke')!)
+    await flush()
+    expect(apiMock.del).toHaveBeenCalledWith('/auth/agent-keys/7')
+  })
 
   it('workspace reach and connector reach are named radio groups driven by arrow keys', async () => {
     await render(<AgentKeysSection />)

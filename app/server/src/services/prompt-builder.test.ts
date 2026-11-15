@@ -13,12 +13,14 @@ const TMP_DB = path.join(os.tmpdir(), `cc-prompt-builder-test-${process.pid}-${D
 process.env.DB_PATH = TMP_DB
 
 import { initDb, getDb } from '../db/index.js'
+import { seedLegacyWorkspaces } from '../__fixtures__/legacy-workspaces.js'
 import { buildPrompt, resolveWorkdir, loadWorkspacesConfig, resolveGithubRepo } from './prompt-builder.js'
 import { HOME_DIR, PROJECTS_DIR, WORKSPACES_JSON } from '../config.js'
 import type { Objective, AcceptanceCriterion } from '@operationkit/shared'
 
-beforeAll(() => {
+beforeAll(async () => {
   initDb()
+  await seedLegacyWorkspaces(getDb())
 })
 
 // Minimal-but-complete Objective. Defaults chosen so the QW2 (unconditional

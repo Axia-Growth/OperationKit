@@ -1,9 +1,11 @@
 import { useState, useMemo, useCallback, useEffect, type ReactNode } from 'react'
 import { agentsTabRoute } from '../lib/routes'
 import { useSearchParams } from 'react-router-dom'
-import { AlertTriangle, Check, Copy, FileWarning, Network, List, Users } from 'lucide-react'
+import { AlertTriangle, Check, ChevronRight, Copy, FileWarning, Network, List, Users } from 'lucide-react'
 import type { Workspace } from '@operationkit/shared'
 import { useProjects } from '../hooks/useProjects'
+import { useWorkspaces } from '../hooks/useWorkspaces'
+import { formatBytes, friendlyError } from '../lib/format'
 import { useBoardLayer } from '../hooks/useBoardLayer'
 import { GraphCanvas } from './SkillGraph'
 import { MarkdownEditor } from './MarkdownEditor'
@@ -11,7 +13,7 @@ import {
   PageContainer,
   PageHeader,
   Toolbar,
-  Tabs,
+  SegmentedControl,
   Card,
   Badge,
   Button,
@@ -71,6 +73,8 @@ interface Selection {
   /** The path the graph/list claims — shown immediately, before the fetch lands. */
   path: string
   exists: boolean
+  /** What a person reads in the viewer header (the slug stays in the tooltip). */
+  label?: string
 }
 
 const KIND_TONE = {
@@ -80,6 +84,14 @@ const KIND_TONE = {
   tool: 'verify',
 } as const
 
+/** On-screen word for each layer kind (the code keeps `agent`). */
+const KIND_LABEL: Record<NodeKind, string> = {
+  agent: 'Bot',
+  overlay: 'Workspace overlay',
+  skill: 'Skill',
+  tool: 'Tool',
+}
+
 const VIEW_TABS: TabItem[] = [
   { key: 'list', label: 'Layers' },
   { key: 'graph', label: 'Graph' },
@@ -88,6 +100,8 @@ const VIEW_TABS: TabItem[] = [
 export function AgentsPage({ workspace, fixture, loadFile, embedded = false }: AgentsPageProps) {
   const [params, setParams] = useSearchParams()
   const { projects } = useProjects(workspace)
+  const { labelOf } = useWorkspaces()
+  const wsLabel = labelOf(workspace)
 
   // Scope lives in the URL so a reload (or a shared link) lands on the same
   // project rather than silently resetting to all-of-workspace.
@@ -135,12 +149,12 @@ export function AgentsPage({ workspace, fixture, loadFile, embedded = false }: A
   const openNode = useCallback((kind: NodeKind, slug: string) => {
     if (kind === 'agent') {
       const a = agentBySlug.get(slug)
-      setSelected({ kind, slug, path: a?.persona_file ?? '', exists: a?.persona_exists ?? false })
+      setSelected({ kind, slug, path: a?.persona_file ?? '', exists: a?.persona_exists ?? false, label: a?.label })
       return
     }
     if (kind === 'overlay') {
       const a = agentBySlug.get(slug)
-      setSelected({ kind, slug, path: a?.overlay_file ?? '', exists: a?.overlay_exists ?? false })
+      setSelected({ kind, slug, path: a?.overlay_file ?? '', exists: a?.overlay_exists ?? false, label: a?.label })
       return
     }
     if (kind === 'skill') {
@@ -167,8 +181,8 @@ export function AgentsPage({ workspace, fixture, loadFile, embedded = false }: A
   }, [data])
 
   const scopeLabel = projectParam === ALL
-    ? `All of ${workspace}`
-    : data?.scope.project_name ?? projects.find(p => String(p.id) === projectParam)?.name ?? `Project ${projectParam}`
+    ? `All of ${wsLabel}`
+    : data?.scope.project_name ?? projects.find(p => String(p.id) === projectParam)?.name ?? 'This project'
 
   // Inside the one Agents page the hub owns the title and the Registry tab;
   // standalone (tests, old embeds) it keeps its own page chrome.
@@ -177,16 +191,17 @@ export function AgentsPage({ workspace, fixture, loadFile, embedded = false }: A
     <Shell>
       {embedded ? (
         <p className="mb-4 max-w-3xl text-sm leading-relaxed text-fg-2">
-          The agent, skill and tool markdown a project's sessions actually run on. Read-only — edit the roster in the Registry tab.
+          The bot, skill and tool files a project's cards actually run on. Read-only — edit the roster in the Registry tab.
         </p>
       ) : (
         <PageHeader
-          title="Agents"
-          breadcrumbs={[{ label: workspace }, { label: 'Agents' }]}
-          description="The agent, skill and tool markdown a project's sessions actually run on. Read-only — the roster and assignments live in the Registry tab."
+          title="Bots & skills"
+          breadcrumbs={[{ label: 'Bots & skills', href: '/agents' }, { label: 'By project' }]}
+          description="The bot, skill and tool files a project's cards actually run on. Read-only — the roster and assignments live on the Registry and Assignments tabs."
           actions={
             <Button variant="ghost" size="sm" onClick={() => { window.location.assign(agentsTabRoute('registry')) }}>
-              Agent registry ›
+              Bot registry
+              <ChevronRight aria-hidden="true" className="h-3.5 w-3.5" />
             </Button>
           }
         />
@@ -203,22 +218,24 @@ export function AgentsPage({ workspace, fixture, loadFile, embedded = false }: A
                 value={projectParam}
                 onChange={v => setScope(v)}
               >
-                <option value={ALL}>All of {workspace}</option>
+                <option value={ALL}>All of {wsLabel}</option>
                 {projects.map(p => (
-                  <option key={p.id} value={String(p.id)}>{p.id} · {p.name}</option>
+                  <option key={p.id} value={String(p.id)}>{p.name}</option>
                 ))}
                 {projectParam !== ALL && !projects.some(p => String(p.id) === projectParam) && (
                   <option value={projectParam}>{scopeLabel}</option>
                 )}
               </Select>
             </label>
-            <Tabs items={VIEW_TABS} value={view} onChange={setView} label="Layer views" />
+            {/* List vs graph is a way of LOOKING at one result, not a panel switch:
+                a SegmentedControl, so the page keeps one tab level (obj 900807). */}
+            <SegmentedControl items={VIEW_TABS} value={view} onChange={setView} label="Layer views" />
           </>
         }
         right={
           data ? (
-            <span className="font-mono text-xs text-fg-2">
-              {data.agents.length} agents · {data.skills.length} skills · {data.tools.length} tools
+            <span className="text-xs text-fg-2">
+              {data.agents.length} {data.agents.length === 1 ? 'bot' : 'bots'} · {data.skills.length} skills · {data.tools.length} tools
             </span>
           ) : undefined
         }
@@ -228,7 +245,7 @@ export function AgentsPage({ workspace, fixture, loadFile, embedded = false }: A
         <EmptyState
           icon={<Users className="h-5 w-5" />}
           title="Pick a single workspace"
-          description="The agent → skill → tool layer is defined per workspace, so this tab cannot show 'all'. Choose one workspace in the Workspace switcher in the top bar and the layer for its projects appears here."
+          description="Bots, skills and tools are set up per workspace, so this tab cannot show every workspace at once. Choose one workspace in the Workspace switcher in the top bar and its bots appear here."
         />
       )}
 
@@ -237,8 +254,8 @@ export function AgentsPage({ workspace, fixture, loadFile, embedded = false }: A
       {!needsWorkspace && !loading && error && (
         <EmptyState
           icon={<Network className="h-5 w-5" />}
-          title="Board layer unavailable"
-          description={error}
+          title="Could not load bots and skills"
+          description={friendlyError(error).message}
           action={<Button variant="secondary" size="sm" onClick={() => { void live.refresh() }}>Retry</Button>}
         />
       )}
@@ -246,8 +263,8 @@ export function AgentsPage({ workspace, fixture, loadFile, embedded = false }: A
       {!needsWorkspace && !loading && !error && data && data.agents.length === 0 && (
         <EmptyState
           icon={<Users className="h-5 w-5" />}
-          title="No agents in this scope"
-          description={`Nothing on the board for ${scopeLabel} is routed to an agent yet, so there is no layer to show.`}
+          title="No bots in this scope"
+          description={`Nothing on the board for ${scopeLabel} is assigned to a bot yet, so there is nothing to show.`}
         />
       )}
 
@@ -258,13 +275,13 @@ export function AgentsPage({ workspace, fixture, loadFile, embedded = false }: A
               {orphans > 0 ? (
                 <ul className="space-y-0.5">
                   {data.orphans.agents_without_persona.length > 0 && (
-                    <li>Agents with no persona file: <span className="font-mono">{data.orphans.agents_without_persona.join(', ')}</span></li>
+                    <li>Bots with no instructions file: <span className="font-mono">{data.orphans.agents_without_persona.join(', ')}</span></li>
                   )}
                   {data.orphans.skills_declared_missing.length > 0 && (
-                    <li>Skills declared by an agent but absent on disk: <span className="font-mono">{data.orphans.skills_declared_missing.join(', ')}</span></li>
+                    <li>Skills a bot lists but missing on disk: <span className="font-mono">{data.orphans.skills_declared_missing.join(', ')}</span></li>
                   )}
                   {data.orphans.tools_declared_missing.length > 0 && (
-                    <li>Tools declared by a skill but absent on disk: <span className="font-mono">{data.orphans.tools_declared_missing.join(', ')}</span></li>
+                    <li>Tools a skill lists but missing on disk: <span className="font-mono">{data.orphans.tools_declared_missing.join(', ')}</span></li>
                   )}
                 </ul>
               ) : (
@@ -309,7 +326,7 @@ function EmbeddedShell({ children }: { children: ReactNode }) {
 
 function LoadingState() {
   return (
-    <div className="grid gap-4 lg:grid-cols-2" aria-busy="true" aria-label="Loading the board layer">
+    <div className="grid gap-4 lg:grid-cols-2" aria-busy="true" aria-label="Loading bots and skills">
       <Card>
         <div className="space-y-3 p-4">
           {[0, 1, 2].map(i => (
@@ -351,7 +368,7 @@ function MissingChip({ what = 'file missing' }: { what?: string }) {
 function PathLine({ path, exists }: { path: string; exists: boolean }) {
   return (
     <div className="mt-1 flex items-center gap-1.5 break-all font-mono text-xs text-fg-3">
-      {exists ? null : <FileWarning className="h-3 w-3 shrink-0 text-signal-alarm" aria-hidden="true" />}
+      {exists ? null : <FileWarning className="h-3 w-3 shrink-0 text-danger" aria-hidden="true" />}
       {path || <span className="italic">no path declared</span>}
     </div>
   )
@@ -382,8 +399,8 @@ function NodeButton({
       )}
     >
       <div className="flex flex-wrap items-center gap-1.5">
-        <Badge tone={KIND_TONE[kind]}>{kind}</Badge>
-        <span className="font-mono text-xs font-medium text-fg-0">{label}</span>
+        <Badge tone={KIND_TONE[kind]}>{KIND_LABEL[kind]}</Badge>
+        <span className={cn('text-xs font-medium text-fg-0', (kind === 'skill' || kind === 'tool') && 'font-mono')}>{label}</span>
         {!exists && <MissingChip />}
         {meta && <span className="text-xs text-fg-3">{meta}</span>}
       </div>
@@ -415,12 +432,11 @@ function LayerList({
               <div className="flex flex-wrap items-start justify-between gap-2">
                 <div className="min-w-0">
                   <div className="flex flex-wrap items-center gap-1.5">
-                    <span className="font-display text-base font-semibold text-fg-0">{agent.label}</span>
-                    <Badge mono>{agent.slug}</Badge>
+                    <span className="font-display text-base font-semibold text-fg-0" title={agent.slug}>{agent.label}</span>
                     <Badge tone={agent.objective_count > 0 ? 'accent' : 'neutral'}>
-                      {agent.objective_count} objective{agent.objective_count === 1 ? '' : 's'}
+                      {agent.objective_count} card{agent.objective_count === 1 ? '' : 's'}
                     </Badge>
-                    {!agent.assignable && <Badge>routing-only</Badge>}
+                    {!agent.assignable && <Badge>Routing only</Badge>}
                   </div>
                 </div>
               </div>
@@ -429,7 +445,7 @@ function LayerList({
                   the persona file and the workspace overlay concatenated. */}
               <div className="space-y-1.5">
                 <NodeButton
-                  label={`${agent.slug} persona`}
+                  label={`${agent.label} instructions`}
                   kind="agent"
                   path={agent.persona_file}
                   exists={agent.persona_exists}
@@ -438,7 +454,7 @@ function LayerList({
                 />
                 {agent.overlay_file && (
                   <NodeButton
-                    label={`${agent.slug} workspace overlay`}
+                    label={`${agent.label} workspace overlay`}
                     kind="overlay"
                     path={agent.overlay_file}
                     exists={agent.overlay_exists}
@@ -455,7 +471,7 @@ function LayerList({
                 </div>
                 <div className="space-y-1.5">
                   {declared.length === 0 && (
-                    <p className="text-xs text-fg-3">This agent declares no skills.</p>
+                    <p className="text-xs text-fg-3">This bot lists no skills.</p>
                   )}
                   {declared.map(({ slug, always }) => {
                     const skill = skillBySlug.get(slug)
@@ -552,7 +568,7 @@ function FileViewer({
           <EmptyState
             icon={<List className="h-5 w-5" />}
             title="Pick a node"
-            description="Select an agent, overlay, skill or tool to read its markdown here, with its resolved path."
+            description="Select a bot, overlay, skill or tool to read its file here, with its path."
           />
         </div>
       </Card>
@@ -566,8 +582,8 @@ function FileViewer({
     <Card className="lg:sticky lg:top-4">
       <div key={`hdr:${selection.kind}:${selection.slug}`} className="cc-land border-b border-line p-4">
         <div className="flex flex-wrap items-center gap-1.5">
-          <Badge tone={KIND_TONE[selection.kind]}>{selection.kind}</Badge>
-          <span className="font-mono text-sm font-medium text-fg-0">{selection.slug}</span>
+          <Badge tone={KIND_TONE[selection.kind]}>{KIND_LABEL[selection.kind]}</Badge>
+          <span className={cn('text-sm font-medium text-fg-0', !selection.label && 'font-mono')} title={selection.slug}>{selection.label ?? selection.slug}</span>
           {missing && <MissingChip />}
         </div>
         <div className="mt-2 flex items-start gap-2">
@@ -587,25 +603,28 @@ function FileViewer({
             }}
           >
             {copied
-              ? <Check className="h-4 w-4 text-signal-verify" />
+              ? <Check className="h-4 w-4 text-success" />
               : <Copy className="h-4 w-4" />}
           </IconButton>
         </div>
         {file && (
-          <div className="mt-1.5 font-mono text-xs text-fg-3">{file.bytes} bytes</div>
+          <div className="mt-1.5 text-xs text-fg-3">{formatBytes(file.bytes)}</div>
         )}
       </div>
 
       <div key={`${selection.kind}:${selection.slug}`} className="cc-land max-h-[62vh] overflow-y-auto p-4">
         {loading && <SkeletonText lines={10} />}
         {!loading && error && (
-          <Alert tone="alarm">{error}</Alert>
+          <Alert tone="alarm">
+            {friendlyError(error).message}
+            <details className="mt-1 text-xs text-fg-3"><summary>Details</summary>{error}</details>
+          </Alert>
         )}
         {!loading && !error && missing && (
           <EmptyState
             icon={<FileWarning className="h-5 w-5" />}
             title="File missing on disk"
-            description={`${selection.slug} is declared in the layer graph but ${path || 'its path'} does not exist. This is a real defect in the agent layer, not a display problem.`}
+            description={`${selection.label ?? selection.slug} is listed, but ${path || 'its file'} does not exist. This is a real gap in the bot's setup, not a display problem.`}
           />
         )}
         {!loading && !error && !missing && file && (

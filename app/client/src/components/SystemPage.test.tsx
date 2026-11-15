@@ -101,7 +101,7 @@ describe('CpuDetail (obj 900685)', () => {
     flushSync(() => root.render(<CpuDetail cpu={{ ...SYSTEM.cpu, windowSeconds: 10, avg1mPercent: 31.2, peak1mPercent: 59, breakdown: { sessions: 18, kernel: 22, other: 1 } }} />))
     const text = host.textContent ?? ''
     expect(text).toContain('10s avg · 1-min avg 31.2% · peak 59%')
-    expect(text).toContain('Sessions 18% · Kernel 22% · Server/other 1%')
+    expect(text).toContain('Bots 18% · Kernel 22% · Server/other 1%')
     flushSync(() => root.unmount())
   })
 

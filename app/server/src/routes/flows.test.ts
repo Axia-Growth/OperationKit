@@ -381,10 +381,10 @@ describe('acceptance 4: diagram — kind, tool/connector, effect, LLM nodes, per
     const before = await call('GET', `/api/flows/${flowId}`, { as: ADMIN })
     const m: string = before.json.mermaid
     expect(m).toMatch(/^flowchart TD/)
-    expect(m).toContain('n_start(["⏰ trigger · schedule<br/>0 8 * * 1-5"])') // trigger = stadium + cron
-    expect(m).toContain('🔧 tool · calendar-bookings-list') // tool slug
-    expect(m).toContain('🔌 MCP · crm.upsert_contact') // connector.tool
-    expect(m).toContain('n_classify{{"🧠 LLM · classify') // LLM = hexagon
+    expect(m).toContain('n_start(["trigger · schedule<br/>0 8 * * 1-5"])') // trigger = stadium + cron
+    expect(m).toContain('tool · calendar-bookings-list') // tool slug
+    expect(m).toContain('MCP · crm.upsert_contact') // connector.tool
+    expect(m).toContain('n_classify{{"LLM · classify') // LLM = hexagon
     expect(m).toMatch(/SEND · NOT APPROVED/) // effect badge — the typed-in approvals block is not authority (B5); only a recorded approval reads as owner-approved
     expect(m).toMatch(/class [^\n]*n_classify[^\n]* llm/) // LLM class
     expect(m).toMatch(/class [^\n]*n_notify[^\n]* send/) // send class

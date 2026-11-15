@@ -102,7 +102,7 @@ export function CleanupPanel({
 
   const rebuild = async () => {
     if (!(await confirm({
-      title: 'Rebuild the whole wiki?',
+      title: 'Rebuild all of Context?',
       message: 'Moves the current pages to a trash folder and re-reads every original. Originals are never touched. Saved answers are kept. This can take a while.',
       confirmLabel: 'Rebuild',
       danger: true,
@@ -157,7 +157,7 @@ export function CleanupPanel({
     <div className="flex flex-col gap-5">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
         <p className="max-w-[64ch] text-sm leading-relaxed text-fg-2">
-          Cleanup checks the wiki for broken links, missing topic pages, pages nothing links to, likely duplicates,
+          Cleanup checks your Context for broken links, missing topic pages, pages nothing links to, likely duplicates,
           pages that haven’t been updated in a while, and facts that disagree between files. Safe fixes happen
           automatically; anything that needs judgement is listed for you. Your original files are never changed.
         </p>
@@ -182,7 +182,7 @@ export function CleanupPanel({
           compact
           icon={<Wand2 className="h-5 w-5" aria-hidden="true" />}
           title="Cleanup hasn't run yet"
-          description="It runs on the schedule below, or click “Run cleanup now” to check the wiki right away."
+          description="It runs on the schedule below, or click “Run cleanup now” to check your Context right away."
         />
       )}
 
@@ -193,7 +193,7 @@ export function CleanupPanel({
 
           <section aria-labelledby="cleanup-needs" className="flex flex-col gap-1.5">
             <h4 id="cleanup-needs" className="flex items-center gap-2 font-display text-base font-semibold tracking-tight text-fg-0">
-              <Eye className="h-4 w-4 text-signal-amber" aria-hidden="true" />
+              <Eye className="h-4 w-4 text-warning" aria-hidden="true" />
               Needs a look
               <span className="font-mono text-xs font-normal text-fg-3">{report.needs_human.length}</span>
             </h4>
@@ -204,7 +204,7 @@ export function CleanupPanel({
 
           <section aria-labelledby="cleanup-fixed" className="flex flex-col gap-1.5">
             <h4 id="cleanup-fixed" className="flex items-center gap-2 font-display text-base font-semibold tracking-tight text-fg-0">
-              <CheckCircle2 className="h-4 w-4 text-signal-verify" aria-hidden="true" />
+              <CheckCircle2 className="h-4 w-4 text-success" aria-hidden="true" />
               Fixed automatically
               <span className="font-mono text-xs font-normal text-fg-3">{report.fixed.length}</span>
             </h4>
@@ -251,7 +251,7 @@ export function CleanupPanel({
               Rebuild every page from your original files and imported chats — useful after big changes to how pages are written.
             </p>
             <Button variant="danger" loading={rebuilding} onClick={() => { void rebuild() }} leftIcon={<RefreshCw className="h-4 w-4" aria-hidden="true" />} className="shrink-0">
-              Rebuild wiki
+              Rebuild Context
             </Button>
           </div>
         </section>

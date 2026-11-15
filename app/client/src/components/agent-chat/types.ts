@@ -1,5 +1,5 @@
 // Wire types for /api/agent-chat (obj 719987). Mirrors routes/agent-chat.ts.
-import type { ObjectiveStatus } from '@operationkit/shared'
+import type { ModelRow, ObjectiveStatus } from '@operationkit/shared'
 
 export type AgentColour = 'blue' | 'pink' | 'green' | 'amber' | 'grey'
 export type ProviderId = 'claude' | 'anthropic' | 'openai' | 'xai' | 'openai-compatible' | 'demo'
@@ -98,7 +98,7 @@ export interface BotConfigInfo {
   updated_at: string
 }
 
-export type ToolGroup = 'web' | 'knowledge' | 'board' | 'connectors' | 'integrations' | 'secrets'
+export type ToolGroup = 'web' | 'knowledge' | 'board' | 'bots' | 'connectors' | 'integrations' | 'secrets'
 
 export interface ToolCatalogEntry {
   name: string
@@ -117,6 +117,9 @@ export interface AgentsResponse {
   problems?: { slug: string; file: string; errors: string[] }[]
   /** obj 900671 */
   tool_catalog?: ToolCatalogEntry[]
+  /** obj 900863: the install's enabled model registry (the same rows as GET /api/models), so every bot's
+   *  model picker offers the full list in the same format as Settings → Models. */
+  models?: ModelRow[]
   model_suggestions?: Partial<Record<ProviderId, string[]>>
   default_models?: Partial<Record<ProviderId, string>>
   web?: { available: boolean; backends: string[] }
@@ -201,7 +204,17 @@ export interface ChatMessage {
   provider: string | null
   model: string | null
   tool_name: string | null
-  meta: { draft_id?: number; objective_id?: number; provider_label?: string; ok?: boolean } | null
+  meta: {
+    draft_id?: number
+    objective_id?: number
+    provider_label?: string
+    ok?: boolean
+    /** A bot-to-bot thread this row started, used or relays (obj 900859). */
+    bot_conversation_id?: number
+    bot_message_id?: number
+    /** 'bot_reply' / 'bot_message_failed' = a line the server relayed from a bot thread. */
+    kind?: string
+  } | null
   images?: ChatImage[]
   created_at: string
 }
@@ -313,4 +326,54 @@ export interface SidebarState {
   bots: Record<string, SidebarBot>
   max_pins: number
   max_sections: number
+}
+
+// ── bot-to-bot threads (obj 900859) — GET /agent-chat/bot-conversations[/:id] ──
+
+export interface BotConversation {
+  id: number
+  workspace: string
+  initiator_slug: string
+  recipient_slug: string
+  subject: string
+  message_count: number
+  last_message_at: string | null
+  created_at: string
+  updated_at: string
+  /** List rows only. */
+  last_preview?: string | null
+  last_kind?: BotConversationEntry['kind'] | null
+  pending?: number
+  failed?: number
+}
+
+export interface BotConversationEntry {
+  id: number
+  kind: 'message' | 'reply' | 'tool' | 'error' | 'notice'
+  from_slug: string
+  to_slug: string | null
+  body: string
+  tool_name: string | null
+  depth: number
+  in_reply_to: number | null
+  /** The person the sending bot was working for. */
+  sent_for: string | null
+  status: 'pending' | 'delivering' | 'delivered' | 'failed' | 'none'
+  attempts: number
+  next_attempt_at: string | null
+  last_error: string | null
+  provider: string | null
+  model: string | null
+  ok?: boolean
+  created_at: string
+  delivered_at: string | null
+}
+
+export interface BotConversationsResponse {
+  conversations: BotConversation[]
+}
+
+export interface BotConversationResponse {
+  conversation: BotConversation
+  messages: BotConversationEntry[]
 }

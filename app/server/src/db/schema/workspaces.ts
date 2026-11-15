@@ -32,100 +32,23 @@ export function initWorkspacesSchema(db: Database.Database): void {
   if (!wsCols.has('merged_into')) {
     db.exec('ALTER TABLE workspaces ADD COLUMN merged_into TEXT')
   }
-
-  // Seed the three workspaces that were hard-coded in shared/types.ts and
-  // docs.ts. Idempotent: INSERT OR IGNORE skips rows that already exist.
-  const seedWorkspaces = [
-    {
-      slug: 'example',
-      name: 'Example',
-      short_label: 'Example',
-      badge_color: 'bg-blue-500/20 text-blue-400',
-      vault_path: '/home/operator/second-brain/workspaces/example',
-      doc_read_roots: [
-        '/home/operator/second-brain/workspaces/example',
-        '/home/operator/second-brain/shared',
-        '/home/operator/ai-workspace/agents',
-        '/home/operator/ai-workspace/skills',
-      ],
-      doc_write_roots: ['/home/operator/second-brain/workspaces/example'],
-      default_agent_pool: ['cto', 'cmo', 'coo', 'cfo', 'general'],
-      sort_order: 1,
-    },
-    {
-      slug: 'example-project',
-      name: 'Example Project',
-      short_label: 'WS',
-      badge_color: 'bg-green-500/20 text-green-400',
-      vault_path: '/home/operator/second-brain/workspaces/example-project',
-      doc_read_roots: [
-        '/home/operator/second-brain/workspaces/example-project',
-        '/home/operator/second-brain/shared',
-        '/home/operator/ai-workspace/agents',
-        '/home/operator/ai-workspace/skills',
-      ],
-      doc_write_roots: ['/home/operator/second-brain/workspaces/example-project'],
-      default_agent_pool: ['cto', 'cmo', 'coo', 'cfo', 'general'],
-      sort_order: 2,
-    },
-    {
-      slug: 'operator',
-      name: 'Operator',
-      short_label: 'ML',
-      badge_color: 'bg-purple-500/20 text-purple-400',
-      vault_path: '/home/operator/second-brain/workspaces/operator',
-      doc_read_roots: [
-        '/home/operator/second-brain/workspaces/operator',
-        '/home/operator/second-brain/personal',
-        '/home/operator/second-brain/shared',
-        '/home/operator/ai-workspace/agents',
-        '/home/operator/ai-workspace/skills',
-      ],
-      doc_write_roots: [
-        '/home/operator/second-brain/workspaces/operator',
-        '/home/operator/second-brain/personal',
-      ],
-      default_agent_pool: ['cto', 'cmo', 'coo', 'cfo', 'general'],
-      sort_order: 3,
-    },
-    {
-      // Example Five — a dental-lab client of Example. Modeled on the `example2`
-      // client workspace (seeded separately in seedDevelopmentRegistry).
-      slug: 'example5',
-      name: 'Example Five',
-      short_label: 'EXAMPLE5',
-      badge_color: 'bg-teal-500/20 text-teal-400',
-      vault_path: '/home/operator/second-brain/workspaces/example5',
-      doc_read_roots: [
-        '/home/operator/second-brain/workspaces/example5',
-        '/home/operator/second-brain/shared',
-        '/home/operator/ai-workspace/agents',
-        '/home/operator/ai-workspace/skills',
-      ],
-      doc_write_roots: ['/home/operator/second-brain/workspaces/example5'],
-      default_agent_pool: ['cto', 'cmo', 'coo', 'cfo', 'general'],
-      sort_order: 5,
-    },
-  ]
-  const insertWs = db.prepare(
-    `INSERT OR IGNORE INTO workspaces
-       (slug, name, short_label, badge_color, vault_path,
-        doc_read_roots, doc_write_roots, default_agent_pool, sort_order)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
-  )
-  for (const w of seedWorkspaces) {
-    insertWs.run(
-      w.slug,
-      w.name,
-      w.short_label,
-      w.badge_color,
-      w.vault_path,
-      JSON.stringify(w.doc_read_roots),
-      JSON.stringify(w.doc_write_roots),
-      JSON.stringify(w.default_agent_pool),
-      w.sort_order,
-    )
+  // obj 900870: "Delete" on an ARCHIVED workspace is a reversible soft-delete.
+  // The row (and every card, secret, repo and membership that names the slug)
+  // stays; `deleted_at` only takes it off the admin archived list. Recover with
+  // `POST /api/admin/workspaces/:slug/undelete`, which puts it back in the
+  // archived list. See services/workspaces.ts → softDeleteArchivedWorkspace.
+  if (!wsCols.has('deleted_at')) {
+    db.exec('ALTER TABLE workspaces ADD COLUMN deleted_at TEXT')
   }
+  if (!wsCols.has('deleted_by')) {
+    db.exec('ALTER TABLE workspaces ADD COLUMN deleted_by INTEGER')
+  }
+
+  // obj 900803 (white-label): a fresh install starts with NO workspaces — the
+  // first-run setup / Settings → Workspaces creates the operator's own. This used
+  // to INSERT OR IGNORE the original author's businesses (with their vault paths
+  // and badge colours) on every boot. Removing the seed never deletes a row, so
+  // an install that already has those workspaces keeps them exactly as they are.
 
   // workspace_repos — admin-managed repos/projects attached to a workspace via
   // the Config page. Persisted separately from the legacy read-only

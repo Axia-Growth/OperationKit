@@ -70,8 +70,10 @@ export function AccountSettings({ embedded = false }: { embedded?: boolean }) {
     </>
   )
 
+  // Settings → API & MCP: the Settings page owns the content width (1200px,
+  // polish F5) — the tab no longer caps itself. Paragraphs keep max-w-prose.
   if (embedded) {
-    return <div className="max-w-3xl">{body}</div>
+    return <div className="min-w-0">{body}</div>
   }
 
   return (

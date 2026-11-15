@@ -10,9 +10,11 @@
  * `claude setup-token`); pasting a setup token stays as the fallback.
  */
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from 'react'
+import { Plus } from 'lucide-react'
 import { api, ApiError } from '../../lib/api'
 import { useWorkspaces } from '../../hooks/useWorkspaces'
-import { Alert, Badge, Button, Card, EmptyState, IconButton, Skeleton, cn, useConfirm } from '../../components/ui'
+import { ChevronDown } from 'lucide-react'
+import { Alert, Badge, Button, Card, EmptyState, Field, IconButton, Input, SectionHeader, SettingsSection, Skeleton, cn, useConfirm } from '../../components/ui'
 import { Switch } from '../ui/Switch'
 import { SeatDeviceLogin } from './SeatDeviceLogin'
 import { SeatClaudeSignIn } from './SeatClaudeSignIn'
@@ -65,11 +67,6 @@ const ENGINES: { kind: SeatKind; name: string; empty: string }[] = [
   { kind: 'grok', name: 'Grok', empty: 'No Grok seats' },
 ]
 const ENGINE_NAME: Record<SeatKind, string> = { claude: 'Claude', codex: 'Codex', grok: 'Grok' }
-
-const INPUT =
-  'min-h-[44px] w-full rounded-md border border-line bg-surface-1 px-3 text-sm text-fg-0 outline-none ' +
-  'transition-colors duration-fast ease-out placeholder:text-fg-3 hover:border-line-strong focus:border-accent ' +
-  'focus-visible:ring-2 focus-visible:ring-accent/40 disabled:cursor-not-allowed disabled:opacity-45 sm:min-h-[36px]'
 
 const TEST_COPY: Record<TestOutcome, { ok: boolean; text: string }> = {
   healthy: { ok: true, text: 'works.' },
@@ -135,21 +132,7 @@ export function seatBadge(seat: Pick<SeatSummary, 'health' | 'cooldownUntil' | '
 }
 
 function Chevron({ up }: { up?: boolean }) {
-  return (
-    <svg viewBox="0 0 16 16" className={cn('h-4 w-4', up && 'rotate-180')} fill="none" stroke="currentColor" strokeWidth="1.6" aria-hidden="true">
-      <path d="M4 6l4 4 4-4" strokeLinecap="round" strokeLinejoin="round" />
-    </svg>
-  )
-}
-
-function Field({ label, htmlFor, hint, children }: { label: string; htmlFor: string; hint?: ReactNode; children: ReactNode }) {
-  return (
-    <div className="space-y-1.5">
-      <label htmlFor={htmlFor} className="block text-sm font-medium text-fg-1">{label}</label>
-      {children}
-      {hint && <p className="text-xs leading-relaxed text-fg-3">{hint}</p>}
-    </div>
-  )
+  return <ChevronDown aria-hidden="true" className={cn('h-4 w-4', up && 'rotate-180')} />
 }
 
 function SeatSkeleton() {
@@ -184,16 +167,12 @@ function signInNotice(name: string, outcome: TestOutcome): Notice {
   return { ok: copy.ok, text: `${name} ${copy.text}` }
 }
 
+/** "Paste a token instead" style switch between the two ways to connect a seat. */
 function TextToggle({ onClick, children, disabled }: { onClick: () => void; children: ReactNode; disabled?: boolean }) {
   return (
-    <button
-      type="button"
-      onClick={onClick}
-      disabled={disabled}
-      className="inline-flex min-h-[44px] items-center rounded-md px-1 text-sm font-medium text-accent-hover underline-offset-2 transition-colors duration-fast ease-out hover:text-accent hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/50 disabled:cursor-not-allowed disabled:opacity-45 sm:min-h-[32px]"
-    >
+    <Button type="button" variant="ghost" size="sm" onClick={onClick} disabled={disabled} className="-ml-2 text-accent-hover">
       {children}
-    </button>
+    </Button>
   )
 }
 
@@ -241,8 +220,8 @@ function AddClaudeForm({ onAdded, onCancel, onNotice }: {
 
   return (
     <div className="space-y-4 rounded-md border border-line bg-surface-1 p-4" role="group" aria-label="Add Claude seat">
-      <Field label="Label" htmlFor="seat-claude-label">
-        <input id="seat-claude-label" className={INPUT} value={label} onChange={e => setLabel(e.target.value)} placeholder="Seat 1" autoComplete="off" disabled={saving} />
+      <Field label="Label" id="seat-claude-label">
+        <Input value={label} onChange={e => setLabel(e.target.value)} placeholder="Seat 1" autoComplete="off" disabled={saving} />
       </Field>
 
       {mode === 'signin' ? (
@@ -263,24 +242,23 @@ function AddClaudeForm({ onAdded, onCancel, onNotice }: {
         <form onSubmit={submit} className="space-y-3" aria-label="Paste a Claude setup token">
           <Field
             label="Setup token"
-            htmlFor="seat-claude-token"
-            hint={<>From <code className="font-mono text-fg-2">claude setup-token</code> on a machine signed in to the subscription. It is stored encrypted and never shown again.</>}
+            id="seat-claude-token"
+            hint={<>From <code className="font-mono text-fg-1">claude setup-token</code> on a machine signed in to the subscription. It is stored encrypted and never shown again.</>}
           >
-            <input
-              id="seat-claude-token"
+            <Input
               type="password"
               autoComplete="off"
               spellCheck={false}
-              className={cn(INPUT, 'font-mono')}
+              className="font-mono"
               value={token}
               onChange={e => setToken(e.target.value)}
               disabled={saving}
             />
           </Field>
-          <Field label="Expires (optional)" htmlFor="seat-claude-expiry">
-            <input id="seat-claude-expiry" type="date" className={cn(INPUT, 'sm:max-w-[220px]')} value={expiresAt} onChange={e => setExpiresAt(e.target.value)} disabled={saving} />
+          <Field label="Expires" optional id="seat-claude-expiry">
+            <Input type="date" className="sm:max-w-[220px]" value={expiresAt} onChange={e => setExpiresAt(e.target.value)} disabled={saving} />
           </Field>
-          {error && <Alert tone="alarm">{error}</Alert>}
+          {error && <Alert tone="alarm" title={error} />}
           <div className="flex flex-wrap gap-2">
             <Button type="submit" variant="primary" loading={saving}>Add seat</Button>
             <Button type="button" variant="ghost" onClick={onCancel} disabled={saving}>Cancel</Button>
@@ -427,10 +405,10 @@ function SeatCard({ seat, onChange, onRemoved, onNotice, confirm }: {
         <div className="min-w-0 flex-1">
           {renaming ? (
             <form className="flex flex-wrap items-center gap-2" onSubmit={e => { e.preventDefault(); void saveLabel() }}>
-              <label htmlFor={`seat-label-${seat.id}`} className="sr-only">Seat name</label>
-              <input
+              <Input
                 id={`seat-label-${seat.id}`}
-                className={cn(INPUT, 'max-w-[260px] flex-1')}
+                aria-label="Seat name"
+                className="max-w-[260px] flex-1"
                 value={labelDraft}
                 autoFocus
                 autoComplete="off"
@@ -486,7 +464,7 @@ function SeatCard({ seat, onChange, onRemoved, onNotice, confirm }: {
             {expires && (
               <span
                 className={cn(
-                  cred.expiry === 'expired' ? 'text-signal-alarm' : cred.expiry === 'expiring' ? 'text-signal-amber' : 'text-fg-3',
+                  cred.expiry === 'expired' ? 'text-danger' : cred.expiry === 'expiring' ? 'text-warning' : 'text-fg-3',
                 )}
               >
                 {cred.expiry === 'expired' ? `expired ${expires}` : `expires ${expires}`}
@@ -497,31 +475,34 @@ function SeatCard({ seat, onChange, onRemoved, onNotice, confirm }: {
       </dl>
 
       {needsSignIn && !rotating && (
-        <div className="flex flex-col gap-3 rounded-md border border-signal-alarm/30 bg-signal-alarm/5 px-3 py-2.5 sm:flex-row sm:items-center sm:justify-between">
-          <p className="min-w-0 flex-1 text-sm leading-relaxed text-fg-1">
+        <Alert tone="alarm" title="Sessions cannot use this seat">
+          <p className="text-fg-1">
             This seat is signed in with the Claude CLI, which sandboxed sessions cannot use, so it stays unavailable.
             Sign in with Claude once to switch it to a setup token. Its name, priority and history stay.
           </p>
-          <Button variant="primary" onClick={() => { setRotating(true); setRotateMode('signin'); setRowError('') }} disabled={!!busy}>
+          <Button variant="secondary" className="mt-2" onClick={() => { setRotating(true); setRotateMode('signin'); setRowError('') }} disabled={!!busy}>
             Reconnect with Sign in with Claude
           </Button>
-        </div>
+        </Alert>
       )}
       {notSignedIn && !rotating && (
-        <p className="text-sm text-signal-amber">
+        <p className="text-sm text-warning">
           {isClaude ? 'No usable token yet. Press Reconnect to sign in.' : 'Not signed in yet. Press Sign in again to finish the login.'}
         </p>
       )}
 
       {/* Actions */}
       <div className="flex flex-wrap items-center gap-2 border-t border-line-soft pt-3">
-        <div className="flex items-center gap-1.5">
-          <label htmlFor={`seat-priority-${seat.id}`} className="text-sm text-fg-2">Priority</label>
-          <input
-            id={`seat-priority-${seat.id}`}
+        <Field
+          id={`seat-priority-${seat.id}`}
+          label="Priority"
+          className="flex-row items-center"
+          labelClassName="font-normal text-fg-2"
+        >
+          <Input
             type="number"
             inputMode="numeric"
-            className={cn(INPUT, 'w-20 font-mono')}
+            className="w-20 font-mono"
             value={priorityDraft}
             onChange={e => setPriorityDraft(e.target.value)}
             onBlur={() => void savePriority(Number(priorityDraft))}
@@ -530,7 +511,7 @@ function SeatCard({ seat, onChange, onRemoved, onNotice, confirm }: {
             aria-describedby={`seat-priority-hint-${seat.id}`}
           />
           <span id={`seat-priority-hint-${seat.id}`} className="sr-only">Lower numbers are used first.</span>
-        </div>
+        </Field>
         {!renaming && <Button variant="ghost" onClick={() => { setLabelDraft(seat.label); setRenaming(true) }} disabled={!!busy}>Rename</Button>}
         <Button variant="secondary" onClick={() => void test()} loading={busy === 'test'} disabled={!!busy && busy !== 'test'}>
           {busy === 'test' ? 'Testing…' : 'Test now'}
@@ -564,20 +545,19 @@ function SeatCard({ seat, onChange, onRemoved, onNotice, confirm }: {
       )}
       {rotating && isClaude && rotateMode === 'paste' && (
         <form onSubmit={rotate} className="space-y-3 rounded-md border border-line bg-surface-1 p-4" aria-label={`Rotate token for ${name}`}>
-          <Field label="New setup token" htmlFor={`seat-rotate-${seat.id}`} hint="The old token is replaced. The new one is stored encrypted and never shown again.">
-            <input
-              id={`seat-rotate-${seat.id}`}
+          <Field label="New setup token" id={`seat-rotate-${seat.id}`} hint="The old token is replaced. The new one is stored encrypted and never shown again.">
+            <Input
               type="password"
               autoComplete="off"
               spellCheck={false}
-              className={cn(INPUT, 'font-mono')}
+              className="font-mono"
               value={rotateToken}
               onChange={e => setRotateToken(e.target.value)}
               disabled={busy === 'rotate'}
             />
           </Field>
-          <Field label="Expires (optional)" htmlFor={`seat-rotate-expiry-${seat.id}`}>
-            <input id={`seat-rotate-expiry-${seat.id}`} type="date" className={cn(INPUT, 'sm:max-w-[220px]')} value={rotateExpiry} onChange={e => setRotateExpiry(e.target.value)} disabled={busy === 'rotate'} />
+          <Field label="Expires" optional id={`seat-rotate-expiry-${seat.id}`}>
+            <Input type="date" className="sm:max-w-[220px]" value={rotateExpiry} onChange={e => setRotateExpiry(e.target.value)} disabled={busy === 'rotate'} />
           </Field>
           <div className="flex flex-wrap gap-2">
             <Button type="submit" variant="primary" loading={busy === 'rotate'}>Save new token</Button>
@@ -599,7 +579,7 @@ function SeatCard({ seat, onChange, onRemoved, onNotice, confirm }: {
       )}
 
       {rowInfo && <Alert tone="amber">{rowInfo}</Alert>}
-      {rowError && <Alert tone="alarm">{rowError}</Alert>}
+      {rowError && <Alert tone="alarm" title={rowError} />}
     </Card>
   )
 }
@@ -644,19 +624,20 @@ function EngineSection({ kind, name, empty, seats, onSeat, onRemoved, onNotice, 
   }
 
   const addButton = (
-    <Button variant="secondary" onClick={() => void startAdd()} loading={creating} disabled={adding || !!loginSeat}>
+    <Button variant="secondary" leftIcon={<Plus className="h-4 w-4" />} onClick={() => void startAdd()} loading={creating} disabled={adding || !!loginSeat}>
       Add {name} seat
     </Button>
   )
 
   return (
     <section aria-labelledby={`seats-${kind}`} className="space-y-3">
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <h3 id={`seats-${kind}`} className="font-display text-lg font-semibold tracking-tight text-fg-0">
-          {name} <span className="font-mono text-xs font-normal text-fg-3">{seats.length}</span>
-        </h3>
-        {seats.length > 0 && addButton}
-      </div>
+      <SectionHeader
+        level={3}
+        headingId={`seats-${kind}`}
+        className="mb-0 sm:items-center"
+        title={<>{name} <span className="font-mono text-xs font-normal text-fg-3">{seats.length}</span></>}
+        actions={seats.length > 0 && addButton}
+      />
 
       {adding && kind === 'claude' && (
         <AddClaudeForm onAdded={s => { onSeat(s); setAdding(false) }} onCancel={() => setAdding(false)} onNotice={onNotice} />
@@ -673,7 +654,7 @@ function EngineSection({ kind, name, empty, seats, onSeat, onRemoved, onNotice, 
           onCancel={() => setLoginSeat(null)}
         />
       )}
-      {error && <Alert tone="alarm">{error}</Alert>}
+      {error && <Alert tone="alarm" title={error} />}
 
       {seats.length === 0 ? (
         !adding && !loginSeat && (
@@ -760,18 +741,19 @@ function FailoverPanel({ onNotice }: { onNotice: (n: Notice) => void }) {
   }
 
   return (
-    <Card className="space-y-3" aria-labelledby="seats-failover">
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <h3 id="seats-failover" className="font-display text-lg font-semibold tracking-tight text-fg-0">Engine failover</h3>
-        {choices.length > 1 && (
-          <div className="flex items-center gap-2">
-            <label htmlFor="seats-failover-ws" className="text-sm text-fg-2">Workspace</label>
-            <Select id="seats-failover-ws" className="w-auto" value={workspace} onChange={v => setWorkspace(v)} disabled={saving}>
-              {choices.map(s => <option key={s} value={s}>{labelOf(s)}</option>)}
-            </Select>
-          </div>
-        )}
-      </div>
+    <SettingsSection
+      id="seats-failover"
+      title="Engine failover"
+      className="rounded-lg border border-line bg-surface-2 p-4"
+      bodyClassName="space-y-3"
+      actions={choices.length > 1 && (
+        <Field id="seats-failover-ws" label="Workspace" className="flex-row items-center gap-2" labelClassName="font-normal text-fg-2">
+          <Select className="w-auto" value={workspace} onChange={v => setWorkspace(v)} disabled={saving}>
+            {choices.map(s => <option key={s} value={s}>{labelOf(s)}</option>)}
+          </Select>
+        </Field>
+      )}
+    >
 
       {!workspace ? (
         <p className="text-sm text-fg-3">No workspaces yet.</p>
@@ -810,8 +792,8 @@ function FailoverPanel({ onNotice }: { onNotice: (n: Notice) => void }) {
           </div>
         </>
       )}
-      {error && <Alert tone="alarm">{error}</Alert>}
-    </Card>
+      {error && <Alert tone="alarm" title={error} />}
+    </SettingsSection>
   )
 }
 
@@ -923,16 +905,13 @@ export function SeatPool({ refreshMs }: { refreshMs?: number } = {}) {
 export function SettingsSeats() {
   const [notice, setNotice] = useState<Notice>(null)
   return (
-    <div className="max-w-4xl space-y-6">
-      <div>
-        <h3 className="font-display text-lg font-semibold tracking-tight text-fg-0">Subscription seats</h3>
-        <p className="mt-1 text-sm leading-relaxed text-fg-2">
-          Subscriptions sessions run on. Each card uses the healthy seat with the lowest priority number for its
-          engine; a seat that hits a limit cools down and the next one takes over.
-        </p>
-      </div>
-
-      <SeatPool />
+    <div className="space-y-6">
+      <SettingsSection
+        title="Subscription seats"
+        description="Subscriptions sessions run on. Each card uses the healthy seat with the lowest priority number for its engine; a seat that hits a limit cools down and the next one takes over."
+      >
+        <SeatPool />
+      </SettingsSection>
 
       {notice && (
         <div aria-live="polite">

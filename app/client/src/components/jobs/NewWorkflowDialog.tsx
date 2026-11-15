@@ -3,6 +3,8 @@ import { useNavigate } from '../../context/nav'
 import { Workflow } from 'lucide-react'
 import { Alert, Button, Modal } from '../ui'
 import { Select } from '../ui/Select'
+import { FLOW_NOTES_MAX_CHARS } from '../../../../shared/flow/details'
+import { FlowToolsInput } from './FlowToolsInput'
 
 /**
  * "New workflow" (obj 900642, card B6 of docs/design/WORKFLOWS.md §5.1).
@@ -27,6 +29,9 @@ export async function createWorkflowFromGoal(body: {
   name?: string
   end_condition?: { assert: { expr: string }[] }
   builder?: { max_iterations: number }
+  /** obj 900868 — optional Notes + Tools on the workflow. */
+  notes?: string
+  tools?: string[]
 }): Promise<{ ok: true; result: NewWorkflowResult } | { ok: false; error: string }> {
   try {
     const r = await fetch('/api/flows', {
@@ -80,6 +85,8 @@ export function NewWorkflowDialog({
   const [name, setName] = useState('')
   const [asserts, setAsserts] = useState('')
   const [maxIterations, setMaxIterations] = useState(6)
+  const [notes, setNotes] = useState('')
+  const [tools, setTools] = useState<string[]>([])
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [created, setCreated] = useState<NewWorkflowResult | null>(null)
@@ -94,6 +101,8 @@ export function NewWorkflowDialog({
     setName('')
     setAsserts('')
     setMaxIterations(6)
+    setNotes('')
+    setTools([])
     setError(null)
     setCreated(null)
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -115,6 +124,8 @@ export function NewWorkflowDialog({
       ...(name.trim() ? { name: name.trim() } : {}),
       ...(parseAsserts(asserts) ? { end_condition: parseAsserts(asserts) } : {}),
       builder: { max_iterations: maxIterations },
+      ...(notes.trim() ? { notes: notes.trim() } : {}),
+      ...(tools.length ? { tools } : {}),
     })
     setBusy(false)
     if (!r.ok) {
@@ -201,6 +212,22 @@ export function NewWorkflowDialog({
                 value={asserts}
                 onChange={(e) => setAsserts(e.target.value)}
                 placeholder="len(steps.fetch.output.bookings) == steps.upsert.output.count"
+              />
+            </div>
+            <div>
+              <label className={LABEL} htmlFor={`${titleId}-tools`}>Tools <span className="text-fg-3">(optional)</span></label>
+              <FlowToolsInput id={`${titleId}-tools`} value={tools} onChange={setTools} describedBy={`${titleId}-tools-help`} />
+              <p id={`${titleId}-tools-help`} className="mt-1 text-xs text-fg-3">The tools or integrations this workflow should use. Press Enter after each one.</p>
+            </div>
+            <div>
+              <label className={LABEL} htmlFor={`${titleId}-notes`}>Notes <span className="text-fg-3">(optional)</span></label>
+              <textarea
+                id={`${titleId}-notes`}
+                className={`${FIELD} min-h-[56px]`}
+                value={notes}
+                onChange={(e) => setNotes(e.target.value)}
+                maxLength={FLOW_NOTES_MAX_CHARS}
+                placeholder="Anything the builder and your team should know: what to skip, who to tell, when it matters."
               />
             </div>
             <div className="flex items-center gap-2">

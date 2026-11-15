@@ -757,12 +757,18 @@ It writes one folder, `/opt/operationkit/backups/nightly-<time>/` (root only):
 |---|---|
 | `command-center.db` | the database, copied with SQLite's online backup while the app runs, then integrity-checked |
 | `data.tar.gz` | seat logins (`cc-accounts`), uploads, branding |
-| `home.tar.gz` | projects, notes, agent memory, the knowledge base |
+| `home.tar.gz` | projects, notes, agent memory, the knowledge base (with `BACKUP_HOME="offsite"`: not here, see *Large home* below) |
 | `secrets.tar.gz` | `secrets/`: `secrets-kek` (and its copy in `stack.env`) is the key that decrypts the secrets stored in the database, so a restore needs both. Keep one more copy of `secrets-kek` somewhere you control, for example a password manager: without it no backup of the database can be read |
 | `client.conf`, `install.env`, `MANIFEST` | settings, and the commit + checksums of this backup |
 
 The newest `BACKUP_KEEP_LOCAL` (default 7) stay on the server. Log:
 `/opt/operationkit/logs/backup.log`.
+
+**Is it running?** `sudo bash /opt/operationkit-src/install/backup.sh status --config /opt/operationkit-src/client.conf`
+prints the nightly job and its time, where copies go, how home is kept, the newest
+nightly folder and its age (a warning past 36 hours means the job is not running),
+and any other backup job on the server. It changes nothing. `update.sh` prints it at
+the end of every update.
 
 **Off the server (recommended).** A backup on the same disk does not survive
 losing the server. Set `BACKUP_TARGET` in `client.conf` and every nightly folder
@@ -771,7 +777,25 @@ is also sent, encrypted, to an S3-compatible bucket with
 nightly job**: there is no separate off-site timer. restic keeps one copy per day
 for `BACKUP_KEEP_DAILY` days, one per week for `BACKUP_KEEP_WEEKLY` weeks and one
 per month for `BACKUP_KEEP_MONTHLY` months (defaults **7 / 4 / 6**, at most 17
-snapshots). Pruning old data runs on Sundays.
+snapshots; snapshots are grouped by host and tag, so the policy applies across
+nights). Pruning old data runs on Sundays.
+
+**Large home (tens of GB): `BACKUP_HOME="offsite"`.** By default every nightly
+folder holds a fresh `home.tar.gz`. For a big home that is slow, keeps
+`BACKUP_KEEP_LOCAL` full copies on the server's own disk, and uploads almost all of
+it every night (a new gzip file shares almost nothing with yesterday's, so restic
+cannot de-duplicate it). With `BACKUP_HOME="offsite"` in `client.conf` and
+`BACKUP_TARGET` set, the nightly run sends `state/home` to restic **as a folder**, in
+its own snapshot (tag `operationkit-home`): after the first night only what changed
+uploads, and the local nightly folders hold just the database, data, secrets and
+settings. Each folder's `MANIFEST` names the home snapshot taken the same night, so
+`fetch` brings back that home with that database, `restore` puts it in place, and
+`verify` checks the snapshot is there and not empty. The trade-off: home is then
+**only** off the server, so a home restore needs the bucket. A run that sends nothing
+off-site (`manual`, `--no-offsite`, no `BACKUP_TARGET`) still writes `home.tar.gz`.
+The first off-site run uploads the whole home once: start it by hand (*By hand*,
+point 4, below)
+rather than waiting for the night.
 
 **What it costs on Backblaze B2:** $6.95 per TB per month, the first 10 GB free,
 downloads free up to three times what you store
@@ -851,7 +875,9 @@ sudo bash install/backup.sh restore /opt/operationkit/backups/nightly-<time> --c
 It checks the folder against its `MANIFEST`, stops the app, moves the current
 database, data, home and secrets aside to `backups/pre-restore-<time>/`, puts the
 backup's back, and starts the app. A `pre-update-…` folder restores the
-database, seat logins and secrets but leaves home as it is.
+database, seat logins and secrets but leaves home as it is, and so does a
+`nightly-…` folder made with `BACKUP_HOME="offsite"` (its home is in the bucket:
+`fetch` it, then restore the fetched folder).
 
 **Recover onto a new server** (the old one is gone):
 
@@ -868,13 +894,43 @@ database, seat logins and secrets but leaves home as it is.
    ```
 
    Run the printed `restore` command. The restored `secrets/` includes the old
-   tunnel token, so the site comes back on the same address.
+   tunnel token, so the site comes back on the same address. With
+   `BACKUP_HOME="offsite"`, `fetch` also downloads that night's home into the
+   folder (`…/home/`), and `restore` moves it into place.
 4. Run verify (step 8), then the restore test (`backup.sh verify`) so the new
    server's own off-site backups are known to work.
 
 If the backup password is lost, these steps cannot work: the off-site copies
 cannot be decrypted by anyone. That is why point 5 above says to keep it in a
 password manager.
+
+### Switching from a hand-made backup
+
+A server set up before this script existed, or by hand, may run its own backup: a
+systemd timer, a file in `/etc/cron.d`, or a root crontab line calling restic.
+`install.sh`, `update.sh`, `b2-setup.sh` and `backup.sh status` name any such job.
+They never switch it off for you. To move to the built-in backup:
+
+1. **See what runs today.** `backup.sh status` (above). Write down each hand-made
+   job: its schedule, what it backs up and its restic repository. Keep its
+   credentials and password: its snapshots stay readable after the switch.
+2. **Point the built-in backup at its own place.** Use a new bucket folder (for
+   example `…/<bucket>/operationkit`) rather than the hand-made job's repository, so
+   the two retention policies never touch each other's snapshots. `b2-setup.sh` sets
+   `BACKUP_TARGET` and the keys (*The easy way* above). For a large home also set
+   `BACKUP_HOME="offsite"` in `client.conf`.
+3. **Run it once by hand and prove it:** `backup.sh run --label nightly`, then
+   `backup.sh verify` must print `RESTORE TEST: PASS`, and `backup.sh list` shows the
+   snapshot(s).
+4. **Then switch the old job off**, without deleting anything: `systemctl disable
+   --now <timer>`, or comment out the cron line. Leave its repository and local
+   copies alone until the built-in backup has run on its own for a few nights.
+5. **Check the next morning:** `backup.sh status` shows a nightly folder under 36
+   hours old and *other jobs: none*.
+
+To go back: re-enable the old job (`systemctl enable --now <timer>` or uncomment
+the line). Nothing in steps 2-4 deleted any of its data. To stop the built-in
+off-site copy, empty `BACKUP_TARGET` and re-run `backup.sh install-cron`.
 
 ## After the install
 

@@ -1,12 +1,14 @@
 /**
  * SessionViewer header — extracted from SessionViewer.tsx (behavior frozen).
  */
-import { X, GitPullRequest, Maximize2, Minimize2, Pencil } from 'lucide-react'
+import { Check, ExternalLink, X, GitPullRequest, Maximize2, Minimize2, Pencil } from 'lucide-react'
 import type { Objective, ObjectiveStatus } from '@operationkit/shared'
 import { ConnStatusPill, type ConnState } from '../ConnStatusPill'
 import { STATUS_META, AgentMonogram, LiveBadge } from '../design/primitives'
-import { Badge, Button, IconButton } from '../ui'
-import { VIEWER_STATUS_ACTIONS } from './types'
+import { Badge, Button, CopyButton, IconButton } from '../ui'
+import { formatCost } from '../../lib/format'
+import { actionStatusOf, statusActionsFor } from '../../lib/statusActions'
+import { OwnerTag } from '../OwnerTag'
 
 export function ViewerHeader({
   objective,
@@ -59,7 +61,11 @@ export function ViewerHeader({
   hideSizeToggle?: boolean
   onEdit?: (objective: Objective) => void
 }) {
-  const statusMeta = STATUS_META[objective.status]
+  // Same status (and so the same label and moves) the board card shows for
+  // this objective: a review card with an agent still on it reads as Working
+  // (obj 900669; one action map, polish F4).
+  const shownStatus = actionStatusOf(objective)
+  const statusMeta = STATUS_META[shownStatus]
 
   // Header action buttons (Brief / Flag mistake / status actions / PR link).
   // Rendered in two places: the desktop top-right cluster, and — on mobile —
@@ -72,8 +78,8 @@ export function ViewerHeader({
           size="sm"
           variant="ghost"
           onClick={() => onEdit(objective)}
-          title="Edit objective"
-          aria-label="Edit objective"
+          title="Edit card"
+          aria-label="Edit card"
         >
           <Pencil className="h-3.5 w-3.5" />
         </Button>
@@ -101,13 +107,13 @@ export function ViewerHeader({
         title="Flag a mistake — becomes a high-priority gotcha in the next spawn"
         className={showCorrection ? 'bg-status-review/20 text-status-review hover:bg-status-review/25' : ''}
       >
-        {correctionSaved ? 'Flagged ✓' : 'Flag mistake'}
+        {correctionSaved ? <><Check aria-hidden="true" className="h-3.5 w-3.5" />Flagged</> : 'Flag mistake'}
       </Button>
-      {onChangeStatus && (VIEWER_STATUS_ACTIONS[objective.status] || []).map(action => (
+      {onChangeStatus && statusActionsFor(shownStatus).map(action => (
         <Button
           key={action.target}
           size="sm"
-          variant={action.variant === 'primary' ? 'primary' : 'secondary'}
+          variant={action.variant}
           onClick={() => onChangeStatus(objective.id, action.target)}
         >
           {action.label}
@@ -141,17 +147,21 @@ export function ViewerHeader({
               <span className={statusMeta.tone}>{statusMeta.label}</span>
               {isActive && <LiveBadge />}
               {isActive && <ConnStatusPill state={connState} />}
+              {/* obj 900869: who owns it now (bot while it works, person in Needs You). */}
+              <OwnerTag objective={objective} showHandoff />
               {objective.project && <span>{objective.project}</span>}
               {Number(objective.session_count) > 0 && (
                 <span>{objective.session_count} session{objective.session_count !== 1 ? 's' : ''}</span>
               )}
               {Number(objective.total_cost_usd) > 0 && (
-                <span>${Number(objective.total_cost_usd).toFixed(2)} spent</span>
+                <span>{formatCost(objective.total_cost_usd)} cost</span>
               )}
-              {time && <span className="font-mono text-fg-3">{time}</span>}
+              {time && <span className="text-fg-3">{time}</span>}
             </div>
             {objective.session_id && (
-              <div className="mt-0.5 truncate font-mono text-xs text-fg-3">{objective.session_id}</div>
+              <div className="mt-1" title={`Session id: ${objective.session_id}`}>
+                <CopyButton value={objective.session_id} label="Copy session id" size="sm" />
+              </div>
             )}
             {/* Session activity (obj-2387): skills + sub-agent personas this
                 objective's sessions actually invoked, beside the agent badge. */}
@@ -167,7 +177,7 @@ export function ViewerHeader({
                 )}
                 {subagentPersonas.length > 0 && (
                   <div className="flex flex-wrap items-center gap-1">
-                    <span className="text-xs font-medium uppercase tracking-eyebrow text-fg-3">Agents</span>
+                    <span className="text-xs font-medium uppercase tracking-eyebrow text-fg-3">Bots</span>
                     {subagentPersonas.map(a => (
                       <span key={`ag-${a}`} className="inline-flex items-center gap-1">
                         <AgentMonogram agent={a} size="sm" />
@@ -178,7 +188,7 @@ export function ViewerHeader({
                 )}
                 {subagentWorkers.length > 0 && (
                   <div className="flex flex-wrap items-center gap-1">
-                    <span className="text-xs font-medium uppercase tracking-eyebrow text-fg-3">Sub-agents</span>
+                    <span className="text-xs font-medium uppercase tracking-eyebrow text-fg-3">Helper bots</span>
                     {subagentWorkers.map(w => (
                       <Badge key={`sa-${w}`} tone="neutral" mono>{w}</Badge>
                     ))}
@@ -203,9 +213,11 @@ export function ViewerHeader({
               label={onOpenInNewTab ? 'Open in new tab' : isFull ? 'Exit fullscreen (f)' : 'Fullscreen (f)'}
               onClick={onOpenInNewTab ?? toggleSize}
             >
-              {onOpenInNewTab || !isFull
-                ? <Maximize2 className="h-4 w-4" />
-                : <Minimize2 className="h-4 w-4" />}
+              {onOpenInNewTab
+                ? <ExternalLink className="h-4 w-4" />
+                : !isFull
+                  ? <Maximize2 className="h-4 w-4" />
+                  : <Minimize2 className="h-4 w-4" />}
             </IconButton>
           )}
           <IconButton label="Close session" onClick={onClose}>

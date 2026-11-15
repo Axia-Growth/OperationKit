@@ -22,7 +22,10 @@
 #      before touching it, so an install that is already correct is unchanged.
 #   5. reports the PINNED Playwright/Chromium versions now running and how to
 #      move them on their own when a browser advisory lands between releases
-#   6. prints the exact rollback steps (also on failure). Those cover the code,
+#   6. shows which nightly backup this server really runs (install/backup.sh
+#      status): schedule, off-site target, how home is kept, the age of the
+#      newest nightly folder, and any hand-made backup job still beside it
+#   7. prints the exact rollback steps (also on failure). Those cover the code,
 #      the images and the database. The Cloudflare side is rolled back with its
 #      own commands, which are printed at the end of the run.
 # Nothing in INSTALL_DIR is deleted. Re-running is safe.
@@ -40,7 +43,7 @@ while [ $# -gt 0 ]; do
     --skip-backup) SKIP_BACKUP=1 ;;
     --dry-run) DRY_RUN=1 ;;
     --) shift; INSTALL_ARGS=("$@"); break ;;
-    -h|--help) sed -n '2,21p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    -h|--help) sed -n '2,31p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) die "unknown argument: $1 (see --help)" ;;
   esac
   shift
@@ -163,6 +166,9 @@ fi
 
 step "Updated: $(cut -c1-12 <<<"$OLD_SHA") → $(cut -c1-12 <<<"$NEW_SHA")"
 log "  pre-update backup: ${BACKUP_DIR:-none (--skip-backup)}"
+# The pre-update folder above is a rollback point, not the nightly backup. Show
+# which nightly backup this server really runs (and anything hand-made beside it).
+bash "$OK_LIB_DIR/backup.sh" status --config "$CONFIG" || warn "could not read the backup status: sudo bash $OK_LIB_DIR/backup.sh status --config $CONFIG"
 if ! local_mode; then
   log "  Cloudflare was reconciled by the installer above. To re-run just that part:"
   log "    sudo bash $OK_LIB_DIR/cloudflare.sh api-bypass --config $CONFIG   # Access steps aside on the bot API routes"

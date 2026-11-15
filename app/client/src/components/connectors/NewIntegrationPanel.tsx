@@ -17,7 +17,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { ArrowLeft, BookOpen, Bot, ChevronDown, ChevronUp, Link2, Plug } from 'lucide-react'
 import type { ConnectorSummary, McpCatalogEntry, McpServerSummary } from '@operationkit/shared'
 import { api } from '../../lib/api'
-import { Badge, Button, Card, EmptyState, SearchInput, cn } from '../ui'
+import { Badge, Button, Card, EmptyState, SearchInput, SectionHeader, cn } from '../ui'
 import { ConnectorCard, type ConnectorActions } from './ConnectorCard'
 import { ConnectMcpServerDialog } from './ConnectMcpServerDialog'
 import { MakeMyOwnIntegration } from './MakeMyOwnIntegration'
@@ -99,7 +99,7 @@ function BrowseRow({
           {e.connector && (
             <Button
               size="sm"
-              variant={expanded ? 'ghost' : 'primary'}
+              variant={expanded ? 'ghost' : 'secondary'}
               onClick={onToggle}
               aria-expanded={expanded}
               leftIcon={expanded ? <ChevronUp className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />}
@@ -108,7 +108,7 @@ function BrowseRow({
             </Button>
           )}
           {e.mcp && isAdmin && (
-            <Button size="sm" variant={e.connector ? 'secondary' : 'primary'} onClick={() => onMcp(e.mcp!)}>
+            <Button size="sm" variant="secondary" onClick={() => onMcp(e.mcp!)}>
               Add as workspace MCP server
             </Button>
           )}
@@ -172,9 +172,11 @@ export function NewIntegrationPanel({
           >
             {step === 'choose' ? 'Connected integrations' : 'Back'}
           </Button>
-          <h3 id="new-integration-title" className="font-display text-lg font-semibold text-fg-0">
-            {step === 'browse' ? 'Browse integrations' : step === 'make' ? 'Make my own' : 'New integration'}
-          </h3>
+          <SectionHeader
+            headingId="new-integration-title"
+            className="mb-0"
+            title={step === 'browse' ? 'Browse integrations' : step === 'make' ? 'Make my own' : 'New integration'}
+          />
         </div>
       </div>
 

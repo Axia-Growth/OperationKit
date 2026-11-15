@@ -34,7 +34,7 @@ function run(over: Partial<FlowRunSummary>): FlowRunSummary {
 const FLOW: FlowSummary = {
   id: 12, slug: 'daily-booking-triage', name: 'Daily booking triage', workspace: 'acme', status: 'active',
   published_version: 3, latest_version: 3, objective_id: 500, created_by: 'user:1', created_at: '2026-11-12T00:00:00Z',
-  updated_at: '2026-11-12T00:00:00Z', trigger: { on: 'schedule', cron: '0 8 * * 1-5' }, node_count: 8,
+  updated_at: '2026-11-12T00:00:00Z', notes: null, tools: [], trigger: { on: 'schedule', cron: '0 8 * * 1-5' }, node_count: 8,
   kinds: { trigger: 1, tool: 1, loop: 1, llm: 1, mcp: 2, check: 1, end: 1 },
   routine: {
     id: 77, cron_expr: '0 8 * * 1-5', cadence: 'Weekdays at 08:00', enabled: false, next_run_at: null, last_run_at: null,
@@ -44,7 +44,7 @@ const FLOW: FlowSummary = {
   last_run: run({ id: 9, status: 'failed', error: { type: 'check_failed', title: 'check "upsert" failed' } }),
 }
 
-const MERMAID = 'flowchart TD\n  n_classify{{"🧠 LLM · classify"}}\n  class n_classify llm\n  class n_fetch succeeded\n'
+const MERMAID = 'flowchart TD\n  n_classify{{"LLM · classify"}}\n  class n_classify llm\n  class n_fetch succeeded\n'
 const DETAIL: FlowDetailResponse = {
   flows_enabled: true, flow: FLOW, version: 3, definition: {} as never,
   versions: [{ version: 3, author: 'user:1', sha256: 'x', parent_version: null, created_at: '2026-11-12T00:00:00Z', published: true }],
@@ -56,6 +56,7 @@ const DETAIL: FlowDetailResponse = {
 
 let routinesFixture: RoutineSummary[] = []
 let runsFixture: FlowRunSummary[] = []
+let flowsFixture: FlowSummary[] = []
 
 vi.mock('../hooks/useRoutines', async importOriginal => {
   const actual = await importOriginal<typeof import('../hooks/useRoutines')>()
@@ -82,7 +83,7 @@ vi.mock('../context/AuthContext', () => ({ useAuth: () => ({ user: { id: 1, user
 vi.mock('./settings/QueueAutostartPanel', () => ({ QueueAutostartPanel: () => null }))
 vi.mock('./jobs/HostCronJobs', () => ({ HostCronJobs: () => null }))
 vi.mock('../hooks/useFlows', () => ({
-  useFlows: () => ({ flows: [FLOW], runs: runsFixture, flowsEnabled: true, loading: false, error: null, refresh: async () => {}, runNow: flowRunNow }),
+  useFlows: () => ({ flows: flowsFixture, runs: runsFixture, flowsEnabled: true, loading: false, error: null, refresh: async () => {}, runNow: flowRunNow }),
   useFlowDetail: (id: number | null) => ({ detail: id === 12 ? DETAIL : null, error: null, loading: false, reload: async () => {} }),
   fetchFlowRun: async () => { throw new Error('not in this test') },
   fetchFlowNode: async () => { throw new Error('not in this test') },
@@ -107,6 +108,7 @@ let container: HTMLDivElement
 let root: Root
 beforeEach(() => {
   flowRunNow.mockClear()
+  flowsFixture = [FLOW]
   window.history.replaceState(null, '', '/jobs')
   routinesFixture = [
     routine({ id: 5, title: 'Nightly agent job', kind: 'ai' }),
@@ -156,6 +158,23 @@ describe('JobsBoard — opens on the flow-chart view (obj 900675)', () => {
     expect(window.location.search).toContain('view=runs')
   })
 
+  it('names strategy, scheduled task and workflow apart (one word each, glossary)', async () => {
+    await mount()
+    expect(container.textContent).toContain('A workflow is a chain of steps')
+    // The rarer create sits in the menu beside "New workflow" (obj 900807).
+    const more = container.querySelector('[data-testid="workflows-create-menu"]') as HTMLElement
+    more.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true }))
+    more.click()
+    await settle()
+    expect(document.body.textContent).toContain('New scheduled task')
+    expect(document.body.textContent).not.toContain('New strategy job')
+    clickTab('Runs')
+    await settle()
+    expect(container.textContent).toContain('Scheduled tasks')
+    expect(container.textContent).toContain('A task can belong to a strategy')
+    expect(container.textContent).not.toMatch(/strategy workflow/i)
+  })
+
   it.each([['/jobs?view=jobs'], ['/jobs?kind=agent'], ['/jobs#host-cron']])('%s still lands on the lanes', async url => {
     window.history.replaceState(null, '', url)
     await mount()
@@ -181,7 +200,7 @@ describe('JobsBoard — workflows (B4)', () => {
     expect(hasRunBadge(10)).toBe(true) // running → Running
     expect(text()).toContain('check_failed')
 
-    clickTab('Agent jobs')
+    clickTab('Bot runs')
     await settle()
     expect(hasRunBadge(9)).toBe(false)
     expect(hasRunBadge(10)).toBe(false)
@@ -196,7 +215,7 @@ describe('JobsBoard — workflows (B4)', () => {
     expect(hasRunBadge(9)).toBe(true)
     expect(hasRunBadge(10)).toBe(true)
     // agent routine row and agent lane row are gone; the workflow routine remains (with its badge)
-    expect(Array.from(container.querySelectorAll('button')).some(b => b.textContent === 'diagram')).toBe(true)
+    expect(Array.from(container.querySelectorAll('button')).some(b => b.textContent === 'Diagram')).toBe(true)
     expect(text).not.toContain('Nightly agent job')
   })
 
@@ -277,5 +296,60 @@ describe('Run now feedback toasts', () => {
     runNowIn(row).click()
     await settle()
     expect(region().querySelector('[data-slot="toast"]')?.textContent).toContain('Started: Nightly agent job')
+  })
+})
+
+describe('JobsBoard — workspace counts match the list shown (obj 900868)', () => {
+  /** The count on a Workspace filter option, e.g. "All" → 0. Since obj 900807 the
+      workspace filter is one Select on the toolbar row (it was a second chip row),
+      so open it, read the option ("All workspaces (0)", "acme (1)") and close it. */
+  async function wsCount(label: string): Promise<number> {
+    const trigger = container.querySelector<HTMLElement>('[role="combobox"][aria-label="Workspace"]')
+    expect(trigger, 'workspace filter').toBeTruthy()
+    for (const type of ['pointerdown', 'mousedown', 'pointerup', 'mouseup', 'click']) {
+      const Ctor = type.startsWith('pointer') ? (globalThis.PointerEvent ?? MouseEvent) : MouseEvent
+      trigger!.dispatchEvent(new Ctor(type, { bubbles: true, cancelable: true, button: 0 }))
+    }
+    await settle()
+    const want = label === 'All' ? 'All workspaces' : label
+    const item = Array.from(document.querySelectorAll('[role="option"]')).find(o => o.textContent?.trim().startsWith(`${want} (`))
+    expect(item, `workspace option ${label}`).toBeTruthy()
+    const n = Number(/\((\d+)\)\s*$/.exec(item!.textContent!.trim())?.[1])
+    ;(document.activeElement ?? trigger!).dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }))
+    await settle()
+    return n
+  }
+
+  it('Workflows view with no workflows says All 0, not the run count', async () => {
+    flowsFixture = []
+    runsFixture = Array.from({ length: 9 }, (_, i) => run({ id: 100 + i }))
+    await mount()
+    expect(container.querySelector('[data-testid="workflows-panel"]')).not.toBeNull()
+    expect(container.textContent).toContain('No workflows yet')
+    expect(await wsCount('All')).toBe(0)
+    expect(await wsCount('acme')).toBe(0)
+  })
+
+  it('Workflows view counts workflow definitions per workspace', async () => {
+    flowsFixture = [FLOW, { ...FLOW, id: 13, slug: 'other', name: 'Other', workspace: 'beta' }]
+    await mount()
+    expect(await wsCount('All')).toBe(2)
+    expect(await wsCount('acme')).toBe(1)
+    expect(await wsCount('beta')).toBe(1)
+  })
+
+  it('Runs view counts the runs of the picked kind only', async () => {
+    window.history.replaceState(null, '', '/jobs?view=runs')
+    await mount()
+    // 1 agent job + 2 workflow runs
+    expect(await wsCount('All')).toBe(3)
+    clickTab('Bot runs')
+    await settle()
+    expect(await wsCount('All')).toBe(1)
+    // The run-kind filter's "Workflows", not the view tab of the same name.
+    const kind = container.querySelector('[aria-label="Run kind"]')!
+    ;(Array.from(kind.querySelectorAll('button, [role="radio"]')).find(b => b.textContent?.trim() === 'Workflows') as HTMLElement).click()
+    await settle()
+    expect(await wsCount('All')).toBe(2)
   })
 })

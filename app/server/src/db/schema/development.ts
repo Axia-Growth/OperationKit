@@ -246,15 +246,13 @@ export function initDevelopmentSchema(db: Database.Database): void {
  * "create if absent", never "reset to defaults".
  */
 export function seedDevelopmentRegistry(db: Database.Database): void {
-  // `example2` is NOT in the workspaces seed at :963-1091 (only example,
-  // example-project, operator are), and `dev_items.workspace` is a hard FK to
-  // workspaces(slug) with foreign_keys=ON. Seeding the repo/integration rows
-  // below — and every later dev_items insert — would fail on a fresh DB
-  // without this. INSERT OR IGNORE leaves a pre-existing prod row untouched.
-  db.prepare(
-    `INSERT OR IGNORE INTO workspaces (slug, name, short_label, badge_color, sort_order)
-     VALUES (?, ?, ?, ?, ?)`,
-  ).run('example2', 'Example3', 'EXAMPLE2', 'bg-emerald-500/20 text-emerald-400', 4)
+  // obj 900803 (white-label): no workspace is CREATED here any more (this used
+  // to insert the author's `example2` workspace on every boot). The repo and
+  // integration rows below are only seeded into a workspace that already exists
+  // — on a fresh install none of them do, so nothing is seeded; an install that
+  // has these workspaces keeps every existing row untouched (INSERT OR IGNORE /
+  // existence-checked, as before).
+  const workspaceExists = db.prepare('SELECT 1 FROM workspaces WHERE slug = ? LIMIT 1')
 
   // workspace_repos — the join key between changelog_entries.repo, GitHub
   // webhook payloads (repository.full_name) and dev_items.project.
@@ -308,6 +306,7 @@ export function seedDevelopmentRegistry(db: Database.Database): void {
     // obj 900667: follow workspaces.merged_into, or the existence check misses
     // a row the merge moved and re-seeds it into the retired workspace on boot.
     const ws = canonicalWorkspaceSlugIn(db, workspace)
+    if (!workspaceExists.get(ws)) continue
     if (repoExists.get(ws, name)) continue
     insertRepo.run(ws, name, github, repoPath, JSON.stringify(stack))
   }
@@ -374,6 +373,7 @@ export function seedDevelopmentRegistry(db: Database.Database): void {
     ],
   ]
   for (const [workspace, config, status] of devConfigs) {
+    if (!workspaceExists.get(workspace)) continue
     insertIntegration.run(workspace, JSON.stringify(config), status)
   }
 }

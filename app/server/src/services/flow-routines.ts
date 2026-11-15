@@ -36,6 +36,9 @@ export interface FlowRow {
   created_by: string
   created_at: string
   updated_at: string
+  /** obj 900868 — Notes + Tools (`tools_json` = JSON string[]); see shared/flow/details.ts. */
+  notes?: string | null
+  tools_json?: string | null
 }
 
 /** Routine name for a flow. `routines.name` is UNIQUE, so it embeds workspace + slug. */

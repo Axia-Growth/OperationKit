@@ -4,10 +4,11 @@
  */
 import { useState, useEffect, useCallback } from 'react'
 import {
-  Boxes, FileText, KeyRound, FolderGit2, Plug, Plus, Trash2, ChevronRight, Check, Sparkles, GitBranch, Activity, Unplug, RotateCcw,
+  Boxes, Plug, Plus, Trash2, ChevronRight, Check, GitBranch, Activity, Unplug, RotateCcw,
 } from 'lucide-react'
 import {
   Card, CardHeader, Button, Badge, Alert, EmptyState, Skeleton, useConfirm, cn,
+  Field, Input, SettingsSection, RowActions,
 } from '../ui'
 import { useWorkspaces } from '../../hooks/useWorkspaces'
 import { useAgents } from '../../hooks/useAgents'
@@ -23,7 +24,6 @@ import {
   type GithubOrgRepo,
 } from '@operationkit/shared'
 import { api } from '../../lib/api'
-import { inputCls, SectionLabel } from './config-form'
 import { Select } from '../ui/Select'
 
 // ── Workspaces Tab ──
@@ -172,6 +172,42 @@ export function WorkspacesTab() {
     }
   }
 
+  /**
+   * Delete an ARCHIVED workspace so it leaves this list — obj 900870.
+   *
+   * A soft-delete: the server only stamps `deleted_at`. No card, secret
+   * (workspace or Shared), repo, connection or member is removed, and an
+   * active workspace is refused (409). The confirm copy says exactly that,
+   * and how to get it back.
+   */
+  async function deleteArchivedWorkspace(slug: string, name: string) {
+    if (!(await confirm({
+      title: 'Delete archived workspace?',
+      message: (
+        <>
+          <span className="block">
+            “{name}” will be removed from the archived list. Nothing is permanently deleted: its cards,
+            secrets, repos and members are kept, and no other workspace or Shared secret is touched.
+          </span>
+          <span className="mt-2 block">
+            To recover it later, an admin can call <code className="font-mono text-xs">POST /api/admin/workspaces/{slug}/undelete</code> and it returns to this list.
+          </span>
+        </>
+      ),
+      confirmLabel: 'Delete workspace',
+      danger: true,
+    }))) return
+    setWsBusy(slug)
+    try {
+      await api.post(`/admin/workspaces/${slug}/delete`, { confirm: slug })
+      await Promise.all([refreshWorkspaces(), loadAdminRecords()])
+    } catch (e) {
+      alert(e instanceof Error ? e.message : 'Failed to delete workspace')
+    } finally {
+      setWsBusy(null)
+    }
+  }
+
   async function removeWorkspace(slug: string, name: string) {
     if (!(await confirm({
       title: 'Remove workspace?',
@@ -297,7 +333,6 @@ export function WorkspacesTab() {
         <Card inset>
           <CardHeader
             title="Workspaces"
-            eyebrow="Manage"
             actions={
               <Button
                 size="sm"
@@ -312,10 +347,8 @@ export function WorkspacesTab() {
           {showCreate && (
             <form onSubmit={createWorkspace} className="space-y-3 p-4">
               <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                <label className="space-y-1">
-                  <span className="text-xs font-medium uppercase tracking-eyebrow text-fg-3">Name</span>
-                  <input
-                    className={inputCls}
+                <Field label="Name" id="new-workspace-name">
+                  <Input
                     placeholder="Acme Co"
                     value={newName}
                     onChange={e => {
@@ -325,18 +358,17 @@ export function WorkspacesTab() {
                       }
                     }}
                   />
-                </label>
-                <label className="space-y-1">
-                  <span className="text-xs font-medium uppercase tracking-eyebrow text-fg-3">Slug</span>
-                  <input
-                    className={cn(inputCls, 'font-mono')}
+                </Field>
+                <Field label="Slug" id="new-workspace-slug" hint="Lowercase letters, numbers and hyphens">
+                  <Input
+                    className="font-mono"
                     placeholder="acme"
                     value={newSlug}
                     onChange={e => { setSlugDirty(true); setNewSlug(e.target.value) }}
                   />
-                </label>
+                </Field>
               </div>
-              {createError && <Alert tone="alarm">{createError}</Alert>}
+              {createError && <Alert tone="alarm" title={createError} />}
               <div className="flex justify-end">
                 <Button type="submit" variant="primary" size="sm" disabled={creating}>
                   {creating ? 'Creating…' : 'Create workspace'}
@@ -378,22 +410,23 @@ export function WorkspacesTab() {
                 <div className="min-w-0">
                   <div className="flex flex-wrap items-center gap-2">
                     <h3 className="font-display text-base font-semibold text-fg-0">{ws.name}</h3>
-                    <Badge mono>{key}</Badge>
+                    <span className="font-mono text-xs text-fg-3">{key}</span>
                     <Badge tone="neutral">{ws.projects.length + dbRepos.length} {ws.projects.length + dbRepos.length === 1 ? 'repo' : 'repos'}</Badge>
                   </div>
                   {ws.description && <p className="mt-0.5 truncate text-xs text-fg-3">{ws.description}</p>}
                 </div>
               </button>
               {isAdmin && (
-                <Button
-                  size="sm"
-                  variant="danger"
-                  leftIcon={<Trash2 className="h-3.5 w-3.5" />}
-                  disabled={wsBusy === key}
-                  onClick={() => removeWorkspace(key, ws.name)}
-                >
-                  Remove
-                </Button>
+                <RowActions
+                  label={`Actions for ${ws.name}`}
+                  actions={[{
+                    label: 'Remove workspace',
+                    icon: <Trash2 className="h-3.5 w-3.5" />,
+                    danger: true,
+                    disabled: wsBusy === key,
+                    onSelect: () => void removeWorkspace(key, ws.name),
+                  }]}
+                />
               )}
             </div>
 
@@ -401,22 +434,21 @@ export function WorkspacesTab() {
               <div className="space-y-4 border-t border-line p-4">
                 {/* Knowledge */}
                 {ws.knowledge && (
-                  <section>
-                    <SectionLabel icon={<FileText className="h-3.5 w-3.5" />}>Knowledge</SectionLabel>
+                  <SettingsSection title="Knowledge" level={3}>
                     <div className="flex flex-wrap gap-2">
                       <Badge tone="neutral" mono>qmd: {ws.knowledge.qmd_collection}</Badge>
                       {ws.knowledge.qmd_filter && <Badge tone="neutral" mono>{ws.knowledge.qmd_filter}</Badge>}
                     </div>
-                  </section>
+                  </SettingsSection>
                 )}
 
                 {/* Agent pool (admin) */}
                 {isAdmin && adminRecords[key] && (
-                  <section>
-                    <div className="mb-2 flex items-center justify-between">
-                      <SectionLabel icon={<KeyRound className="h-3.5 w-3.5" />} className="mb-0">Agent pool</SectionLabel>
-                      {poolSaving === key && <span className="text-xs text-fg-3">saving…</span>}
-                    </div>
+                  <SettingsSection
+                    title="Agent pool"
+                    level={3}
+                    actions={poolSaving === key ? <span className="text-xs text-fg-3">saving…</span> : undefined}
+                  >
                     <div className="flex flex-wrap gap-1.5">
                       {agentsLoading && <Skeleton className="h-7 w-56" />}
                       {agentSlugs.map(a => {
@@ -424,10 +456,12 @@ export function WorkspacesTab() {
                         return (
                           <button
                             key={a}
+                            type="button"
+                            aria-pressed={on}
                             onClick={() => togglePoolAgent(key, a)}
                             disabled={poolSaving === key}
                             className={cn(
-                              'rounded-md border px-2 py-1 text-xs font-medium transition-colors disabled:opacity-50',
+                              'rounded-md border px-2 py-1 text-xs font-medium outline-none transition-colors focus-visible:ring-2 focus-visible:ring-accent/50 disabled:opacity-50',
                               on
                                 ? 'border-[color:var(--accent-line)] bg-surface-2 text-accent'
                                 : 'border-line bg-surface-1 text-fg-3 hover:text-fg-1',
@@ -440,16 +474,15 @@ export function WorkspacesTab() {
                     </div>
                     <p className="mt-1.5 text-xs text-fg-3">
                       {adminRecords[key].default_agent_pool.length === 0
-                        ? 'Empty pool — every agent is allowed (legacy default).'
-                        : 'Only agents above can be assigned to objectives in this workspace.'}
+                        ? 'Empty pool — every bot is allowed (the default).'
+                        : 'Only bots above can be assigned to cards in this workspace.'}
                     </p>
-                    {poolError && poolSaving !== key && <p className="mt-1 text-xs text-signal-alarm">{poolError}</p>}
-                  </section>
+                    {poolError && poolSaving !== key && <Alert tone="alarm" title={poolError} className="mt-2" />}
+                  </SettingsSection>
                 )}
 
                 {/* Repos */}
-                <section>
-                  <SectionLabel icon={<FolderGit2 className="h-3.5 w-3.5" />}>Repos & projects</SectionLabel>
+                <SettingsSection title="Repos & projects" level={3}>
                   <div className="space-y-2">
                     {/* DB-backed (removable) */}
                     {dbRepos.map(repo => (
@@ -470,18 +503,13 @@ export function WorkspacesTab() {
                           )}
                         </div>
                         {isAdmin && (
-                          <div className="flex shrink-0 items-center gap-1">
-                            <Button
-                              size="sm"
-                              variant="ghost"
-                              onClick={() => void toggleDocs(key, repo)}
-                            >
-                              {repo.docs_enabled ? 'Pause docs' : 'Live docs'}
-                            </Button>
-                            <Button size="sm" variant="ghost" aria-label="Remove repo" onClick={() => removeRepo(key, repo)}>
-                              <Trash2 className="h-3.5 w-3.5 text-signal-alarm" />
-                            </Button>
-                          </div>
+                          <RowActions
+                            label={`Actions for ${repo.name}`}
+                            actions={[
+                              { label: repo.docs_enabled ? 'Pause docs' : 'Live docs', onSelect: () => void toggleDocs(key, repo) },
+                              { label: 'Remove repo', icon: <Trash2 className="h-3.5 w-3.5" />, danger: true, onSelect: () => void removeRepo(key, repo) },
+                            ]}
+                          />
                         )}
                       </div>
                     ))}
@@ -509,21 +537,27 @@ export function WorkspacesTab() {
 
                   {/* Add repo (admin) */}
                   {isAdmin && (
-                    <form onSubmit={e => addRepo(key, e)} className="mt-3 flex flex-col gap-2 rounded-md border border-line bg-surface-1 p-3 sm:flex-row sm:items-center">
-                      <input className={inputCls} placeholder="repo name" value={draftFor(key).name}
-                             onChange={e => setDraft(key, { name: e.target.value })} />
-                      <input className={cn(inputCls, 'font-mono')} placeholder="owner/repo (optional)" value={draftFor(key).github}
-                             onChange={e => setDraft(key, { github: e.target.value })} />
-                      <input className={inputCls} placeholder="stack, comma-sep" value={draftFor(key).stack}
-                             onChange={e => setDraft(key, { stack: e.target.value })} />
-                      <Button type="submit" variant="secondary" size="sm" disabled={repoBusy === key}
+                    <form onSubmit={e => addRepo(key, e)} className="mt-3 grid grid-cols-1 gap-3 rounded-md border border-line bg-surface-1 p-3 sm:grid-cols-[1fr_1fr_1fr_auto] sm:items-end">
+                      <Field label="Repo name" id={`repo-name-${key}`}>
+                        <Input placeholder="my-app" value={draftFor(key).name}
+                               onChange={e => setDraft(key, { name: e.target.value })} />
+                      </Field>
+                      <Field label="GitHub repo" id={`repo-github-${key}`} optional>
+                        <Input className="font-mono" placeholder="owner/repo" value={draftFor(key).github}
+                               onChange={e => setDraft(key, { github: e.target.value })} />
+                      </Field>
+                      <Field label="Stack, comma-separated" id={`repo-stack-${key}`} optional>
+                        <Input placeholder="react, supabase" value={draftFor(key).stack}
+                               onChange={e => setDraft(key, { stack: e.target.value })} />
+                      </Field>
+                      <Button type="submit" variant="secondary" disabled={repoBusy === key}
                               leftIcon={<Plus className="h-4 w-4" />} className="shrink-0">
-                        {repoBusy === key ? 'Adding…' : 'Add'}
+                        {repoBusy === key ? 'Adding…' : 'Add repo'}
                       </Button>
                     </form>
                   )}
-                  {repoError[key] && <p className="mt-1.5 text-xs text-signal-alarm">{repoError[key]}</p>}
-                </section>
+                  {repoError[key] && <Alert tone="alarm" title={repoError[key]} className="mt-2" />}
+                </SettingsSection>
 
                 {/* Connections (admin) — GitHub org + PostHog per workspace */}
                 {isAdmin && (
@@ -532,12 +566,11 @@ export function WorkspacesTab() {
 
                 {/* Context preview */}
                 {contextContent[key] && (
-                  <section>
-                    <SectionLabel icon={<FileText className="h-3.5 w-3.5" />}>Context file</SectionLabel>
+                  <SettingsSection title="Context file" level={3}>
                     <pre className="max-h-64 overflow-auto rounded-md border border-line bg-surface-1 p-3 font-mono text-xs leading-relaxed text-fg-2 whitespace-pre-wrap">
                       {contextContent[key]}
                     </pre>
-                  </section>
+                  </SettingsSection>
                 )}
               </div>
             )}
@@ -558,7 +591,7 @@ export function WorkspacesTab() {
                 <div className="min-w-0 flex-1">
                   <div className="flex flex-wrap items-center gap-2">
                     <h3 className="font-display text-base font-semibold text-fg-2">{r.name || r.slug}</h3>
-                    <Badge mono>{r.slug}</Badge>
+                    <span className="font-mono text-xs text-fg-3">{r.slug}</span>
                     <Badge tone="neutral">archived</Badge>
                   </div>
                 </div>
@@ -571,6 +604,19 @@ export function WorkspacesTab() {
                 >
                   {wsBusy === r.slug ? 'Restoring…' : 'Restore'}
                 </Button>
+                {/* obj 900870: Delete lives ONLY on archived rows — an active
+                    workspace has no delete shortcut. Shared danger + confirm
+                    patterns (Button variant=danger, useConfirm). */}
+                <Button
+                  size="sm"
+                  variant="danger"
+                  leftIcon={<Trash2 className="h-3.5 w-3.5" />}
+                  disabled={wsBusy === r.slug}
+                  data-testid={`delete-archived-${r.slug}`}
+                  onClick={() => deleteArchivedWorkspace(r.slug, r.name || r.slug)}
+                >
+                  Delete
+                </Button>
               </div>
             ))}
           </div>
@@ -581,10 +627,6 @@ export function WorkspacesTab() {
 }
 // ── Connections (GitHub org + PostHog, per workspace) ──
 
-// Inputs here meet the 44px mobile hit-target (taller than the dense forms
-// above) since they carry secrets and are the primary connect affordance.
-const connInputCls = cn(inputCls, 'min-h-[44px] sm:min-h-[38px]')
-
 const POSTHOG_HOSTS = [
   { value: 'https://us.i.posthog.com', label: 'US Cloud' },
   { value: 'https://eu.i.posthog.com', label: 'EU Cloud' },
@@ -592,8 +634,8 @@ const POSTHOG_HOSTS = [
 ] as const
 
 function ConnectionPanel({
-  icon, title, connected, children,
-}: { icon: React.ReactNode; title: string; connected: boolean; children: React.ReactNode }) {
+  icon, title, connected, actions, children,
+}: { icon: React.ReactNode; title: string; connected: boolean; actions?: React.ReactNode; children: React.ReactNode }) {
   return (
     <div className="rounded-md border border-line bg-surface-1 p-3.5">
       <div className="mb-3 flex items-center gap-2">
@@ -604,6 +646,7 @@ function ConnectionPanel({
         {connected
           ? <Badge tone="verify" className="ml-auto"><Check className="mr-1 inline h-3 w-3" />Connected</Badge>
           : <Badge tone="neutral" className="ml-auto">Not connected</Badge>}
+        {actions}
       </div>
       {children}
     </div>
@@ -677,7 +720,17 @@ function GithubConnect({ slug, integration, onChange, onRepoAdded }: {
   }
 
   return (
-    <ConnectionPanel icon={<GitBranch className="h-4 w-4" />} title="GitHub" connected={connected}>
+    <ConnectionPanel
+      icon={<GitBranch className="h-4 w-4" />}
+      title="GitHub"
+      connected={connected}
+      actions={connected ? (
+        <RowActions
+          label="GitHub connection actions"
+          actions={[{ label: 'Disconnect GitHub', icon: <Unplug className="h-3.5 w-3.5" />, danger: true, onSelect: () => void disconnect() }]}
+        />
+      ) : undefined}
+    >
       {confirmDialog}
       {connected ? (
         <div className="space-y-3">
@@ -691,9 +744,6 @@ function GithubConnect({ slug, integration, onChange, onRepoAdded }: {
           <div className="flex flex-wrap gap-2">
             <Button size="md" variant="secondary" leftIcon={<Plus className="h-4 w-4" />} onClick={openPicker}>
               {showPicker ? 'Hide org repos' : 'Add repo from org'}
-            </Button>
-            <Button size="md" variant="danger" leftIcon={<Unplug className="h-4 w-4" />} onClick={disconnect}>
-              Disconnect
             </Button>
           </div>
           {showPicker && (
@@ -726,18 +776,21 @@ function GithubConnect({ slug, integration, onChange, onRepoAdded }: {
                   </div>
                 ))}
               </div>
-              {pickerError && <p className="mt-1 px-1 text-xs text-signal-alarm">{pickerError}</p>}
+              {pickerError && <Alert tone="alarm" title={pickerError} className="mt-1" />}
             </div>
           )}
         </div>
       ) : (
-        <form onSubmit={connect} className="space-y-2">
-          <input className={connInputCls} placeholder="organization (e.g. acme-inc)"
-                 value={org} onChange={e => setOrg(e.target.value)} autoComplete="off" />
-          <input className={cn(connInputCls, 'font-mono')} type="password" placeholder="personal access token (repo + read:org)"
-                 value={tokenVal} onChange={e => setTokenVal(e.target.value)} autoComplete="off" />
-          {error && <Alert tone="alarm">{error}</Alert>}
-          <Button type="submit" size="md" variant="primary" disabled={busy} className="w-full sm:w-auto"
+        <form onSubmit={connect} className="space-y-3">
+          <Field label="GitHub organization" id={`gh-org-${slug}`}>
+            <Input placeholder="acme-inc" value={org} onChange={e => setOrg(e.target.value)} autoComplete="off" />
+          </Field>
+          <Field label="Personal access token" id={`gh-token-${slug}`} hint="Needs the repo and read:org scopes.">
+            <Input className="font-mono" type="password"
+                   value={tokenVal} onChange={e => setTokenVal(e.target.value)} autoComplete="off" />
+          </Field>
+          {error && <Alert tone="alarm" title={error} />}
+          <Button type="submit" size="md" variant="secondary" disabled={busy} className="w-full sm:w-auto"
                   leftIcon={<Plug className="h-4 w-4" />}>
             {busy ? 'Validating…' : 'Connect GitHub'}
           </Button>
@@ -791,33 +844,46 @@ function PosthogConnect({ slug, integration, onChange }: {
   }
 
   return (
-    <ConnectionPanel icon={<Activity className="h-4 w-4" />} title="PostHog" connected={connected}>
+    <ConnectionPanel
+      icon={<Activity className="h-4 w-4" />}
+      title="PostHog"
+      connected={connected}
+      actions={connected ? (
+        <RowActions
+          label="PostHog connection actions"
+          actions={[{ label: 'Disconnect PostHog', icon: <Unplug className="h-3.5 w-3.5" />, danger: true, onSelect: () => void disconnect() }]}
+        />
+      ) : undefined}
+    >
       {confirmDialog}
       {connected ? (
-        <div className="space-y-3">
-          <div className="flex flex-wrap items-center gap-2 text-xs">
-            <Badge mono>{integration?.host}</Badge>
-            {integration?.project_api_key_last4 && <Badge tone="neutral" mono>key {integration.project_api_key_last4}</Badge>}
-          </div>
-          <Button size="md" variant="danger" leftIcon={<Unplug className="h-4 w-4" />} onClick={disconnect}>
-            Disconnect
-          </Button>
+        <div className="flex flex-wrap items-center gap-2 text-xs">
+          <Badge mono>{integration?.host}</Badge>
+          {integration?.project_api_key_last4 && <Badge tone="neutral" mono>key {integration.project_api_key_last4}</Badge>}
         </div>
       ) : (
-        <form onSubmit={connect} className="space-y-2">
-          <Select className="w-full" aria-label="PostHog host" value={hostChoice} onChange={v => setHostChoice(v)}>
-            {POSTHOG_HOSTS.map(h => <option key={h.value} value={h.value}>{h.label}</option>)}
-          </Select>
+        <form onSubmit={connect} className="space-y-3">
+          <Field label="PostHog host" id={`ph-host-${slug}`}>
+            <Select className="w-full" value={hostChoice} onChange={v => setHostChoice(v)}>
+              {POSTHOG_HOSTS.map(h => <option key={h.value} value={h.value}>{h.label}</option>)}
+            </Select>
+          </Field>
           {hostChoice === '__self' && (
-            <input className={cn(connInputCls, 'font-mono')} placeholder="https://posthog.your-domain.com"
-                   value={selfHost} onChange={e => setSelfHost(e.target.value)} autoComplete="off" />
+            <Field label="Self-hosted URL" id={`ph-self-${slug}`}>
+              <Input className="font-mono" placeholder="https://posthog.your-domain.com"
+                     value={selfHost} onChange={e => setSelfHost(e.target.value)} autoComplete="off" />
+            </Field>
           )}
-          <input className={cn(connInputCls, 'font-mono')} type="password" placeholder="project API key (phc_…)"
-                 value={projectKey} onChange={e => setProjectKey(e.target.value)} autoComplete="off" />
-          <input className={cn(connInputCls, 'font-mono')} type="password" placeholder="personal API key (optional)"
-                 value={personalKey} onChange={e => setPersonalKey(e.target.value)} autoComplete="off" />
-          {error && <Alert tone="alarm">{error}</Alert>}
-          <Button type="submit" size="md" variant="primary" disabled={busy} className="w-full sm:w-auto"
+          <Field label="Project API key" id={`ph-project-${slug}`}>
+            <Input className="font-mono" type="password" placeholder="phc_…"
+                   value={projectKey} onChange={e => setProjectKey(e.target.value)} autoComplete="off" />
+          </Field>
+          <Field label="Personal API key" id={`ph-personal-${slug}`} optional>
+            <Input className="font-mono" type="password"
+                   value={personalKey} onChange={e => setPersonalKey(e.target.value)} autoComplete="off" />
+          </Field>
+          {error && <Alert tone="alarm" title={error} />}
+          <Button type="submit" size="md" variant="secondary" disabled={busy} className="w-full sm:w-auto"
                   leftIcon={<Plug className="h-4 w-4" />}>
             {busy ? 'Validating…' : 'Connect PostHog'}
           </Button>
@@ -840,12 +906,11 @@ function ConnectionsSection({ slug, onRepoAdded }: { slug: string; onRepoAdded: 
   const ph = integrations?.find(i => i.kind === 'posthog')
 
   return (
-    <section>
-      <SectionLabel icon={<Plug className="h-3.5 w-3.5" />}>Connections</SectionLabel>
+    <SettingsSection title="Connections" level={3}>
       <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
         <GithubConnect slug={slug} integration={gh} onChange={load} onRepoAdded={onRepoAdded} />
         <PosthogConnect slug={slug} integration={ph} onChange={load} />
       </div>
-    </section>
+    </SettingsSection>
   )
 }

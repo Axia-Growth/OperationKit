@@ -42,6 +42,7 @@ import { ingestEnabled, startDrain } from '../services/doc-ingest/service.js'
 import { generatedPagePath, onWikiCompiled, readPage, scanWiki } from '../services/kb-wiki/wiki.js'
 import { MAX_RELATED_DEPTH, MAX_WORKSPACE_GRAPH_NODES, kbRelated, kbWhoKnows, kbWorkspaceGraph, readUnresolved, syncGraph } from '../services/kb-wiki/graph.js'
 import { graphScanOptions, syncWorkspaceGraph, workspaceForKbRoot } from '../services/kb-wiki/graph-sync.js'
+import { workspaceGraphLayout } from '../services/kb-wiki/graph-layout.js'
 import { fileAnswer } from '../services/kb-wiki/answers.js'
 import { LINT_LAST, type LintReport } from '../services/kb-wiki/lint.js'
 import { runLintForWorkspace, startWikiLintScheduler } from '../services/kb-wiki/scheduler.js'
@@ -142,14 +143,25 @@ function intArg(v: unknown, dflt: number, min: number, max: number): number {
   return Number.isFinite(n) ? Math.max(min, Math.min(max, Math.floor(n))) : dflt
 }
 
-router.get('/graph', (req: AuthRequest, res) => {
+router.get('/graph', async (req: AuthRequest, res) => {
   const ws = resolveWorkspace(req, res); if (!ws) return
   try {
     const db = getDb()
     const root = workspaceKbRoot(ws)
     syncWorkspaceGraph(ws)
+    const graph = kbWorkspaceGraph(db, ws, { limit: intArg(req.query.limit, MAX_WORKSPACE_GRAPH_NODES, 1, MAX_WORKSPACE_GRAPH_NODES) })
+    // obj 900867: the default view's layout, computed once per graph version off
+    // the event loop (services/kb-wiki/graph-layout.ts) — the browser draws it
+    // with zero ticks instead of settling 2,000 pages itself. Absent when it is
+    // not ready in time; the browser then lays out on its own, as before.
+    const layout = await workspaceGraphLayout(ws, graph)
+    // obj 900867: the browser keeps this and revalidates it by ETag every time
+    // (Express sets a weak ETag on res.json), so an unchanged graph is a 304 — no
+    // ~1 MB re-download when Context re-checks its cached copy. `private`: never
+    // stored by a shared cache.
+    res.setHeader('Cache-Control', 'private, no-cache')
     // root: the folder the page paths are relative to, so the Knowledge base page can open one in its editor.
-    res.json({ root, ...kbWorkspaceGraph(db, ws, { limit: intArg(req.query.limit, MAX_WORKSPACE_GRAPH_NODES, 1, MAX_WORKSPACE_GRAPH_NODES) }) })
+    res.json({ root, ...graph, ...(layout ? { layout } : {}) })
   } catch (err) { fail(res, err, 500) }
 })
 

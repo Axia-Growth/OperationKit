@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
+import { readCache, writeCache } from './chat-cache'
 import { api } from '../../lib/api'
 import { Alert, Button, cn } from '../ui'
 import { Switch } from '../ui/Switch'
@@ -77,6 +78,7 @@ export function HighAgencySection({
   const adopt = (r: HighAgencyResponse) => {
     const h = r?.high_agency
     if (!h) throw new Error('This server does not support High Agency yet')
+    writeCache(url, r)
     setInfo(h)
     setEnabled(h.enabled)
     setLevel(isHighAgencyLevel(h.level) ? h.level : DEFAULT_LEVEL)
@@ -92,6 +94,9 @@ export function HighAgencySection({
   useEffect(() => {
     let live = true
     setLoadError(null)
+    // obj 900865: a bot whose settings were opened before paints them at once.
+    const hit = readCache<HighAgencyResponse>(url)
+    if (hit) adopt(hit)
     api.get<HighAgencyResponse>(url)
       .then(r => { if (live) adopt(r) })
       .catch(e => { if (live) setLoadError(e instanceof Error ? e.message : 'Could not load High Agency') })

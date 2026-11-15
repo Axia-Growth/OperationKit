@@ -1,0 +1,16 @@
+<!doctype html>
+<html lang="en" class="h-full bg-surface">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Icon set harness (polish F9)</title>
+    <script>
+      // Apply ?theme= before first paint, and store it so useBoardTheme agrees.
+      var t = new URLSearchParams(location.search).get('theme');
+      t = t === 'dark' || t === 'light' ? t : 'light';
+      document.documentElement.setAttribute('data-theme', t);
+      try { localStorage.setItem('ok-theme', t) } catch (e) {}
+    </script>
+  </head>
+  <body class="h-full bg-surface-0 text-fg-0"><div id="root"></div><script type="module" src="./icons.tsx"></script></body>
+</html>

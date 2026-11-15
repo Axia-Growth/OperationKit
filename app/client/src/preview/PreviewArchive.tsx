@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { Pencil, Search } from 'lucide-react'
+import { Archive, Pencil, Search, SearchX } from 'lucide-react'
+import { EmptyState } from '../components/ui/EmptyState'
+import { Skeleton } from '../components/ui/Skeleton'
 import type { Objective, ObjectiveStatus, UpdateObjectiveRequest, Workspace } from '@operationkit/shared'
 import { useArchiveLibrary } from '../hooks/useArchiveLibrary'
 import { useSlashSearch } from '../hooks/useSlashSearch'
@@ -9,12 +11,15 @@ import { useAuth } from '../context/AuthContext'
 import { groupObjectives } from '../lib/groupObjectives'
 import { scopeObjectives } from '../lib/scopeObjectives'
 import { api } from '../lib/api'
-import { relativeTime } from '../lib/time'
+import { formatDateTime } from '../lib/format'
 import { AgentMonogram, STATUS_META } from '../components/design/primitives'
 import { ObjectiveModal } from '../components/ObjectiveModal'
 import { ObjectiveSearchPanel } from '../components/lazy-overlays'
 import { SessionViewer } from '../components/SessionViewer'
 import { SegmentedControl } from '../components/ui/SegmentedControl'
+import { Button, IconButton, RowButton, SearchInput } from '../components/ui'
+import { WorkspaceChip } from '../components/WorkspaceChip'
+import { REOPEN_LABEL } from '../lib/statusActions'
 
 type Tab = 'done' | 'cancelled'
 
@@ -38,7 +43,7 @@ export function PreviewArchive({ workspaces }: { workspaces: Workspace[] }) {
   const {
     done, cancelled, doneLoading, cancelledLoading, cancelledLoaded, error, loadCancelled, applyUpdate,
   } = useArchiveLibrary(workspaces)
-  const { shortOf } = useWorkspaces()
+  const { labelOf } = useWorkspaces()
   const { user } = useAuth()
   const navigate = useNavigate()
   const [tab, setTab] = useState<Tab>('done')
@@ -127,32 +132,29 @@ export function PreviewArchive({ workspaces }: { workspaces: Workspace[] }) {
             { key: 'cancelled', label: 'Retired', ...(cancelledLoaded ? { count: cancelled.length } : {}) },
           ]}
         />
-        <label className="relative min-w-[180px] flex-1 max-w-md">
-          <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-fg-3" />
-          <input
-            value={query}
-            onChange={e => setQuery(e.target.value)}
-            placeholder="Filter this library…"
-            className="w-full rounded-md border border-line bg-surface-2 py-1.5 pl-8 pr-3 text-base text-fg-0 placeholder-fg-3 outline-none focus:border-line-strong"
-          />
-        </label>
-        <button
-          type="button"
+        <SearchInput
+          value={query}
+          onChange={e => setQuery(e.target.value)}
+          placeholder={tab === 'done' ? 'Filter done cards…' : 'Filter retired cards…'}
+          aria-label="Filter this list"
+          wrapClassName="min-w-[180px] max-w-md flex-1"
+          className="min-h-8 sm:min-h-8"
+        />
+        {/* One search story (obj 900807): the same "Search cards /" control as
+            the board (every stage). The field beside it only narrows this list. */}
+        <Button
+          size="sm"
           onClick={() => setSearchOpen(true)}
-          title="Search objectives (all stages) — press /"
-          className="inline-flex items-center gap-1.5 rounded-md border border-line bg-surface-2 px-2.5 py-1.5 text-base text-fg-2 hover:border-line-strong hover:text-fg-1"
+          aria-label="Search cards"
+          title="Search cards — every stage, including done. Press /."
+          leftIcon={<Search className="h-4 w-4" />}
         >
-          <Search className="h-4 w-4" />
-          <span className="hidden md:inline">Search</span>
-          <span className="hidden font-mono text-xs text-fg-3 md:inline">/</span>
-        </button>
-        <button
-          type="button"
-          onClick={() => navigate('/')}
-          className="text-xs text-fg-2 hover:text-fg-0"
-        >
+          <span className="hidden md:inline">Search cards</span>
+          <kbd className="hidden font-mono text-xs text-fg-3 md:inline">/</kbd>
+        </Button>
+        <Button size="sm" variant="ghost" onClick={() => navigate('/')}>
           Back to board
-        </button>
+        </Button>
       </div>
 
       {error && (
@@ -161,9 +163,23 @@ export function PreviewArchive({ workspaces }: { workspaces: Workspace[] }) {
 
       <div className="min-h-0 flex-1 overflow-y-auto">
         {rows.length === 0 && !loading ? (
-          <div className="px-4 py-12 text-center text-base text-fg-3">
-            {q ? 'No matches in this library.' : tab === 'done' ? 'No done objectives.' : 'No retired objectives.'}
-          </div>
+          q ? (
+            <EmptyState
+              icon={<SearchX className="h-5 w-5" aria-hidden="true" />}
+              title="No matches"
+              description={`Nothing in ${tab === 'done' ? 'Done' : 'Retired'} matches “${query.trim()}”. Try a different word, or search every card.`}
+              action={<Button onClick={() => setSearchOpen(true)} leftIcon={<Search className="h-4 w-4" aria-hidden="true" />}>Search all cards</Button>}
+            />
+          ) : (
+            <EmptyState
+              icon={<Archive className="h-5 w-5" aria-hidden="true" />}
+              title={tab === 'done' ? 'No finished cards yet' : 'No retired cards'}
+              description={tab === 'done'
+                ? 'Cards you mark done move here, so the board stays about what is still open.'
+                : 'Cards you retire from the board are kept here, and you can reopen them any time.'}
+              action={<Button onClick={() => navigate('/')}>Back to board</Button>}
+            />
+          )
         ) : (
           <ul>
             {rows.map(obj => {
@@ -172,19 +188,13 @@ export function PreviewArchive({ workspaces }: { workspaces: Workspace[] }) {
               return (
                 <li key={obj.id} className="border-b border-line">
                   <div className="flex items-start gap-1 px-2 py-1 hover:bg-surface-3">
-                    <button
-                      type="button"
+                    <RowButton
                       onClick={() => setSessionObjective(obj)}
-                      className="flex min-w-0 flex-1 items-start gap-3 px-2 py-2 text-left"
+                      className="flex min-w-0 flex-1 items-start gap-3 rounded-md px-2 py-2"
                     >
                       <AgentMonogram agent={obj.agent_context} size="sm" />
                       <div className="min-w-0 flex-1">
-                        <div className="flex items-baseline gap-2">
-                          <span className="truncate text-base font-medium text-fg-0">{obj.title || 'Untitled'}</span>
-                          <span className="shrink-0 text-xs uppercase text-fg-3 font-semibold tracking-eyebrow">
-                            {shortOf(obj.workspace as Workspace)}
-                          </span>
-                        </div>
+                        <div className="truncate text-base font-medium text-fg-0">{obj.title || 'Untitled'}</div>
                         <div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-fg-2">
                           <span className={meta.tone}>{meta.label}</span>
                           {obj.project && <span>{obj.project}</span>}
@@ -193,31 +203,27 @@ export function PreviewArchive({ workspaces }: { workspaces: Workspace[] }) {
                           ) : (
                             <span className="text-fg-3">Unassigned</span>
                           )}
-                          {kids.length > 0 && <span>{kids.length} nested</span>}
+                          {kids.length > 0 && <span>{kids.length} {kids.length === 1 ? 'sub-card' : 'sub-cards'}</span>}
                           {obj.pr_url && <span>#{obj.pr_number ?? 'PR'}</span>}
+                          {obj.workspace && <WorkspaceChip label={labelOf(obj.workspace as Workspace)} />}
                         </div>
                       </div>
-                      <span className="shrink-0 pt-0.5 font-mono text-xs text-fg-3">{relativeTime(obj.updated_at)}</span>
-                    </button>
+                      <span className="shrink-0 pt-0.5 text-xs tabular-nums text-fg-3" title={formatDateTime(obj.updated_at).title}>{formatDateTime(obj.updated_at).label}</span>
+                    </RowButton>
                     <div className="mt-1.5 flex shrink-0 items-center gap-1">
                       {(obj.status === 'cancelled' || obj.status === 'done') && (
-                        <button
-                          type="button"
-                          onClick={() => void handleReopen(obj)}
-                          className="rounded-md border border-line bg-surface-2 px-2.5 py-1 text-xs font-medium text-fg-0 hover:border-line-strong hover:bg-surface-3"
-                        >
-                          Re-open
-                        </button>
+                        <Button size="xs" onClick={() => void handleReopen(obj)}>
+                          {REOPEN_LABEL}
+                        </Button>
                       )}
-                      <button
-                        type="button"
+                      <IconButton
+                        size="sm"
+                        label="Edit card"
                         onClick={() => setEditingObjective(obj)}
-                        aria-label="Edit objective"
-                        title="Edit objective"
-                        className="inline-flex h-7 w-7 items-center justify-center rounded-md text-fg-3 hover:bg-surface-4 hover:text-fg-0"
+                        className="text-fg-3"
                       >
                         <Pencil className="h-3.5 w-3.5" />
-                      </button>
+                      </IconButton>
                     </div>
                   </div>
                 </li>
@@ -226,8 +232,17 @@ export function PreviewArchive({ workspaces }: { workspaces: Workspace[] }) {
           </ul>
         )}
         {loading && (
-          <div className="px-4 py-3 text-center text-xs text-fg-3">
-            {source.length > 0 ? `Loading archive… ${source.length} so far` : 'Loading archive…'}
+          <div role="status" aria-busy="true" aria-label={source.length > 0 ? `Loading archive, ${source.length} so far` : 'Loading archive'} data-testid="archive-skeleton">
+            {Array.from({ length: source.length > 0 ? 2 : 6 }).map((_, i) => (
+              <div key={i} className="flex items-start gap-3 border-b border-line px-4 py-3">
+                <Skeleton className="h-6 w-6 shrink-0 rounded" />
+                <div className="flex min-w-0 flex-1 flex-col gap-2">
+                  <Skeleton className={i % 2 ? 'h-3.5 w-2/5' : 'h-3.5 w-3/5'} />
+                  <Skeleton className="h-3 w-1/3" />
+                </div>
+                <Skeleton className="h-3 w-10" />
+              </div>
+            ))}
           </div>
         )}
         {!loading && q && rows.length !== topLevel.length && (

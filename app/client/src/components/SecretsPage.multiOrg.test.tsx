@@ -83,11 +83,25 @@ const { state, apiMock, ApiErrorMock } = vi.hoisted(() => {
 
 vi.mock('../lib/api', () => ({ api: apiMock, ApiError: ApiErrorMock }))
 vi.mock('../context/AuthContext', () => ({ useAuth: () => ({ user: { id: 1, role: 'admin', username: 'operator' } }) }))
-vi.mock('./ui', () => ({
+// Real primitives (DataTable, RowActions, Field…); only the portal Modal and the
+// confirm dialog are stubbed so the test drives the page inline.
+vi.mock('./ui', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('./ui')>()),
   Modal: ({ children }: { children: React.ReactNode }) => <div role="dialog">{children}</div>,
-  Skeleton: () => <div />,
   useConfirm: () => ({ confirm: vi.fn(() => Promise.resolve(true)), confirmDialog: null }),
 }))
+/** Opens a secret row's "⋯" menu (ui/RowActions) and picks an item. */
+async function pickRowAction(scope: ParentNode, key: string, item: string) {
+  const { click } = await import('../test/render')
+  const trigger = scope.querySelector(`[aria-label="Actions for ${key}"]`)
+  await click(trigger)
+  const menuId = trigger?.getAttribute('aria-controls')
+  const menu = (menuId && document.getElementById(menuId)) || document
+  const entry = Array.from(menu.querySelectorAll<HTMLElement>('[role="menuitem"]')).find(m => m.textContent?.trim() === item)
+  if (!entry) throw new Error(`no "${item}" in the row menu for ${key}`)
+  await click(entry)
+}
+
 
 import { SecretsPage } from './SecretsPage'
 import { chooseOption, click, optionsOf, press } from '../test/render'
@@ -118,7 +132,7 @@ describe('Secrets create modal — multi-organization scoping (obj 706458)', () 
   async function openCreateAtOrgScope() {
     flushSync(() => root.render(<SecretsPage />))
     await flush()
-    const newBtn = Array.from(container.querySelectorAll('button')).find(b => b.textContent === '+ New')!
+    const newBtn = Array.from(container.querySelectorAll('button')).find(b => b.textContent === 'New secret')!
     flushSync(() => newBtn.dispatchEvent(new MouseEvent('click', { bubbles: true })))
     await flush()
     await chooseOption(scopeTrigger(container), 'Workspace')
@@ -259,8 +273,7 @@ describe('Secrets create modal — multi-organization scoping (obj 706458)', () 
 
     flushSync(() => root.render(<SecretsPage />))
     await flush()
-    const editBtn = Array.from(container.querySelectorAll('button')).find(b => b.textContent === 'Edit')!
-    flushSync(() => editBtn.dispatchEvent(new MouseEvent('click', { bubbles: true })))
+    await pickRowAction(container, 'EXISTING', 'Edit')
     await flush()
 
     // Single-select present, checkbox list absent — a row IS one scope.

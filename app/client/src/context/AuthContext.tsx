@@ -1,6 +1,7 @@
 import { createContext, useContext, useState, useEffect, useCallback, type ReactNode } from 'react'
 import type { User } from '@operationkit/shared'
 import { api, ApiError } from '../lib/api'
+import { clearKbCache, setKbCacheScope } from '../lib/kbCache'
 
 /**
  * Cloudflare Access let this person in, but no Operation Kit user has their
@@ -31,6 +32,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null)
   const [loading, setLoading] = useState(true)
   const [accessDenied, setAccessDenied] = useState<AccessDenied | null>(null)
+  // Context's cache (obj 900867) is per person: point it at whoever is signed in
+  // now, during render, so no page ever reads it under the previous user.
+  setKbCacheScope(user?.id ?? null)
 
   useEffect(() => {
     // No app session yet: behind Cloudflare Access the server can sign us in
@@ -80,6 +84,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [])
 
   const logout = useCallback(async () => {
+    // Signing out forgets every cached Context page on this browser.
+    clearKbCache()
     const res = await api.post<{ ok: boolean; access_logout_url?: string }>('/auth/logout')
     // Behind Cloudflare Access, also end the Access session — otherwise the next
     // page load would sign straight back in.

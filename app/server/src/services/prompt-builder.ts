@@ -33,6 +33,8 @@ import {
   objectiveScratchPath,
 } from './prompt-builder-blocks.js'
 import { resolveWriteWorkspace } from './workspaces.js'
+import { resolveBrandName } from './branding-config.js'
+import { resolveOwnerName } from '../lib/install-defaults.js'
 
 export {
   COMPACTION_SESSION_SENTINEL,
@@ -127,6 +129,10 @@ function isStrategyDelegator(objective: Objective): boolean {
 }
 
 export function buildPrompt(objective: Objective): string {
+  // obj 900803: the install's own product name and owner — never a built-in one.
+  const brand = resolveBrandName()
+  const owner = resolveOwnerName()
+  const shellSafeBrand = brand.replace(/["`$\\]/g, '')
   // Registry lookup, with the slug itself as the fallback so a persona that was
   // archived mid-flight never renders as "You are the undefined agent".
   const agent = resolveAgentPromptFile(objective.agent_context)
@@ -276,7 +282,7 @@ export function buildPrompt(objective: Objective): string {
     '## Identity (this session — do not improvise)',
     '',
     'Google and GitHub for this session belong to the assigned user (or the creator if unassigned). Env tells you which:',
-    '- `CC_ACTING_USER_ID` — Command Center user id you are acting as.',
+    `- \`CC_ACTING_USER_ID\` — ${brand} user id you are acting as.`,
     '- `GOOGLE_WORKSPACE_CONNECTION=user` + `USER_GOOGLE_EMAIL` — send/read mail and Docs ONLY as that address. Never pick another account from disk.',
     '- `GOOGLE_WORKSPACE_CONNECTION=absent` — this user has no Google connection. Do NOT send email. Tell them to connect at Settings → Account → Google Workspace.',
     '- `GH_TOKEN` / `GIT_AUTHOR_EMAIL` — GitHub actor for this user. Do not fall back to another person\'s token or a sibling credential file.',
@@ -310,7 +316,7 @@ export function buildPrompt(objective: Objective): string {
       '',
       objective.approved_plan,
       '',
-      'You are now in the Execute phase. Follow the plan above. If you discover the plan is wrong, STOP and report back to Operator with the conflict instead of silently deviating.',
+      `You are now in the Execute phase. Follow the plan above. If you discover the plan is wrong, STOP and report back to ${owner} with the conflict instead of silently deviating.`,
     )
   }
 
@@ -453,8 +459,8 @@ export function buildPrompt(objective: Objective): string {
 
     const githubRepo = resolveGithubRepo(objective)
     const prCreateCmd = githubRepo
-      ? `gh pr create --repo ${githubRepo} --base main --title "${objective.title.replace(/"/g, '\\"')}" --body "Command Center objective #${objective.id}"`
-      : `gh pr create --title "${objective.title.replace(/"/g, '\\"')}" --body "Command Center objective #${objective.id}"`
+      ? `gh pr create --repo ${githubRepo} --base main --title "${objective.title.replace(/"/g, '\\"')}" --body "${shellSafeBrand} objective #${objective.id}"`
+      : `gh pr create --title "${objective.title.replace(/"/g, '\\"')}" --body "${shellSafeBrand} objective #${objective.id}"`
 
     // Integration mode. A non-PR child of a PR-building parent folds its branch
     // back into the parent's branch so the parent ships ONE PR (Decision #4);
@@ -619,10 +625,10 @@ export function buildPrompt(objective: Objective): string {
       '',
       '## Jobs Disposition (REQUIRED — you are an automated daily job)',
       '',
-      'This run is a scheduled **job**, logged on the Jobs board (not the main Board). As the FINAL step of your run, record your disposition so Operator can triage at a glance:',
+      `This run is a scheduled **job**, logged on the Jobs board (not the main Board). As the FINAL step of your run, record your disposition so ${owner} can triage at a glance:`,
       '',
       '```bash',
-      '# Clean run, nothing for Operator to do:',
+      `# Clean run, nothing for ${owner} to do:`,
       `curl -s -X POST http://localhost:3002/api/internal/objectives/${objective.id}/job-disposition \\`,
       "  -H 'Content-Type: application/json' \\",
       `  -d '{"disposition":"complete"}'`,
@@ -630,12 +636,12 @@ export function buildPrompt(objective: Objective): string {
       '# You have a question, OR you saw a concrete way to improve our system:',
       `curl -s -X POST http://localhost:3002/api/internal/objectives/${objective.id}/job-disposition \\`,
       "  -H 'Content-Type: application/json' \\",
-      `  -d '{"disposition":"needs_review","note":"<one-line reason Operator should look>"}'`,
+      `  -d '{"disposition":"needs_review","note":"<one-line reason ${owner} should look>"}'`,
       '```',
       '',
-      'Use `needs_review` only when you genuinely want Operator\'s attention (a question, a decision, or a system-improvement opportunity you noticed while running). Otherwise use `complete`.',
+      `Use \`needs_review\` only when you genuinely want ${owner}'s attention (a question, a decision, or a system-improvement opportunity you noticed while running). Otherwise use \`complete\`.`,
       '',
-      `If Operator later replies in this thread asking you to "create an objective for X", create it with \`POST http://localhost:3002/api/internal/objectives\` (a JSON array of objective objects). Include \`"source_job_id":${objective.id}\` on each so the new card links back to this job. Then reply telling Operator the new objective id(s). Example:`,
+      `If ${owner} later replies in this thread asking you to "create an objective for X", create it with \`POST http://localhost:3002/api/internal/objectives\` (a JSON array of objective objects). Include \`"source_job_id":${objective.id}\` on each so the new card links back to this job. Then reply telling ${owner} the new objective id(s). Example:`,
       '```bash',
       `curl -s -X POST http://localhost:3002/api/internal/objectives \\`,
       "  -H 'Content-Type: application/json' \\",
@@ -662,7 +668,7 @@ export function buildLiveProgressBlock(objectiveId: number, memoryDir: string): 
   return [
     '## Live progress (keep the card readable while you run)',
     '',
-    `Operator and his bots ask "how's it going?" mid-run through GET /api/objectives/${objectiveId}/progress. Write a snapshot at each meaningful step — when you start, at each milestone, before any long wait, and when blocked:`,
+    `${capitalizeFirst(resolveOwnerName())} and their bots ask "how's it going?" mid-run through GET /api/objectives/${objectiveId}/progress. Write a snapshot at each meaningful step — when you start, at each milestone, before any long wait, and when blocked:`,
     '```bash',
     `node ${CC_LIVE_SCRIPT} progress ${objectiveId} --step 2 --of 5 --label "what you are doing now" --note "short status, counts so far" [--artifact live/partial.csv]`,
     '```',
@@ -677,3 +683,7 @@ export function buildLiveProgressBlock(objectiveId: number, memoryDir: string): 
   ]
 }
 
+
+function capitalizeFirst(s: string): string {
+  return s.charAt(0).toUpperCase() + s.slice(1)
+}

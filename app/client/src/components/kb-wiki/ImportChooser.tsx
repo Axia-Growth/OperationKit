@@ -198,8 +198,8 @@ export function ImportChooser({
                     )}
                   </div>
                   {it.preview && <p className="mt-1 line-clamp-2 text-sm leading-snug text-fg-2">{it.preview}</p>}
-                  {it.status === 'skipped' && it.skip_reason && <p className="mt-1 text-xs text-signal-amber">Skipped: {it.skip_reason}</p>}
-                  {it.status === 'failed' && it.error && <p className="mt-1 text-xs text-signal-alarm">{it.error}</p>}
+                  {it.status === 'skipped' && it.skip_reason && <p className="mt-1 text-xs text-warning">Skipped: {it.skip_reason}</p>}
+                  {it.status === 'failed' && it.error && <p className="mt-1 text-xs text-danger">{it.error}</p>}
                   {it.source_note && (
                     <Button size="sm" variant="ghost" className="mt-1 min-h-[44px] px-2 sm:min-h-[28px]" onClick={() => onOpenNote(it.source_note!)}>
                       Open readable copy

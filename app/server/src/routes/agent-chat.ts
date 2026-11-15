@@ -71,6 +71,7 @@ import {
 import { BotDeleteRefused, deleteBotFolder } from '../services/agent-chat/bot-delete.js'
 import sidebarRouter from './agent-chat-sidebar.js'
 import delegationsRouter from './agent-chat-delegations.js'
+import botMessagesRouter from './agent-chat-bot-messages.js'
 
 /**
  * Built-in agent chat (obj 719987) — /api/agent-chat
@@ -99,6 +100,9 @@ import delegationsRouter from './agent-chat-delegations.js'
  *   POST   /agents/:slug/workspaces    admin: grant one workspace
  *   DELETE /agents/:slug/workspaces/:workspace  admin: revoke one workspace
  *   DELETE /agents/:slug               admin: delete a bot — its agent folder moves to .deleted/ (obj 900798)
+ *   GET    /bot-conversations          bot-to-bot threads the caller may see (obj 900859,
+ *                                      routes/agent-chat-bot-messages.ts)
+ *   GET    /bot-conversations/:id      one bot-to-bot thread, every entry on it
  *   /sidebar/*                         the caller's own Bots sidebar: pins, sections, unread (obj 900798,
  *                                      routes/agent-chat-sidebar.ts)
  *
@@ -137,6 +141,8 @@ router.use(requireAuth)
 router.use('/sidebar', sidebarRouter)
 // obj 900839: "Approve on my behalf" grants — owner-only writes, see the file.
 router.use(delegationsRouter)
+// obj 900859: bot-to-bot threads, read-only for people — see the file.
+router.use(botMessagesRouter)
 
 /** What the bot list shows about a bot's workspace access; workspace names only where the caller may see them. */
 interface WorkspaceAccessSummary { mode: 'restricted' | 'unrestricted'; workspaces: string[]; count: number }
@@ -225,6 +231,11 @@ function modelSuggestions(): Record<string, string[]> {
   }
 }
 
+/** The enabled registry rows (Settings → Models); none before the table exists. */
+function enabledModelsOrEmpty() {
+  try { return listEnabledModels() } catch { return [] }
+}
+
 /** Only a signed-in admin may change what a bot runs on — never an API key (a bot must not grant itself tools). */
 function adminSessionOr403(req: AuthRequest, res: Response): boolean {
   if (req.user?.role !== 'admin' || req.authVia !== 'session') {
@@ -295,6 +306,9 @@ router.get('/agents', (req: AuthRequest, res) => {
     default_provider: installDefaultProvider(),
     // obj 900671: the bot page's tool picker, model field and web-search status.
     tool_catalog: TOOL_CATALOG,
+    // obj 900863: the full enabled model registry — the SAME rows GET /api/models returns for the
+    // card modal and Settings → Models — so every bot's model dropdown offers one list, one format.
+    models: enabledModelsOrEmpty(),
     model_suggestions: modelSuggestions(),
     default_models: DEFAULT_MODELS,
     web: webSearchStatus(),

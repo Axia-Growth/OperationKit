@@ -112,7 +112,7 @@ describe('AgentsPage — project scoping', () => {
     expect(select).toBeTruthy()
     expect(select.textContent).toContain('All of example')
 
-    await chooseOption(select, '16 · Acquisition Sites')
+    await chooseOption(select, 'Acquisition Sites')
     await settle()
 
     // Refetched for the new scope…
@@ -121,13 +121,14 @@ describe('AgentsPage — project scoping', () => {
       { workspace: 'example', projectId: 16 },
     ])
     // …and the scope is in the URL, so a reload lands back here.
-    expect(select.textContent).toContain('16 · Acquisition Sites')
+    expect(select.textContent).toContain('Acquisition Sites')
+    expect(select.textContent).not.toContain('16 ·')
     expect(container.textContent).not.toContain('CMO')
   })
 
   it('renders the objective count per agent so you can see who does the work', async () => {
     await mount('/agents?project=16')
-    expect(container.textContent).toContain('129 objectives')
+    expect(container.textContent).toContain('129 cards')
   })
 })
 
@@ -165,7 +166,7 @@ describe('AgentsPage — missing files and orphan edges are visibly flagged', ()
 describe('AgentsPage — markdown opens in place', () => {
   it('renders an agent persona file and its resolved path on click', async () => {
     await mount('/agents?project=16')
-    buttonWithText('acq-sites persona').click()
+    buttonWithText('Acquisition Sites instructions').click()
     await settle()
 
     const path = container.querySelector('[data-testid="viewer-path"]')
@@ -175,7 +176,7 @@ describe('AgentsPage — markdown opens in place', () => {
 
   it('exposes the workspace overlay as its own reachable file', async () => {
     await mount('/agents?project=16')
-    buttonWithText('acq-sites workspace overlay').click()
+    buttonWithText('Acquisition Sites workspace overlay').click()
     await settle()
 
     const path = container.querySelector('[data-testid="viewer-path"]')

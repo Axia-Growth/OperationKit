@@ -6,6 +6,7 @@ import type { Objective, ObjectiveReview, ObjectivePR } from '@operationkit/shar
 import { renderMarkdown } from '../../lib/markdown'
 import { AcceptanceCriteriaResults } from '../AcceptanceCriteriaResults'
 import { Card, Badge, cn } from '../ui'
+import { formatCost, formatDateTime, humanize } from '../../lib/format'
 
 export function BriefPanel({
   objective,
@@ -29,7 +30,7 @@ export function BriefPanel({
           {objective.project && <Badge tone="info">{objective.project}</Badge>}
           {objective.pr_url && (
             <a href={objective.pr_url} target="_blank" rel="noopener noreferrer" className="inline-flex">
-              <Badge tone="verify" mono className="transition-colors hover:bg-signal-verify/20">
+              <Badge tone="verify" mono className="transition-colors hover:bg-success/20">
                 <GitPullRequest className="h-2.5 w-2.5" />
                 #{objective.pr_number || ''}
               </Badge>
@@ -41,12 +42,12 @@ export function BriefPanel({
         </div>
 
         {/* Stats row */}
-        <div className="flex flex-wrap gap-x-4 gap-y-1 font-mono text-xs text-fg-3">
+        <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-fg-3">
           {Number(objective.session_count) > 0 && (
             <span>{objective.session_count} session{objective.session_count !== 1 ? 's' : ''}</span>
           )}
           {Number(objective.total_cost_usd) > 0 && (
-            <span>${Number(objective.total_cost_usd).toFixed(2)} spent</span>
+            <span>{formatCost(objective.total_cost_usd)} cost</span>
           )}
           {Number(objective.total_tokens) > 0 && (
             <span>{(Number(objective.total_tokens) / 1000).toFixed(0)}k tokens</span>
@@ -56,7 +57,7 @@ export function BriefPanel({
         {/* Last session summary */}
         {objective.last_session_summary && (
           <Card inset className="px-3 py-2">
-            <div className="mb-1 text-xs uppercase text-fg-3 font-semibold tracking-eyebrow">Last Session Summary</div>
+            <div className="mb-1 text-xs uppercase text-fg-3 font-semibold tracking-eyebrow">Last session summary</div>
             <div className="text-xs leading-relaxed text-fg-1">{objective.last_session_summary}</div>
           </Card>
         )}
@@ -65,9 +66,9 @@ export function BriefPanel({
         {objective.approved_plan && (
           <Card inset className="border-status-planning/30 bg-status-planning/[0.06] px-3 py-2">
             <div className="mb-1 flex items-center gap-2 text-xs uppercase text-status-planning font-semibold tracking-eyebrow">
-              <span>Approved Plan</span>
+              <span>Approved plan</span>
               {objective.plan_approved_at && (
-                <span className="font-normal text-fg-3">approved {objective.plan_approved_at.slice(0, 16).replace('T', ' ')}</span>
+                <span className="font-normal text-fg-3" title={formatDateTime(objective.plan_approved_at).title}>approved {formatDateTime(objective.plan_approved_at).label}</span>
               )}
             </div>
             <div
@@ -81,14 +82,14 @@ export function BriefPanel({
         {objective.ai_review_findings && (() => {
           const verdict = objective.ai_review_verdict
           const tone = verdict === 'pass' ? 'verify' : verdict === 'fail' ? 'alarm' : 'amber'
-          const ring = verdict === 'pass' ? 'border-signal-verify/30 bg-signal-verify/[0.07]'
-            : verdict === 'fail' ? 'border-signal-alarm/30 bg-signal-alarm/[0.07]'
-            : 'border-signal-amber/30 bg-signal-amber/[0.07]'
+          const ring = verdict === 'pass' ? 'border-success/30 bg-success/[0.07]'
+            : verdict === 'fail' ? 'border-danger/30 bg-danger/[0.07]'
+            : 'border-warning/30 bg-warning/[0.07]'
           return (
             <Card inset className={cn('px-3 py-2', ring)}>
               <div className="mb-1 flex items-center gap-2 text-xs uppercase text-fg-2 font-semibold tracking-eyebrow">
-                <span>AI Review Findings</span>
-                <Badge tone={tone} className="uppercase">{verdict || '—'}</Badge>
+                <span>AI review findings</span>
+                <Badge tone={tone} className="uppercase">{verdict ? humanize(verdict) : '—'}</Badge>
               </div>
               <div
                 className="max-h-64 overflow-y-auto rounded bg-surface-0/50 px-2 py-1.5 text-xs leading-relaxed text-fg-1"
@@ -110,7 +111,7 @@ export function BriefPanel({
           <Card inset className="px-3 py-2">
             <div className="mb-1.5 flex items-center gap-2 text-xs uppercase text-fg-3 font-semibold tracking-eyebrow">
               <GitPullRequest className="h-3 w-3" />
-              <span>Pull Requests</span>
+              <span>Pull requests</span>
               <span className="text-fg-3">{prs.length}</span>
             </div>
             <ul className="space-y-1">
@@ -130,7 +131,7 @@ export function BriefPanel({
                       <span className="min-w-0 flex-1 truncate text-xs text-fg-1 group-hover:text-fg-0">
                         {pr.title || pr.branch_name || pr.repo || 'Pull request'}
                       </span>
-                      <Badge tone={tone} className="shrink-0 uppercase">{pr.state}</Badge>
+                      <Badge tone={tone} className="shrink-0 uppercase">{humanize(pr.state)}</Badge>
                     </a>
                   </li>
                 )

@@ -80,12 +80,47 @@ function normalize(b: Partial<Branding>): Branding {
 export function loadBranding(): Promise<Branding> {
   if (!cached) {
     cached = fetch('/api/branding', { credentials: 'include', cache: 'no-store' })
-      .then(r => (r.ok ? r.json() : DEFAULT_BRANDING))
-      .then((b: Partial<Branding>) => normalize(b))
-      .catch(() => DEFAULT_BRANDING)
+      .then(r => (r.ok ? r.json().then((b: Partial<Branding>) => normalize(b)) : unreachableBranding()))
+      .catch(() => unreachableBranding())
       .then(b => { publish(b); return b })
   }
   return cached
+}
+
+/** CSS custom property each brand token is published as (see brandTokenVars). */
+const TOKEN_CSS_VARS: Record<keyof BrandTokens, string> = {
+  accent: '--accent',
+  accentHover: '--accent-hover',
+  accentPress: '--accent-press',
+  accentFg: '--accent-fg',
+  verify: '--brand-verify',
+  verifyOnDark: '--brand-verify-on-dark',
+  caution: '--brand-caution',
+  cautionOnDark: '--brand-caution-on-dark',
+}
+
+/** The tokens the server already painted into index.html's inline
+ * `<style id="brand-tokens">` (routes/branding.ts renderBrandedIndex). A field
+ * the page does not carry as a plain hex keeps the shipped default. */
+export function servedBrandTokens(): BrandTokens {
+  const out: BrandTokens = { ...DEFAULT_BRANDING.tokens }
+  if (typeof document === 'undefined' || typeof getComputedStyle !== 'function') return out
+  const css = getComputedStyle(document.documentElement)
+  for (const [key, cssVar] of Object.entries(TOKEN_CSS_VARS) as Array<[keyof BrandTokens, string]>) {
+    const v = css.getPropertyValue(cssVar).trim()
+    if (/^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/.test(v)) out[key] = v
+  }
+  return out
+}
+
+/** /api/branding could not be read. The server already injected the install's
+ * own name into <title> and its accent tokens into an inline style
+ * (routes/branding.ts renderBrandedIndex), so keep THOSE rather than
+ * overwriting them with the shipped default name and accent (obj 900803). */
+export function unreachableBranding(): Branding {
+  const served = typeof document !== 'undefined' ? document.title.trim() : ''
+  const tokens = servedBrandTokens()
+  return { ...DEFAULT_BRANDING, ...(served ? { name: served } : {}), tokens }
 }
 
 /** Applies a branding object everywhere at once: every mounted useBranding()

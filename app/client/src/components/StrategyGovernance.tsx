@@ -6,7 +6,7 @@ import { StrategyGovernancePanel } from './StrategyGovernancePanel'
    criterion "gov-ui") as a center modal. The body now lives in the
    reusable <StrategyGovernancePanel> (shared with the /strategy/:id
    detail-page governance rail); this file is just the modal chrome
-   around it, so the ObjectiveCard entry point keeps working.
+   around it.
    ───────────────────────────────────────────────────────── */
 
 interface StrategyGovernanceProps {

@@ -14,7 +14,7 @@
  */
 import { useSearchParams } from 'react-router-dom'
 import { useAuth } from '../../context/AuthContext'
-import { Tabs } from '../ui'
+import { SegmentedControl } from '../ui'
 import type { TabItem } from '../ui'
 import { SecretsPage } from '../SecretsPage'
 import { TestCredentialsPage } from '../TestCredentialsPage'
@@ -51,7 +51,7 @@ export function SettingsSecrets() {
   const body = (
     <>
       {view === 'mine' && (
-        <div className="max-w-3xl [&>section]:mt-0">
+        <div>
           {/* Same three promises as Shared (obj 900749): your own secrets are just as write-only. */}
           <SecurityStrip />
           <MySecretsSection />
@@ -65,9 +65,12 @@ export function SettingsSecrets() {
   return (
     <div>
       {items.length > 1 ? (
-        <Tabs items={items} value={view} onChange={select} label="Secret lists" panelClassName="mt-4">
-          {body}
-        </Tabs>
+        // Which list to show — Settings owns the page's one tab row, so this is
+        // a SegmentedControl (obj 900807), never a second, nested Tabs.
+        <>
+          <SegmentedControl items={items} value={view} onChange={select} label="Secret lists" />
+          <div className="mt-4">{body}</div>
+        </>
       ) : (
         body
       )}

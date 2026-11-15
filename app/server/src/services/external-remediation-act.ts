@@ -33,8 +33,10 @@ import {
 import { resolveFollowUpSessionId } from './objective-sessions.js'
 import { checkCiFollowupCap, recordCiFollowup, noteCiFollowupCapExhausted } from './ci-followup-cap.js'
 import { noteStartReason } from './session-start-reasons.js'
+import { resolveHarnessRepo } from '../lib/install-defaults.js'
 
-const DEFAULT_HARNESS_REPO = process.env.HARNESS_REPO || 'your-org/operationkit'
+// obj 900803: HARNESS_REPO env → settings → '' (no built-in repo).
+const defaultHarnessRepo = (): string => resolveHarnessRepo()
 
 /**
  * A workflow_run whose JOBS were all cancelled still rolls up to `conclusion: failure`
@@ -166,7 +168,7 @@ export async function fetchFailureContext(
   statusDescription: string | null,
   exec: ExecFn = defaultExec,
 ): Promise<string> {
-  const repo = classified.repoFullName || DEFAULT_HARNESS_REPO
+  const repo = classified.repoFullName || defaultHarnessRepo()
   try {
     if (classified.kind === 'workflow_run' && classified.runId) {
       const raw = await exec('gh', ['run', 'view', String(classified.runId), '--log-failed', '-R', repo])
@@ -572,7 +574,7 @@ export async function handleExternalCheckEvent(
     // have NO PR yet. Keying dedupe/attempts on -obj.id keeps them per-objective
     // and can never collide with a real PR number or the trunk sentinel (0).
     const prNumber = obj.pr_number ?? parsePrNumberFromUrl(obj.pr_url) ?? classified.prNumberHint ?? -obj.id
-    const repo = classified.repoFullName || DEFAULT_HARNESS_REPO
+    const repo = classified.repoFullName || defaultHarnessRepo()
 
     // IDEMPOTENCY: INSERT OR IGNORE on the UNIQUE (repo, pr, check, sha). If the row
     // already existed (changes()===0) this is a re-delivery → skip.
@@ -715,7 +717,7 @@ export function findOpenTrunkCard(
   classified: Pick<ClassifiedCheck, 'repoFullName' | 'checkName'>,
   branch: string,
 ): Objective | null {
-  const repo = classified.repoFullName || DEFAULT_HARNESS_REPO
+  const repo = classified.repoFullName || defaultHarnessRepo()
   const { title } = buildTrunkFailureObjective({
     classified: { ...(classified as ClassifiedCheck), repoFullName: repo },
     branch,
@@ -787,7 +789,7 @@ function handleTrunkFailure(
   statusDescription: string | null,
   env: NodeJS.ProcessEnv,
 ): RemediationResult {
-  const repo = classified.repoFullName || DEFAULT_HARNESS_REPO
+  const repo = classified.repoFullName || defaultHarnessRepo()
   const ins = deps.db
     .prepare(
       `INSERT OR IGNORE INTO external_check_remediations
@@ -936,7 +938,7 @@ function handleNonFixableCheck(
   fixability: CheckClassification,
   branchHint: string | null,
 ): RemediationResult {
-  const repo = classified.repoFullName || DEFAULT_HARNESS_REPO
+  const repo = classified.repoFullName || defaultHarnessRepo()
   const owner = resolveOwnerObjective(deps.db, classified, branchHint, { allowRecentDone: true, env: deps.env })
   const obj = owner.objective
   const prNumber = classified.prNumberHint ?? (obj ? (obj.pr_number ?? parsePrNumberFromUrl(obj.pr_url) ?? -obj.id) : 0)
@@ -1019,7 +1021,7 @@ async function handleCancelledCheck(
   branchHint: string | null,
   env: NodeJS.ProcessEnv,
 ): Promise<RemediationResult> {
-  const repo = classified.repoFullName || DEFAULT_HARNESS_REPO
+  const repo = classified.repoFullName || defaultHarnessRepo()
   const owner = resolveOwnerObjective(deps.db, classified, branchHint, { allowRecentDone: true, env })
   const prNumber = classified.prNumberHint
     ?? (owner.objective ? (owner.objective.pr_number ?? parsePrNumberFromUrl(owner.objective.pr_url)) : null)
@@ -1097,7 +1099,7 @@ function handleUnownedPrFailure(
   branchHint: string | null,
   env: NodeJS.ProcessEnv,
 ): RemediationResult {
-  const repo = classified.repoFullName || DEFAULT_HARNESS_REPO
+  const repo = classified.repoFullName || defaultHarnessRepo()
   const kind = unownedKindFor(branchHint)
 
   const ins = deps.db
@@ -1229,7 +1231,7 @@ function handleOrphanedObjective(
   doneOwner: Objective,
   branchHint: string | null,
 ): RemediationResult {
-  const repo = classified.repoFullName || DEFAULT_HARNESS_REPO
+  const repo = classified.repoFullName || defaultHarnessRepo()
   const prNumber = classified.prNumberHint ?? doneOwner.pr_number ?? parsePrNumberFromUrl(doneOwner.pr_url) ?? -doneOwner.id
 
   const ins = deps.db

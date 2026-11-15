@@ -21,3 +21,7 @@ Settings is split by scope: **You** (personal — GitHub, Google, API key, perso
 A single OperationKit install can run work for multiple teams or clients without them seeing each other's cards, repos, or knowledge base — the isolation is a schema-level property, not a convention you have to enforce by discipline. That's what makes "self-hosted, multi-tenant" a real claim rather than a hopeful one: you're not running N separate installs to keep N teams apart.
 
 See [Board & Objectives Lifecycle](./Board-and-Objectives-Lifecycle) for how cards move inside a workspace, and [Knowledge Base & Context Loading](./Knowledge-Base-and-Context-Loading) for how per-workspace context is kept separate.
+
+## Archiving and deleting
+
+Archive hides a workspace from the board; archived ones are listed at the bottom of Settings → Organizations. An archived workspace can then be **deleted** (a reversible soft-delete that removes nothing else) — see [Deleting archived workspaces](Deleting-Archived-Workspaces.md).

@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { ChevronRight } from 'lucide-react'
+import { ChevronRight, Circle, Diamond, TriangleAlert } from 'lucide-react'
 import type { Objective } from '@operationkit/shared'
 import { StatusDot } from './design/primitives'
 
@@ -51,10 +51,10 @@ export function WorkerRollup({ workers, onOpenWorker, label = 'Workers' }: Worke
         <ChevronRight className={`h-3 w-3 shrink-0 transition-transform duration-fast ${expanded ? 'rotate-90' : ''}`} />
         <span className="font-medium uppercase tracking-eyebrow">{label}</span>
         <span className="font-mono text-fg-3">{done}/{total} done</span>
-        {running > 0 && <span className="text-status-working">● {running} running</span>}
-        {reviewing > 0 && <span className="text-status-ai">◇ {reviewing} reviewing</span>}
-        {ready > 0 && <span className="text-status-review">◆ {ready} ready</span>}
-        {blocked > 0 && <span className="text-flag-blocked">▲ {blocked} blocked</span>}
+        {running > 0 && <span className="inline-flex items-center gap-1 text-status-working"><Circle aria-hidden="true" className="h-2.5 w-2.5 fill-current" />{running} running</span>}
+        {reviewing > 0 && <span className="inline-flex items-center gap-1 text-status-ai"><Diamond aria-hidden="true" className="h-2.5 w-2.5" />{reviewing} reviewing</span>}
+        {ready > 0 && <span className="inline-flex items-center gap-1 text-status-review"><Diamond aria-hidden="true" className="h-2.5 w-2.5 fill-current" />{ready} ready</span>}
+        {blocked > 0 && <span className="inline-flex items-center gap-1 text-flag-blocked"><TriangleAlert aria-hidden="true" className="h-3 w-3" />{blocked} blocked</span>}
       </button>
 
       {expanded && (

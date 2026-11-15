@@ -52,9 +52,9 @@ export function SaveAnswerButton({
           onClick={() => { void save() }}
           loading={saving}
           disabled={!!saved || !question.trim()}
-          leftIcon={saved ? <Check className="h-4 w-4 text-signal-verify" aria-hidden="true" /> : <BookmarkPlus className="h-4 w-4" aria-hidden="true" />}
+          leftIcon={saved ? <Check className="h-4 w-4 text-success" aria-hidden="true" /> : <BookmarkPlus className="h-4 w-4" aria-hidden="true" />}
         >
-          {saved ? 'Saved to wiki' : 'Save to wiki'}
+          {saved ? 'Saved to Context' : 'Save to Context'}
         </Button>
         {saved ? (
           <span className="flex min-w-0 flex-wrap items-center gap-2 text-sm text-fg-2" aria-live="polite">

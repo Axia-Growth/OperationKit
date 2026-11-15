@@ -114,7 +114,7 @@ function errorProblems(err: unknown): { message: string; errors: Problem[] } {
 function ProblemList({ items, tone }: { items: Problem[]; tone: 'alarm' | 'amber' }) {
   if (!items.length) return null
   return (
-    <ul className={cn('mt-1.5 space-y-1 text-sm', tone === 'alarm' ? 'text-signal-alarm' : 'text-signal-amber')}>
+    <ul className={cn('mt-1.5 space-y-1 text-sm', tone === 'alarm' ? 'text-danger' : 'text-warning')}>
       {items.map((p, i) => (
         <li key={i}>
           <span className="font-mono">{p.field}</span>
@@ -337,7 +337,7 @@ export function AgentTemplatesPage({ embedded = false }: { embedded?: boolean } 
       ) : (
         <PageHeader
           title="Agent templates"
-          breadcrumbs={[{ label: 'Agents & Skills', href: '/agents' }, { label: 'Templates' }]}
+          breadcrumbs={[{ label: 'Bots & skills', href: '/agents' }, { label: 'Templates' }]}
           description="Each agent is one file you can copy, share and re-import. Add a starter agent, import a file someone sent you, or export an agent to share it."
           actions={importActions}
         />
@@ -391,11 +391,11 @@ export function AgentTemplatesPage({ embedded = false }: { embedded?: boolean } 
                     <p className="mt-1 text-sm text-fg-1">{pending.result.agent.description}</p>
                     <p className="mt-1 text-xs text-fg-2">v{pending.result.agent.version} · by {pending.result.agent.author}</p>
                     {pendingExists && (
-                      <p className="mt-2 text-sm text-signal-amber">An agent with this slug already exists. Replacing it overwrites its instructions.</p>
+                      <p className="mt-2 text-sm text-warning">An agent with this slug already exists. Replacing it overwrites its instructions.</p>
                     )}
                   </>
                 ) : (
-                  <p className="mt-1 text-sm font-medium text-signal-alarm">This file can't be imported yet. Fix these and try again:</p>
+                  <p className="mt-1 text-sm font-medium text-danger">This file can't be imported yet. Fix these and try again:</p>
                 )}
                 {!pending.result.ok && <ProblemList items={pending.result.errors} tone="alarm" />}
                 {pending.result.warnings.length > 0 && (

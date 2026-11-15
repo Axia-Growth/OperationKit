@@ -13,12 +13,16 @@ import { upsertObjectivePR } from '../services/objective-prs.js'
 import { enqueuePreviewDeploy, kickHostDrain } from '../services/preview-spool.js'
 import { depthForParent } from '../lib/objective-depth.js'
 import { isLocalhost } from '../lib/is-localhost.js'
+import { resolvePreviewDomain } from '../lib/install-defaults.js'
 
 export function registerInternalPreviewRoutes(router: Router): void {
 // Caddy on-demand TLS check — validates preview subdomains
 router.get('/check-preview', (req, res) => {
   const domain = req.query.domain as string
-  if (domain?.match(/^pr-\d+\.ai\.example\.com$/)) {
+  // obj 900803: only `pr-<N>.<this install's preview domain>`; none configured → 404.
+  const previewDomain = resolvePreviewDomain()
+  const m = typeof domain === 'string' ? /^pr-(\d+)\.(.+)$/.exec(domain.toLowerCase()) : null
+  if (previewDomain && m && m[2] === previewDomain) {
     res.status(200).end()
   } else {
     res.status(404).end()

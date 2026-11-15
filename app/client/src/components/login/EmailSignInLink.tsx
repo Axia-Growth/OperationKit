@@ -7,12 +7,9 @@
  * the click means an inbox link-scanner that pre-fetches URLs cannot use or
  * burn the link.
  */
-import { useState, type FormEvent } from 'react'
-
-const inputCls =
-  'w-full rounded border border-line bg-surface-1 min-h-[44px] px-3 py-2 text-fg-0 placeholder-fg-3 outline-none transition focus:border-accent focus-visible:ring-2 focus-visible:ring-accent/40'
-const primaryBtn =
-  'min-h-[44px] w-full rounded bg-accent py-2 text-base font-medium text-accent-fg transition duration-150 hover:bg-accent-hover active:bg-accent-press focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/50 disabled:cursor-not-allowed disabled:opacity-50'
+import { useState, type FormEvent, type ReactNode } from 'react'
+import { Button, Field, Input } from '../ui'
+import { AuthCard, AuthLink } from './AuthCard'
 
 /** Token from ?link=… (read once; removed from the address bar). */
 export function readLinkToken(): string | null {
@@ -25,7 +22,7 @@ export function readLinkToken(): string | null {
   return token
 }
 
-export function EmailLinkRequest({ onBack }: { onBack: () => void }) {
+export function EmailLinkRequest({ brandName, onBack, footer }: { brandName: string; onBack: () => void; footer?: ReactNode }) {
   const [email, setEmail] = useState('')
   const [sent, setSent] = useState(false)
   const [error, setError] = useState('')
@@ -54,31 +51,36 @@ export function EmailLinkRequest({ onBack }: { onBack: () => void }) {
   }
 
   return (
-    <div className="space-y-4 rounded-lg border border-border bg-surface-raised p-6">
+    <AuthCard
+      title={sent ? 'Check your email' : `Sign in to ${brandName}`}
+      subtitle={sent ? undefined : 'We will email you a link that signs you in.'}
+      error={error || undefined}
+      footer={
+        <>
+          <AuthLink onClick={onBack}>Sign in with a password instead</AuthLink>
+          {footer}
+        </>
+      }
+    >
       {sent ? (
-        <div role="status" className="space-y-2 text-base text-fg-1">
-          <p className="font-medium text-fg-0">Check your email</p>
-          <p className="text-fg-2">If <span className="font-mono text-fg-1">{email.trim()}</span> has an account here, a sign-in link is on its way. It works once and expires in 15 minutes.</p>
-        </div>
+        <p role="status" className="text-sm leading-relaxed text-fg-1">
+          If <span className="font-medium text-fg-0">{email.trim()}</span> has an account here, a sign-in link is on its way. It works once and expires in 15 minutes.
+        </p>
       ) : (
         <form onSubmit={submit} className="space-y-4">
-          {error && <div className="rounded bg-signal-alarm/10 px-3 py-2 text-base text-signal-alarm">{error}</div>}
-          <div>
-            <label htmlFor="link-email" className="mb-1 block text-base text-fg-1">Email</label>
-            <input id="link-email" type="email" required autoFocus value={email} onChange={e => setEmail(e.target.value)}
-              className={inputCls} placeholder="you@company.com" />
-          </div>
-          <button type="submit" disabled={loading} className={primaryBtn}>{loading ? 'Sending…' : 'Email me a sign-in link'}</button>
+          <Field label="Email" id="link-email" hint="For example, you@company.com">
+            <Input type="email" autoComplete="email" required autoFocus value={email} onChange={e => setEmail(e.target.value)} />
+          </Field>
+          <Button type="submit" variant="primary" loading={loading} className="w-full">
+            {loading ? 'Sending…' : 'Email me a sign-in link'}
+          </Button>
         </form>
       )}
-      <button type="button" onClick={onBack} className="w-full text-center text-base text-fg-2 underline-offset-4 hover:text-fg-0 hover:underline">
-        Sign in with a password instead
-      </button>
-    </div>
+    </AuthCard>
   )
 }
 
-export function EmailLinkRedeem({ token, brandName }: { token: string; brandName: string }) {
+export function EmailLinkRedeem({ token, brandName, footer }: { token: string; brandName: string; footer?: ReactNode }) {
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
 
@@ -103,18 +105,25 @@ export function EmailLinkRedeem({ token, brandName }: { token: string; brandName
   }
 
   return (
-    <div className="space-y-4 rounded-lg border border-border bg-surface-raised p-6">
-      {error ? (
+    <AuthCard
+      title={`Sign in to ${brandName}`}
+      error={error || undefined}
+      footer={
         <>
-          <div className="rounded bg-signal-alarm/10 px-3 py-2 text-base text-signal-alarm">{error}</div>
-          <a href="/login" className="block text-center text-base text-fg-2 underline-offset-4 hover:text-fg-0 hover:underline">Back to sign in</a>
+          {error && <AuthLink href="/login">Back to sign in</AuthLink>}
+          {footer}
         </>
-      ) : (
+      }
+    >
+      {!error && (
         <>
-          <p className="text-base text-fg-1">You opened a sign-in link for {brandName}.</p>
-          <button type="button" onClick={redeem} disabled={loading} className={primaryBtn}>{loading ? 'Signing in…' : 'Sign in'}</button>
+          <p className="text-sm text-fg-1">You opened a sign-in link for {brandName}.</p>
+          <Button variant="primary" onClick={redeem} loading={loading} className="w-full">
+            {loading ? 'Signing in…' : 'Sign in'}
+          </Button>
         </>
       )}
-    </div>
+      {error && <p className="text-sm text-fg-2">Sign-in links work once and expire after 15 minutes. Ask for a new one from the sign-in page.</p>}
+    </AuthCard>
   )
 }

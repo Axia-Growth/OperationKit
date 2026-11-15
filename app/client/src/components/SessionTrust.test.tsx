@@ -1,66 +1,14 @@
 // @vitest-environment node
 import { describe, it, expect } from 'vitest'
 import { renderToStaticMarkup } from 'react-dom/server'
-import type { Objective } from '@operationkit/shared'
-import { ObjectiveCard } from './ObjectiveCard'
 import { NeedsSecretFlag, SenderTag } from './design/primitives'
 import { ChatSecretRequests } from './session-viewer/ChatSecretRequest'
 import { Composer } from './session-viewer/Composer'
 import { GroupedMessages } from './SessionMessages'
 
-// obj 718944 — server-stamped sender on chat bubbles; needs-secret on the card.
+// obj 718944 — server-stamped sender on chat bubbles; needs-secret flag.
 
-const base = {
-  id: 1,
-  title: 'A fable objective',
-  description: '',
-  status: 'working',
-  type: 'task',
-  effort: 'normal',
-  category: 'general',
-  agent_context: 'cto',
-  workspace: 'example',
-  project: null,
-  parent_id: null,
-  is_strategy: false,
-  delegate_mode: false,
-  has_blockers: false,
-  create_pr: false,
-  skip_ai_review: false,
-  created_by: 1,
-  session_id: null,
-  transcript_path: null,
-  last_session_summary: null,
-  session_count: 0,
-  total_cost_usd: 0,
-  total_tokens: 0,
-  branch_name: null,
-  pr_url: null,
-  pr_number: null,
-  assigned_user_id: null,
-  assigned_user_ids: [],
-  model: 'claude-fable-5',
-  ran_on_fallback: false,
-  fallback_detected_at: null,
-  ran_model: null,
-  created_at: '2026-07-07T00:00:00Z',
-  updated_at: '2026-07-07T00:00:00Z',
-} as unknown as Objective
-
-const card = (o: Partial<Objective>) => renderToStaticMarkup(
-  <ObjectiveCard objective={{ ...base, ...o } as Objective} onOpenTerminal={() => {}} onEdit={() => {}} onChangeStatus={() => {}} />,
-)
-
-describe('needs-secret on the card (obj 718944)', () => {
-  it('shows the exact secret name on the card', () => {
-    const html = card({ needs_secret: [{ name: 'APIFY_API_TOKEN', reason: 'skip trace', requested_at: 't' }] } as Partial<Objective>)
-    expect(html).toContain('Needs secret: </span><span class="truncate">APIFY_API_TOKEN')
-  })
-
-  it('shows nothing when no secret is pending', () => {
-    expect(card({ needs_secret: [] } as Partial<Objective>)).not.toContain('Needs secret')
-  })
-
+describe('needs-secret (obj 718944)', () => {
   it('flag summarises several names and lists all in the title', () => {
     const html = renderToStaticMarkup(<NeedsSecretFlag names={['A_KEY', 'B_KEY']} />)
     expect(html).toContain('A_KEY +1')
@@ -106,10 +54,10 @@ describe('chat sender tag (obj 718944)', () => {
   it('verified owner reads Verified with a check; agent reads not verified', () => {
     const owner = renderToStaticMarkup(<SenderTag sender={{ kind: 'owner', verified: true, label: 'Operator', username: 'operator' }} />)
     expect(owner).toContain('Verified · Operator (owner)')
-    expect(owner).toContain('✓')
+    expect(owner).toContain('lucide-check')
     const agent = renderToStaticMarkup(<SenderTag sender={{ kind: 'agent', verified: false, label: 'Example Client Data', username: null }} />)
     expect(agent).toContain('Agent · Example Client Data · not verified')
-    expect(agent).not.toContain('✓')
+    expect(agent).not.toContain('lucide-check')
   })
 
   it('a relayed followup renders the quiet surface bubble, the owner the accent bubble', () => {

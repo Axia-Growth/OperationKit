@@ -135,6 +135,8 @@ jobs:
       # shellcheck ships on the ubuntu-latest runner image.
       - name: shellcheck
         run: shellcheck --version && shellcheck -x scripts/migrate/*.sh
+      - name: the old-layout backup timer is never installed on an Operation Kit install
+        run: bash scripts/migrate/legacy-backup-guard-test.sh
 
   gitleaks-config:
     name: gitleaks-config (OSS publish allowlist)

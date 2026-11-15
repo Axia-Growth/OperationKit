@@ -19,10 +19,10 @@ const {
   isPrAutolinkKilled,
   resolveBranchForObjective,
   HARNESS_CONTEXT,
-  PR_LINKAGE_REPO,
+  prLinkageRepo,
 } = await import('./pr-linkage.js')
 
-const REPO = PR_LINKAGE_REPO
+const REPO = prLinkageRepo()
 const prUrl = (n: number) => `https://github.com/${REPO}/pull/${n}`
 
 /** Insert an objective and return its full row, applying the extra (migrated)

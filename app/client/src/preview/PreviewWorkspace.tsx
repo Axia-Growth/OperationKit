@@ -5,11 +5,16 @@ import { useAuth } from '../context/AuthContext'
 import { useObjectives } from '../hooks/useObjectives'
 import { groupObjectives } from '../lib/groupObjectives'
 import { api } from '../lib/api'
+import { friendlyError } from '../lib/format'
 import { filesFromIntel, mergeAttachments, type TouchedFile } from '../lib/touchedFiles'
 import { SessionViewer } from '../components/SessionViewer'
 import { ObjectiveModal } from '../components/ObjectiveModal'
 import { FileRail } from './FileRail'
 import { SubObjectiveRail } from './SubObjectiveRail'
+import { FileQuestion, TriangleAlert } from 'lucide-react'
+import { Button } from '../components/ui/Button'
+import { EmptyState } from '../components/ui/EmptyState'
+import { Skeleton, SkeletonText } from '../components/ui/Skeleton'
 
 function idFromPath(pathname: string, param?: string): number {
   if (param && Number.isFinite(Number(param))) return Number(param)
@@ -27,7 +32,7 @@ export function PreviewWorkspace({ workspaces }: { workspaces: Workspace[] }) {
   const [detail, setDetail] = useState<Objective | null>(null)
   const [intel, setIntel] = useState<SessionIntel[]>([])
   const [uploads, setUploads] = useState<Array<{ name: string; path: string }>>([])
-  const [error, setError] = useState<string | null>(null)
+  const [error, setError] = useState<{ message: string; notFound: boolean } | null>(null)
   const [designMode, setDesignMode] = useState(false)
   const [editing, setEditing] = useState(false)
   // Defensive: a non-admin member of one org still gets a scoped workspace
@@ -49,7 +54,15 @@ export function PreviewWorkspace({ workspaces }: { workspaces: Workspace[] }) {
     setDesignMode(false)
     api.get<Objective>(`/objectives/${objectiveId}`)
       .then(row => { if (!cancelled) setDetail(row) })
-      .catch(err => { if (!cancelled) setError(err instanceof Error ? err.message : 'Not found') })
+      .catch(err => {
+        if (cancelled) return
+        const status = (err as { status?: number } | null)?.status
+        setError({
+          message: err instanceof Error ? err.message : 'Not found',
+          // 404, or 403 when RBAC hides the card: to this viewer it does not exist.
+          notFound: status === 404 || status === 403 || !(err instanceof Error),
+        })
+      })
     api.get<SessionIntel[]>(`/objectives/${objectiveId}/intel`)
       .then(rows => { if (!cancelled) setIntel(Array.isArray(rows) ? rows : []) })
       .catch(() => { if (!cancelled) setIntel([]) })
@@ -73,30 +86,42 @@ export function PreviewWorkspace({ workspaces }: { workspaces: Workspace[] }) {
     [intel, uploads],
   )
 
+  const backToBoard = (
+    <Button variant="primary" onClick={() => navigate('/')}>Back to the board</Button>
+  )
+
   if (!Number.isFinite(objectiveId)) {
     return (
-      <div className="flex flex-1 flex-col items-center justify-center gap-2 p-8 text-center">
-        <p className="text-base text-fg-2">That URL is missing an objective id.</p>
-        <button type="button" className="text-base text-accent hover:underline" onClick={() => navigate('/')}>
-          Back to the board
-        </button>
+      <div className="flex flex-1 items-center justify-center p-8" data-testid="objective-not-found">
+        <EmptyState
+          icon={<FileQuestion className="h-5 w-5" aria-hidden="true" />}
+          title="Card not found"
+          description="This link is missing a card number."
+          action={backToBoard}
+        />
       </div>
     )
   }
 
   if (error) {
     return (
-      <div className="flex flex-1 flex-col items-center justify-center gap-2 p-8 text-center">
-        <p className="text-base text-fg-2">{error}</p>
-        <button type="button" className="text-base text-accent hover:underline" onClick={() => navigate('/')}>
-          Back to the board
-        </button>
+      <div className="flex flex-1 items-center justify-center p-8" data-testid={error.notFound ? 'objective-not-found' : 'objective-error'}>
+        <EmptyState
+          icon={error.notFound
+            ? <FileQuestion className="h-5 w-5" aria-hidden="true" />
+            : <TriangleAlert className="h-5 w-5" aria-hidden="true" />}
+          title={error.notFound ? 'Card not found' : "Couldn't open this card"}
+          description={error.notFound
+            ? `Card #${objectiveId} doesn't exist, was deleted, or isn't shared with you.`
+            : friendlyError(error.message).message}
+          action={backToBoard}
+        />
       </div>
     )
   }
 
   if (!objective) {
-    return <div className="flex flex-1 items-center justify-center text-base text-fg-2">Opening objective…</div>
+    return <ObjectiveSkeleton />
   }
 
   return (
@@ -137,6 +162,24 @@ export function PreviewWorkspace({ workspaces }: { workspaces: Workspace[] }) {
           }}
         />
       )}
+    </div>
+  )
+}
+
+/** Placeholder while a deep-linked card loads (polish F8; was "Opening objective…"). */
+function ObjectiveSkeleton() {
+  return (
+    <div className="flex min-h-0 flex-1 flex-col" role="status" aria-busy="true" aria-label="Opening card" data-testid="objective-skeleton">
+      <div className="flex items-center gap-3 border-b border-line px-4 py-3">
+        <Skeleton className="h-6 w-6 rounded" />
+        <Skeleton className="h-4 w-64 max-w-[50%]" />
+        <Skeleton className="ml-auto h-7 w-20 rounded-md" />
+      </div>
+      <div className="mx-auto flex w-full max-w-3xl flex-1 flex-col gap-6 overflow-hidden p-6">
+        <SkeletonText lines={3} />
+        <SkeletonText lines={4} />
+        <SkeletonText lines={2} />
+      </div>
     </div>
   )
 }

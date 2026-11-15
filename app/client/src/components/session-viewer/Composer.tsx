@@ -2,8 +2,8 @@
  * Follow-up composer — extracted from SessionViewer.tsx (behavior frozen).
  */
 import { useMemo, useState, type ClipboardEvent, type Dispatch, type RefObject, type SetStateAction } from 'react'
-import { KeyRound, Paperclip } from 'lucide-react'
-import { Badge, Button } from '../ui'
+import { FileText, Image as ImageIcon, KeyRound, Paperclip, X } from 'lucide-react'
+import { Badge, Button, IconButton, RowButton } from '../ui'
 import { filesFromClipboard, useFileDrop } from '../../hooks/useFileDrop'
 import { useMediaQuery } from '../../hooks/useMediaQuery'
 import { detectSecrets, redactValue, type SecretCandidate } from '../../lib/secretDetect'
@@ -101,10 +101,10 @@ export function Composer({
               const isImage = f.mimetype.startsWith('image/')
               return (
                 <Badge key={i} tone="neutral" className="gap-1.5 py-1">
-                  <span>{isImage ? '\uD83D\uDDBC\uFE0F' : '\uD83D\uDCC4'}</span>
+                  {isImage ? <ImageIcon aria-hidden="true" className="h-3.5 w-3.5 shrink-0 text-fg-3" /> : <FileText aria-hidden="true" className="h-3.5 w-3.5 shrink-0 text-fg-3" />}
                   <span className="max-w-[150px] truncate">{f.originalName}</span>
                   <span className="font-mono text-fg-3">{formatFileSize(f.size)}</span>
-                  <button onClick={() => removeFile(i)} aria-label="Remove file" className="ml-0.5 text-fg-3 hover:text-flag-blocked">&times;</button>
+                  <RowButton onClick={() => removeFile(i)} aria-label="Remove file" className="ml-0.5 rounded-sm text-fg-3 hover:text-flag-blocked"><X className="h-3 w-3" /></RowButton>
                 </Badge>
               )
             })}
@@ -145,15 +145,15 @@ export function Composer({
           </div>
         )}
         {savedNote && (
-          <div role="status" className="mb-2 flex items-center justify-between rounded-md bg-signal-verify/10 px-3 py-1.5 text-xs text-signal-verify">
+          <div role="status" className="mb-2 flex items-center justify-between rounded-md bg-success/10 px-3 py-1.5 text-xs text-success">
             <span>{savedNote}</span>
-            <button onClick={() => setSavedNote(null)} aria-label="Dismiss" className="ml-2 grid h-8 w-8 place-items-center rounded text-signal-verify/70 transition-colors hover:bg-signal-verify/10 hover:text-signal-verify">&times;</button>
+            <IconButton size="sm" label="Dismiss" onClick={() => setSavedNote(null)} className="-my-1 ml-2 text-success/70 hover:bg-success/10 hover:text-success"><X className="h-3.5 w-3.5" /></IconButton>
           </div>
         )}
         {sendError && (
           <div className="mb-2 flex items-center justify-between rounded-md bg-flag-blocked/10 px-3 py-1.5 text-xs text-flag-blocked">
             <span>{sendError}</span>
-            <button onClick={() => setSendError(null)} aria-label="Dismiss error" className="ml-2 text-flag-blocked/60 hover:text-flag-blocked">&times;</button>
+            <IconButton size="sm" label="Dismiss error" onClick={() => setSendError(null)} className="-my-1 ml-2 text-flag-blocked/60 hover:bg-flag-blocked/10 hover:text-flag-blocked"><X className="h-3.5 w-3.5" /></IconButton>
           </div>
         )}
         <div
@@ -164,7 +164,7 @@ export function Composer({
               : 'border-line focus-within:border-accent'
           }`}
         >
-          {/* Hidden file input */}
+          {/* raw-control: hidden file input, opened by the Attach IconButton. */}
           <input
             ref={fileInputRef}
             type="file"
@@ -173,15 +173,15 @@ export function Composer({
             onChange={e => e.target.files && handleUpload(e.target.files)}
           />
           {/* Attach button */}
-          <button
+          <IconButton
+            label="Attach files"
             onClick={() => fileInputRef.current?.click()}
             disabled={inputDisabled || uploading}
-            className="grid h-11 w-11 shrink-0 place-items-center rounded-md text-fg-3 transition-colors hover:bg-surface-3 hover:text-accent disabled:opacity-40 sm:h-9 sm:w-9"
-            title="Attach files"
-            aria-label="Attach files"
+            className="shrink-0 text-fg-3 hover:text-accent"
           >
             <Paperclip className={`h-4 w-4 ${uploading ? 'animate-pulse' : ''}`} />
-          </button>
+          </IconButton>
+          {/* raw-control: the borderless autosize composer field inside its own frame. */}
           <textarea
             ref={messageRef}
             value={message}
@@ -213,7 +213,7 @@ export function Composer({
                 variant="danger"
                 onClick={handleStop}
                 disabled={interrupting}
-                title="Stop this objective — kills the session and parks it in review"
+                title="Stop this card. The bot stops and the card moves to review."
               >
                 {interrupting ? 'Stopping...' : 'Stop'}
               </Button>

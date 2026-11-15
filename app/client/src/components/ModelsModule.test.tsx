@@ -104,7 +104,7 @@ describe('ModelsModule', () => {
     expect(container.querySelector('[data-testid="refresh-status-xai"]')!.textContent).toContain('Not connected')
 
     // the discovered model is listed with a New badge
-    expect(container.textContent).toContain('claude-opus-6')
+    expect(container.textContent).toContain('Claude Opus 6')
     expect(container.textContent).toContain('New')
   })
 

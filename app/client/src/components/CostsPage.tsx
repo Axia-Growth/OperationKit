@@ -1,6 +1,5 @@
 import { useState, useEffect, useCallback, useMemo, type ReactNode } from 'react'
-import { useBranding } from '../hooks/useBranding'
-import { RefreshCw, DollarSign } from 'lucide-react'
+import { ArrowRight, RefreshCw, DollarSign } from 'lucide-react'
 import { api, ApiError } from '../lib/api'
 import {
   PageContainer,
@@ -18,6 +17,7 @@ import {
   type TabItem,
 } from './ui'
 import { Select } from './ui/Select'
+import { humanize } from '../lib/format'
 
 interface DailyCost {
   date: string
@@ -363,7 +363,6 @@ function KpiCard({
 }
 
 export function CostsPage() {
-  const brandName = useBranding().name
   const [tz, setTz] = useState<string>(() => {
     try {
       const saved = localStorage.getItem(TZ_STORAGE_KEY)
@@ -463,7 +462,7 @@ export function CostsPage() {
   const objectiveColumns: Column<ObjectiveCost>[] = [
     {
       key: 'title',
-      header: 'Objective',
+      header: 'Card',
       cell: o => (
         <a
           href={`/?objective=${o.objective_id}`}
@@ -477,7 +476,7 @@ export function CostsPage() {
     {
       key: 'status',
       header: 'Status',
-      cell: o => <Badge tone={statusTone(o.status)}>{o.status}</Badge>,
+      cell: o => <Badge tone={statusTone(o.status)}>{humanize(o.status)}</Badge>,
     },
     {
       key: 'project',
@@ -487,7 +486,7 @@ export function CostsPage() {
     },
     {
       key: 'sessions',
-      header: 'Sessions',
+      header: 'Runs',
       mono: true,
       align: 'right',
       sortable: true,
@@ -505,7 +504,7 @@ export function CostsPage() {
     },
     {
       key: 'last',
-      header: 'Last Session',
+      header: 'Last run',
       mono: true,
       align: 'right',
       sortable: true,
@@ -518,7 +517,7 @@ export function CostsPage() {
     <PageContainer width="wide">
       <PageHeader
         title="Costs"
-        breadcrumbs={[{ label: brandName }, { label: 'Costs' }]}
+        breadcrumbs={[{ label: 'System', href: '/system' }, { label: 'Costs' }]}
         description={`Token usage & spend · days bucketed in ${tzShort}`}
         actions={
           <Button
@@ -546,7 +545,7 @@ export function CostsPage() {
                 className={dateInputCls}
                 aria-label="Start date"
               />
-              <span className="text-accent-hover">→</span>
+              <ArrowRight aria-label="to" className="h-4 w-4 shrink-0 text-fg-3" />
               <input
                 type="date"
                 value={range.end}
@@ -688,7 +687,7 @@ export function CostsPage() {
       {/* Per-objective table */}
       <section className="space-y-2">
         <h3 className="text-xs uppercase tracking-eyebrow text-fg-3 font-semibold">
-          By Objective <span className="text-fg-3">(selected range, top 50 by cost)</span>
+          By card <span className="text-fg-3">(selected range, top 50 by cost)</span>
         </h3>
         <DataTable
           columns={objectiveColumns}
@@ -707,7 +706,7 @@ export function CostsPage() {
           )}
           empty={{
             icon: <DollarSign className="h-5 w-5" />,
-            title: 'No objective costs in this range',
+            title: 'No card costs in this range',
             description: 'Pick a wider date range or a different timezone.',
           }}
         />

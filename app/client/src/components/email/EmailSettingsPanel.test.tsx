@@ -13,6 +13,12 @@ import { SetupChecklist } from '../setup/SetupChecklist'
 import { invalidateWorkspacesCache } from '../../hooks/useWorkspaces'
 import type { EmailSetup, SetupStatus } from '../../lib/email'
 
+// SetupChecklist reads the role (admin-only steps say "Ask an admin" to a member).
+const auth = vi.hoisted(() => ({ role: 'admin' as 'admin' | 'member' }))
+vi.mock('../../context/AuthContext', () => ({
+  useAuth: () => ({ user: { id: 1, username: 'operator', role: auth.role } }),
+}))
+
 async function flush() {
   for (let i = 0; i < 8; i++) {
     await Promise.resolve()
@@ -104,7 +110,7 @@ describe('EmailSettingsPanel', () => {
     })
     render(<EmailSettingsPanel />)
     await flush()
-    const to = host.querySelector<HTMLInputElement>('input[aria-label="Send test to"]')!
+    const to = host.querySelector<HTMLInputElement>('#email-test-to')!
     const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!
     setter.call(to, 'owner@acme.test')
     to.dispatchEvent(new Event('input', { bubbles: true }))
@@ -142,7 +148,7 @@ describe('SetupChecklist', () => {
     expect(host.textContent).toContain('Copy prompt')
   })
 
-  it('step 4 "Set up your knowledge base" ticks once a visible workspace has a finished setup run (obj 900556)', async () => {
+  it('step 4 "Set up your Context" ticks once a visible workspace has a finished setup run (obj 900556)', async () => {
     invalidateWorkspacesCache()
     mockFetch({
       'GET /api/admin/setup-status': () => ({ json: { complete: true, steps: [{ id: 'branding', title: 'Branding', done: true }, { id: 'email', title: 'Email', done: true }, { id: 'models', title: 'Models', done: true }] } }),
@@ -154,7 +160,7 @@ describe('SetupChecklist', () => {
     await flush()
     await flush()
     const kb = host.querySelector('li[data-step="knowledge_base"]')!
-    expect(kb.textContent).toContain('Set up your knowledge base')
+    expect(kb.textContent).toContain('Set up your Context')
     expect(kb.getAttribute('data-done')).toBe('1')
     expect(host.textContent).toContain('4 of 4 done')
     invalidateWorkspacesCache()
@@ -168,6 +174,32 @@ describe('SetupChecklist', () => {
     expect(hrefs).toEqual(['/settings/email', '/settings/models', '/knowledge/setup'])
     expect(host.textContent).toContain('OK_BRAND_NAME')
     expect(host.textContent).toContain('Keep default')
+  })
+
+  it('gives only the next incomplete step the primary button (polish F5)', async () => {
+    mockFetch({ 'GET /api/admin/setup-status': () => ({ json: { complete: false, steps: [{ id: 'branding', title: 'Branding', done: true }, { id: 'email', title: 'Email', done: false }, { id: 'models', title: 'Models', done: false }] } }) })
+    render(<SetupChecklist />)
+    await flush()
+    const primary = [...host.querySelectorAll('a, button')].filter(el => el.classList.contains('bg-accent'))
+    expect(primary).toHaveLength(1)
+    expect(primary[0].getAttribute('href')).toBe('/settings/email')
+    expect(primary[0].closest('li')?.getAttribute('data-step')).toBe('email')
+  })
+
+  it('tells a non-admin to ask an admin instead of linking admin-only steps', async () => {
+    auth.role = 'member'
+    try {
+      mockFetch({ 'GET /api/admin/setup-status': () => ({ json: { complete: false, steps: [{ id: 'branding', title: 'Branding', done: false }, { id: 'email', title: 'Email', done: false }, { id: 'models', title: 'Models', done: true }] } }) })
+      render(<SetupChecklist />)
+      await flush()
+      const hrefs = [...host.querySelectorAll('a')].map(a => a.getAttribute('href'))
+      expect(hrefs).toEqual(['/knowledge/setup'])
+      expect(host.querySelectorAll('[data-testid="ask-admin"]')).toHaveLength(2)
+      expect(host.querySelector('li[data-step="branding"]')!.textContent).toContain('Ask an admin')
+      expect(host.textContent).not.toContain('Keep default')
+    } finally {
+      auth.role = 'admin'
+    }
   })
 })
 

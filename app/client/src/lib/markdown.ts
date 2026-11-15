@@ -1,4 +1,5 @@
 import { mermaidPlaceholderHtml } from './mermaid'
+import { DOC_PATH_RE } from './docPaths'
 
 /**
  * Markdown-to-HTML using v1.0 design system tokens (§07 prose).
@@ -104,14 +105,10 @@ export function renderMarkdown(text: string): string {
       ? text
       : `<a href="${href.trim()}" target="_blank" rel="noopener noreferrer" class="text-accent hover:underline">${text}</a>`)
 
-  // Clickable markdown file paths — any .md under /home/operator/
-  const docPathRe = /(?:\/home\/operator\/[\w./-]+\.md|~\/[\w./-]+\.md)/g
-  html = html.replace(docPathRe, (match) => {
-    const fullPath = match.startsWith('~/')
-      ? '/home/operator/' + match.slice(2)
-      : match
-    return `<a data-doc-path="${fullPath}" class="text-accent hover:underline cursor-pointer font-mono" title="Click to edit">${match}</a>`
-  })
+  // Clickable markdown file paths — any .md under a home directory (lib/docPaths.ts).
+  // `~/` is passed through as-is; the docs route expands it against its own roots.
+  html = html.replace(DOC_PATH_RE, (match) =>
+    `<a data-doc-path="${match}" class="text-accent hover:underline cursor-pointer font-mono" title="Click to edit">${match}</a>`)
 
   // Newlines to <br> (but not after block elements)
   html = html.replace(/\n/g, '<br/>')

@@ -12,7 +12,7 @@ function Harness({ go }: { go: (href: string) => void }) {
   const [open, setOpen] = useState(false)
   const items = ['Board', 'Bots', 'Settings', 'Secrets'].map((label) => ({
     label,
-    hint: `/${label.toLowerCase()}`,
+    keywords: [label === 'Secrets' ? 'credentials' : label.toLowerCase()],
     onSelect: () => go(`/${label.toLowerCase()}`),
   }))
   return (
@@ -72,7 +72,7 @@ describe('CommandPalette on UI SDK Command + Dialog', () => {
     await render(<Harness go={go} />)
     await openPalette()
     await type('secr')
-    await vi.waitFor(() => expect(options().filter((o) => !o.hidden).map((o) => o.textContent)).toEqual(['Secrets/secrets']))
+    await vi.waitFor(() => expect(options().filter((o) => !o.hidden).map((o) => o.textContent)).toEqual(['Secrets']))
     await press('ArrowDown', input())
     await press('Enter', input())
     expect(go).toHaveBeenCalledWith('/secrets')

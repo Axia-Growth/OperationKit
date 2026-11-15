@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { ArrowRight, BookOpen, CalendarDays, LayoutGrid, Mail, type LucideIcon } from 'lucide-react'
 import { Badge, Button, cn } from '../ui'
 import { StatusDot } from '../design/primitives'
 import { renderMarkdown } from '../../lib/markdown'
@@ -74,8 +75,25 @@ export function UserBubble({ m }: { m: ChatMessage }) {
   )
 }
 
-export function AssistantBubble({ m, agent }: { m: ChatMessage; agent: ChatAgentInfo }) {
+/** A small "Open thread" link to a bot-to-bot conversation (obj 900859). */
+export function BotThreadLink({ id, onOpen, className }: { id: number; onOpen: (id: number) => void; className?: string }) {
+  return (
+    <button
+      type="button"
+      onClick={() => onOpen(id)}
+      className={cn('text-xs text-accent-hover underline-offset-2 hover:text-accent hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/50', className)}
+    >
+      Open bot thread #{id}
+    </button>
+  )
+}
+
+export function AssistantBubble({ m, agent, onOpenBotThread }: { m: ChatMessage; agent: ChatAgentInfo; onOpenBotThread?: (id: number) => void }) {
   const by = m.meta?.provider_label ?? m.provider ?? 'unknown'
+  // A line the server relayed from a bot-to-bot thread (obj 900859): no model
+  // answered it in THIS chat, so say where it came from instead of "Answered by".
+  const relayed = m.meta?.kind === 'bot_reply' || m.meta?.kind === 'bot_message_failed'
+  const threadId = m.meta?.bot_conversation_id
   return (
     <div className="flex items-start gap-2.5">
       <AgentAvatar agent={agent} size="sm" />
@@ -84,9 +102,21 @@ export function AssistantBubble({ m, agent }: { m: ChatMessage; agent: ChatAgent
           <div className="cc-prose break-words text-base" dangerouslySetInnerHTML={{ __html: renderMarkdown(m.content) }} />
         </div>
         <p className="mt-1 flex flex-wrap items-center gap-x-1.5 px-1 text-xs text-fg-2" data-testid="answered-by">
-          <span>Answered by <span className="font-medium text-fg-1">{by}</span></span>
-          {m.model && <span className="font-mono text-fg-2">· {m.model}</span>}
+          {relayed ? (
+            <span>From a bot thread</span>
+          ) : (
+            <>
+              <span>Answered by <span className="font-medium text-fg-1">{by}</span></span>
+              {m.model && <span className="font-mono text-fg-2">· {m.model}</span>}
+            </>
+          )}
           <span>· {time(m.created_at)}</span>
+          {relayed && threadId && onOpenBotThread && (
+            <>
+              <span>·</span>
+              <BotThreadLink id={threadId} onOpen={onOpenBotThread} />
+            </>
+          )}
         </p>
       </div>
     </div>
@@ -95,18 +125,18 @@ export function AssistantBubble({ m, agent }: { m: ChatMessage; agent: ChatAgent
 
 export function ErrorLine({ m }: { m: ChatMessage }) {
   return (
-    <div role="alert" className="mx-auto max-w-[90%] rounded-md border border-signal-alarm/30 bg-signal-alarm/10 px-3 py-2 text-sm text-fg-0">
-      <span className="font-medium text-signal-alarm">Couldn't answer. </span>
+    <div role="alert" className="mx-auto max-w-[90%] rounded-md border border-danger/30 bg-danger/10 px-3 py-2 text-sm text-fg-0">
+      <span className="font-medium text-danger">Couldn't answer. </span>
       {m.content}
     </div>
   )
 }
 
-const TOOL_ICON: Record<string, string> = {
-  email: 'M21.75 6.75v10.5a2.25 2.25 0 0 1-2.25 2.25h-15a2.25 2.25 0 0 1-2.25-2.25V6.75m19.5 0A2.25 2.25 0 0 0 19.5 4.5h-15a2.25 2.25 0 0 0-2.25 2.25m19.5 0v.243a2.25 2.25 0 0 1-1.07 1.916l-7.5 4.615a2.25 2.25 0 0 1-2.36 0L3.32 8.91a2.25 2.25 0 0 1-1.07-1.916V6.75',
-  calendar: 'M6.75 3v2.25M17.25 3v2.25M3 18.75V7.5a2.25 2.25 0 0 1 2.25-2.25h13.5A2.25 2.25 0 0 1 21 7.5v11.25m-18 0A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75m-18 0v-7.5A2.25 2.25 0 0 1 5.25 9h13.5A2.25 2.25 0 0 1 21 11.25v7.5',
-  board: 'M3.75 6A2.25 2.25 0 0 1 6 3.75h2.25A2.25 2.25 0 0 1 10.5 6v12a2.25 2.25 0 0 1-2.25 2.25H6A2.25 2.25 0 0 1 3.75 18V6ZM13.5 6a2.25 2.25 0 0 1 2.25-2.25H18A2.25 2.25 0 0 1 20.25 6v6A2.25 2.25 0 0 1 18 14.25h-2.25a2.25 2.25 0 0 1-2.25-2.25V6Z',
-  knowledge: 'M19.5 14.25v-2.625a3.375 3.375 0 0 0-3.375-3.375h-1.5A1.125 1.125 0 0 1 13.5 7.125v-1.5a3.375 3.375 0 0 0-3.375-3.375H8.25m2.25 0H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 0 0-9-9Z',
+const TOOL_ICON: Record<string, LucideIcon> = {
+  email: Mail,
+  calendar: CalendarDays,
+  board: LayoutGrid,
+  knowledge: BookOpen,
 }
 
 function toolFamily(name: string | null): keyof typeof TOOL_ICON {
@@ -119,11 +149,10 @@ function toolFamily(name: string | null): keyof typeof TOOL_ICON {
 
 export function ToolLine({ m }: { m: ChatMessage }) {
   const failed = m.meta?.ok === false
+  const Icon = TOOL_ICON[toolFamily(m.tool_name)]
   return (
-    <div className={cn('ml-9 flex items-center gap-2 text-xs', failed ? 'text-signal-amber' : 'text-fg-2')}>
-      <svg className="h-3.5 w-3.5 shrink-0" fill="none" viewBox="0 0 24 24" strokeWidth={1.6} stroke="currentColor" aria-hidden="true">
-        <path strokeLinecap="round" strokeLinejoin="round" d={TOOL_ICON[toolFamily(m.tool_name)]} />
-      </svg>
+    <div className={cn('ml-9 flex items-center gap-2 text-xs', failed ? 'text-warning' : 'text-fg-2')}>
+      <Icon aria-hidden="true" className="h-3.5 w-3.5 shrink-0" />
       <span className="min-w-0 break-words">{m.content}</span>
     </div>
   )
@@ -258,7 +287,7 @@ export function CardChip({ card }: { card: ChatCard }) {
         </span>
         <span className="block text-xs text-fg-2">On the board · {CARD_STATE[card.status] ?? card.status}</span>
       </span>
-      <span className="text-xs font-medium text-fg-1 transition-colors duration-fast group-hover:text-accent-hover">Open →</span>
+      <span className="inline-flex items-center gap-1 text-xs font-medium text-fg-1 transition-colors duration-fast group-hover:text-accent-hover">Open<ArrowRight aria-hidden="true" className="h-3.5 w-3.5" /></span>
     </a>
   )
 }

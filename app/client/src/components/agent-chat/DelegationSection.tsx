@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
+import { readCache, writeCache } from './chat-cache'
 import {
   DELEGATION_ACTION_LABELS,
   DELEGATION_ACTIONS,
@@ -21,7 +22,14 @@ import type { ChatAgentInfo } from './types'
 
    Only the owner, signed in here, can switch it on, add a grant or revoke one.
    A bot can never grant or extend its own approvals, and a grant can't be
-   edited, only revoked and issued again. */
+   edited, only revoked and issued again.
+
+   A grant is held by the bot's REGISTRY identity (the name it puts on an
+   approval). Every chat bot has one with no manual step (obj 900862): a bot
+   the stored registry doesn't know gets an identity derived from its file, so
+   the grant form is here straight away. Only when no identity can be derived
+   (its name and slug are both taken) does the one-click "Register this bot"
+   show. Nobody edits a settings row by hand. */
 
 const EXPIRY_PRESETS = [
   { value: '1', label: '24 hours' },
@@ -60,6 +68,8 @@ export function DelegationSection({ agent, isAdmin }: { agent: Pick<ChatAgentInf
   const [busy, setBusy] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
+  // '' = register as a new bot; otherwise an existing registry bot id to link to.
+  const [registerAs, setRegisterAs] = useState<string | null>(null)
 
   const url = `/agent-chat/agents/${encodeURIComponent(agent.slug)}/delegations`
 
@@ -67,8 +77,11 @@ export function DelegationSection({ agent, isAdmin }: { agent: Pick<ChatAgentInf
     if (!isAdmin) return
     let live = true
     setLoadError(null)
+    // obj 900865: a bot whose settings were opened before paints them at once.
+    const hit = readCache<DelegationGrantsResponse>(url)
+    if (hit) setData(hit)
     api.get<DelegationGrantsResponse>(url)
-      .then(r => { if (live) setData(r) })
+      .then(r => { writeCache(url, r); if (live) setData(r) })
       .catch(e => { if (live) setLoadError(e instanceof Error ? e.message : 'Could not load approval grants') })
     return () => { live = false }
   }, [url, isAdmin])
@@ -90,7 +103,9 @@ export function DelegationSection({ agent, isAdmin }: { agent: Pick<ChatAgentInf
     setError(null)
     setNotice(null)
     try {
-      setData(await fn())
+      const r = await fn()
+      writeCache(url, r)
+      setData(r)
       setNotice(done)
       return true
     } catch (e) {
@@ -125,6 +140,28 @@ export function DelegationSection({ agent, isAdmin }: { agent: Pick<ChatAgentInf
     }
   }
 
+  const reg = data?.registration
+  const regChoice = registerAs ?? (reg?.suggested ?? (reg?.new_bot_id ? '' : reg?.existing[0]?.id ?? ''))
+  const regOptions = reg
+    ? [
+        ...(reg.new_bot_id ? [{ value: '', label: `A new bot named “${reg.new_bot_id}”` }] : []),
+        ...reg.existing.map(b => ({
+          value: b.id,
+          label: `Existing bot: ${b.name}${b.name !== b.id ? ` (${b.id})` : ''}${b.id === reg.suggested ? ' · suggested' : ''}`,
+        })),
+      ]
+    : []
+
+  const register = async () => {
+    const ok = await run(
+      'register',
+      () => api.post<DelegationGrantsResponse>(`/agent-chat/agents/${encodeURIComponent(agent.slug)}/registry`, { bot: regChoice || null }),
+      `Registered ${agent.name}. Pick what it may approve below.`,
+    )
+    // Straight into the grant form: registering is only ever the first step.
+    if (ok) setFormOpen(true)
+  }
+
   const toggleAction = (a: DelegationAction) =>
     setActions(prev => (prev.includes(a) ? prev.filter(x => x !== a) : [...prev, a]))
 
@@ -148,8 +185,27 @@ export function DelegationSection({ agent, isAdmin }: { agent: Pick<ChatAgentInf
       {loadError && <Alert tone="alarm">{loadError}</Alert>}
       {data && !data.bot && <Alert tone="info">{data.bot_unavailable_reason}</Alert>}
 
+      {data && !data.bot && canManage && reg && regOptions.length > 0 && (
+        <div className="flex flex-wrap items-end gap-2 rounded-md border border-line bg-surface-0 p-3">
+          <div className="min-w-[220px] flex-1">
+            <label htmlFor={id('register-as')} className="mb-1 block text-xs font-medium text-fg-1">Register {agent.name} as</label>
+            <Select id={id('register-as')} value={regChoice} onChange={v => setRegisterAs(v)} disabled={busy !== null} className="w-full" options={regOptions} />
+          </div>
+          <Button variant="primary" size="sm" loading={busy === 'register'} disabled={busy !== null} onClick={() => void register()}>
+            Register this bot
+          </Button>
+        </div>
+      )}
+
       {data?.bot && (
         <>
+          <p className="-mt-1 text-xs text-fg-2">
+            {data.bot_auto ? 'Registered automatically as ' : 'Grants are held by the registered bot '}
+            <span className="font-medium text-fg-1">{data.bot.name}</span>
+            {data.bot.name !== data.bot.id && <> (<code>{data.bot.id}</code>)</>}
+            {data.bot_auto?.linked && <>, the shipped bot {agent.name} is a copy of</>}
+            .{data.bot_auto && ' No setup needed: grants work now.'}
+          </p>
           <Switch
             checked={on}
             disabled={!canManage || busy !== null}

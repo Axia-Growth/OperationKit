@@ -28,6 +28,8 @@ fs.writeFileSync(path.join(TMP_AGENTS, 'librarian', 'agent.yaml'), 'name: Librar
 process.env.AGENT_FILES_DIR = TMP_AGENTS
 
 const { initDb, getDb } = await import('../db/index.js')
+// obj 900803: a fresh DB no longer seeds the author's workspaces — this suite uses them.
+const { seedLegacyWorkspaces } = await import('../__fixtures__/legacy-workspaces.js')
 const { issueApiKey } = await import('../lib/api-keys.js')
 const { createAgentKey } = await import('../lib/agent-keys.js')
 const { agentKeyGuard } = await import('../middleware/agent-key-guard.js')
@@ -94,6 +96,7 @@ const statusOf = (id: number) => (getDb().prepare('SELECT status FROM objectives
 beforeAll(async () => {
   if (fs.existsSync(TMP_DB)) fs.unlinkSync(TMP_DB)
   initDb()
+  await seedLegacyWorkspaces(getDb())
   const ins = getDb().prepare(`INSERT INTO users (id, username, password_hash, role) VALUES (?, ?, 'x', ?)`)
   ins.run(ADMIN_ID, 'admin', 'admin')
   ins.run(MEMBER_ID, 'grokbot', 'member')
