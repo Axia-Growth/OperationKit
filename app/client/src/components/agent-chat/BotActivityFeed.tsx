@@ -1,10 +1,12 @@
 import { useCallback, useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { ChevronDown, ChevronRight, GitPullRequest } from 'lucide-react'
+import { CheckCircle2, ChevronDown, ChevronRight, CirclePlay, FilePlus2, GitPullRequest, Eye, XCircle } from 'lucide-react'
 import {
   NEEDS_YOU_LABELS,
   type BotActivityCardRef,
   type BotActivityEntry,
+  type BotActivityItem,
+  type BotActivityItemKind,
   type BotActivityResponse,
   type BotActivityRun,
 } from '@operationkit/shared'
@@ -195,6 +197,42 @@ export function ActivityEntryRow({ e, slug, open, onToggle }: { e: BotActivityEn
   )
 }
 
+const ITEM_ICON: Record<BotActivityItemKind, typeof FilePlus2> = {
+  wake: CirclePlay,
+  filed: FilePlus2,
+  started: CirclePlay,
+  review: Eye,
+  done: CheckCircle2,
+  cancelled: XCircle,
+  pr: GitPullRequest,
+}
+
+/**
+ * One non-wake action in the unified feed (obj 901030): a card the bot filed,
+ * started, sent to review, finished, cancelled, or a PR it opened/merged/
+ * closed — everything a High Agency wake entry doesn't already cover. Not
+ * expandable; it just links to the card.
+ */
+function ActivityItemRow({ item }: { item: BotActivityItem }) {
+  const Icon = ITEM_ICON[item.kind]
+  return (
+    <li data-testid="activity-item" data-kind={item.kind} className="rounded-lg border border-line bg-surface-1">
+      <div className="flex items-start gap-3 px-3 py-2.5">
+        <Icon className="mt-0.5 h-4 w-4 shrink-0 text-fg-2" aria-hidden="true" />
+        <span className="w-16 shrink-0 text-xs tabular-nums text-fg-2">
+          <span className="block text-fg-1">{clock(item.at)}</span>
+          {ago(item.at)}
+        </span>
+        <span className="min-w-0 flex-1">
+          <span className="mb-0.5 block text-xs text-fg-2">{item.detail}</span>
+          <CardRef c={item.card} />
+        </span>
+        {item.pr_url && <PrLink url={item.pr_url} />}
+      </div>
+    </li>
+  )
+}
+
 export function BotActivityFeed({ agent }: { agent: Pick<ChatAgentInfo, 'slug' | 'name'> }) {
   const [data, setData] = useState<BotActivityResponse | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -227,24 +265,43 @@ export function BotActivityFeed({ agent }: { agent: Pick<ChatAgentInfo, 'slug' |
       </div>
     )
   }
+  // obj 901030: the unified feed (items) is everything the bot did, newest
+  // first, with wake rows folded in — a wake item still expands into its full
+  // run via the existing entries data.
+  const items = data.items ?? []
+  const entryByWake = new Map(data.entries.map(e => [e.wake_id, e]))
   return (
     <div className="mx-auto max-w-[860px] space-y-4 px-3 py-4 sm:px-6" data-testid="bot-activity-feed">
       <DailySummary data={data} agentName={agent.name} />
-      {data.entries.length === 0 ? (
+      {items.length === 0 ? (
         <EmptyState
           compact
-          title="No wakes yet"
+          title="No activity yet"
           description={
             data.high_agency
-              ? `${agent.name}'s High Agency wakes will show here, one entry per wake.`
-              : `High Agency is off for ${agent.name}. An admin can turn it on in this bot's Settings; each wake then shows here instead of in the chat.`
+              ? `${agent.name}'s actions — cards it files or starts, PRs it opens, High Agency wakes — will show here.`
+              : `${agent.name}'s actions will show here as they happen. High Agency is off, so an admin can turn it on in this bot's Settings to add scheduled wakes too.`
           }
         />
       ) : (
-        <ol className="space-y-1.5" aria-label={`${agent.name} High Agency wakes`}>
-          {data.entries.map(e => (
-            <ActivityEntryRow key={e.wake_id} e={e} slug={agent.slug} open={open.has(e.wake_id)} onToggle={() => toggle(e.wake_id)} />
-          ))}
+        <ol className="space-y-1.5" aria-label={`${agent.name} activity`}>
+          {items.map(item => {
+            if (item.kind === 'wake' && item.wake_id != null) {
+              const e = entryByWake.get(item.wake_id)
+              if (e) {
+                return (
+                  <ActivityEntryRow
+                    key={item.key}
+                    e={e}
+                    slug={agent.slug}
+                    open={open.has(e.wake_id)}
+                    onToggle={() => toggle(e.wake_id)}
+                  />
+                )
+              }
+            }
+            return <ActivityItemRow key={item.key} item={item} />
+          })}
         </ol>
       )}
     </div>

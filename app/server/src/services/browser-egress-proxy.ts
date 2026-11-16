@@ -288,3 +288,37 @@ export async function stopSharedBrowserEgressProxy(): Promise<void> {
   await shared.close()
   shared = null
 }
+
+// ── Worker guard in the app container (obj 901051, tmux opt-in only) ─────────
+//
+// A worker card's browser must run under the WORKER policy (loopback refused,
+// CC API port blocked), not the reviewer policy the shared guard above enforces.
+// In jail mode each jail starts its own guard. In tmux mode a worker browser is
+// refused unless CARD_BROWSER_WORKER_IN_APP_CONTAINER=on; then this second guard
+// is started at boot on CARD_BROWSER_WORKER_PROXY_PORT (default 3098).
+
+let sharedWorker: EgressProxyHandle | null = null
+
+export function sharedWorkerBrowserEgressProxy(): EgressProxyHandle | null {
+  return sharedWorker
+}
+
+export async function startSharedWorkerBrowserEgressProxy(
+  policy: BrowserPolicy,
+  port: number,
+): Promise<EgressProxyHandle | null> {
+  if (!policy.egressGuard) return null
+  if (sharedWorker) return sharedWorker
+  sharedWorker = await startBrowserEgressProxy(policy, { port })
+  console.log(
+    `[card-browser] WORKER egress guard listening on 127.0.0.1:${sharedWorker.port} ` +
+    `(loopback ${policy.allowLoopback ? `ports ${(policy.loopbackPorts ?? []).join(',')} only` : 'refused'})`,
+  )
+  return sharedWorker
+}
+
+export async function stopSharedWorkerBrowserEgressProxy(): Promise<void> {
+  if (!sharedWorker) return
+  await sharedWorker.close()
+  sharedWorker = null
+}

@@ -67,3 +67,23 @@ describe('card browser version pins', () => {
     expect(cmp(CHROMIUM_VERSION, '157.0.8103.38')).toBeGreaterThanOrEqual(0)
   })
 })
+
+// obj 901029: the browser jail image (app/jail/Dockerfile, built WITH_BROWSER=1)
+// installs the same pinned Playwright / MCP. A third copy of the versions, so
+// a third file the gate keeps in step.
+describe('browser jail image pins (obj 901029)', () => {
+  const jailDockerfile = fs.readFileSync(path.resolve(here, '../../../jail/Dockerfile'), 'utf8')
+  const jailArg = (name: string) => new RegExp(`^ARG\\s+${name}=(\\S+)\\s*$`, 'm').exec(jailDockerfile)?.[1] ?? null
+
+  it('agrees with browser-pins.ts', () => {
+    expect(jailArg('PLAYWRIGHT_VERSION')).toBe(PLAYWRIGHT_VERSION)
+    expect(jailArg('PLAYWRIGHT_MCP_VERSION')).toBe(PLAYWRIGHT_MCP_VERSION)
+  })
+  it('keeps the browser OFF in the default jail image', () => {
+    expect(jailArg('WITH_BROWSER')).toBe('0')
+  })
+  it('never installs an unpinned playwright and never makes chrome_sandbox setuid in the jail', () => {
+    expect(jailDockerfile).not.toMatch(/@playwright\/mcp@latest/)
+    expect(jailDockerfile).not.toMatch(/chmod 4755/)
+  })
+})

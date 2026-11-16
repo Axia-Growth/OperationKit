@@ -20,6 +20,7 @@ import { spawnInTmux } from './session-tmux.js'
 import { getModelEngine } from './model-registry.js'
 import { buildSpawnEnv } from './session-spawn-env.js'
 import { writeReviewerPlaywrightMcpConfig } from './session-reviewer-prompt.js'
+import { cardWantsBrowser } from '../lib/card-browser.js'
 import { type ActiveSession, registerActiveSession } from './session-registry.js'
 import { computeIsolation, ensureWorktree, ensureWorktreeHookAssets } from './session-worktree.js'
 import { resolveCommonDir } from './worktree-gitdir.js'
@@ -316,6 +317,8 @@ export async function startSession(objective: Objective): Promise<string> {
     env: buildSpawnEnv({ objective, homeDir, sessionKind: 'worker' }),
     seatEnv: assignment.env,
     seatMount: assignment.mount,
+    // obj 901029: only a card that opted in (needs_browser) gets a browser.
+    cardBrowser: cardWantsBrowser(objective),
   })
 
   const session: ActiveSession = {

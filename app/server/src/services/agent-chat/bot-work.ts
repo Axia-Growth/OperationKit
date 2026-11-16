@@ -40,6 +40,8 @@ import {
   DEFAULT_AGENT_CONTEXT,
   type BotActivityCardRef,
   type BotActivityEntry,
+  type BotActivityItem,
+  type BotActivityItemKind,
   type BotActivityResponse,
   type BotActivityRun,
   type BotStatusEntry,
@@ -473,8 +475,163 @@ function ref(r: CardRow, spend: Map<number, number>): BotActivityCardRef {
   return { id: r.id, title: r.title, status: r.status, pr_url: r.pr_url || null, spent_usd: round(spend.get(r.id) ?? 0) }
 }
 
-function entryFor(w: CardRow, kids: CardRow[], spend: Map<number, number>, signals: Map<number, CardSignals>): BotActivityEntry {
-  const picked = kids[0] ? ref(kids[0], spend) : null
+interface StatusEvent {
+  objective_id: number
+  to_value: string
+  created_at: string
+}
+
+/**
+ * Status transitions ('working' / 'done' / 'cancelled') for the given cards,
+ * oldest first — the time-window fallback for "which card did this wake start
+ * or close" (below). Independent of source_job_id / parent_id, so it finds the
+ * card even when a wake started an EXISTING queued card (nothing to link —
+ * obj 901030, e.g. a wake files three cards under a standing project, then a
+ * later wake's close-out pass starts one of them).
+ */
+function loadStatusEvents(db: Database, ids: number[]): StatusEvent[] {
+  if (ids.length === 0) return []
+  try {
+    return db
+      .prepare(
+        `SELECT objective_id, to_value, created_at FROM objective_events
+          WHERE kind = 'status' AND to_value IN ('working', 'done', 'cancelled')
+            AND objective_id IN (${placeholders(ids.length)})
+          ORDER BY created_at ASC`,
+      )
+      .all(...ids) as StatusEvent[]
+  } catch {
+    return []
+  }
+}
+
+/** Status events ('review'/'ai_review'/'done'/'cancelled') for the wakes themselves — when a wake's OWN run ended. */
+function loadWakeEndEvents(db: Database, wakeIds: number[]): StatusEvent[] {
+  if (wakeIds.length === 0) return []
+  try {
+    return db
+      .prepare(
+        `SELECT objective_id, to_value, created_at FROM objective_events
+          WHERE kind = 'status' AND to_value IN ('review', 'ai_review', 'done', 'cancelled')
+            AND objective_id IN (${placeholders(wakeIds.length)})
+          ORDER BY created_at ASC`,
+      )
+      .all(...wakeIds) as StatusEvent[]
+  } catch {
+    return []
+  }
+}
+
+interface AgentStart {
+  objective_id: number
+  created_at: string
+}
+
+/**
+ * Real-provenance signal (obj 901030, operator review of PR #812): a NEW
+ * session spawned on another owned card with `session_starts.reason = 'agent'`
+ * — an API-key/bot-triggered start, as opposed to `board` (a person clicked
+ * Start) or `follow_up` (a chat message, human or bot, started it). Preferred
+ * over the time-window status-event fallback below because it is attributable
+ * to "something automated started this", not merely "this changed status while
+ * the wake happened to be running".
+ */
+function loadAgentSessionStarts(db: Database, ids: number[]): AgentStart[] {
+  if (ids.length === 0) return []
+  try {
+    return db
+      .prepare(
+        // session_starts.created_at defaults to an ISO 'T'-separated timestamp
+        // while objectives/objective_events use `datetime('now')`'s
+        // space-separated form — normalize here so string comparison against
+        // those (in pickForWake) is apples to apples, not a format mismatch
+        // that would silently push every agent start "after" its real time.
+        `SELECT objective_id, strftime('%Y-%m-%d %H:%M:%S', created_at) AS created_at FROM session_starts
+          WHERE kind = 'spawn' AND reason = 'agent' AND objective_id IN (${placeholders(ids.length)})
+          ORDER BY created_at ASC`,
+      )
+      .all(...ids) as AgentStart[]
+  } catch {
+    return []
+  }
+}
+
+/**
+ * This wake's own run: it ends when the wake reached review/done/cancelled,
+ * else falls back to its `updated_at` — NEVER the next wake's `created_at`
+ * (obj 901030, operator review of PR #812). The old next-wake boundary let a
+ * card started from chat, or by a person, in the GAP after this wake finished
+ * but before the next one fired get wrongly credited to this wake.
+ */
+const TERMINAL_WAKE_STATUSES = new Set(['review', 'ai_review', 'done', 'cancelled'])
+
+/**
+ * Null means the wake is STILL running — no upper bound yet, so a later
+ * status change on an owned card can still be attributed to it. Once the
+ * wake has a recorded end (an own status event, or — for rows written before
+ * that event existed — its terminal `status`/`updated_at`), everything after
+ * that belongs to whatever comes next: a later wake, a chat message, or a
+ * person — never this wake.
+ */
+function wakeRunEnd(wake: CardRow, wakeEndEvents: StatusEvent[]): string | null {
+  const own = wakeEndEvents.find(e => e.objective_id === wake.id)
+  if (own) return own.created_at
+  if (TERMINAL_WAKE_STATUSES.has(wake.status)) return wake.updated_at
+  return null
+}
+
+/**
+ * The card this one wake's run actually started or closed: prefer a real
+ * `agent`-reason session spawn inside the run's window, else the first
+ * 'working' transition (else 'done'/'cancelled') in that same window —
+ * excluding the wakes themselves either way.
+ */
+function pickForWake(
+  wake: CardRow,
+  end: string | null,
+  events: StatusEvent[],
+  agentStarts: AgentStart[],
+  wakeIds: Set<number>,
+): StatusEvent | null {
+  const inWindow = (at: string) => at >= wake.created_at && (end == null || at <= end)
+  const spawn = agentStarts.find(a => !wakeIds.has(a.objective_id) && inWindow(a.created_at))
+  if (spawn) return { objective_id: spawn.objective_id, to_value: 'working', created_at: spawn.created_at }
+  let started: StatusEvent | null = null
+  let closed: StatusEvent | null = null
+  for (const ev of events) {
+    if (wakeIds.has(ev.objective_id)) continue
+    if (!inWindow(ev.created_at)) continue
+    if (ev.to_value === 'working') started ??= ev
+    else closed ??= ev
+  }
+  return started ?? closed
+}
+
+/** Every wake's picked card, by its own run's window (see `pickForWake`). */
+function pickedByWindow(
+  wakeRows: CardRow[],
+  events: StatusEvent[],
+  wakeEndEvents: StatusEvent[],
+  agentStarts: AgentStart[],
+  wakeIds: Set<number>,
+): Map<number, StatusEvent> {
+  const out = new Map<number, StatusEvent>()
+  for (const w of wakeRows) {
+    const pick = pickForWake(w, wakeRunEnd(w, wakeEndEvents), events, agentStarts, wakeIds)
+    if (pick) out.set(w.id, pick)
+  }
+  return out
+}
+
+function entryFor(
+  w: CardRow,
+  kids: CardRow[],
+  spend: Map<number, number>,
+  signals: Map<number, CardSignals>,
+  windowPick?: CardRow,
+): BotActivityEntry {
+  const pickedRow = kids[0] ?? windowPick ?? null
+  const picked = pickedRow ? ref(pickedRow, spend) : null
   return {
     wake_id: w.id,
     at: w.created_at,
@@ -486,6 +643,104 @@ function entryFor(w: CardRow, kids: CardRow[], spend: Map<number, number>, signa
     disposition: w.job_disposition,
     needs_you: signals.get(w.id)?.needs_you ?? [],
   }
+}
+
+const EVENT_ITEM_KIND: Record<string, BotActivityItemKind | undefined> = {
+  working: 'started',
+  review: 'review',
+  ai_review: 'review',
+  done: 'done',
+  cancelled: 'cancelled',
+}
+
+const EVENT_ITEM_LABEL: Record<BotActivityItemKind, string> = {
+  wake: 'Wake',
+  filed: 'Filed',
+  started: 'Started',
+  review: 'Entered review',
+  done: 'Finished',
+  cancelled: 'Cancelled',
+  pr: 'PR',
+}
+
+interface ActivityEventRow {
+  objective_id: number
+  kind: string
+  to_value: string | null
+  detail: string | null
+  created_at: string
+}
+
+/** Everything the board already logs for these cards: filed, status moves, PRs. */
+function loadActivityEvents(db: Database, ids: number[], limit: number): ActivityEventRow[] {
+  if (ids.length === 0) return []
+  try {
+    return db
+      .prepare(
+        `SELECT objective_id, kind, to_value, detail, created_at FROM objective_events
+          WHERE objective_id IN (${placeholders(ids.length)})
+            AND (kind = 'created' OR kind = 'pr'
+                 OR (kind = 'status' AND to_value IN ('working', 'review', 'ai_review', 'done', 'cancelled')))
+          ORDER BY created_at DESC LIMIT ?`,
+      )
+      .all(...ids, limit) as ActivityEventRow[]
+  } catch {
+    return []
+  }
+}
+
+/**
+ * The unified Activity feed (obj 901030): every action on a card this bot owns
+ * — filed, started, entered review, finished, cancelled, a PR opened/merged/
+ * closed — not only its High Agency wakes. A wake fire is folded in as its own
+ * `kind: 'wake'` item so the two streams read as one timeline, newest first.
+ */
+function buildActivityItems(
+  cardById: Map<number, CardRow>,
+  events: ActivityEventRow[],
+  wakeIds: Set<number>,
+  spend: Map<number, number>,
+  wakeEntries: BotActivityEntry[],
+  limit: number,
+): BotActivityItem[] {
+  const items: BotActivityItem[] = []
+  for (const ev of events) {
+    if (wakeIds.has(ev.objective_id)) continue // the wake's own lifecycle is its 'wake' item below
+    const card = cardById.get(ev.objective_id)
+    if (!card) continue
+    let kind: BotActivityItemKind | undefined
+    let prUrl: string | null = null
+    if (ev.kind === 'created') kind = 'filed'
+    else if (ev.kind === 'status') kind = EVENT_ITEM_KIND[ev.to_value ?? '']
+    else if (ev.kind === 'pr') {
+      kind = 'pr'
+      prUrl = ev.detail || card.pr_url || null
+    }
+    if (!kind) continue
+    const label = ev.kind === 'pr' ? `PR ${ev.to_value ?? 'opened'}` : EVENT_ITEM_LABEL[kind]
+    items.push({
+      key: `${kind}:${ev.objective_id}:${ev.created_at}`,
+      kind,
+      at: ev.created_at,
+      card: ref(card, spend),
+      wake_id: null,
+      detail: label,
+      pr_url: prUrl,
+    })
+  }
+  for (const e of wakeEntries) {
+    items.push({
+      key: `wake:${e.wake_id}:${e.at}`,
+      kind: 'wake',
+      at: e.at,
+      card: e.picked ?? { id: e.wake_id, title: 'High Agency wake', status: e.status, pr_url: e.pr_url, spent_usd: e.cost_usd },
+      wake_id: e.wake_id,
+      detail: e.did,
+      pr_url: e.pr_url,
+    })
+  }
+  items.sort((a, b) => (a.at < b.at ? 1 : a.at > b.at ? -1 : 0))
+  return items.slice(0, limit)
 }
 
 export interface BotActivityOptions extends BotWorkOptions {
@@ -503,11 +758,34 @@ export function buildBotActivity(db: Database, bot: BotRef, opts: BotActivityOpt
   const since = sqlTime(now.getTime() - 24 * 3600_000)
   const { wakes, scope, workspaces, rows: owned, signals: ownedSignals } = ownedCardsWithSignals(db, bot, opts.viewer)
   const wakeRows = loadWakes(db, wakes, scope, Math.min(200, Math.max(1, opts.limit ?? 30)))
+  const wakeIdSet = new Set(wakeRows.map(w => w.id))
   const kids = loadWakeChildren(db, wakeRows.map(w => w.id), scope)
-  const allIds = [...wakeRows.map(w => w.id), ...[...kids.values()].flat().map(k => k.id)]
+  // obj 901030: when a wake started or closed an EXISTING card instead of
+  // filing a new (linked) one, source_job_id/parent_id has nothing to find —
+  // fall back to the card's own status-change timestamp landing inside this
+  // wake's window.
+  const cardById = new Map(owned.map(r => [r.id, r]))
+  const ownedIdsForEvents = owned.map(r => r.id)
+  const statusEvents = loadStatusEvents(db, ownedIdsForEvents)
+  const wakeEndEvents = loadWakeEndEvents(db, wakeRows.map(w => w.id))
+  const agentStarts = loadAgentSessionStarts(db, ownedIdsForEvents)
+  const windowPicks = pickedByWindow(wakeRows, statusEvents, wakeEndEvents, agentStarts, wakeIdSet)
+  const allIds = [
+    ...wakeRows.map(w => w.id),
+    ...[...kids.values()].flat().map(k => k.id),
+    ...[...windowPicks.values()].map(p => p.objective_id),
+  ]
   const spend = measuredSpend(db, allIds)
   const wakeSignals = cardSignals(db, wakeRows)
-  const entries = wakeRows.map(w => entryFor(w, kids.get(w.id) ?? [], spend, wakeSignals))
+  const entries = wakeRows.map(w => {
+    const windowPick = kids.get(w.id)?.length ? undefined : cardById.get(windowPicks.get(w.id)?.objective_id ?? -1)
+    return entryFor(w, kids.get(w.id) ?? [], spend, wakeSignals, windowPick)
+  })
+
+  // The unified feed (obj 901030): every action on a bot-owned card, wake rows
+  // folded in alongside it.
+  const activityEvents = loadActivityEvents(db, ownedIdsForEvents, Math.min(500, Math.max(1, opts.limit ?? 30) * 5))
+  const items = buildActivityItems(cardById, activityEvents, wakeIdSet, spend, entries, Math.max(1, opts.limit ?? 30))
 
   // Daily summary — what shipped, spend, what's next.
   const ownedIds = owned.map(r => r.id)
@@ -568,6 +846,7 @@ export function buildBotActivity(db: Database, bot: BotRef, opts: BotActivityOpt
       next: { next_wake_at: nextWake, queued, needs_you: needsYou },
     },
     entries,
+    items,
   }
 }
 
@@ -578,9 +857,23 @@ export function buildBotActivityRun(db: Database, bot: BotRef, wakeId: number, o
   const [w] = loadWakes(db, wakes, scope, 1, wakeId)
   if (!w) return null
   const kids = loadWakeChildren(db, [w.id], scope).get(w.id) ?? []
-  const spend = measuredSpend(db, [w.id, ...kids.map(k => k.id)])
+  // obj 901030: same provenance-first, own-run-bounded pick as buildBotActivity
+  // — this wake's window runs from its own created_at to when IT reached
+  // review/done (never the next wake's start — see pickForWake/wakeRunEnd).
+  let windowPick: CardRow | undefined
+  if (kids.length === 0) {
+    const owned = ownedCardsWithSignals(db, bot, opts.viewer).rows
+    const ownedIds = owned.map(r => r.id)
+    const cardById = new Map(owned.map(r => [r.id, r]))
+    const end = wakeRunEnd(w, loadWakeEndEvents(db, [w.id]))
+    const events = loadStatusEvents(db, ownedIds)
+    const agentStarts = loadAgentSessionStarts(db, ownedIds)
+    const pick = pickForWake(w, end, events, agentStarts, new Set([w.id]))
+    windowPick = pick ? cardById.get(pick.objective_id) : undefined
+  }
+  const spend = measuredSpend(db, [w.id, ...kids.map(k => k.id), ...(windowPick ? [windowPick.id] : [])])
   const signals = cardSignals(db, [w])
-  const base = entryFor(w, kids, spend, signals)
+  const base = entryFor(w, kids, spend, signals, windowPick)
   return {
     ...base,
     title: w.title,
@@ -589,7 +882,7 @@ export function buildBotActivityRun(db: Database, bot: BotRef, wakeId: number, o
     review_note: w.job_review_note,
     wake_spent_usd: round(spend.get(w.id) ?? 0),
     ceiling_usd: signals.get(w.id)?.ceiling_usd ?? null,
-    children: kids.map(k => ref(k, spend)),
+    children: (kids.length ? kids : windowPick ? [windowPick] : []).map(k => ref(k, spend)),
     updated_at: w.updated_at,
   }
 }

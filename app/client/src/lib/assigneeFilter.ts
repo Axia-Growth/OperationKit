@@ -25,7 +25,8 @@ export { botOwnerToken, isBotOwnerToken }
 
 const STORAGE_PREFIX = 'cc-assignee-filter:'
 
-type AssigneeLike = Pick<Objective, 'assigned_usernames'> & Partial<Pick<Objective, 'owner_bot' | 'bot_owner' | 'bot_owner_name'>>
+type AssigneeLike = Pick<Objective, 'assigned_usernames'> &
+  Partial<Pick<Objective, 'owner_bot' | 'bot_owner' | 'bot_owner_name' | 'bot_owner_is_external' | 'bot_owner_detail'>>
 
 /** True when `obj` should be shown given the set of selected owner tokens:
  *  - matches if ANY of its `assigned_usernames` is selected, OR
@@ -43,6 +44,11 @@ export interface BotRosterEntry {
   token: string
   id: string
   name: string
+  /** obj 901030: true when no chat bot on this install answers to this name —
+   *  e.g. a card filed by an outside assistant over a shared API key. */
+  is_external: boolean
+  /** Tooltip text when `is_external`. */
+  detail: string | null
 }
 
 /** Distinct bots behind `objectives` (owner_bot, else the chat-slug bot the
@@ -53,7 +59,13 @@ export function botRoster(objectives: ReadonlyArray<AssigneeLike>): BotRosterEnt
   for (const o of objectives) {
     const id = cardBot(o)
     if (!id || byId.has(id)) continue
-    byId.set(id, { token: botOwnerToken(id), id, name: (o.bot_owner_name ?? '').trim() || id })
+    byId.set(id, {
+      token: botOwnerToken(id),
+      id,
+      name: (o.bot_owner_name ?? '').trim() || id,
+      is_external: !!o.bot_owner_is_external,
+      detail: o.bot_owner_detail ?? null,
+    })
   }
   return [...byId.values()].sort((a, b) => a.name.localeCompare(b.name))
 }

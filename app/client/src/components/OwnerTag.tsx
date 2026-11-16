@@ -1,4 +1,4 @@
-import { Bot, User as UserIcon, UserX } from 'lucide-react'
+import { Bot, Globe, User as UserIcon, UserX } from 'lucide-react'
 import { cardOwner, type CardOwner, type Objective } from '@operationkit/shared'
 import { Badge } from './ui'
 import { BotAvatarMini } from './BotAvatarMini'
@@ -19,6 +19,8 @@ export function ownerOf(o: Objective): CardOwner {
     owner_bot: o.owner_bot,
     bot_owner: o.bot_owner,
     bot_owner_name: o.bot_owner_name,
+    bot_owner_is_external: o.bot_owner_is_external,
+    bot_owner_detail: o.bot_owner_detail,
     assigned_usernames: o.assigned_usernames,
     created_by_username: o.created_by_username,
   })
@@ -26,6 +28,7 @@ export function ownerOf(o: Objective): CardOwner {
 
 /** One line a screen reader (and the hover title) reads for the owner. */
 export function ownerSentence(owner: CardOwner): string {
+  if (owner.kind === 'external') return owner.external_detail ?? `Owner: ${owner.label} — not a bot on this install.`
   if (owner.kind === 'bot') return `Owner: ${owner.label} (bot) — working on it`
   if (owner.kind === 'unassigned') {
     return owner.needs_human
@@ -59,10 +62,13 @@ export function OwnerTag({
     ? avatarFor(avatars, { bot_owner: owner.bot, bot_owner_name: owner.label, agent_context: objective?.agent_context })
     : null
   const sentence = ownerSentence(owner)
-  const Icon = owner.kind === 'bot' ? Bot : owner.kind === 'human' ? UserIcon : UserX
+  const Icon = owner.kind === 'bot' ? Bot : owner.kind === 'external' ? Globe : owner.kind === 'human' ? UserIcon : UserX
   const tone = owner.kind === 'bot' ? 'info' : 'neutral'
   const className = owner.needs_human && owner.kind === 'human'
     ? HUMAN_NEEDED
+    // obj 901030: external owners get a visibly distinct, dashed style — never
+    // mistaken for either an install-local bot or a mystery/unassigned card.
+    : owner.kind === 'external' ? 'border-dashed text-fg-2'
     : owner.kind === 'unassigned' ? 'text-fg-3' : undefined
   return (
     <span

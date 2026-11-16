@@ -118,8 +118,9 @@ import { startDriftGuard } from './services/drift-guard.js'
 import { startObjectivesSafety } from './services/objectives-safety.js'
 import { startPrHealthWatchdog } from './services/pr-health-watchdog.js'
 import { startHostBootDaemons } from './services/host-boot-daemons.js'
-import { startSharedBrowserEgressProxy } from './services/browser-egress-proxy.js'
+import { startSharedBrowserEgressProxy, startSharedWorkerBrowserEgressProxy } from './services/browser-egress-proxy.js'
 import { resolveBrowserPolicy } from './lib/browser-policy.js'
+import { resolveWorkerBrowserPolicy, workerBrowserInAppContainerAllowed, workerEgressProxyPort } from './lib/card-browser.js'
 import { resolveCorsOrigins } from './lib/install-defaults.js'
 import { startN8nWatchdog } from './services/n8n-watchdog.js'
 import { startSlotHealthCheck } from './services/account-health-check.js'
@@ -717,6 +718,20 @@ server.listen(PORT, () => {
   void startSharedBrowserEgressProxy(resolveBrowserPolicy()).catch((err) => {
     console.error('[card-browser] egress guard failed to start:', (err as Error).message)
   })
+  // Worker card browsers (obj 901051) run only in jails by default. An operator
+  // may allow them in the app container; that gets its own guard under the
+  // WORKER policy (loopback refused, CC API port blocked) and a loud warning.
+  if (workerBrowserInAppContainerAllowed()) {
+    console.warn(
+      '[card-browser] WARNING: CARD_BROWSER_WORKER_IN_APP_CONTAINER=on — needs_browser worker cards on the tmux path ' +
+      'get Chromium INSIDE the app container (secrets store, DB, seat logins). Prefer SESSION_ISOLATION=docker.',
+    )
+    const workerPolicy = resolveWorkerBrowserPolicy()
+    for (const w of workerPolicy.warnings) console.warn(`[card-browser] worker: ${w}`)
+    void startSharedWorkerBrowserEgressProxy(workerPolicy, workerEgressProxyPort()).catch((err) => {
+      console.error('[card-browser] worker egress guard failed to start:', (err as Error).message)
+    })
+  }
   // Telegram contactbook sibling — no-ops unless TELEGRAM_BOT_TOKEN + OWNER_ID are set.
   startContactbookSibling()
   // Installer switch (obj 719986): STARTER_AGENT_TEMPLATES=all|slug,slug installs

@@ -74,6 +74,10 @@ const ACTIVITY = {
     { wake_id: 90, at: '2026-11-15 09:00:00', status: 'done', picked: { id: 40, title: 'Ship the importer', status: 'working', pr_url: null, spent_usd: 4 }, did: 'Closed 2 cards and started the importer.', pr_url: null, cost_usd: 4.5, disposition: 'complete', needs_you: [] },
     { wake_id: 89, at: '2026-11-15 07:00:00', status: 'review', picked: null, did: 'Nothing worth starting.', pr_url: null, cost_usd: 0.3, disposition: 'needs_review', needs_you: ['decision'] },
   ],
+  items: [
+    { key: 'wake:90:2026-11-15 09:00:00', kind: 'wake', at: '2026-11-15 09:00:00', card: { id: 40, title: 'Ship the importer', status: 'working', pr_url: null, spent_usd: 4 }, wake_id: 90, detail: 'Closed 2 cards and started the importer.', pr_url: null },
+    { key: 'wake:89:2026-11-15 07:00:00', kind: 'wake', at: '2026-11-15 07:00:00', card: { id: 89, title: 'High Agency wake', status: 'review', pr_url: null, spent_usd: 0.3 }, wake_id: 89, detail: 'Nothing worth starting.', pr_url: null },
+  ],
 }
 const RUN = {
   ...ACTIVITY.entries[0], title: 'High Agency wake: CTO', workspace: 'ops', summary: 'Full run text: read 4 cards, closed 2, started #40.',

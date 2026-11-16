@@ -86,11 +86,100 @@ every single session spawn. Both versions now live in exactly two places —
 `app/server/src/lib/browser-pins.ts` and the `ARG` lines in `app/Dockerfile` —
 and `browser-pins.test.ts` fails CI if those two disagree.
 
+## Worker cards that ask for a browser (`needs_browser`, obj 901029)
+
+By default a **worker** session (the one that builds the card) still gets no
+browser — only reviewer and design-arena sessions do. A card that needs its
+worker to take screenshots or run an end-to-end check sets
+`needs_browser: true` (`POST/PUT /api/objectives`, or an item of
+`POST /api/internal/objectives`; a non-boolean is a `400`). It takes effect
+from the card's next spawn, and follow-ups keep it. Planner sessions never get it.
+
+A marked worker gets the **same** browser this page describes, under a
+**stricter** egress policy, and only in a jail by default:
+
+**Jail only by default (obj 901051).** On the tmux path the worker would run
+Chromium inside the app container, next to the secrets store, the DB and the
+seat logins. So tmux mode **refuses**: the card gets `CC_CARD_BROWSER_REFUSED`
+saying the browser is only available in jailed sessions
+(`SESSION_ISOLATION=docker`). An operator can allow it with
+`CARD_BROWSER_WORKER_IN_APP_CONTAINER=on`, which is logged as a warning at boot
+and starts a second, worker-only guard on `CARD_BROWSER_WORKER_PROXY_PORT`
+(default `3098`) under the worker policy below — never the reviewer's guard.
+
+**Worker policy: no loopback (obj 901051).** `resolveWorkerBrowserPolicy()` is
+`resolveBrowserPolicy()` with `allowLoopback` forced **off**, whatever
+`CARD_BROWSER_ALLOW_LOOPBACK` says. Loopback is not harmless for a worker: in a
+jail, `127.0.0.1:3002` is the forwarder to the control-plane API
+(`JAIL_CC_LOOPBACK_PORT`), and in the app container loopback is the app itself.
+Chromium is always started with `--proxy-bypass <-loopback>`, so loopback still
+goes through the guard and is refused there. A worker that needs its own preview
+server opens only explicit ports with `CARD_BROWSER_WORKER_LOOPBACK_PORTS`
+(`;`-separated). That list can never include the API port `3002`, the guard
+ports (`3099`, `3098`, `CARD_BROWSER_PROXY_PORT`, `CARD_BROWSER_WORKER_PROXY_PORT`)
+or the app's `PORT`: those are dropped with a warning and blocked by origin and
+by port even under a `*` allowlist. Private networks, link-local, ULA and cloud
+metadata stay refused. The reviewer policy is unchanged.
+
+| | tmux mode (`SESSION_ISOLATION` unset) — only with `CARD_BROWSER_WORKER_IN_APP_CONTAINER=on` | jail mode (`SESSION_ISOLATION=docker`) |
+| --- | --- | --- |
+| Chromium | the app image's pinned install | a **separate** jail image, `ok-jail-browser:local`, built from `app/jail/Dockerfile` with `WITH_BROWSER=1` and the same pins. The stock `ok-jail:local` has no Chromium and no libs. |
+| OS sandbox | on (setuid helper, as for reviewers) | on, via Chromium's **user-namespace** sandbox. The jail keeps `--cap-drop ALL` and `no-new-privileges`; it adds only the seccomp profile `app/server/src/lib/jail-browser-seccomp.json` = Docker's default profile **plus clone / unshare / setns, and chroot** (Chromium's zygote chroots inside its own new user namespace; the kernel still refuses chroot to the capless jail outside one) (generated from a pinned moby commit by `scripts/gen-jail-browser-seccomp.mjs`). `mount`, `bpf` etc. stay blocked. |
+| Egress guard | a worker-only guard on `127.0.0.1:3098`, worker policy (loopback refused) | the guard runs **inside the jail** (a verbatim copy of `browser-egress-proxy.ts` + `browser-policy.ts`, started by `tsx` before the session) with the worker policy embedded; loopback, including the jail's `127.0.0.1:3002` API forwarder, is refused |
+| Playwright MCP | the reviewer's config (`--mcp-config`) | the same args, in the jail HOME |
+| Fail closed | flag not set → **no browser**; worker guard not running → **no browser** | profile missing → **no browser** |
+| Secrets | none: the MCP server is started with `env -i` and only `PATH`, `HOME`, `LANG`, `PLAYWRIGHT_BROWSERS_PATH` | same |
+
+Every marked session also gets a launcher, `$CC_BROWSER_LAUNCHER`
+(`cc-browser.mjs`), for scripts and the shell:
+
+```sh
+node "$CC_BROWSER_LAUNCHER" check                      # launches; reports sandbox namespaces + guard
+node "$CC_BROWSER_LAUNCHER" screenshot <url> <out.png> # 1440x900 by default; --full, --width, --height
+# or: const { launch } = await import(process.env.CC_BROWSER_LAUNCHER)
+```
+
+`launch()` fixes the binary, `headless`, `chromiumSandbox` and the proxy, and
+**refuses** `--no-sandbox`, `--disable-setuid-sandbox`, `--no-zygote`, any
+`--proxy-*` switch, and overrides of `executablePath` / `proxy` /
+`chromiumSandbox` / `env`. Chromium gets only a fixed non-secret env
+(`BROWSER_ENV_ALLOWLIST`: `PATH`, `HOME`, `LANG`, `LC_ALL`, `TZ`, `TMPDIR`,
+`XDG_RUNTIME_DIR`, `FONTCONFIG_PATH`), never the session env and its secrets
+(Playwright would otherwise pass `process.env` through). It waits up to 10 s for the guard and then refuses to start
+an unguarded browser. `PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1` keeps a worker from
+quietly installing an unpinned Chromium of its own.
+
+When the server cannot keep the lockdown it gives the card **no** browser and
+sets `CC_CARD_BROWSER_REFUSED=<reason>`; the worker prompt tells the session to
+report that as a blocker instead of working around it.
+
+Enabling the jail half on an install: build the browser image once
+(`docker build -t ok-jail-browser:local --build-arg WITH_BROWSER=1 -f app/jail/Dockerfile app/jail`)
+and pin it by digest with `SESSION_JAIL_BROWSER_IMAGE`. A marked card on an
+install that has not built it fails to start its jail (docker cannot find the
+image) — loud, never a browser-less fallback that pretends.
+
+**Honest limit.** The guard fences the *browser* — what a hostile page can
+reach. It does not fence the worker's own shell, which already has whatever
+network the card was given.
+
+**Proof.** `.github/workflows/jail-browser-proof.yml` builds both jail images
+and runs `scripts/jail-browser-proof.sh`: a stock jail has no Chromium; a
+browser jail started with the production argv launches Chromium with its
+renderers in their own namespaces, is refused a loopback preview by default,
+loads it once its port is in `CARD_BROWSER_WORKER_LOOPBACK_PORTS`, is refused
+`127.0.0.1:3002` even when that port is listed, and is refused `example.com`,
+the metadata endpoint, `--no-sandbox` and a missing guard. Hosts that block unprivileged user namespaces
+(`kernel.apparmor_restrict_unprivileged_userns=1` on Ubuntu 23.10+, or
+`kernel.unprivileged_userns_clone=0`) make `check` fail with "No usable
+sandbox" — fix it on the host; never turn the sandbox off to get past it.
+
 ## What the browser may reach, out of the box
 
 * this install's own site (`DOMAIN` in `client.conf`)
 * anything on `localhost` / `127.0.0.1` / `[::1]` — the preview servers sessions
-  start, which is what preview review depends on
+  start, which is what preview review depends on. **Reviewer and arena browsers
+  only**: a worker card's browser refuses loopback (see "Worker policy" above).
 
 Everything else is refused, including the cloud metadata endpoint and the whole
 private network, and every refusal is logged as
@@ -133,6 +222,12 @@ is testable, not so it is convenient.
 | `CARD_BROWSER_ALLOW_PRIVATE_NETWORK` | `off` | allow RFC1918 / CGNAT / link-local |
 | `CARD_BROWSER_ALLOW_METADATA` | `off` | allow cloud instance metadata |
 | `CARD_BROWSER_PROXY_PORT` | `3099` | loopback port the guard binds |
+| `CARD_BROWSER_WORKER_IN_APP_CONTAINER` | `off` | let a `needs_browser` worker on the tmux path run Chromium in the app container (warned at boot) |
+| `CARD_BROWSER_WORKER_PROXY_PORT` | `3098` | port of the worker-only guard (tmux opt-in) |
+| `CARD_BROWSER_WORKER_LOOPBACK_PORTS` | *(empty)* | loopback preview ports a worker browser may reach; never 3002 or a guard port |
+
+`CARD_BROWSER_ALLOW_LOOPBACK` applies to reviewer and arena browsers only; a
+worker browser ignores it.
 
 ## Proving it
 
@@ -191,8 +286,9 @@ Pinning makes the update an explicit act. When a Chromium advisory lands:
      | jq -r '.browsers[] | select(.name=="chromium") | .revision'
    ```
    If no MCP release matches yet, stay on the previous Playwright pin.
-5. Bump the versions in **both** places — CI fails the PR if you only do one:
+5. Bump the versions in **all three** places — CI fails the PR if you miss one:
    * `app/Dockerfile` → `ARG PLAYWRIGHT_VERSION` / `ARG PLAYWRIGHT_MCP_VERSION`
+   * `app/jail/Dockerfile` → the same two `ARG`s (the browser jail image)
    * `app/server/src/lib/browser-pins.ts` → `PLAYWRIGHT_VERSION`,
      `PLAYWRIGHT_MCP_VERSION`, `CHROMIUM_VERSION`, `CHROMIUM_REVISION`
 6. Ship it, then rebuild and re-verify on the install:
@@ -204,7 +300,8 @@ Pinning makes the update an explicit act. When a Chromium advisory lands:
 
 ## Residual risk (not hidden)
 
-* **Loopback is allowed by default**, because preview review needs it. A
+* **Loopback is allowed by default for reviewer and arena browsers** (not for
+  worker browsers, which refuse it), because preview review needs it. A
   compromised browser can therefore reach the app on `127.0.0.1:3002` — which
   still has to get past the app's own auth, but is a bigger surface than the
   public internet. An install that never previews locally should set
@@ -218,6 +315,11 @@ Pinning makes the update an explicit act. When a Chromium advisory lands:
 * **Non-proxied protocols.** The guard covers http/https, which is what
   Playwright MCP navigates. WebRTC and raw DNS are not proxied by Chromium's
   `--proxy-server`.
-* **Sandboxed (`SESSION_ISOLATION=docker`) sessions have no browser at all** —
-  the MCP overlay is dropped in jail mode. That path is unaffected by everything
-  on this page, and is already secret-free.
+* **Sandboxed (`SESSION_ISOLATION=docker`) sessions have no browser** unless
+  the card set `needs_browser` (see above). A marked jail runs a separate image
+  and a seccomp profile that allows user namespaces; the user-namespace sandbox
+  widens the kernel surface a renderer can touch compared with a jail that has
+  no browser at all. That is the trade the opt-in buys, and why it is per card.
+* **In-jail guard runs as the session's uid.** The session can kill it — the
+  launcher then refuses to start a browser — but it is not protected from the
+  session itself (see "Honest limit" above).

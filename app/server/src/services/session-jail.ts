@@ -277,6 +277,14 @@ export interface CreateJailOpts {
    * {@link buildJailGitMountArgs} for the exact, hardened mount set.
    */
   gitMount?: JailGitMount
+  /**
+   * obj 901029: absolute path (on the CONTROL PLANE — the docker CLI reads it
+   * client-side) of a seccomp profile. Set ONLY for a `needs_browser` card's
+   * jail, to lib/jail-browser-seccomp.json (Docker's default + chroot/clone/unshare/
+   * setns so Chromium's user-namespace sandbox can start). Absent = Docker's
+   * default profile, exactly as before. `unconfined` is refused.
+   */
+  seccompProfile?: string
 }
 
 /**
@@ -399,6 +407,13 @@ function assertAbsolute(label: string, dir: string): void {
   }
 }
 
+/** obj 901029: a seccomp profile must be a real JSON file path — never "unconfined". */
+function assertSeccompProfile(p: string): void {
+  if (!path.isAbsolute(p) || !/\.json$/.test(p) || /unconfined/i.test(p) || /[\s,=]/.test(p)) {
+    throw new Error(`seccompProfile must be an absolute path to a .json profile (never unconfined), got ${JSON.stringify(p)}`)
+  }
+}
+
 export function jailName(id: string | number): string {
   const s = String(id)
   assertJailId(s)
@@ -425,6 +440,7 @@ export function buildJailRunArgv(opts: CreateJailOpts): string[] {
     tmpSize = DEFAULT_JAIL_TMP_SIZE,
     claudeTmpdir,
     gitMount,
+    seccompProfile,
   } = opts
   const name = jailName(objectiveId)
   assertJailId(sessionId)
@@ -464,6 +480,11 @@ export function buildJailRunArgv(opts: CreateJailOpts): string[] {
     argv.push('--mount', `type=bind,source=${toHostPath(seatMount.source, hostPathMap)},target=${seatMount.target},bind-propagation=rprivate`)
   }
   if (gitMount) argv.push(...buildJailGitMountArgs(gitMount, hostPathMap))
+  if (seccompProfile) {
+    assertSeccompProfile(seccompProfile)
+    // Additive to the controls above: cap-drop ALL and no-new-privileges stay.
+    argv.push('--security-opt', `seccomp=${seccompProfile}`)
+  }
   if (network) {
     assertJailNetwork(network)
     argv.push('--network', network)

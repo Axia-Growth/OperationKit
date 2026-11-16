@@ -36,23 +36,52 @@ afterAll(() => {
 
 describe('board owner: installed chat bots outside the registry', () => {
   it('agent_context = the chat bot slug resolves to the bot by its display name', () => {
-    expect(resolveBotOwner({ owner_bot: null, agent_context: 'shipwright' } as never)).toEqual({ id: 'Shipwright Dev', name: 'Shipwright Dev' })
+    expect(resolveBotOwner({ owner_bot: null, agent_context: 'shipwright' } as never)).toEqual({ id: 'Shipwright Dev', name: 'Shipwright Dev', external: false })
   })
 
   it('an owner_bot that names the chat bot by slug or name resolves to the same id', () => {
-    expect(resolveBotOwner({ owner_bot: 'shipwright', agent_context: 'general' } as never)).toEqual({ id: 'Shipwright Dev', name: 'Shipwright Dev' })
-    expect(resolveBotOwner({ owner_bot: 'shipwright dev', agent_context: 'general' } as never)).toEqual({ id: 'Shipwright Dev', name: 'Shipwright Dev' })
+    expect(resolveBotOwner({ owner_bot: 'shipwright', agent_context: 'general' } as never)).toEqual({ id: 'Shipwright Dev', name: 'Shipwright Dev', external: false })
+    expect(resolveBotOwner({ owner_bot: 'shipwright dev', agent_context: 'general' } as never)).toEqual({ id: 'Shipwright Dev', name: 'Shipwright Dev', external: false })
   })
 
   it('a chat bot that IS in the registry resolves to its registry entry, by slug or by its chat display name', () => {
-    expect(resolveBotOwner({ owner_bot: null, agent_context: 'your-org-cto' } as never)).toEqual({ id: 'Grok: CTO', name: 'CTO' })
-    expect(resolveBotOwner({ owner_bot: 'Operation Kit CTO', agent_context: 'general' } as never)).toEqual({ id: 'Grok: CTO', name: 'CTO' })
+    expect(resolveBotOwner({ owner_bot: null, agent_context: 'your-org-cto' } as never)).toEqual({ id: 'Grok: CTO', name: 'CTO', external: false })
+    expect(resolveBotOwner({ owner_bot: 'Operation Kit CTO', agent_context: 'general' } as never)).toEqual({ id: 'Grok: CTO', name: 'CTO', external: false })
   })
 
-  it('the default agent_context and unknown slugs still resolve to no bot; an unknown owner_bot is shown as itself', () => {
+  it('the default agent_context and unknown slugs still resolve to no bot; an unknown owner_bot is shown as itself, and external', () => {
     expect(resolveBotOwner({ owner_bot: null, agent_context: 'general' } as never)).toBeNull()
     expect(resolveBotOwner({ owner_bot: null, agent_context: 'nobody-here' } as never)).toBeNull()
-    expect(resolveBotOwner({ owner_bot: 'Someone Else', agent_context: 'general' } as never)).toEqual({ id: 'Someone Else', name: 'Someone Else' })
+    expect(resolveBotOwner({ owner_bot: 'Someone Else', agent_context: 'general' } as never)).toEqual({ id: 'Someone Else', name: 'Someone Else', external: true })
+  })
+
+  // obj 901030 (operator review of PR #812) — the ORIGINAL version of this test
+  // only went external by first REPLACING settings.bot_registry, which no real
+  // install does. On the DEFAULT built-in registry, "Operation Kit" is
+  // BUILT_IN_BOTS[0] — a registry hit regardless of whether this install ever
+  // configured a matching chat bot — so a registry match alone must NOT decide
+  // `external`. What decides it: no chat agent installed HERE answers to the
+  // name/alias/agent_slug, AND the card arrived through a shared agent API key
+  // (agent_key_label set). Neither signal alone is enough — a registry hit with
+  // no API key (a human typed `owner_bot: 'Operation Kit'`) stays local, and an
+  // API-key card naming a bot this install DOES have a chat agent for
+  // (Shipwright, Operation Kit CTO, …) stays local too.
+  it('a registry hit with no installed chat agent is external only when it arrived via an agent API key (DEFAULT registry)', () => {
+    expect(resolveBotOwner({ owner_bot: 'Operation Kit', agent_context: 'general', agent_key_label: null } as never))
+      .toEqual({ id: 'Operation Kit', name: 'Operation Kit', external: false })
+    expect(resolveBotOwner({ owner_bot: 'Operation Kit', agent_context: 'general', agent_key_label: 'OpKit' } as never))
+      .toEqual({ id: 'Operation Kit', name: 'Operation Kit', external: true })
+  })
+
+  it('a bot with a chat agent installed here stays local even when filed via the same API key', () => {
+    // 'shipwright' is an installed chat agent file (beforeAll above) and is not
+    // in the registry at all — purely a chat-installed bot, filed via API key.
+    expect(resolveBotOwner({ owner_bot: 'shipwright', agent_context: 'general', agent_key_label: 'OpKit' } as never))
+      .toEqual({ id: 'Shipwright Dev', name: 'Shipwright Dev', external: false })
+    // 'your-org-cto' IS in the registry (Grok: CTO) AND has an installed chat
+    // agent ('Operation Kit CTO') — stays local via an API key too.
+    expect(resolveBotOwner({ owner_bot: 'Operation Kit CTO', agent_context: 'general', agent_key_label: 'OpKit' } as never))
+      .toEqual({ id: 'Grok: CTO', name: 'CTO', external: false })
   })
 
   it('the Work tab owner_token names the same bot the board resolves', () => {

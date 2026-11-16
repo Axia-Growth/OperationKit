@@ -2,6 +2,7 @@
  * Bulk POST /objectives — extracted from internal.ts (behavior frozen).
  * Localhost-or-bearer auth and SQL unchanged.
  */
+import { parseNeedsBrowser, applyNeedsBrowser } from '../lib/card-browser.js'
 import { Router } from 'express'
 import { getDb, resolveStrategyId } from '../db/index.js'
 import { broadcast } from '../ws/index.js'
@@ -83,6 +84,8 @@ router.post('/objectives', async (req, res) => {
      *  delegator's `create_pr: true` returned 201 and stored 0 — a silent drop
      *  that strands a finished worker's branch with no PR. */
     create_pr?: boolean
+    /** obj 901029: give the card's worker the locked-down browser. Strict boolean. */
+    needs_browser?: boolean
     /** Board-Project association (obj 708808). When omitted and parent_id is set,
      *  the parent's project_id is inherited. Rejected with 400 on workspace mismatch. */
     project_id?: number | null
@@ -127,7 +130,7 @@ router.post('/objectives', async (req, res) => {
     'title', 'description', 'agent_context', 'workspace', 'project', 'category',
     'parent_id', 'completion_goal', 'workflow_hint', 'effort', 'model', 'type',
     'delegate_mode', 'create_pr', 'acceptance_criteria', 'source_job_id', 'origin',
-    'force',
+    'force', 'needs_browser',
   ])
   // Near-miss hints for the names ad-hoc curl callers actually reach for. The
   // `agent` / `agent_context` confusion is not hypothetical — it is what the
@@ -162,6 +165,10 @@ router.post('/objectives', async (req, res) => {
         // Machine-readable so a caller can react without parsing prose.
         unsupported_fields: unknown,
       })
+      return
+    }
+    if (!parseNeedsBrowser(item.needs_browser).ok) {
+      res.status(400).json({ error: `Item ${i}: needs_browser must be a boolean` })
       return
     }
     // `type` used to fall back to 'task' for any unrecognized value — the same
@@ -583,6 +590,9 @@ router.post('/objectives', async (req, res) => {
         owner.agent_key_id,
         owner.agent_key_label,
       )
+      // obj 901029: separate UPDATE so the shared INSERT keeps its shape.
+      const nb = parseNeedsBrowser(item.needs_browser)
+      applyNeedsBrowser(db, Number(result.lastInsertRowid), nb.ok ? nb.value : undefined)
       created.push({ id: result.lastInsertRowid as number, title: item.title.trim() })
       if (forcedOverId != null) {
         forcedOver.push({ title: item.title.trim(), workspace: itemWorkspace, project: item.project || null, existingId: forcedOverId, newIdx: created.length - 1 })

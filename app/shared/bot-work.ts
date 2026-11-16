@@ -271,12 +271,37 @@ export interface BotDailySummary {
   }
 }
 
+/**
+ * obj 901030: everything the bot did, not only its High Agency wakes — a card
+ * it filed or started from chat, a PR it opened, a card it closed, a review
+ * verdict. Newest first; a wake fire is one `kind: 'wake'` item among the rest
+ * (its `wake_id` opens the same expanded run `entries`/`GET .../activity/:id`
+ * already serve).
+ */
+export type BotActivityItemKind = 'wake' | 'filed' | 'started' | 'review' | 'done' | 'cancelled' | 'pr'
+
+export interface BotActivityItem {
+  /** Stable React key: unique per (kind, card, timestamp). */
+  key: string
+  kind: BotActivityItemKind
+  at: string
+  card: BotActivityCardRef
+  /** Set only for kind = 'wake' — opens its expanded run. */
+  wake_id: number | null
+  /** One line: "Filed", "Started", "Entered review", "PR opened", … (wake rows
+   *  carry their own report line instead, see BotActivityEntry.did). */
+  detail: string
+  pr_url: string | null
+}
+
 export interface BotActivityResponse {
   slug: string
   high_agency: boolean
   workspaces: string[]
   summary: BotDailySummary
   entries: BotActivityEntry[]
+  /** obj 901030: the unified feed — every action, wake rows included. */
+  items: BotActivityItem[]
 }
 
 /** meta.kind of a main-chat message a bot posts when it needs a person. */

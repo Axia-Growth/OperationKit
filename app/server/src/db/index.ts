@@ -294,6 +294,11 @@ export function initDb(): Database.Database {
   if (!colNames.has('test_cred_slug')) {
     db.exec("ALTER TABLE objectives ADD COLUMN test_cred_slug TEXT")
   }
+  // obj 901029: opt-in browser for the card's WORKER session (lib/card-browser.ts).
+  // Default 0 = no browser, which is every existing card.
+  if (!colNames.has('needs_browser')) {
+    db.exec("ALTER TABLE objectives ADD COLUMN needs_browser INTEGER NOT NULL DEFAULT 0")
+  }
   // KL-21 gate-rejection memory (obj-2509) — additive, nullable. `rejected_tree_sha`
   // records the head tree SHA of the objective's branch at the moment it was last
   // rejected (ai_review_verdict='fail'); `not_mergeable` is set when a re-review is

@@ -41,6 +41,42 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # The Claude CLI the session actually runs.
 RUN npm install -g @anthropic-ai/claude-code tsx && npm cache clean --force
 
+# ── Optional card browser (obj 901029) ────────────────────────────────────────
+# OFF by default: the stock `ok-jail:local` image carries no Playwright, no
+# Chromium and none of its shared libraries, so a card that did not ask for a
+# browser cannot launch one even by downloading it (the libs are missing and
+# the jail has no root to install them — exactly what card #901024 hit).
+#
+# A SEPARATE image is built for the cards that opt in (`needs_browser`):
+#   docker build -t ok-jail-browser:local --build-arg WITH_BROWSER=1 \
+#     -f app/jail/Dockerfile app/jail
+# and the control plane selects it per card (SESSION_JAIL_BROWSER_IMAGE).
+#
+# PINNED. These ARGs must equal app/server/src/lib/browser-pins.ts AND the
+# matching ARGs in app/Dockerfile; browser-pins.test.ts fails the gate if any
+# of the three drift. Never `latest`.
+#
+# No setuid chrome_sandbox here, deliberately: the jail runs with
+# `no-new-privileges`, which makes a setuid helper useless. Chromium's OS
+# sandbox inside the jail is the user-namespace sandbox instead, which the
+# control plane enables for browser jails ONLY, with the seccomp profile in
+# app/server/src/lib/jail-browser-seccomp.json (Docker's default profile plus
+# chroot/clone/unshare/setns — nothing else). If that is unavailable Chromium fails to
+# launch; the launcher never falls back to --no-sandbox.
+ARG WITH_BROWSER=0
+ARG PLAYWRIGHT_VERSION=1.65.0
+ARG PLAYWRIGHT_MCP_VERSION=0.0.85
+ENV PLAYWRIGHT_BROWSERS_PATH=/usr/local/share/playwright
+RUN if [ "$WITH_BROWSER" = "1" ]; then \
+      npm install -g "playwright@${PLAYWRIGHT_VERSION}" "@playwright/mcp@${PLAYWRIGHT_MCP_VERSION}" \
+      && npx "playwright@${PLAYWRIGHT_VERSION}" install --with-deps chromium \
+      && chmod -R a+rX /usr/local/share/playwright \
+      && npm cache clean --force \
+      && rm -rf /var/lib/apt/lists/*; \
+    else \
+      echo "ok-jail: built WITHOUT the card browser (WITH_BROWSER=$WITH_BROWSER)"; \
+    fi
+
 # Non-root jail user, UID >= 1000, no sudo, not in any docker group.
 # The node base image already owns uid 1000, so jailuser takes 1001 and the
 # control plane passes --user explicitly (SESSION_JAIL_USER / default 1000:1000

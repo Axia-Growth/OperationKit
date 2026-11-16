@@ -1,4 +1,4 @@
-import { Bot, User as UserIcon } from 'lucide-react'
+import { Bot, Globe, User as UserIcon } from 'lucide-react'
 import { UNASSIGNED_TOKEN, type BotRosterEntry } from '../lib/assigneeFilter'
 import { FilterDropdown, DropdownOption } from './FilterDropdown'
 import { BotAvatarMini } from './BotAvatarMini'
@@ -32,6 +32,10 @@ export function OwnerFilterSelect({
   options, bots = [], selected, everyoneSelected, currentUser, onToggle, onEveryone,
 }: OwnerFilterSelectProps) {
   const botName = new Map(bots.map(b => [b.token, b.name]))
+  // obj 901030: external bots (filed via a shared API key, not installed here)
+  // get their own section so they never blend into either "Bots" or "People".
+  const localBots = bots.filter(b => !b.is_external)
+  const externalBots = bots.filter(b => b.is_external)
   // obj 900947: each bot row carries the bot's avatar, as on its cards.
   const avatars = useBotAvatars()
   const name = (token: string) =>
@@ -83,13 +87,13 @@ export function OwnerFilterSelect({
               {name(token)}
             </DropdownOption>
           ))}
-          {bots.length > 0 && (
+          {localBots.length > 0 && (
             <>
               <div className="my-1 border-t border-line-soft" />
               <div className="px-2 pb-0.5 pt-1 text-xs font-medium uppercase tracking-eyebrow text-fg-3" aria-hidden="true">
                 Bots
               </div>
-              {bots.map(b => (
+              {localBots.map(b => (
                 <DropdownOption
                   key={b.token}
                   multi
@@ -102,6 +106,33 @@ export function OwnerFilterSelect({
                       const info = avatarFor(avatars, { bot_owner: b.id, bot_owner_name: b.name })
                       return info ? <BotAvatarMini info={info} /> : <Bot className="h-3.5 w-3.5 text-fg-3" aria-hidden="true" />
                     })()}
+                    {b.name}
+                  </span>
+                </DropdownOption>
+              ))}
+            </>
+          )}
+          {externalBots.length > 0 && (
+            <>
+              <div className="my-1 border-t border-line-soft" />
+              <div
+                className="px-2 pb-0.5 pt-1 text-xs font-medium uppercase tracking-eyebrow text-fg-3"
+                aria-hidden="true"
+                title="Filed via a shared API key by an assistant not installed on this board"
+              >
+                External
+              </div>
+              {externalBots.map(b => (
+                <DropdownOption
+                  key={b.token}
+                  multi
+                  selected={selected.has(b.token)}
+                  onClick={() => onToggle(b.token)}
+                  data-owner={b.token}
+                  data-external="1"
+                >
+                  <span className="inline-flex items-center gap-1.5" title={b.detail ?? undefined}>
+                    <Globe className="h-3.5 w-3.5 text-fg-3" aria-hidden="true" />
                     {b.name}
                   </span>
                 </DropdownOption>

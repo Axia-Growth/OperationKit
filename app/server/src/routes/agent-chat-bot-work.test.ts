@@ -454,6 +454,7 @@ describe('Activity feed', () => {
     expect((await call(`/agents/cto/activity/${ids.running}`)).status).toBe(404) // not a wake
     expect((await call(`/agents/dev/activity/${ids.wakeDone}`)).status).toBe(404) // not dev's wake
   })
+
 })
 
 describe('chat routing: only the four need-a-person reasons reach the main chat', () => {
@@ -714,5 +715,106 @@ describe('card visibility: a member sees only what the board list shows them', (
     } finally {
       db.prepare("UPDATE agent_chat_high_agency SET run_as_user_id = ? WHERE slug = 'cto'").run(ADMIN)
     }
+  })
+})
+
+// obj 901030 — kept last: these add a new wake + card fixtures of their own,
+// which would otherwise shift the exact entries/counts other describes above
+// assert against.
+describe('Activity: the unified feed and the time-window "picked" fallback', () => {
+  // "No card picked" even though the wake visibly started one — a wake that
+  // started (or closed) an EXISTING queued card has nothing to link via
+  // source_job_id/parent_id, so the card the wake touched is found from its
+  // own status-change timestamp landing inside the wake's time window.
+  it('picks the card a wake started even with no source_job_id/parent_id link (time-window fallback)', async () => {
+    const legacyBacklog = card({ status: 'queue', agent_context: 'cto', title: 'Legacy backlog item' })
+    const wakeNoLink = card({
+      status: 'working',
+      routine_id: routineId,
+      job_review_note: 'Started the legacy backlog item.',
+    })
+    getDb().prepare("UPDATE objectives SET status = 'working' WHERE id = ?").run(legacyBacklog)
+
+    const r = await call('/agents/cto/activity')
+    expect(r.status).toBe(200)
+    expect(r.json.entries[0].wake_id).toBe(wakeNoLink)
+    expect(r.json.entries[0].picked).toMatchObject({ id: legacyBacklog, title: 'Legacy backlog item' })
+
+    const run = await call(`/agents/cto/activity/${wakeNoLink}`)
+    expect(run.json.run.children.map((c: Loose) => c.id)).toEqual([legacyBacklog])
+  })
+
+  it('the unified feed: every action on an owned card, wake rows folded in, newest first', async () => {
+    // objective_prs (not the pr_url column) is what the 'pr' event trigger fires on.
+    getDb()
+      .prepare("INSERT INTO objective_prs (objective_id, pr_number, pr_url, state) VALUES (?, 42, 'https://github.com/acme/repo/pull/42', 'open')")
+      .run(ids.picked)
+
+    const r = await call('/agents/cto/activity')
+    expect(r.status).toBe(200)
+    const items = r.json.items as Loose[]
+    expect(Array.isArray(items)).toBe(true)
+    expect(items.length).toBeGreaterThan(0)
+    // Sorted newest first.
+    const times = items.map((i: Loose) => i.at)
+    expect([...times].sort().reverse()).toEqual(times)
+    // A chat-filed card's own lifecycle shows up even though it was never a wake.
+    expect(items.some((i: Loose) => i.kind === 'filed' && i.card.id === ids.decision)).toBe(true)
+    // ids.picked was explicitly transitioned to done after insert (a real status event).
+    expect(items.some((i: Loose) => i.kind === 'done' && i.card.id === ids.picked)).toBe(true)
+    // PRs the bot opened show up as their own item.
+    expect(items.some((i: Loose) => i.kind === 'pr' && i.card.id === ids.picked && i.pr_url?.includes('/pull/42'))).toBe(true)
+    // Wake rows are folded in as 'wake' items, not dropped.
+    expect(items.some((i: Loose) => i.kind === 'wake' && i.wake_id === ids.wakeDone)).toBe(true)
+    // A card started outside any wake is its own item too (not only the wake's "picked" line).
+    expect(items.some((i: Loose) => i.kind === 'started' && i.card.title === 'Legacy backlog item')).toBe(true)
+  })
+
+  // Operator review of PR #812: the OLD window ran from a wake's created_at to
+  // the NEXT wake's — hours later — so a card started from chat, or by a
+  // person, in that GAP got wrongly credited to a wake that had already
+  // finished. The window must stop when the wake itself reached review/done.
+  it('a card started after a wake already finished (from chat, before the next wake) is NOT that wake credited', async () => {
+    const db = getDb()
+    const longAgo = '2026-01-01 00:00:00'
+    const wakeEndedAt = '2026-01-01 01:00:00'
+    const afterWakeEnded = '2026-01-01 01:30:00'
+
+    const finishedWake = card({ status: 'working', routine_id: routineId, created_at: longAgo, job_review_note: 'Finished its own run.' })
+    // The wake's OWN completion — this is what now bounds its window.
+    db.prepare("UPDATE objectives SET status = 'done', updated_at = ? WHERE id = ?").run(wakeEndedAt, finishedWake)
+    db.prepare("UPDATE objective_events SET created_at = ? WHERE objective_id = ? AND kind = 'status' AND to_value = 'done'").run(wakeEndedAt, finishedWake)
+
+    // A card started from chat AFTER the wake's own run ended, in the gap
+    // before any later wake. Not linked to the wake (no source_job_id/parent_id).
+    const chatStarted = card({ status: 'queue', agent_context: 'cto', title: 'Started later from chat', created_at: wakeEndedAt })
+    db.prepare(
+      `INSERT INTO objective_events (objective_id, kind, to_value, created_at) VALUES (?, 'status', 'working', ?)`,
+    ).run(chatStarted, afterWakeEnded)
+
+    const r = await call('/agents/cto/activity')
+    expect(r.status).toBe(200)
+    const entry = (r.json.entries as Loose[]).find((e: Loose) => e.wake_id === finishedWake)
+    expect(entry).toBeTruthy()
+    expect(entry.picked).toBeNull()
+  })
+
+  // Real provenance (a session_starts row with reason 'agent' — an API-key/bot
+  // spawn) beats the time-window status-event guess, even when the guessed
+  // card's status event happens to land EARLIER in the window.
+  it('prefers a real agent-spawned session start over a status-event guess', async () => {
+    const db = getDb()
+    const wakeOpen = card({ status: 'working', routine_id: routineId, created_at: '2026-03-01 00:00:00', job_review_note: 'Still running.' })
+    const guessedCard = card({ status: 'queue', agent_context: 'cto', title: 'Status guess only' })
+    const spawnedCard = card({ status: 'queue', agent_context: 'cto', title: 'Really started by the bot' })
+    db.prepare(`INSERT INTO objective_events (objective_id, kind, to_value, created_at) VALUES (?, 'status', 'working', ?)`)
+      .run(guessedCard, '2026-03-01 00:10:00')
+    db.prepare(`INSERT INTO session_starts (objective_id, session_id, kind, reason, created_at) VALUES (?, 'sess-x', 'spawn', 'agent', ?)`)
+      .run(spawnedCard, '2026-03-01T00:20:00.000Z')
+
+    const r = await call('/agents/cto/activity')
+    expect(r.status).toBe(200)
+    const entry = (r.json.entries as Loose[]).find((e: Loose) => e.wake_id === wakeOpen)
+    expect(entry.picked?.id).toBe(spawnedCard)
   })
 })

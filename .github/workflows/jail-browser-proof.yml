@@ -1,0 +1,51 @@
+name: Jail Browser Proof
+
+# obj 901029: live proof that a needs_browser card's jail launches the pinned
+# Chromium with the OS sandbox on, behind the egress guard — and that the stock
+# jail has no browser. Builds both jail images, so it only runs when the
+# browser path changes.
+on:
+  pull_request:
+    paths:
+      - app/jail/**
+      - app/server/src/lib/card-browser.ts
+      - app/server/src/lib/browser-pins.ts
+      - app/server/src/lib/browser-policy.ts
+      - app/server/src/lib/jail-browser-seccomp.json
+      - app/server/src/services/card-browser-spawn.ts
+      - app/server/src/services/browser-egress-proxy.ts
+      - app/server/src/services/session-jail.ts
+      - scripts/jail-browser-proof*.{sh,ts}
+      - .github/workflows/jail-browser-proof.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  jail-browser-proof:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      # tsx only (the stager imports server TS with no native deps).
+      - name: Install app deps (no install scripts)
+        working-directory: app
+        run: npm ci --ignore-scripts
+
+      - name: Build the stock jail image
+        run: docker build -t ok-jail:proof -f app/jail/Dockerfile app/jail
+
+      - name: Build the browser jail image (WITH_BROWSER=1)
+        run: docker build -t ok-jail-browser:proof --build-arg WITH_BROWSER=1 -f app/jail/Dockerfile app/jail
+
+      - name: Seccomp profile is current
+        run: node scripts/gen-jail-browser-seccomp.mjs --check
+
+      - name: Run the jail browser proof
+        run: bash scripts/jail-browser-proof.sh ok-jail:proof ok-jail-browser:proof
