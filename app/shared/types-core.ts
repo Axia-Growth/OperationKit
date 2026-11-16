@@ -381,6 +381,11 @@ export interface Objective {
   bot_owner?: string | null
   /** obj 900869: display name of `bot_owner` (registry name). */
   bot_owner_name?: string | null
+  /** obj 901030: true when `bot_owner` names a bot no chat agent on this
+   *  install answers to (filed via a shared API key by an outside assistant). */
+  bot_owner_is_external?: boolean
+  /** obj 901030: tooltip text when `bot_owner_is_external` — who filed it and how. */
+  bot_owner_detail?: string | null
   /** obj 900869: username of `created_by` (the Needs You owner when nobody is assigned). */
   created_by_username?: string | null
   /** obj 900869: who owns the card right now (bot while it works, human in
@@ -475,6 +480,9 @@ export interface Objective {
   /** Pointer into `test_credentials.slug`; null means the reviewer falls
    *  back to a workspace+project lookup at spawn time. */
   test_cred_slug: string | null
+  /** obj 901029: the card's WORKER gets the pinned, sandboxed, egress-guarded
+   *  browser (lib/card-browser.ts). False = no browser, as for every card before. */
+  needs_browser?: boolean
   created_at: string
   updated_at: string
   /** Denormalized last-activity timestamp (obj 700850): the most recent moment the

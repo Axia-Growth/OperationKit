@@ -33,7 +33,7 @@ const LIST_COLUMNS_ARRAY = [
   'tasks_passed', 'create_pr', 'branch_name', 'pr_url', 'pr_number', 'completion_goal',
   'workflow_hint', 'effort', 'created_by', 'type', 'plan_approved_at', 'planning_session_id',
   'ai_review_verdict', 'ai_review_session_id', 'skip_ai_review', 'ai_review_iteration',
-  'test_cred_slug', 'model', 'routine_id', 'delegate_mode', 'job_disposition',
+  'test_cred_slug', 'needs_browser', 'model', 'routine_id', 'delegate_mode', 'job_disposition',
   'job_review_note', 'source_job_id', 'scope_flags', 'reconcile_sig', 'is_strategy',
   'rejected_tree_sha', 'not_mergeable', 'trust_stage', 'origin', 'strategy_id',
   'last_activity_at', 'ran_on_fallback', 'fallback_detected_at', 'ran_model',
@@ -187,10 +187,40 @@ function matchChatBot(raw: string | null | undefined): { slug: string; name: str
   return cachedChatBots().find(c => registryKey(c.slug) === key || registryKey(c.name) === key) ?? null
 }
 
+/**
+ * obj 901030: does ANY chat bot actually installed on THIS board answer to
+ * `b`'s name, alias or agent slug? Registry membership alone (BUILT_IN_BOTS or
+ * settings.bot_registry) is a generic identity shipped with the product — e.g.
+ * "Operation Kit" ships as BUILT_IN_BOTS[0] on every install whether or not that
+ * install has actually configured a chat bot for it. An install that never
+ * loaded a matching agent file has nothing here that can vouch for the name.
+ */
+function hasInstalledChatAgent(b: BotDefinition): boolean {
+  const chats = cachedChatBots()
+  if (chats.length === 0) return false
+  const keys = new Set([registryKey(b.id), registryKey(b.name), ...b.aliases.map(registryKey), ...b.agent_slugs.map(registryKey)])
+  return chats.some(c => keys.has(registryKey(c.slug)) || keys.has(registryKey(c.name)))
+}
+
 /** Test seam: forget the cached registry (a test that edits settings.bot_registry). */
 export function clearBotOwnerCache(): void {
   botCache = null
   chatBotCache = null
+}
+
+export interface ResolvedBotOwner {
+  id: string
+  name: string
+  /** obj 901030: true when the card arrived through a shared agent API key
+   *  (`agent_key_label` is set) AND no chat bot installed on THIS board
+   *  answers to the resolved name/alias/agent_slug (`hasInstalledChatAgent`).
+   *  A registry hit (BUILT_IN_BOTS or settings.bot_registry) is NOT enough on
+   *  its own — the registry is shipped product data, present whether or not an
+   *  install actually configured that bot (e.g. "Operation Kit" is
+   *  BUILT_IN_BOTS[0] everywhere). A bot this board actually has a chat agent
+   *  for is never external, API key or not — that is the normal shape of a
+   *  headless Grok bot (obj 900323) answering through the shared key. */
+  external: boolean
 }
 
 /**
@@ -199,9 +229,13 @@ export function clearBotOwnerCache(): void {
  * with agent_context = the bot's slug). Null when neither names a known bot. An
  * `owner_bot` the registry does not know resolves to an installed chat bot when
  * it names one (obj 900947), else is still shown as itself — it was
- * written by someone, and hiding it would hide who filed the card.
+ * written by someone, and hiding it would hide who filed the card. `external`
+ * (obj 901030) flags the case nothing on this board can actually vouch for:
+ * no installed chat agent answers to the name AND the card arrived via a
+ * shared agent API key, so it is styled as an outside owner rather than
+ * silently passing for one of this install's own bots.
  */
-export function resolveBotOwner(row: Pick<Objective, 'owner_bot' | 'agent_context'>): { id: string; name: string } | null {
+export function resolveBotOwner(row: Pick<Objective, 'owner_bot' | 'agent_context' | 'agent_key_label'>): ResolvedBotOwner | null {
   const bots = cachedBots()
   const match = (raw: string | null | undefined, slugs: boolean): BotDefinition | null => {
     const key = raw ? registryKey(raw) : ''
@@ -213,17 +247,19 @@ export function resolveBotOwner(row: Pick<Objective, 'owner_bot' | 'agent_contex
     }
     return null
   }
+  const arrivedViaApiKey = (row.agent_key_label ?? '').trim().length > 0
+  const externalFor = (b: BotDefinition): boolean => arrivedViaApiKey && !hasInstalledChatAgent(b)
   const explicit = (row.owner_bot ?? '').trim()
   if (explicit) {
     const b = match(explicit, true)
-    if (b) return { id: b.id, name: b.name }
+    if (b) return { id: b.id, name: b.name, external: externalFor(b) }
     // obj 900947: a chat bot's display name → its registry entry (by its slug), else the bot itself.
     const chat = matchChatBot(explicit)
     if (chat) {
       const reg = match(chat.slug, true)
-      return reg ? { id: reg.id, name: reg.name } : { id: chat.name, name: chat.name }
+      return reg ? { id: reg.id, name: reg.name, external: false } : { id: chat.name, name: chat.name, external: false }
     }
-    return { id: explicit, name: explicit }
+    return { id: explicit, name: explicit, external: true }
   }
   // 'general' is the column DEFAULT for agent_context (every card filed without
   // a persona carries it), and the built-in "General" bot also lists it as its
@@ -232,10 +268,10 @@ export function resolveBotOwner(row: Pick<Objective, 'owner_bot' | 'agent_contex
   // must say so through owner_bot (a claim or a bot filer sets it).
   if (registryKey(row.agent_context ?? '') === registryKey(DEFAULT_AGENT_CONTEXT)) return null
   const viaSlug = match(row.agent_context, true)
-  if (viaSlug) return { id: viaSlug.id, name: viaSlug.name }
+  if (viaSlug) return { id: viaSlug.id, name: viaSlug.name, external: externalFor(viaSlug) }
   // obj 900947: an installed chat bot outside the registry still owns its slug's cards.
   const chat = matchChatBot(row.agent_context)
-  return chat ? { id: chat.name, name: chat.name } : null
+  return chat ? { id: chat.name, name: chat.name, external: false } : null
 }
 
 export function mapObjective(row: Objective, userMap?: Map<number, string>): Objective {
@@ -258,11 +294,17 @@ export function mapObjective(row: Objective, userMap?: Map<number, string>): Obj
   const assignedUsernames = resolveUsernames(assignedIds, userMap)
   const createdBy = row.created_by != null ? (resolveUsernames([row.created_by], userMap)[0] ?? null) : null
   const bot = resolveBotOwner(row)
+  const keyLabel = (row.agent_key_label ?? '').trim()
+  const botOwnerDetail = bot?.external
+    ? (keyLabel ? `Filed by an outside assistant via API key ${keyLabel}.` : `Filed by an outside assistant — ${bot.name} is not a bot on this install.`)
+    : null
   const currentOwner = cardOwner({
     status: row.status,
     session_id: row.session_id,
     bot_owner: bot?.id ?? null,
     bot_owner_name: bot?.name ?? null,
+    bot_owner_is_external: bot?.external ?? false,
+    bot_owner_detail: botOwnerDetail,
     assigned_usernames: assignedUsernames,
     created_by_username: createdBy,
   })
@@ -270,6 +312,8 @@ export function mapObjective(row: Objective, userMap?: Map<number, string>): Obj
     ...row,
     bot_owner: bot?.id ?? null,
     bot_owner_name: bot?.name ?? null,
+    bot_owner_is_external: bot?.external ?? false,
+    bot_owner_detail: botOwnerDetail,
     created_by_username: createdBy,
     current_owner: currentOwner,
     needs_secret: parseNeedsSecret(r.needs_secret),
@@ -279,6 +323,7 @@ export function mapObjective(row: Objective, userMap?: Map<number, string>): Obj
     is_strategy: !!r.is_strategy,
     terminal_by_human: !!r.terminal_by_human,
     skip_ai_review: !!r.skip_ai_review,
+    needs_browser: !!r.needs_browser,
     ran_on_fallback: !!r.ran_on_fallback,
     // obj 900372: one-read stall signal for bots. True only while the card is still
     // `working` — a flag left on a card that already moved on is not a stall.

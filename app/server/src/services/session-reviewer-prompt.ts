@@ -12,7 +12,7 @@ import { previewHostFor } from '../lib/preview-health.js'
 import { getEffectiveGateMode, buildVisionRubricBlock, isBackendOnlyChange, type UiGateMode } from './design-context.js'
 import { maskWorkerScratch, buildReviewerArtifactBlock } from './prompt-builder.js'
 import { resolveBrowserPolicy, type BrowserPolicy } from '../lib/browser-policy.js'
-import { PLAYWRIGHT_MCP_VERSION } from '../lib/browser-pins.js'
+import { buildPlaywrightMcpArgs, resolveChromiumBinary, writePlaywrightMcpConfig } from '../lib/card-browser.js'
 import { sharedBrowserEgressProxy } from './browser-egress-proxy.js'
 import { resolveBrandName } from './branding-config.js'
 
@@ -526,56 +526,17 @@ export function isDelegatorWorkerObjective(objective: Objective): boolean {
  *     config that would launch an unrestricted browser — the reviewer loses
  *     browser tools, which is the safe direction to fail.
  */
-export function buildPlaywrightMcpArgs(
-  profileDir: string,
-  chromiumBin: string,
-  policy: BrowserPolicy,
-  proxyPort: number | null,
-): string[] {
-  const args = [
-    '-y', `@playwright/mcp@${PLAYWRIGHT_MCP_VERSION}`,
-    '--user-data-dir', profileDir,
-    '--executable-path', chromiumBin,
-    '--headless',
-    // Service workers survive a navigation and can keep fetching after the
-    // page the agent was looking at is gone. Nothing the card browser does
-    // needs them.
-    '--block-service-workers',
-  ]
-  args.push(policy.sandbox ? '--sandbox' : '--no-sandbox')
-  if (policy.allowedOrigins.length > 0) {
-    args.push('--allowed-origins', policy.allowedOrigins.join(';'))
-  }
-  if (policy.blockedOrigins.length > 0) {
-    args.push('--blocked-origins', policy.blockedOrigins.join(';'))
-  }
-  if (proxyPort) {
-    args.push('--proxy-server', `http://127.0.0.1:${proxyPort}`)
-    // Chromium bypasses the proxy for loopback by default. When the policy
-    // does NOT allow loopback we have to force it back through the guard,
-    // otherwise "no loopback" would be unenforced for exactly the destination
-    // that matters most (this app, on 127.0.0.1:3002).
-    if (!policy.allowLoopback) args.push('--proxy-bypass', '<-loopback>')
-  }
-  return args
-}
+// buildPlaywrightMcpArgs moved to lib/card-browser.ts (obj 901029) so the
+// reviewer, the arena and an opted-in worker share ONE launch contract.
+// Re-exported here so existing importers keep working.
+export { buildPlaywrightMcpArgs }
 
 export function writeReviewerPlaywrightMcpConfig(sessionId: string, homeDir: string): string | null {
   try {
     const profileDir = path.join(homeDir, '.cache', 'playwright-mcp')
-    // Resolve the shared Chromium install (PLAYWRIGHT_BROWSERS_PATH); pick the
-    // newest chromium-* dir rather than hardcoding a version.
-    const browsersRoot = '/usr/local/share/playwright'
-    let chromiumBin = path.join(browsersRoot, 'chromium-1223', 'chrome-linux64', 'chrome')
-    try {
-      const dirs = fs.readdirSync(browsersRoot)
-        .filter((d) => d.startsWith('chromium-'))
-        .sort()
-      for (const d of dirs.reverse()) {
-        const candidate = path.join(browsersRoot, d, 'chrome-linux64', 'chrome')
-        if (fs.existsSync(candidate)) { chromiumBin = candidate; break }
-      }
-    } catch { /* keep default */ }
+    // Resolve the shared Chromium install (PLAYWRIGHT_BROWSERS_PATH); newest
+    // chromium-* dir rather than a hardcoded version (lib/card-browser.ts).
+    const chromiumBin = resolveChromiumBinary()
 
     const policy = resolveBrowserPolicy()
     let proxyPort: number | null = null
@@ -594,19 +555,14 @@ export function writeReviewerPlaywrightMcpConfig(sessionId: string, homeDir: str
       proxyPort = guard.port
     }
 
-    const config = {
-      mcpServers: {
-        playwright: {
-          command: 'npx',
-          args: buildPlaywrightMcpArgs(profileDir, chromiumBin, policy, proxyPort),
-        },
-      },
-    }
-    fs.mkdirSync(TMUX_SCRIPT_DIR, { recursive: true })
-    const cfgPath = path.join(TMUX_SCRIPT_DIR, `${sessionId}.mcp.json`)
-    fs.writeFileSync(cfgPath, JSON.stringify(config, null, 2))
-    fs.chmodSync(cfgPath, 0o666)
-    return cfgPath
+    return writePlaywrightMcpConfig({
+      outPath: path.join(TMUX_SCRIPT_DIR, `${sessionId}.mcp.json`),
+      profileDir,
+      chromiumBin,
+      policy,
+      proxyPort,
+      mode: 0o666,
+    })
   } catch (err) {
     console.warn(`[session-manager] reviewer: failed to write Playwright MCP config for ${sessionId}:`, (err as Error).message)
     return null

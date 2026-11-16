@@ -3,6 +3,7 @@
  * live in prompt-builder-workdir.ts / prompt-builder-history.ts /
  * prompt-builder-blocks.ts. This file is buildPrompt + re-exports.
  */
+import { buildCardBrowserPromptBlock } from '../lib/card-browser.js'
 import { buildOwnerPrecedenceBlock, buildSessionTrustBlock } from './session-trust-prompt.js'
 import { buildAttachedFilesBlock } from './jail-uploads.js'
 import fs from 'fs'
@@ -305,6 +306,8 @@ export function buildPrompt(objective: Objective): string {
   // obj 900408: files attached in the New Card modal were uploaded but never
   // mentioned to the session. Empty (prompt unchanged) when there are none.
   parts.push(...buildAttachedFilesBlock(objective.id))
+  // obj 901029: only a needs_browser card gets this block (empty otherwise).
+  parts.push(...buildCardBrowserPromptBlock(objective))
   // obj 718944 — server-stamped sender rule (verified_sender_stamps, default ON
   // since obj 900452) + secret names. Deliberately AFTER the card description:
   // an agent-written card rule must not override verified-owner approval. The

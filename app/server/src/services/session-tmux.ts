@@ -35,6 +35,7 @@ import { resolveJailGitMount, jailGitSafeDirEnv, ensureJailGitWritable, type Jai
 import { buildWorkdirGuard } from './session-startup-failure.js'
 import { stageUploadsIntoJail, rewriteUploadPaths } from './jail-uploads.js'
 import type { SeatMount } from './seat-credentials.js'
+import { planJailCardBrowser, planTmuxCardBrowser, refusedBrowserEnv, type CardBrowserPlan } from './card-browser-spawn.js'
 
 // ── `~`-home false-negative fix (obj 532 / 553) ──
 // Spawned sessions run as OS user `ccuser` with HOME pointed at a per-account
@@ -344,8 +345,10 @@ export function spawnInTmux(opts: {
   objectiveId?: number | string       // required when SESSION_ISOLATION=docker — names the jail `ok-jail-<id>`
   seatEnv?: Record<string, string>    // seat pool v2: the assigned seat's sign-in env (a pasted token)
   seatMount?: SeatMount | null        // seat pool v2: sandboxed Codex/Grok seat login dir to bind into the jail
+  cardBrowser?: boolean               // obj 901029: the card set needs_browser — give this WORKER the locked-down browser
 }): string {
-  const { sessionId, homeDir, workdir, prompt, jsonlPath, logPath, env, effort, model, resumeSessionId, mcpConfigPath, settingsPath, worktreeRoot, gitCommonDir, objectiveId, seatEnv, seatMount } = opts
+  const { sessionId, homeDir, workdir, prompt, jsonlPath, logPath, env, effort, model, resumeSessionId, settingsPath, worktreeRoot, gitCommonDir, objectiveId, seatEnv, seatMount, cardBrowser } = opts
+  let { mcpConfigPath } = opts
   // SESSION_ISOLATION=docker → sibling-container jail. Unset/`tmux` (Operator's live
   // droplet default) keeps every line below byte-identical to the pre-flag path.
   const useJail = jailEnabled()
@@ -371,6 +374,37 @@ export function spawnInTmux(opts: {
     // the session's --env-file and wrapper script (both plaintext credentials)
     // and sits on the shared host /tmp next to every other session's.
     createJailHome(sessionId, JAIL_HOME_ROOT)
+  }
+
+  // obj 901029: opt-in browser for a card that set needs_browser. Only such a
+  // card reaches this; every other spawn is unchanged. A plan that cannot keep
+  // the lockdown (guard down, profile missing) is a REFUSAL — the session gets
+  // no browser plus CC_CARD_BROWSER_REFUSED=<why>, never a degraded browser.
+  let browserPlan: CardBrowserPlan | null = null
+  let browserEnv: Record<string, string> = {}
+  if (cardBrowser) {
+    const r = useJail
+      ? planJailCardBrowser({
+          sessionId,
+          scriptDirHost,
+          scriptDirGuest,
+          jailHomeGuest: JAIL_HOME_PATH,
+          ops: { ownForJail: (t, k) => { applyJailOwnership(t, k) } },
+        })
+      : planTmuxCardBrowser({ sessionId, homeDir, scriptDir: TMUX_SCRIPT_DIR })
+    if (r.ok) {
+      browserPlan = r.plan
+      browserEnv = r.plan.env
+      // Tmux mode: the locked-down Playwright MCP config, unless the caller passed one.
+      if (!useJail && !mcpConfigPath) mcpConfigPath = r.plan.mcpConfigPath
+      console.log(
+        `[card-browser] session ${sessionId}: browser granted (${useJail ? `jail image ${r.plan.jail!.image}` : 'app container'}, ` +
+        `sandbox ${r.plan.env.CC_BROWSER_SANDBOX === '1' ? 'on' : 'OFF (operator opt-out)'}, guard ${r.plan.env.CC_BROWSER_PROXY ?? 'OFF (operator opt-out)'})`,
+      )
+    } else {
+      browserEnv = refusedBrowserEnv(r.reason)
+      console.error(`[card-browser] session ${sessionId}: card asked for a browser, REFUSED: ${r.reason}`)
+    }
   }
 
   // obj 900038: what actually gets bound at /workspace. A no-project card
@@ -442,8 +476,8 @@ export function spawnInTmux(opts: {
   // back to metered billing.
   const signIn = seatEnv ?? (useJail ? sandboxClaudeAuthEnv() : {})
   const fullEnv: Record<string, string> = useJail
-    ? { ...env, HOME: JAIL_HOME_PATH, CC_WORKTREE_ROOT: JAIL_WORKSPACE_PATH, ...signIn, ...jailGitSafeDirEnv(env, jailGitMount) }
-    : { ...canonicalRootEnv(), ...env, ...(worktreeRoot ? { CC_WORKTREE_ROOT: worktreeRoot } : {}), ...signIn }
+    ? { ...env, ...browserEnv, HOME: JAIL_HOME_PATH, CC_WORKTREE_ROOT: JAIL_WORKSPACE_PATH, ...signIn, ...jailGitSafeDirEnv(env, jailGitMount) }
+    : { ...canonicalRootEnv(), ...env, ...browserEnv, ...(worktreeRoot ? { CC_WORKTREE_ROOT: worktreeRoot } : {}), ...signIn }
   if (seatEnv?.CLAUDE_CODE_OAUTH_TOKEN) {
     delete fullEnv.ANTHROPIC_API_KEY
     delete fullEnv.ANTHROPIC_AUTH_TOKEN
@@ -494,11 +528,12 @@ export function spawnInTmux(opts: {
   // host, so in jail mode it is written into the jail's own HOME bind.
   const workspaceMcp = parseSpawnDescriptor(env)
   let effectiveMcpPath = baseMcpPath
-  let jailMcpGuest: string | undefined
+  // obj 901029: a browser jail's Playwright MCP config already sits in the HOME bind.
+  let jailMcpGuest: string | undefined = useJail ? browserPlan?.jail?.mcpConfigGuestPath : undefined
   if (workspaceMcp.length > 0) {
     if (useJail) {
       const hostPath = path.join(scriptDirHost, `${sessionId}.workspace-mcp.json`)
-      if (writeWorkspaceMcpConfig({ outPath: hostPath, servers: workspaceMcp }) === hostPath) {
+      if (writeWorkspaceMcpConfig({ outPath: hostPath, basePath: browserPlan?.jail?.mcpConfigHostPath, servers: workspaceMcp }) === hostPath) {
         applyJailOwnership(hostPath, 'jail-read')
         jailMcpGuest = `${scriptDirGuest}/${sessionId}.workspace-mcp.json`
       }
@@ -632,7 +667,10 @@ exit $EXIT_CODE
       homePath: jailHomeHost,
       env: fullEnv,
       envFilePath: path.join(scriptDirHost, `${sessionId}.env`),
-      image: jailImage(),
+      // obj 901029: a needs_browser card runs the browser image under the browser
+      // seccomp profile; every other card keeps the stock image (no Chromium).
+      image: browserPlan?.jail?.image ?? jailImage(),
+      seccompProfile: browserPlan?.jail?.seccompProfile,
       seatMount: seatMount || undefined,
       network: jailNetwork || undefined,
       claudeTmpdir: jailClaudeTmpdir || undefined,
@@ -641,6 +679,7 @@ exit $EXIT_CODE
         'bash', '-lc',
         buildJailClaudeTmpdirPrefix(jailClaudeTmpdir) +
         (jailNetwork ? buildJailCcForwarderPrefix(resolveJailCcUpstream()) : '') +
+        (browserPlan?.jail?.guardPrefix ?? '') +
         `tmux new-session -d -s ${JSON.stringify(tmuxName)} ${JSON.stringify(`bash ${scriptFileGuest}`)}; ` +
         `while tmux has-session -t ${JSON.stringify(tmuxName)} 2>/dev/null; do sleep 5; done`,
       ],

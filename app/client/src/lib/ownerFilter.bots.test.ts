@@ -50,9 +50,9 @@ describe('botRoster', () => {
       card({ assigned_usernames: ['operator'] }),
     ])
     expect(roster).toEqual([
-      { token: 'bot:grok', id: 'grok', name: 'grok' },
-      { token: 'bot:operation-kit', id: 'operation-kit', name: 'Operation Kit' },
-      { token: 'bot:zeta', id: 'zeta', name: 'Zeta' },
+      { token: 'bot:grok', id: 'grok', name: 'grok', is_external: false, detail: null },
+      { token: 'bot:operation-kit', id: 'operation-kit', name: 'Operation Kit', is_external: false, detail: null },
+      { token: 'bot:zeta', id: 'zeta', name: 'Zeta', is_external: false, detail: null },
     ])
   })
   it('is empty when no card has a bot', () => {

@@ -68,6 +68,12 @@ export interface BrowserPolicy {
   allowMetadata: boolean
   /** Allow loopback destinations — needed for local preview servers. */
   allowLoopback: boolean
+  /**
+   * When set, loopback is allowed ONLY on these ports — the worker browser's
+   * explicit preview ports (obj 901051). Absent = any allowlisted loopback port,
+   * which is the reviewer policy and is unchanged.
+   */
+  loopbackPorts?: number[]
   /** Human-readable notes about every control this config widened. */
   warnings: string[]
 }
@@ -369,6 +375,9 @@ export function decideEgress(
     if (isLoopbackAddress(ip)) {
       if (!policy.allowLoopback) {
         return { allow: false, reason: `loopback destination ${ip} is blocked (BROWSER_ALLOW_LOOPBACK=off)` }
+      }
+      if (policy.loopbackPorts && !policy.loopbackPorts.includes(target.port)) {
+        return { allow: false, reason: `loopback port ${target.port} is not an allowed preview port (CARD_BROWSER_WORKER_LOOPBACK_PORTS)` }
       }
       // Only a request that ASKED for loopback may reach it. A public name that
       // resolves to 127.0.0.1 is a rebinding attempt, not a preview server.

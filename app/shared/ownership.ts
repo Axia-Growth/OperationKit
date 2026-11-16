@@ -46,7 +46,15 @@ export function botIdFromToken(token: string): string | null {
   return isBotOwnerToken(token) ? token.slice(OWNER_BOT_PREFIX.length) : null
 }
 
-export type CardOwnerKind = 'bot' | 'human' | 'unassigned'
+/**
+ * 'external' (obj 901030): the card's bot is named by `owner_bot` but is NOT a
+ * bot installed on this board (no chat agent here answers to that name/slug) —
+ * e.g. a card filed through a shared API key by an outside assistant that
+ * names itself as a product-level identity this install never configured.
+ * Styled distinctly from 'bot' so it never reads as "this install's Operation
+ * Kit did this" or, worse, as an unowned/mystery card.
+ */
+export type CardOwnerKind = 'bot' | 'human' | 'unassigned' | 'external'
 
 export interface CardOwner {
   kind: CardOwnerKind
@@ -54,7 +62,7 @@ export interface CardOwner {
   label: string
   /** The owner-filter token(s) this owner answers to. */
   tokens: string[]
-  /** Bot id when kind = 'bot'. */
+  /** Bot id when kind = 'bot' or 'external'. */
   bot: string | null
   /** Usernames when kind = 'human' (primary first). */
   humans: string[]
@@ -62,6 +70,9 @@ export interface CardOwner {
   needs_human: boolean
   /** The bot that was working the card before it shifted to the human, if any. */
   handed_off_from_bot: string | null
+  /** kind = 'external' only: the tooltip explaining who filed it, e.g.
+   *  "Filed by an outside assistant via API key OpKit." */
+  external_detail: string | null
 }
 
 /** The fields ownership reads. Every one already exists on an Objective. */
@@ -74,6 +85,14 @@ export interface OwnershipInput {
   bot_owner?: string | null
   /** Display name for the bot (registry `name`); falls back to the id. */
   bot_owner_name?: string | null
+  /** obj 901030: true when `bot_owner` names a bot no chat agent on THIS
+   *  install answers to (a card filed by an outside assistant via a shared
+   *  API key). Server-resolved alongside `bot_owner`. */
+  bot_owner_is_external?: boolean
+  /** obj 901030: tooltip text for an external bot owner, e.g. "Filed by an
+   *  outside assistant via API key OpKit." Only meaningful when
+   *  `bot_owner_is_external` is true. */
+  bot_owner_detail?: string | null
   assigned_usernames?: string[] | null
   created_by_username?: string | null
 }
@@ -109,17 +128,27 @@ export function cardOwner(o: OwnershipInput): CardOwner {
   if (needsHuman) {
     const humans = assigned.length > 0 ? assigned : o.created_by_username ? [o.created_by_username] : []
     if (humans.length > 0) {
-      return { kind: 'human', label: humans.join(', '), tokens: [...humans], bot: null, humans, needs_human: true, handed_off_from_bot: botLabel }
+      return { kind: 'human', label: humans.join(', '), tokens: [...humans], bot: null, humans, needs_human: true, handed_off_from_bot: botLabel, external_detail: null }
     }
-    return { kind: 'unassigned', label: 'Unassigned', tokens: [OWNER_UNASSIGNED_TOKEN], bot: null, humans: [], needs_human: true, handed_off_from_bot: botLabel }
+    return { kind: 'unassigned', label: 'Unassigned', tokens: [OWNER_UNASSIGNED_TOKEN], bot: null, humans: [], needs_human: true, handed_off_from_bot: botLabel, external_detail: null }
   }
   if (bot) {
-    return { kind: 'bot', label: botLabel ?? bot, tokens: [botOwnerToken(bot)], bot, humans: [], needs_human: false, handed_off_from_bot: null }
+    const external = !!o.bot_owner_is_external
+    return {
+      kind: external ? 'external' : 'bot',
+      label: botLabel ?? bot,
+      tokens: [botOwnerToken(bot)],
+      bot,
+      humans: [],
+      needs_human: false,
+      handed_off_from_bot: null,
+      external_detail: external ? (o.bot_owner_detail ?? `Filed by an outside assistant — ${botLabel ?? bot} is not a bot on this install.`) : null,
+    }
   }
   if (assigned.length > 0) {
-    return { kind: 'human', label: assigned.join(', '), tokens: [...assigned], bot: null, humans: assigned, needs_human: false, handed_off_from_bot: null }
+    return { kind: 'human', label: assigned.join(', '), tokens: [...assigned], bot: null, humans: assigned, needs_human: false, handed_off_from_bot: null, external_detail: null }
   }
-  return { kind: 'unassigned', label: 'Unassigned', tokens: [OWNER_UNASSIGNED_TOKEN], bot: null, humans: [], needs_human: false, handed_off_from_bot: null }
+  return { kind: 'unassigned', label: 'Unassigned', tokens: [OWNER_UNASSIGNED_TOKEN], bot: null, humans: [], needs_human: false, handed_off_from_bot: null, external_detail: null }
 }
 
 /**

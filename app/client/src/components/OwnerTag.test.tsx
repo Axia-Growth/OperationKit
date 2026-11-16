@@ -59,12 +59,22 @@ describe('OwnerTag', () => {
 
   it('prefers the server-shipped current_owner when present', () => {
     const tag = render(base({
-      current_owner: { kind: 'bot', label: 'Server Bot', tokens: ['bot:s'], bot: 's', humans: [], needs_human: false, handed_off_from_bot: null },
+      current_owner: { kind: 'bot', label: 'Server Bot', tokens: ['bot:s'], bot: 's', humans: [], needs_human: false, handed_off_from_bot: null, external_detail: null },
     }))
     expect(tag.textContent).toContain('Server Bot')
   })
 
   it('ownerSentence wording', () => {
     expect(ownerSentence(ownerOf(base({})))).toBe('Owner: Operation Kit (bot) — working on it')
+  })
+
+  it('shows an external owner distinctly, with its tooltip (obj 901030)', () => {
+    const tag = render(base({
+      bot_owner_is_external: true,
+      bot_owner_detail: 'Filed by an outside assistant via API key OpKit.',
+    }))
+    expect(tag.dataset.ownerKind).toBe('external')
+    expect(tag.getAttribute('title')).toBe('Filed by an outside assistant via API key OpKit.')
+    expect(tag.textContent).toContain('Operation Kit')
   })
 })
