@@ -49,13 +49,14 @@ const GROUP_LABELS: Record<ToolGroup, string> = {
   web: 'Web',
   knowledge: 'Knowledge',
   board: 'Board',
+  images: 'Images',
   bots: 'Other bots',
   connectors: 'Email & calendar',
   integrations: 'Integrations',
   secrets: 'Secrets',
 }
 
-const GROUP_ORDER: ToolGroup[] = ['web', 'knowledge', 'board', 'bots', 'connectors', 'integrations', 'secrets']
+const GROUP_ORDER: ToolGroup[] = ['web', 'knowledge', 'board', 'images', 'bots', 'connectors', 'integrations', 'secrets']
 
 const PROVIDERS: ProviderId[] = ['claude', 'anthropic', 'openai', 'xai', 'openai-compatible', 'demo']
 

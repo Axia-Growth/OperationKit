@@ -41,7 +41,7 @@ const { withResolvedKnowledgeFolders } = await import('../services/agent-chat/kn
 const { setAssignment } = await import('../services/resource-assignments.js')
 const { buildPrompt, resolveWorkdir } = await import('../services/prompt-builder.js')
 const { resolveCardWorker } = await import('../services/prompt-builder-workdir.js')
-const { resolveAgentWorkdir } = await import('../services/agent-registry.js')
+const { resolveAgentWorkdir, createAgent, agentExists } = await import('../services/agent-registry.js')
 const { botApprovalEligibility } = await import('../services/bot-approval.js')
 const { BOT_REGISTRY_ADDITIONS_SETTING } = await import('../services/bots/bot-registry.js')
 type Agent = import('../services/agent-chat/agent-defs.js').ChatAgent
@@ -278,25 +278,56 @@ describe('3. the project-grain agent restriction applies to a granted bot', () =
 
 // ── 4. name clashes ──────────────────────────────────────────────────────────
 
-describe('4a. a chat bot named like a worker persona gets no pool exception', () => {
-  it("bot `cfo` granted a workspace whose pool leaves the cfo persona out: nobody can assign 'cfo' there", async () => {
-    grantBotWorkspace('cfo', NOCFO, 'admin')
-    expect(checkAgentInWorkspacePool(NOCFO, 'cfo')).toMatch(/not in workspace 'no-cfo-co' pool/)
-    const create = await call('POST', '/api/objectives', { title: 'Persona via bot grant', workspace: NOCFO, agent_context: 'cfo' })
-    expect(create.status).toBe(400)
-    const internal = await call('POST', '/api/internal/objectives', [{ title: 'Persona via bot grant (internal)', workspace: NOCFO, agent_context: 'cfo', type: 'task' }])
-    expect(internal.status).toBe(400)
-    const made = await call('POST', '/api/objectives', { title: 'Card to hand to cfo', workspace: NOCFO })
-    const update = await call('PUT', `/api/objectives/${made.json.id}`, { agent_context: 'cfo' })
-    expect(update.status).toBe(400)
-    // The chat bot's own cards go to the workspace default, unowned — never to the persona.
-    expect(chatCardAgent({ slug: 'cfo' }, NOCFO)).toEqual({ agentContext: 'general', ownedByBot: false })
-    // Where the persona IS in the pool it stays a persona card, not a bot-owned one.
-    grantBotWorkspace('cfo', A, 'admin')
-    expect(chatCardAgent({ slug: 'cfo' }, A).ownedByBot).toBe(false)
-    // A bot with a name of its own is unaffected.
+describe('4a. a bot sharing a worker persona slug (obj 901026 — a bot and an agent are the same thing)', () => {
+  // The reported case itself: an install's chat bot slug (`operation-kit-dev`,
+  // the DEV builtin) ALSO picked up an agents-table row — the actual clash,
+  // not a hypothetical one (an admin working around the old refusal with a
+  // direct agent-create, or a stale migration).
+  beforeAll(() => { createAgent({ slug: DEV, label: 'Operation Kit Dev (accidental persona row)' }) })
+
+  it("an EXPLICIT grant makes the clashing bot own cards under its slug, even where the pool leaves its persona row out", async () => {
+    expect(agentExists(DEV)).toBe(true) // the clash is real for this test, not assumed
     grantBotWorkspace(DEV, NOCFO, 'admin')
     expect(checkAgentInWorkspacePool(NOCFO, DEV)).toBeNull()
+    const create = await call('POST', '/api/objectives', { title: 'Bot via grant', workspace: NOCFO, agent_context: DEV })
+    expect(create.status).toBe(201)
+    const internal = await call('POST', '/api/internal/objectives', [{ title: 'Bot via grant (internal)', workspace: NOCFO, agent_context: DEV, type: 'task' }])
+    expect(internal.status).toBe(201)
+    const made = await call('POST', '/api/objectives', { title: 'Card to hand to the bot', workspace: NOCFO })
+    const update = await call('PUT', `/api/objectives/${made.json.id}`, { agent_context: DEV })
+    expect(update.status).toBe(200)
+    // The chat bot's own cards are now its own — the grant is the decision, the persona clash no longer refuses it.
+    expect(chatCardAgent({ slug: DEV }, NOCFO)).toEqual({ agentContext: DEV, ownedByBot: true })
+    expect(resolveCardWorker({ agent_context: DEV, workspace: NOCFO } as Loose).bot).toEqual({ slug: DEV, name: 'Operation Kit Dev' })
+    // Without a grant for A, the slug still resolves to the persona there (the grant is per-workspace).
+    expect(chatCardAgent({ slug: DEV }, A)).toEqual({ agentContext: 'general', ownedByBot: false })
+  })
+
+  it("a bot without access to a workspace is still refused there, slug clash or not", () => {
+    // DEV has no grant for B at all.
+    expect(checkAgentInWorkspacePool(B, DEV)).toMatch(/not in workspace 'beta-co' pool/)
+    expect(chatCardAgent({ slug: DEV }, B)).toEqual({ agentContext: 'general', ownedByBot: false })
+  })
+})
+
+describe('4a-protected. the five default-roster personas keep the OLD behavior (review fix — obj 901026)', () => {
+  // cto/cmo/coo/cfo/general intentionally share a slug with their namesake bot
+  // on every install (DEFAULT_AGENT_SEED). A grant must never hand their
+  // identity, Full access or working directory to a same-slugged bot — doing
+  // so would silently change behavior for every existing admin-assigned
+  // CTO/CFO/… card, which is what the first cut of obj 901026 got wrong.
+  it("a grant for `cfo` never lets a bot own a card under that slug, even where the pool leaves cfo out", async () => {
+    grantBotWorkspace('cfo', NOCFO, 'admin')
+    // The pool still refuses it: NOCFO's pool is general/cto only, and the
+    // grant does not supersede the persona for a protected slug.
+    expect(checkAgentInWorkspacePool(NOCFO, 'cfo')).toMatch(/not in workspace 'no-cfo-co' pool/)
+    const create = await call('POST', '/api/objectives', { title: 'cfo via grant refused', workspace: NOCFO, agent_context: 'cfo' })
+    expect(create.status).toBe(400)
+    expect(chatCardAgent({ slug: 'cfo' }, NOCFO)).toEqual({ agentContext: 'general', ownedByBot: false })
+    // In A, where cfo IS in the pool (as the persona always was — unaffected by the grant):
+    expect(checkAgentInWorkspacePool(A, 'cfo')).toBeNull()
+    expect(chatCardAgent({ slug: 'cfo' }, A)).toEqual({ agentContext: 'general', ownedByBot: false })
+    expect(resolveCardWorker({ agent_context: 'cfo', workspace: A } as Loose)).toEqual({ persona: 'cfo', workdirPersona: 'cfo', bot: null })
   })
 })
 

@@ -45,6 +45,7 @@
 // without pulling the chat engine in.
 import { getDb } from '../../db/index.js'
 import { agentExists } from '../agent-registry.js'
+import { isDefaultRosterSlug } from '../../db/schema/agents.js'
 
 export const WORKSPACE_SLUG_RE = /^[a-z0-9][a-z0-9_-]{0,63}$/i
 
@@ -168,21 +169,60 @@ export function botGrantedWorkspace(slug: string | null | undefined, workspace: 
 }
 
 /**
+ * True when `slug` names a worker persona whose identity a workspace grant
+ * must NOT be allowed to hand to a same-named bot (obj 901026 review fix).
+ *
+ * Two cases stay refused exactly as they were before 901026:
+ *   - one of the five protected default-roster personas (cto/cmo/coo/cfo/
+ *     general, `isDefaultRosterSlug`) — these are assumed to share a slug with
+ *     their namesake bot BY DESIGN on every install, and a grant must not
+ *     start handing an existing admin-assigned CTO/CFO/… card's ownership,
+ *     Full access or workdir to the bot; doing so would silently change
+ *     behavior for cards that already exist and were never part of this
+ *     identity question.
+ *   - any OTHER agents-table persona, when this bot has no explicit grant for
+ *     `workspace` — a grant is what turns the clash into "they're one
+ *     identity here"; without one, the persona still owns its name.
+ *
+ * A granted non-default persona (a chat bot called `operation-kit-dev` that
+ * also somehow has an `operation-kit-dev` agents row) is NOT blocked: the
+ * grant is the explicit decision that the two are one identity, which is the
+ * whole point of obj 901026.
+ */
+export function personaOwnershipBlocked(slug: string | null | undefined, workspace: string | null | undefined): boolean {
+  if (!slug) return false
+  let persona = false
+  try { persona = agentExists(slug) } catch { persona = true } // fail-safe: unreadable registry counts as persona
+  if (!persona) return false
+  if (isDefaultRosterSlug(slug)) return true
+  return !botGrantedWorkspace(slug, workspace)
+}
+
+/**
  * May a card name this chat bot's slug as its agent in `workspace` although the
- * slug is not in the workspace agent pool (obj 900948)? Yes only when the bot is
- * explicitly granted the workspace AND the slug is not also a WORKER PERSONA in
- * the agent registry. The persona owns a shared name: a chat bot called `cfo`
- * granted a workspace must not let anyone assign the `cfo` worker persona
- * there when the pool leaves it out (review of PR 797). Such a bot gets no pool
- * exception at all; the pool decides, exactly as for the persona.
+ * slug is not in the workspace agent pool (obj 900948)? Yes whenever the bot is
+ * explicitly granted the workspace — the admin's grant IS the decision, full
+ * stop.
+ *
+ * obj 901026 ("a bot and an agent are the same thing") drops the earlier
+ * blanket exception for a slug that also names a WORKER PERSONA (review of PR
+ * 797): that review worried a chat bot called `cfo` granted a workspace would
+ * let anyone assign the `cfo` worker persona there when the pool leaves it
+ * out. The owner's call is that the two are ONE identity — but ONLY for a
+ * persona slug OUTSIDE the protected default roster (`personaOwnershipBlocked`
+ * carves the roster back out after a review found the first cut silently
+ * changed behavior for every install's built-in CTO/CFO/… cards). A grant for
+ * `cfo` still means the `cfo` WORKER PERSONA, never the bot, in every
+ * workspace: the default roster's slug/persona pairing stays fixed.
+ * `resolveCardWorker` (prompt-builder-workdir.ts) resolves a genuinely
+ * bot-owned card to the BOT (its own instructions file when it has one, else
+ * the workspace default persona for working directory) rather than the
+ * literal persona, so the persona never silently runs under a grant meant for
+ * the bot.
  */
 export function botSlugPassesAgentPool(slug: string | null | undefined, workspace: string | null | undefined): boolean {
-  if (!slug || !botGrantedWorkspace(slug, workspace)) return false
-  try {
-    return !agentExists(slug)
-  } catch {
-    return false
-  }
+  if (personaOwnershipBlocked(slug, workspace)) return false
+  return botGrantedWorkspace(slug, workspace)
 }
 
 /** Narrow a list of workspaces the person can reach to the ones this bot may use, keeping order. */

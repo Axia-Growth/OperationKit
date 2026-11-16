@@ -185,20 +185,26 @@ export interface BotStatusResponse {
   needs_you_total: number
 }
 
-/** Running beats idle; anything needing a person beats both. */
-export function botLiveState(counts: Pick<BotWorkCounts, 'running' | 'needs_you'>): BotLiveState {
+/**
+ * Running beats idle; anything needing a person beats both. `chatActive` is a
+ * turn streaming or running tools in the bot's chat right now (obj 901025) —
+ * it counts the same as a running card even when no card session is open, so
+ * the sidebar/header never read Idle while the bot is mid-reply.
+ */
+export function botLiveState(counts: Pick<BotWorkCounts, 'running' | 'needs_you'>, chatActive = false): BotLiveState {
   if (counts.needs_you > 0) return 'waiting'
-  if (counts.running > 0) return 'running'
+  if (counts.running > 0 || chatActive) return 'running'
   return 'idle'
 }
 
 /**
  * The sidebar line under a bot's name, e.g. "Working on #900936 · 2 in review".
- * `focus` is the newest running card (or the card waiting on you).
+ * `focus` is the newest running card (or the card waiting on you). `chatActive`
+ * — see {@link botLiveState}.
  */
-export function botLiveLine(counts: BotWorkCounts, focus: { id: number } | null): string {
+export function botLiveLine(counts: BotWorkCounts, focus: { id: number } | null, chatActive = false): string {
   const parts: string[] = []
-  const state = botLiveState(counts)
+  const state = botLiveState(counts, chatActive)
   if (state === 'waiting') {
     parts.push(counts.needs_you === 1 ? (focus ? `Needs you on #${focus.id}` : 'Needs you') : `${counts.needs_you} need you`)
     if (counts.running > 0) parts.push(`${counts.running} running`)
@@ -209,7 +215,9 @@ export function botLiveLine(counts: BotWorkCounts, focus: { id: number } | null)
     parts.push('Idle')
   }
   if (counts.review > 0) parts.push(`${counts.review} in review`)
-  if (state === 'idle' && counts.queued > 0) parts.push(`${counts.queued} queued`)
+  // The queued count stays visible whether the bot reads Idle or Working — a
+  // chat turn running (chatActive) must not hide how many cards are waiting.
+  if (state !== 'waiting' && counts.queued > 0) parts.push(`${counts.queued} queued`)
   return parts.join(' · ')
 }
 

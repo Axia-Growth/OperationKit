@@ -494,6 +494,7 @@ export const AGENT_OPENAPI = {
         properties: {
           status: { $ref: '#/components/schemas/ObjectiveStatus' },
           force: { type: 'boolean', description: 'Start even while a same-title twin (created in the last 24h) is already working/ai_review' },
+          override_reason: { type: 'string', description: 'Agent keys only: why a card that has a pull request and no passing AI review is being closed (status done) anyway. Non-empty text, kept on the card audit trail with the key label. Without it that close is a 409 (code no_passing_review).' },
         },
       },
       MessageRequest: {
@@ -748,7 +749,7 @@ export const AGENT_OPENAPI = {
         responses: {
           '200': { description: 'New state' },
           '400': { description: 'Illegal transition' },
-          '409': { description: 'Cap, lease, completion gate, or duplicate (queue → working while a same-title twin created in the last 24h is already working/ai_review; body reason "duplicate_24h", existing_id — pass force:true to start anyway)' },
+          '409': { description: 'Cap, lease, completion gate, or duplicate (queue → working while a same-title twin created in the last 24h is already working/ai_review; body reason "duplicate_24h", existing_id — pass force:true to start anyway). Also an agent key closing (done) a card that has a pull request and no passing AI review without override_reason (code "no_passing_review")' },
         },
       },
     },

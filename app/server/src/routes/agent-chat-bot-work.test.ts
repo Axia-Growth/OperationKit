@@ -42,6 +42,7 @@ const { setBotWorkspaces } = await import('../services/agent-chat/bot-workspaces
 const { setObjectiveCeiling } = await import('../services/job-accounting.js')
 const { runBotAttentionTick, markFeedMessage, attentionText } = await import('../services/agent-chat/bot-attention.js')
 const { enqueueBotThreadDeliveries } = await import('../services/bots/bot-thread-delivery.js')
+const { findAgent, runTurn, stopTurn, whenLaneIdle } = await import('../services/agent-chat/engine.js')
 const shared = await import('@operationkit/shared')
 
 const ADMIN = 1
@@ -288,6 +289,86 @@ describe('"Needs you": the four reasons, counted once', () => {
   it('a bot with nothing open reads Idle', () => {
     expect(shared.botLiveLine({ running: 0, review: 0, queued: 0, done: 3, needs_you: 0 }, null)).toBe('Idle')
     expect(shared.botLiveLine({ running: 1, review: 2, queued: 0, done: 0, needs_you: 0 }, { id: 900936 })).toBe('Working on #900936 · 2 in review')
+  })
+})
+
+/*
+ * obj 901025: "Working" must track a chat turn, not only a card session. This
+ * bot ('quiet') carries NO card anywhere in the fixture set, so if the
+ * sidebar/header still read Working/Idle correctly for it mid-turn and
+ * after, the signal can only be the chat turn itself.
+ */
+describe('a chat turn counts as "Working", not just a running card (obj 901025)', () => {
+  beforeAll(() => {
+    writeBot('quiet', 'name: Quiet\nsystem_prompt: You say nothing unless asked.\n')
+  })
+
+  /**
+   * A provider that holds a request open until released (or the turn's abort
+   * signal fires, exactly like Stop reaches a real provider mid-request).
+   */
+  function gatedProvider() {
+    const bodies: unknown[] = []
+    let openResolve: (() => void) | null = null
+    const f = (async (_url: string, init: RequestInit) => {
+      bodies.push(JSON.parse(String(init.body)))
+      await new Promise<void>((resolve, reject) => {
+        openResolve = resolve
+        init.signal?.addEventListener('abort', () => reject(Object.assign(new Error('aborted'), { name: 'AbortError' })), { once: true })
+      })
+      return new Response(JSON.stringify({ content: [{ type: 'text', text: 'ok' }] }), { status: 200, headers: { 'Content-Type': 'application/json' } })
+    }) as unknown as typeof fetch
+    return { fetch: f, bodies, release: () => openResolve?.() }
+  }
+  const ENV = { ANTHROPIC_API_KEY: 'k', AGENT_CHAT_PROVIDER: 'anthropic' } as NodeJS.ProcessEnv
+  const quietAgent = () => ({ ...findAgent('quiet')!, provider: 'anthropic' as const })
+
+  it('reads Idle before the turn, Working while it streams, and Idle again once it delivers', async () => {
+    expect((await call('/bot-status')).json.bots.quiet.state).toBe('idle')
+
+    const p = gatedProvider()
+    const turn = runTurn({ userId: ADMIN, username: 'user1', agent: quietAgent(), text: 'status check', env: ENV, deps: { fetch: p.fetch } })
+    // Give the fetch stub a tick to record the request before asserting.
+    await new Promise(r => setTimeout(r, 10))
+
+    const mid = await call('/bot-status')
+    expect(mid.json.bots.quiet.state).toBe('running')
+    expect(mid.json.bots.quiet.line).toBe('Working')
+    // Counts are still card-only: no card went running just because the chat did.
+    expect(mid.json.bots.quiet.counts.running).toBe(0)
+
+    const work = await call('/agents/quiet/work')
+    expect(work.json.state).toBe('running')
+    expect(work.json.line).toBe('Working')
+
+    p.release()
+    await turn
+    await whenLaneIdle(ADMIN, 'quiet')
+
+    const after = await call('/bot-status')
+    expect(after.json.bots.quiet.state).toBe('idle')
+    expect(after.json.bots.quiet.line).toBe('Idle')
+  })
+
+  it('goes back to Idle right away after Stop, even though the turn technically kept running until the abort landed', async () => {
+    const p = gatedProvider()
+    const turn = runTurn({ userId: ADMIN, username: 'user1', agent: quietAgent(), text: 'stop me', env: ENV, deps: { fetch: p.fetch } })
+    await new Promise(r => setTimeout(r, 10))
+    expect((await call('/bot-status')).json.bots.quiet.state).toBe('running')
+
+    stopTurn(ADMIN, 'quiet')
+    await turn
+    await whenLaneIdle(ADMIN, 'quiet')
+
+    expect((await call('/bot-status')).json.bots.quiet.state).toBe('idle')
+  })
+
+  it('goes back to Idle after the turn errors out — never sticks on "running"', async () => {
+    const failing = (async () => { throw new Error('boom') }) as unknown as typeof fetch
+    await runTurn({ userId: ADMIN, username: 'user1', agent: quietAgent(), text: 'will fail', env: ENV, deps: { fetch: failing } })
+    await whenLaneIdle(ADMIN, 'quiet')
+
+    expect((await call('/bot-status')).json.bots.quiet.state).toBe('idle')
   })
 })
 

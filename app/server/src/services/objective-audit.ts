@@ -40,6 +40,8 @@ export interface AuditEntry {
   sessionId?: string | null
   titleSnapshot?: string | null
   workspace?: string | null
+  /** Stated reason for a move that needed one (obj 900952, `override_reason`). */
+  reason?: string | null
 }
 
 /**
@@ -49,11 +51,7 @@ export interface AuditEntry {
  */
 export function logObjectiveAudit(db: Database, entry: AuditEntry): void {
   try {
-    db.prepare(
-      `INSERT INTO objective_audit
-         (objective_id, event_type, from_status, to_status, actor, pathway, session_id, title_snapshot, workspace)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    ).run(
+    const values: unknown[] = [
       entry.objectiveId,
       entry.eventType,
       entry.fromStatus ?? null,
@@ -63,7 +61,16 @@ export function logObjectiveAudit(db: Database, entry: AuditEntry): void {
       entry.sessionId ?? null,
       entry.titleSnapshot ?? null,
       entry.workspace ?? null,
-    )
+    ]
+    // `reason` (obj 900952) is named only when there is one, so a row without a
+    // reason is written exactly as before the column existed.
+    const withReason = entry.reason != null
+    if (withReason) values.push(entry.reason)
+    db.prepare(
+      `INSERT INTO objective_audit
+         (objective_id, event_type, from_status, to_status, actor, pathway, session_id, title_snapshot, workspace${withReason ? ', reason' : ''})
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?${withReason ? ', ?' : ''})`,
+    ).run(...values)
   } catch (err) {
     console.error('[objective-audit] failed to append audit row:', err)
   }

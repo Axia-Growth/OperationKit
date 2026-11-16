@@ -1,6 +1,6 @@
 import { useState } from 'react'
-import { ArrowRight, BookOpen, CalendarDays, Clock, LayoutGrid, Mail, type LucideIcon } from 'lucide-react'
-import { Badge, Button, cn } from '../ui'
+import { ArrowRight, BookOpen, CalendarDays, Clock, Download, LayoutGrid, Mail, X, type LucideIcon } from 'lucide-react'
+import { Badge, Button, Modal, cn } from '../ui'
 import { StatusDot } from '../design/primitives'
 import { renderMarkdown } from '../../lib/markdown'
 import {
@@ -8,6 +8,7 @@ import {
   type ChatAgentInfo,
   type ChatCard,
   type ChatDraft,
+  type ChatImage,
   type ChatMessage,
   type EmailDraftPayload,
   type EventDraftPayload,
@@ -55,6 +56,68 @@ function time(iso: string): string {
 }
 
 /**
+ * Thumbnails for a message's attached images (obj 901028), shared by both the
+ * person's and the bot's bubbles. Click a thumbnail to open it full size in a
+ * lightbox with a download link and its alt text as a caption.
+ */
+export function ChatImageGallery({ images, className }: { images: ChatImage[]; className?: string }) {
+  const [openId, setOpenId] = useState<number | null>(null)
+  if (images.length === 0) return null
+  const open = images.find(img => img.id === openId) ?? null
+  return (
+    <>
+      <div className={cn('flex flex-wrap gap-1.5', className)}>
+        {images.map(img => (
+          <button
+            key={img.id}
+            type="button"
+            onClick={() => setOpenId(img.id)}
+            className="block overflow-hidden rounded-md border border-line-soft focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/50"
+          >
+            <img src={img.url} alt={img.alt_text || img.name} className="max-h-48 object-contain" />
+          </button>
+        ))}
+      </div>
+      <Modal open={open !== null} onClose={() => setOpenId(null)} size="lg" labelledBy="chat-image-lightbox-title">
+        {open && (
+          <div className="flex flex-col">
+            <div className="flex items-center justify-between gap-2 border-b border-line-soft px-4 py-3">
+              <span id="chat-image-lightbox-title" className="truncate text-sm font-medium text-fg-1">
+                {open.alt_text || open.name}
+              </span>
+              <div className="flex shrink-0 items-center gap-1">
+                <a
+                  href={open.url}
+                  download={open.name}
+                  className="inline-flex items-center gap-1.5 rounded-md border border-line px-2.5 py-1.5 text-xs font-medium text-fg-1 hover:bg-surface-2"
+                >
+                  <Download aria-hidden="true" className="h-3.5 w-3.5" />
+                  Download
+                </a>
+                <button
+                  type="button"
+                  aria-label="Close"
+                  onClick={() => setOpenId(null)}
+                  className="grid h-8 w-8 place-items-center rounded-md text-fg-2 hover:bg-surface-2 hover:text-fg-1"
+                >
+                  <X aria-hidden="true" className="h-4 w-4" />
+                </button>
+              </div>
+            </div>
+            <div className="flex max-h-[75vh] items-center justify-center overflow-auto bg-surface-2 p-3">
+              <img src={open.url} alt={open.alt_text || open.name} className="max-h-full max-w-full rounded" />
+            </div>
+            {open.alt_text && (
+              <p className="border-t border-line-soft px-4 py-2 text-xs text-fg-2">{open.alt_text}</p>
+            )}
+          </div>
+        )}
+      </Modal>
+    </>
+  )
+}
+
+/**
  * One of the person's messages. `queued` (obj 900949): sent while the bot was
  * working and not delivered to it yet — the bubble is quieter and carries a
  * small "Queued" chip until the bot picks it up. `sending` = not yet stored.
@@ -70,15 +133,7 @@ export function UserBubble({ m, queued, sending }: { m: Pick<ChatMessage, 'conte
           waiting ? 'border-dashed border-line-strong bg-surface-2 text-fg-1' : 'border-line bg-surface-3 text-fg-0',
         )}
       >
-        {images.length > 0 && (
-          <div className="mb-2 flex flex-wrap gap-1.5">
-            {images.map(img => (
-              <a key={img.id} href={img.url} target="_blank" rel="noreferrer" className="block">
-                <img src={img.url} alt={img.name} className="max-h-48 rounded-md border border-line-soft" />
-              </a>
-            ))}
-          </div>
-        )}
+        {images.length > 0 && <ChatImageGallery images={images} className="mb-2" />}
         {m.content && <p className="whitespace-pre-wrap break-words">{m.content}</p>}
         {waiting ? (
           <p className="mt-1 flex justify-end">
@@ -114,12 +169,14 @@ export function AssistantBubble({ m, agent, onOpenBotThread }: { m: ChatMessage;
   // answered it in THIS chat, so say where it came from instead of "Answered by".
   const relayed = m.meta?.kind === 'bot_reply' || m.meta?.kind === 'bot_message_failed'
   const threadId = m.meta?.bot_conversation_id
+  const images = m.images ?? []
   return (
     <div className="flex items-start gap-2.5">
       <AgentAvatar agent={agent} size="sm" />
       <div className="min-w-0 max-w-[90%] sm:max-w-[75%]">
         <div className="rounded-lg rounded-tl-sm border border-line-soft bg-surface-1 px-3.5 py-2.5">
-          <div className="cc-prose break-words text-base" dangerouslySetInnerHTML={{ __html: renderMarkdown(m.content) }} />
+          {images.length > 0 && <ChatImageGallery images={images} className="mb-2" />}
+          {m.content && <div className="cc-prose break-words text-base" dangerouslySetInnerHTML={{ __html: renderMarkdown(m.content) }} />}
         </div>
         <p className="mt-1 flex flex-wrap items-center gap-x-1.5 px-1 text-xs text-fg-2" data-testid="answered-by">
           {relayed ? (
@@ -179,10 +236,16 @@ function toolFamily(name: string | null): keyof typeof TOOL_ICON {
 export function ToolLine({ m }: { m: ChatMessage }) {
   const failed = m.meta?.ok === false
   const Icon = TOOL_ICON[toolFamily(m.tool_name)]
+  // obj 901028: attach_image's image lands on this TOOL row (not the final
+  // assistant text), so this is where it has to render.
+  const images = m.images ?? []
   return (
-    <div className={cn('ml-9 flex items-center gap-2 text-xs', failed ? 'text-warning' : 'text-fg-2')}>
-      <Icon aria-hidden="true" className="h-3.5 w-3.5 shrink-0" />
-      <span className="min-w-0 break-words">{m.content}</span>
+    <div className="ml-9 flex flex-col gap-1.5">
+      <div className={cn('flex items-center gap-2 text-xs', failed ? 'text-warning' : 'text-fg-2')}>
+        <Icon aria-hidden="true" className="h-3.5 w-3.5 shrink-0" />
+        <span className="min-w-0 break-words">{m.content}</span>
+      </div>
+      {images.length > 0 && <ChatImageGallery images={images} />}
     </div>
   )
 }

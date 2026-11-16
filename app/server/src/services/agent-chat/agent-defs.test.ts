@@ -169,4 +169,76 @@ describe('agent files', () => {
       fs.rmSync(dir, { recursive: true, force: true })
     }
   })
+
+  describe('a broken install file never falls back to the shipped bot (obj 900954)', () => {
+    const withDir = (fn: (dir: string, env: { AGENT_FILES_DIR: string }) => void) => {
+      const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'agent-defs-broken-'))
+      try { fn(dir, { AGENT_FILES_DIR: dir }) } finally { fs.rmSync(dir, { recursive: true, force: true }) }
+    }
+
+    it('invalid front matter + a built-in of the same slug: the built-in is not loaded and the slug is in problems', () => {
+      withDir((dir, env) => {
+        fs.mkdirSync(path.join(dir, 'kb-setup'))
+        // No closing --- : the front matter block is not valid.
+        fs.writeFileSync(path.join(dir, 'kb-setup', 'agent.md'), '---\nname: Our KB setup\nknowledge_folders: [workspaces/acme]\nCustom instructions.\n')
+        const r = loadChatAgents({ env, includeBuiltins: true })
+        expect(r.agents.some(a => a.slug === 'kb-setup')).toBe(false)
+        const mine = r.problems.filter(p => p.slug === 'kb-setup')
+        expect(mine).toHaveLength(1)
+        expect(mine[0]).toMatchObject({ file: path.join(dir, 'kb-setup'), withheld: 'builtin' })
+        expect(mine[0].errors.length).toBeGreaterThan(0)
+        // Every other built-in still loads.
+        expect(r.agents.some(a => a.slug === 'operation-kit-dev' && a.source === 'builtin')).toBe(true)
+      })
+    })
+
+    it('a file that parses but fails validation also holds the built-in back', () => {
+      withDir((dir, env) => {
+        fs.mkdirSync(path.join(dir, 'kb-setup'))
+        fs.writeFileSync(path.join(dir, 'kb-setup', 'agent.yaml'), 'name: Our KB setup\ntools: [search]\n') // no system_prompt
+        const r = loadChatAgents({ env, includeBuiltins: true })
+        expect(r.agents.some(a => a.slug === 'kb-setup')).toBe(false)
+        expect(r.problems.find(p => p.slug === 'kb-setup')).toMatchObject({ withheld: 'builtin' })
+      })
+    })
+
+    it('a valid install file still wins, with no problem reported', () => {
+      withDir((dir, env) => {
+        fs.mkdirSync(path.join(dir, 'kb-setup'))
+        fs.writeFileSync(path.join(dir, 'kb-setup', 'agent.yaml'), 'name: Our KB setup\nsystem_prompt: Custom.\ntools: [search]\n')
+        const r = loadChatAgents({ env, includeBuiltins: true })
+        const mine = r.agents.filter(a => a.slug === 'kb-setup')
+        expect(mine).toHaveLength(1)
+        expect(mine[0]).toMatchObject({ name: 'Our KB setup', source: 'file', tools: ['search'] })
+        expect(r.problems).toEqual([])
+      })
+    })
+
+    it('no install file (or an install folder with no agent file in it): the built-in loads as before', () => {
+      withDir((dir, env) => {
+        const none = loadChatAgents({ env, includeBuiltins: true })
+        expect(none.agents.find(a => a.slug === 'kb-setup')).toMatchObject({ source: 'builtin' })
+        expect(none.problems).toEqual([])
+        fs.mkdirSync(path.join(dir, 'kb-setup'))
+        const empty = loadChatAgents({ env, includeBuiltins: true })
+        expect(empty.agents.find(a => a.slug === 'kb-setup')).toMatchObject({ source: 'builtin' })
+        expect(empty.problems).toEqual([])
+      })
+    })
+
+    it('a broken install file is a plain problem when no shipped bot shares its slug, and holds the demo bot back when one does', () => {
+      withDir((dir, env) => {
+        for (const slug of ['my-bot', DEMO_AGENT_SLUG]) {
+          fs.mkdirSync(path.join(dir, slug))
+          fs.writeFileSync(path.join(dir, slug, 'agent.md'), 'no front matter here\n')
+        }
+        const r = loadChatAgents({ env, includeBuiltins: true, includeDemo: true })
+        expect(r.agents.some(a => a.slug === DEMO_AGENT_SLUG)).toBe(false)
+        expect(r.problems.find(p => p.slug === DEMO_AGENT_SLUG)).toMatchObject({ withheld: 'demo' })
+        const plain = r.problems.find(p => p.slug === 'my-bot')!
+        expect(plain.errors.length).toBeGreaterThan(0)
+        expect(plain.withheld).toBeUndefined()
+      })
+    })
+  })
 })

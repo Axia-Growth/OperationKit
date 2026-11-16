@@ -51,8 +51,7 @@ import {
   type FullAccessSwitch,
 } from '@operationkit/shared'
 import { getDb } from '../../db/index.js'
-import { botGrantedWorkspace, getBotWorkspaceAccess, WORKSPACE_SLUG_RE } from './bot-workspaces.js'
-import { agentExists } from '../agent-registry.js'
+import { botGrantedWorkspace, getBotWorkspaceAccess, personaOwnershipBlocked, WORKSPACE_SLUG_RE } from './bot-workspaces.js'
 
 export class FullAccessError extends Error {
   constructor(public status: number, public code: string, message: string) {
@@ -537,9 +536,14 @@ export function cardSessionFullAccess(cardId: number, targetWorkspace: string | 
       | { agent_context: string | null; workspace: string; assigned_user_id: number | null; created_by: number | null; parent_id: number | null; routine_id: number | null }
       | undefined
     if (!card || !card.agent_context || card.workspace !== targetWorkspace) return null
-    // agent_context names a WORKER AGENT when the slug is one (review of PR 797):
-    // a persona's card never carries the Full access of a bot that shares its name.
-    if (agentExists(card.agent_context)) return null
+    // agent_context names a WORKER AGENT when the slug is one (review of PR 797) —
+    // UNLESS (obj 901026) the bot is explicitly granted this workspace, which now
+    // supersedes a persona sharing its name: the grant is the decision that the
+    // two are one identity here. EXCEPT (review fix) the five protected
+    // default-roster personas (cto/cmo/coo/cfo/general): an existing
+    // admin-assigned CTO/CFO/… card never inherits a same-slugged bot's Full
+    // access, grant or not (`personaOwnershipBlocked`).
+    if (personaOwnershipBlocked(card.agent_context, card.workspace)) return null
     if (!fullAccessActive(card.agent_context, card.workspace, now)) return null
     const isAdmin = (id: number | null): boolean =>
       id != null && (db.prepare('SELECT role FROM users WHERE id = ?').get(id) as { role?: string } | undefined)?.role === 'admin'

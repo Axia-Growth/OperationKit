@@ -42,6 +42,7 @@ const bot = (p: Partial<Bot> = {}): Bot => ({
 
 let agents: ReturnType<typeof agent>[] = []
 let sb: { sections: { id: number; name: string; position: number; collapsed: boolean }[]; bots: Record<string, Bot>; max_pins: number; max_sections: number }
+let problems: { slug: string; file: string; errors: string[]; status?: 'needs_fixing'; withheld?: 'builtin' | 'demo' }[] | undefined
 let calls: { url: string; method: string; body: unknown }[] = []
 let nextSection = 10
 let root: Root
@@ -83,6 +84,7 @@ async function openMenu(slug: string) {
 
 beforeEach(() => {
   role = 'member'
+  problems = undefined
   calls = []
   nextSection = 10
   agents = [agent('dev-bot', 'Dev Bot'), agent('marketing-bot', 'Marketing Bot'), agent('ops-bot', 'Ops Bot'), agent('helper', 'Helper', 'builtin')]
@@ -111,7 +113,7 @@ beforeEach(() => {
     const body = typeof init?.body === 'string' ? JSON.parse(init.body) : null
     calls.push({ url, method, body })
     const json = (b: unknown, status = 200) => new Response(JSON.stringify(b), { status, headers: { 'Content-Type': 'application/json' } })
-    if (url === '/api/agent-chat/agents') return json({ agents, demo: false, providers: { demo: true }, default_provider: null })
+    if (url === '/api/agent-chat/agents') return json({ agents, demo: false, providers: { demo: true }, default_provider: null, ...(problems ? { problems } : {}) })
     const m = url.match(/^\/api\/agent-chat\/sidebar\/bots\/([^/]+)(\/read|\/unread)?$/)
     if (m) {
       const b = sb.bots[m[1]]
@@ -645,5 +647,40 @@ describe('Full access badge', () => {
     await mount('/chat/dev-bot')
     await settle()
     expect(host.querySelector('section[aria-label="Conversation with Dev Bot"] header [data-full-access-badge]')).toBeNull()
+  })
+})
+
+describe('bots that need fixing (obj 900954)', () => {
+  const broken = { slug: 'kb-setup', file: '/data/agents/kb-setup', errors: ['agent.md must start with a --- front matter block'], status: 'needs_fixing' as const, withheld: 'builtin' as const }
+  const panel = () => host.querySelector('section[aria-label="Bots that need fixing"]')
+
+  it('shows an admin the broken bot, why, and that the built-in was not loaded instead', async () => {
+    role = 'admin'
+    problems = [broken, { slug: 'my-bot', file: '/data/agents/my-bot', errors: ['system_prompt is required'], status: 'needs_fixing' }]
+    await mount()
+    await settle()
+    const rows = [...panel()!.querySelectorAll('li[data-bot-problem]')]
+    expect(rows.map(r => r.getAttribute('data-bot-problem'))).toEqual(['kb-setup', 'my-bot'])
+    expect(rows[0].textContent).toContain('agent.md must start with a --- front matter block')
+    expect(rows[0].textContent).toContain('The built-in version was not loaded in its place.')
+    expect(rows[0].textContent).toContain('/data/agents/kb-setup')
+    expect(rows[1].textContent).toContain('This bot is off until its file is fixed.')
+    expect(rows[1].textContent).not.toContain('built-in')
+    // A broken bot is not a chat row.
+    expect(row('kb-setup')).toBeNull()
+  })
+
+  it('shows nothing when every bot file loaded, and nothing to a member', async () => {
+    role = 'admin'
+    await mount()
+    await settle()
+    expect(panel()).toBeNull()
+    root.unmount()
+    host.remove()
+    role = 'member'
+    problems = [broken]
+    await mount()
+    await settle()
+    expect(panel()).toBeNull()
   })
 })

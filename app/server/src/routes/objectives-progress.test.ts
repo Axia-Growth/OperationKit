@@ -42,6 +42,12 @@ let parent: number
 let childWorking: number
 let childDone: number
 
+/** Smallest real PNG: 1×1 transparent. */
+const PNG = Buffer.from(
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==',
+  'base64',
+)
+
 function cookieFor(id: number, username: string, role: string): string {
   return `token=${jwt.sign({ id, username, role }, process.env.JWT_SECRET as string, { expiresIn: '1h' })}`
 }
@@ -104,6 +110,9 @@ beforeAll(async () => {
   fs.writeFileSync(path.join(dir, 'ARTIFACT.md'), `# Deliverable\nkey ${SECRET}\n`)
   fs.writeFileSync(path.join(dir, 'NOTES.md'), 'scratch\n')
   fs.writeFileSync(path.join(dir, 'live', 'rows.csv'), 'a,b\n1,2\n3,4\n')
+  // obj 901028: a real screenshot (binary artifacts are otherwise listed but not served).
+  fs.writeFileSync(path.join(dir, 'live', 'screenshot.png'), PNG)
+  fs.writeFileSync(path.join(dir, 'live', 'huge.png'), Buffer.concat([PNG, Buffer.alloc(6 * 1024 * 1024)]))
   fs.mkdirSync(path.join(MEM, String(adminWsB)), { recursive: true })
   fs.writeFileSync(path.join(MEM, String(adminWsB), 'ARTIFACT.md'), 'foreign\n')
 
@@ -282,7 +291,7 @@ describe('GET /:id/artifacts (+ /file)', () => {
     const r = await call(`/${memberWsA}/artifacts`, asMember())
     expect(r.status).toBe(200)
     expect(r.json.status).toBe('working')
-    expect(r.json.entries.map((e: any) => e.path).sort()).toEqual(['ARTIFACT.md', 'live/rows.csv'])
+    expect(r.json.entries.map((e: any) => e.path).sort()).toEqual(['ARTIFACT.md', 'live/huge.png', 'live/rows.csv', 'live/screenshot.png'])
   })
 
   it('reads a file with redaction headers', async () => {
@@ -306,5 +315,48 @@ describe('GET /:id/artifacts (+ /file)', () => {
     expect((await call(`/${memberWsA}/artifacts/file`, asMember())).status).toBe(400)
     expect((await call(`/${memberWsA}/artifacts/file?path=ARTIFACT.md&bogus=1`, asMember())).status).toBe(400)
     expect((await call(`/${memberWsA}/artifacts/file?path=ARTIFACT.md&offset=-1`, asMember())).status).toBe(400)
+  })
+})
+
+// obj 901028: the one path that serves a card artifact's actual bytes (not JSON
+// text) — a screenshot a worker dropped into its live/ output, for the card view.
+describe('GET /:id/artifacts/image', () => {
+  async function getImage(p: string, auth: Record<string, string>): Promise<{ status: number; headers: Headers; body: Buffer; json: any }> {
+    const res = await fetch(`${baseUrl}/api/objectives${p}`, { headers: auth })
+    const buf = Buffer.from(await res.arrayBuffer())
+    let json: any = null
+    try { json = JSON.parse(buf.toString('utf8')) } catch { /* a real image: not JSON, as expected */ }
+    return { status: res.status, headers: res.headers, body: buf, json }
+  }
+
+  it('serves real PNG bytes, authenticated and workspace-scoped, with a locked-down CSP', async () => {
+    const r = await getImage(`/${memberWsA}/artifacts/image?path=live/screenshot.png`, asMember())
+    expect(r.status).toBe(200)
+    expect(r.headers.get('content-type')).toBe('image/png')
+    expect(r.body.equals(PNG)).toBe(true)
+    expect(r.headers.get('content-security-policy')).toContain("default-src 'none'")
+    expect(r.headers.get('x-content-type-options')).toBe('nosniff')
+  })
+
+  it('API-key bearer auth works too', async () => {
+    const r = await getImage(`/${memberWsA}/artifacts/image?path=live/screenshot.png`, asKey())
+    expect(r.status).toBe(200)
+    expect(r.body.equals(PNG)).toBe(true)
+  })
+
+  it('a text artifact is not an image: 415', async () => {
+    const r = await getImage(`/${memberWsA}/artifacts/image?path=ARTIFACT.md`, asMember())
+    expect(r.status).toBe(415)
+  })
+
+  it('oversized image: 413, not read fully into memory first', async () => {
+    const r = await getImage(`/${memberWsA}/artifacts/image?path=live/huge.png`, asMember())
+    expect(r.status).toBe(413)
+  })
+
+  it('NOTES.md → 403; traversal → 400; a foreign workspace card → 404', async () => {
+    expect((await getImage(`/${memberWsA}/artifacts/image?path=NOTES.md`, asMember())).status).toBe(403)
+    expect((await getImage(`/${memberWsA}/artifacts/image?path=..%2F${adminWsB}%2FARTIFACT.md`, asMember())).status).toBe(400)
+    expect((await getImage(`/${adminWsB}/artifacts/image?path=ARTIFACT.md`, asMember())).status).toBe(404)
   })
 })

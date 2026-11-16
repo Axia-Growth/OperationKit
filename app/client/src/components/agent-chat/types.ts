@@ -105,7 +105,7 @@ export interface BotConfigInfo {
   updated_at: string
 }
 
-export type ToolGroup = 'web' | 'knowledge' | 'board' | 'bots' | 'connectors' | 'integrations' | 'secrets'
+export type ToolGroup = 'web' | 'knowledge' | 'board' | 'bots' | 'connectors' | 'integrations' | 'secrets' | 'images'
 
 export interface ToolCatalogEntry {
   name: string
@@ -121,7 +121,12 @@ export interface AgentsResponse {
   demo: boolean
   providers: Record<ProviderId, boolean>
   default_provider: string | null
-  problems?: { slug: string; file: string; errors: string[] }[]
+  /**
+   * Admins only: bot files that failed to load, so the bot is not in `agents`.
+   * `withheld` (obj 900954) = the app ships a bot with this slug and it was held
+   * back instead of replacing the broken file.
+   */
+  problems?: { slug: string; file: string; errors: string[]; status?: 'needs_fixing'; withheld?: 'builtin' | 'demo' }[]
   /** obj 900671 */
   tool_catalog?: ToolCatalogEntry[]
   /** obj 900863: the install's enabled model registry (the same rows as GET /api/models), so every bot's
@@ -202,6 +207,8 @@ export interface ChatImage {
   size: number
   /** Owner-only server route that serves the bytes. */
   url: string
+  /** obj 901028: accessibility text set by whoever attached the image (a bot tool call, or the person). */
+  alt_text?: string | null
 }
 
 export interface ChatMessage {

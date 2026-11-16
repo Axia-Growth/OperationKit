@@ -227,8 +227,10 @@ describe('built-in bot knowledge folders: workspaces/<ws>/ layout and legacy lay
     expect(dev.knowledge_folders).toEqual(['business', 'organizations', 'products', 'projects', 'topics'])
     const c = chatCtx(dev, wsKb)
 
-    const listed = (runTool(c, 'list_folders', {}).result as Loose).folders
-    expect(listed).toEqual(['business', 'organizations', 'products', 'projects', 'topics'].map(f => `workspaces/${OK}/${f}`))
+    // obj 900951: only the folders on disk are listed; the other declared ones are named under `missing`.
+    const top = runTool(c, 'list_folders', {}).result as Loose
+    expect(top.folders).toEqual(['business', 'products'].map(f => `workspaces/${OK}/${f}`))
+    expect(top.missing).toEqual(['organizations', 'projects', 'topics'].map(f => `workspaces/${OK}/${f}`))
     const inside = (runTool(c, 'list_folders', { path: `workspaces/${OK}/business` }).result as Loose).items.map((i: Loose) => i.name)
     expect(inside).toEqual(['profile.md'])
 
@@ -264,7 +266,10 @@ describe('built-in bot knowledge folders: workspaces/<ws>/ layout and legacy lay
     grantBotWorkspace(DEV, OK, 'admin')
     const dev = builtinDev()
     const c = chatCtx(dev, legacyKb)
-    expect((runTool(c, 'list_folders', {}).result as Loose).folders).toEqual(['business', 'organizations', 'products', 'projects', 'topics'])
+    // obj 900951: only the folders on disk are listed; the other declared ones are named under `missing`.
+    const top = runTool(c, 'list_folders', {}).result as Loose
+    expect(top.folders).toEqual(['business', 'topics'])
+    expect(top.missing).toEqual(['organizations', 'products', 'projects'])
     expect((runTool(c, 'read_file', { path: 'business/profile.md' }).result as Loose).content).toMatch(/Legacy profile/)
     const hits = (runTool(c, 'search', { q: 'zebrafish' }).result as Loose).results.map((h: Loose) => h.path)
     expect(hits).toEqual(['business/profile.md'])

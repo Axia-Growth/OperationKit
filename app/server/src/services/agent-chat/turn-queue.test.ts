@@ -33,7 +33,7 @@ process.env.AGENT_FILES_DIR = TMP_AGENTS
 process.env.KNOWLEDGE_BASE_DIR = TMP_KB
 
 const { initDb, getDb } = await import('../../db/index.js')
-const { findAgent, listMessages, laneTurnState, runTurn, stopTurn, submitMessage, whenLaneIdle } = await import('./engine.js')
+const { findAgent, listMessages, laneTurnState, runTurn, stopTurn, submitMessage, whenLaneIdle, isAgentChatRunning } = await import('./engine.js')
 const { createThread, MAIN_LANE } = await import('./threads.js')
 const { default: router } = await import('../../routes/agent-chat.js')
 
@@ -457,5 +457,72 @@ describe('client_msg_id is an idempotency key (obj 900977)', () => {
     expect(mine).toHaveLength(1)
     expect(mine[0].meta).toEqual({ client_msg_id: 'http-msg-0001' })
     expect(p.bodies).toHaveLength(2)
+  })
+})
+
+/*
+ * obj 901025: isAgentChatRunning is what the sidebar/header status reads to
+ * decide "Working" vs "Idle" — it must be true for exactly the window the
+ * turn is actually running (any lane of this bot), and go false again however
+ * the turn ends: delivered, stopped, or failed.
+ */
+describe('isAgentChatRunning (obj 901025)', () => {
+  it('is false before a turn starts, true while it streams/runs tools, false once it delivers', async () => {
+    expect(isAgentChatRunning(OWNER, SLUG)).toBe(false)
+    const p = gatedProvider()
+    const first = turn('status check', p)
+    await p.arrived(1)
+    expect(isAgentChatRunning(OWNER, SLUG)).toBe(true)
+    p.release()
+    await first
+    expect(isAgentChatRunning(OWNER, SLUG)).toBe(false)
+  })
+
+  it('stays true across the lane handing off to a queued message, false only once the whole lane goes quiet', async () => {
+    const p = gatedProvider()
+    const first = turn('one', p)
+    await p.arrived(1)
+    await submit('two')
+    expect(isAgentChatRunning(OWNER, SLUG)).toBe(true)
+    p.release()
+    await first
+    // The drain turn for "two" starts right away: still running.
+    expect(isAgentChatRunning(OWNER, SLUG)).toBe(true)
+    await p.arrived(2)
+    p.release()
+    await whenLaneIdle(OWNER, SLUG)
+    expect(isAgentChatRunning(OWNER, SLUG)).toBe(false)
+  })
+
+  it('goes false the instant Stop cancels the turn, even though the queue is kept and drains next', async () => {
+    const p = gatedProvider()
+    const first = turn('long job', p)
+    await p.arrived(1)
+    expect(isAgentChatRunning(OWNER, SLUG)).toBe(true)
+    const s = stopTurn(OWNER, SLUG, MAIN_LANE)
+    expect(s.stopped).toBe(true)
+    await first
+    expect(isAgentChatRunning(OWNER, SLUG)).toBe(false)
+    // Cleanup: let the kept queue (there is none here) settle before the next test.
+    await whenLaneIdle(OWNER, SLUG)
+  })
+
+  it('goes false after the turn fails (provider error) — never sticks on "running"', async () => {
+    expect(isAgentChatRunning(OWNER, SLUG)).toBe(false)
+    const failing = (async () => { throw Object.assign(new Error('boom'), { name: 'FetchError' }) }) as unknown as typeof fetch
+    const r = await runTurn({ userId: OWNER, username: 'user2', agent: agent(), text: 'will fail', env: ENV, deps: { fetch: failing } })
+    expect(r.messages.map(m => m.role)).toEqual(['user', 'error'])
+    expect(isAgentChatRunning(OWNER, SLUG)).toBe(false)
+  })
+
+  it('is scoped to this bot and this person: another bot, or another lane of someone else, is unaffected', async () => {
+    const p = gatedProvider()
+    const first = turn('side effect check', p)
+    await p.arrived(1)
+    expect(isAgentChatRunning(OWNER, SLUG)).toBe(true)
+    expect(isAgentChatRunning(OWNER, 'some-other-bot')).toBe(false)
+    expect(isAgentChatRunning(999, SLUG)).toBe(false)
+    p.release()
+    await first
   })
 })

@@ -21,7 +21,6 @@ import fs from 'fs'
 import path from 'path'
 import { getDb } from '../../db/index.js'
 import { getDefaultModelId } from '../model-registry.js'
-import { agentExists } from '../agent-registry.js'
 import { cardModelForBot } from './bot-card-model.js'
 import { depthForParent } from '../../lib/objective-depth.js'
 import { checkAgentInWorkspacePool, defaultAgentForWorkspace } from '../../routes/objectives-helpers.js'
@@ -40,7 +39,7 @@ import { callerForChat, executeHttp, listForCaller, recordBrokerUse } from '../s
 import { rateLimit } from '../file-access.js'
 import { userHasWorkspace } from '../../middleware/workspace.js'
 import { webFetch, webSearch, WebToolError, MAX_SEARCH_RESULTS, DEFAULT_SEARCH_RESULTS, type WebToolDeps } from './web-tools.js'
-import { botMayUseWorkspace, botWorkspaceAllowlist } from './bot-workspaces.js'
+import { botMayUseWorkspace, botWorkspaceAllowlist, personaOwnershipBlocked } from './bot-workspaces.js'
 import { withResolvedKnowledgeFolders } from './knowledge-folders.js'
 import { containedIn, realpathOrNull, workspaceScopeRoots } from '../../lib/kb-workspace-scope.js'
 import { searchKnowledgeBase } from '../kb-semantic/search.js'
@@ -58,6 +57,8 @@ import {
   sendBotMessage,
   type BotRef,
 } from './bot-messaging.js'
+import { ArtifactError, readArtifactImage } from '../live-artifacts.js'
+import { ImageRejected, MAX_IMAGE_BYTES, parseIncomingImages, validateImageBytes, type IncomingImage } from './attachments.js'
 
 export interface ToolSpec {
   type: 'function'
@@ -102,6 +103,8 @@ export interface ToolOutcome {
   objective_id?: number
   /** A bot-to-bot conversation this call started or used (obj 900859) — the chat shows an "Open thread" link. */
   bot_conversation_id?: number
+  /** obj 901028: an image this tool call attaches to the reply — rendered inline, same as a pasted screenshot. */
+  images?: IncomingImage[]
 }
 
 export class ToolUseError extends Error {}
@@ -139,6 +142,15 @@ const SPECS: Record<string, ToolSpec[]> = {
     obj({ path: { type: 'string' }, content: { type: 'string' } }, ['path', 'content']))],
   file_answer: [fn('file_answer', 'Save a good answer into the workspace knowledge base as a wiki page, linked from the pages it used, so later questions can build on it. Only save answers the person found useful.',
     obj({ question: { type: 'string' }, answer: { type: 'string', description: 'The answer in markdown; cite pages as [[folder/page.md]]' }, sources: { type: 'array', items: { type: 'string' }, description: 'Knowledge-base paths of the pages the answer used, e.g. "people/dana-ruiz.md"' } }, ['question', 'answer']))],
+  attach_image: [fn('attach_image', 'Attach an image so it renders inline in chat as a thumbnail the person can open full size. source "kb" = a path in your knowledge folders; "card_artifact" = a screenshot a board card saved to its objective memory (give objective_id and the artifact path, e.g. "live/screenshot.png" — list a card\'s files with get_objective first if unsure); "data" = base64 image bytes you generated yourself (e.g. a chart). PNG, JPEG, GIF or WebP only, 5 MB max.',
+    obj({
+      source: { type: 'string', enum: ['kb', 'card_artifact', 'data'] },
+      path: { type: 'string', description: 'Required for "kb" and "card_artifact": the file path. For "data", an optional file name.' },
+      objective_id: { type: 'integer', description: 'Required for "card_artifact": the card number the screenshot belongs to.' },
+      data: { type: 'string', description: 'Required for "data": base64 image bytes (bare, or a data: URL).' },
+      media_type: { type: 'string', description: 'Optional declared type for "data" — checked against the real bytes, never trusted alone.' },
+      alt_text: { type: 'string', description: 'Short description of the image, for accessibility and the caption shown under it.' },
+    }, ['source']))],
   create_objective: [fn('create_objective', 'Hand a bigger job to the team board as a card. Coding tools pick it up and do the work; you can check its status later with get_objective. Use for anything that takes more than a few minutes.',
     obj({
       title: { type: 'string', description: 'Short, specific title' },
@@ -407,6 +419,20 @@ export function missingPathError(ctx: Pick<ToolContext, 'agent'>, kind: 'File' |
   return new ToolUseError(`${kind} "${rel}" does not exist.${hint}`)
 }
 
+/** attach_image's "kb" source: the same 5 MB cap a pasted chat image gets, checked before reading. */
+function readImageFileCapped(abs: string): Buffer {
+  let st: fs.Stats
+  try { st = fs.statSync(abs) } catch { throw new ToolUseError('That image could not be found.') }
+  if (!st.isFile()) throw new ToolUseError('That path is not a file.')
+  if (st.size > MAX_IMAGE_BYTES) throw new ToolUseError('That image is too big (5 MB max).')
+  try { return fs.readFileSync(abs) } catch { throw new ToolUseError('That image could not be read.') }
+}
+
+/** The label under an attach_image "card_artifact" thumbnail: the file name, not the whole card path. */
+function cleanArtifactName(relPath: string): string {
+  return relPath.split('/').pop() || 'screenshot.png'
+}
+
 function walk(dir: string, out: string[], cap: number): void {
   if (out.length >= cap) return
   let entries: fs.Dirent[] = []
@@ -424,6 +450,13 @@ function walk(dir: string, out: string[], cap: number): void {
   }
 }
 
+/** obj 900951: the one-line message a model gets when the search index throws. */
+function searchIndexUnavailable(err: unknown): string {
+  const raw = err instanceof Error ? err.message : String(err ?? '')
+  const reason = raw.replace(/\s+/g, ' ').trim().slice(0, 200) || 'unknown error'
+  return `search index unavailable: ${reason}`
+}
+
 /**
  * obj 900816: hybrid (keyword + semantic) search confined to THIS bot's knowledge
  * folders and granted workspaces — the same two walls the word search applies.
@@ -436,8 +469,10 @@ async function hybridKnowledgeSearch(ctx: ToolContext, q: string, mode: 'hybrid'
   let found: Awaited<ReturnType<typeof searchKnowledgeBase>>
   try {
     found = await searchKnowledgeBase(q, { mode, limit: 8, allow })
-  } catch {
-    return { results: [] }
+  } catch (err) {
+    // obj 900951: a broken index must not look like "nothing found". The caller
+    // still runs the word search, and tells the model the index is down.
+    return { results: [], index_error: searchIndexUnavailable(err) }
   }
   return {
     results: found.results.map(h => ({
@@ -555,12 +590,24 @@ function cardWorkspace(ctx: ToolContext, raw: unknown): string {
  * a granted bot does). Otherwise the workspace's default agent, as before, so a
  * card is never filed with an agent the board would refuse on its next edit.
  *
- * A bot whose slug is ALSO a worker persona (a chat bot called `cfo`) never
- * owns a card this way: agent_context = 'cfo' means the persona, so the card
- * would silently become the persona's. It gets the workspace default, as before.
+ * obj 901026 ("a bot and an agent are the same thing"): a bot whose slug is
+ * ALSO a worker persona (a chat bot called `cfo`) now owns its OWN chat-filed
+ * cards exactly like any other bot, as long as it is explicitly granted the
+ * workspace AND the persona is not one of the five protected default-roster
+ * slugs (`personaOwnershipBlocked`, obj 901026 review fix) — without a grant,
+ * or for cto/cmo/coo/cfo/general, this still falls back to the workspace
+ * default exactly as before 901026, even when the pool would otherwise pass
+ * (those slugs are normally IN the pool on their own account). `resolveCardWorker`
+ * (prompt-builder-workdir.ts) is what then keeps a genuinely bot-owned card's
+ * persona from silently running it: it resolves agent_context to the BOT, not
+ * the persona, whenever the grant is what let the slug in.
  */
 export function chatCardAgent(agent: Pick<ChatAgent, 'slug'>, workspace: string): { agentContext: string; ownedByBot: boolean } {
-  if (!isWorkerPersona(agent.slug) && botMayUseWorkspace(agent.slug, workspace) && checkAgentInWorkspacePool(workspace, agent.slug) === null) {
+  if (
+    !personaOwnershipBlocked(agent.slug, workspace) &&
+    botMayUseWorkspace(agent.slug, workspace) &&
+    checkAgentInWorkspacePool(workspace, agent.slug) === null
+  ) {
     return { agentContext: agent.slug, ownedByBot: true }
   }
   return { agentContext: defaultAgentForWorkspace(workspace), ownedByBot: false }
@@ -574,15 +621,6 @@ export function chatCardAgent(agent: Pick<ChatAgent, 'slug'>, workspace: string)
  */
 export function chatCardModel(agent: Pick<ChatAgent, 'model'>): string {
   return cardModelForBot(agent) ?? getDefaultModelId()
-}
-
-/** Fail-safe: an unreadable registry counts as "is a persona" (no bot exception). */
-function isWorkerPersona(slug: string): boolean {
-  try {
-    return agentExists(slug)
-  } catch {
-    return true
-  }
 }
 
 /**
@@ -963,6 +1001,14 @@ export async function runChatTool(ctxIn: ToolContext, fnName: string, args: Reco
     const q = s(args, 'q', true)
     const r = await hybridKnowledgeSearch(ctx, q, args.mode === 'semantic' ? 'semantic' : 'hybrid')
     if (r.results.length > 0) return { result: r, summary: `Searched knowledge for "${q}" (${r.results.length} found)` }
+    if ('index_error' in r && r.index_error && agentHasTool(ctx.agent, 'search')) {
+      // obj 900951: the index failed. Answer from the plain word search and say so,
+      // so an empty list here is never mistaken for an empty knowledge base.
+      const kw = knowledgeSearch(ctx, q)
+      const warning = `${r.index_error}. These results come from a plain word match over your knowledge folders instead`
+        + (kw.results.length === 0 ? '; no results here does NOT mean the knowledge base is empty. Tell the person search is not working right now.' : '.')
+      return { result: { ...kw, mode_used: 'keyword', warning }, summary: `Searched knowledge for "${q}" (${kw.results.length} found, search index unavailable)` }
+    }
   }
   if (fnName !== 'web_search' && fnName !== 'web_fetch') return runTool(ctx, fnName, args)
   if (!agentHasTool(ctx.agent, fnName)) throw new ToolUseError(`Tool "${fnName}" is not allowed for this agent.`)
@@ -1221,8 +1267,18 @@ export function runTool(ctxIn: ToolContext, fnName: string, args: Record<string,
       const kbRootAbs = path.resolve(ctx.kbRoot)
       if (!p) {
         // obj 900797: a knowledge folder inside a workspace the bot is not granted is not shown.
-        const folders = ctx.agent.knowledge_folders.filter(f => !guard.deniedWorkspace(path.resolve(kbRootAbs, f)))
-        return { result: { folders }, summary: 'Listed knowledge folders' }
+        const declared = ctx.agent.knowledge_folders.filter(f => !guard.deniedWorkspace(path.resolve(kbRootAbs, f)))
+        // obj 900951: only folders that are on disk are listed. The declared ones that
+        // are not there yet go under `missing`, so the model does not open them one by
+        // one and cannot mistake a knowledge base that is not set up for an empty one.
+        const isDir = (f: string) => { try { return fs.statSync(path.resolve(kbRootAbs, f)).isDirectory() } catch { return false } }
+        const folders = declared.filter(isDir)
+        const missing = declared.filter(f => !folders.includes(f))
+        const note = missing.length === 0
+          ? undefined
+          : `The folders under "missing" are set for this bot but do not exist in the knowledge base yet, so there is nothing to read in them.${
+            effectiveTools(ctx.agent).includes('write_doc') ? ' write_doc creates a folder when you save the first note into it.' : ''}`
+        return { result: { folders, missing, ...(note ? { note } : {}) }, summary: 'Listed knowledge folders' }
       }
       const { abs, rel } = resolveKnowledgePath(ctx, p)
       let entries: fs.Dirent[] = []
@@ -1269,6 +1325,40 @@ export function runTool(ctxIn: ToolContext, fnName: string, args: Record<string,
         throw new ToolUseError((err as Error).message)
       }
       return { result: { saved: saved.rel, title: saved.title }, summary: `Saved the answer to the wiki as ${saved.rel}` }
+    }
+    case 'attach_image': {
+      const source = s(args, 'source', true)
+      const altText = s(args, 'alt_text') || undefined
+      let incoming: IncomingImage
+      try {
+        if (source === 'kb') {
+          const { abs, rel } = resolveKnowledgePath(ctx, s(args, 'path', true))
+          incoming = validateImageBytes(readImageFileCapped(abs), rel)
+        } else if (source === 'card_artifact') {
+          const objectiveId = Number(args.objective_id)
+          if (!Number.isInteger(objectiveId) || objectiveId <= 0) throw new ToolUseError('objective_id (a card number) is required for a card_artifact image.')
+          // Same person ∩ bot visibility get_objective enforces — a bot cannot read
+          // a card's screenshots it could not otherwise see.
+          getBoardCard(ctx, objectiveId)
+          const relPath = s(args, 'path', true)
+          const image = readArtifactImage(objectiveId, relPath)
+          incoming = { name: cleanArtifactName(image.path), media_type: image.media_type as IncomingImage['media_type'], data: image.bytes.toString('base64'), bytes: image.bytes }
+        } else if (source === 'data') {
+          incoming = parseIncomingImages([{ name: s(args, 'path') || undefined, media_type: s(args, 'media_type') || undefined, data: s(args, 'data', true) }])[0]
+        } else {
+          throw new ToolUseError('source must be "kb", "card_artifact" or "data".')
+        }
+      } catch (err) {
+        if (err instanceof ArtifactError) throw new ToolUseError(err.message)
+        if (err instanceof ImageRejected) throw new ToolUseError(err.message)
+        throw err
+      }
+      incoming.alt_text = altText ?? null
+      return {
+        result: { attached: incoming.name, media_type: incoming.media_type, size: incoming.bytes.length, alt_text: incoming.alt_text ?? null },
+        summary: `Attached image ${incoming.name}`,
+        images: [incoming],
+      }
     }
     case 'create_objective': {
       const title = s(args, 'title', true)

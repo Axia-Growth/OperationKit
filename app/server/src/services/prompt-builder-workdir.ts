@@ -8,7 +8,8 @@ import fs from 'fs'
 import path from 'path'
 import type { Objective } from '@operationkit/shared'
 import { getDb } from '../db/index.js'
-import { agentExists, resolveAgentWorkdir } from './agent-registry.js'
+import { resolveAgentWorkdir } from './agent-registry.js'
+import { personaOwnershipBlocked } from './agent-chat/bot-workspaces.js'
 import { builtinsEnabled, loadChatAgents } from './agent-chat/agent-defs.js'
 import { getWorkspace } from './workspaces.js'
 import { parseAgentFile, renderAgentInstructions } from './agent-file.js'
@@ -124,7 +125,12 @@ export function readAgentInstructions(agentName: string): string | null {
  * so the session opened with "read <a file that does not exist>" and ran in
  * the home folder instead of the persona's.
  *
- * So for a slug that is not a worker persona but IS a chat bot:
+ * So for a slug that is not a worker persona but IS a chat bot — OR (obj
+ * 901026, "a bot and an agent are the same thing") a slug that IS also a
+ * worker persona but names a bot EXPLICITLY granted this card's workspace AND
+ * is not one of the five protected default-roster personas
+ * (`personaOwnershipBlocked`, obj 901026 review fix) — which supersedes the
+ * persona for that workspace:
  *   - `persona` — the workspace's default worker persona (pool[0], else
  *     'general'), unless the bot has its own installed agent file, whose
  *     instructions keep being inlined as before;
@@ -132,7 +138,9 @@ export function readAgentInstructions(agentName: string): string | null {
  *     working directory of its own);
  *   - `bot` — the bot, so the prompt can say whose card this is. The card's
  *     agent_context, owner and description are untouched.
- * Every other slug resolves to itself, exactly as before.
+ * Every other slug (a plain persona, a cto/cmo/coo/cfo/general card even when a
+ * same-slugged bot is granted, or a persona-slug bot with no grant for this
+ * workspace) resolves to itself, exactly as before.
  */
 export interface CardWorker {
   persona: string
@@ -145,7 +153,7 @@ export function resolveCardWorker(objective: Pick<Objective, 'agent_context' | '
   const self: CardWorker = { persona: slug, workdirPersona: slug, bot: null }
   if (!slug) return self
   try {
-    if (agentExists(slug)) return self
+    if (personaOwnershipBlocked(slug, objective.workspace)) return self
     const bot = loadChatAgents({ includeBuiltins: builtinsEnabled(), includeDemo: false }).agents.find(a => a.slug === slug)
     if (!bot) return self
     const pool = objective.workspace ? getWorkspace(objective.workspace)?.default_agent_pool : null

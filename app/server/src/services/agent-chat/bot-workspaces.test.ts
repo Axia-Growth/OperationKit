@@ -32,10 +32,13 @@ const {
   seedExistingBotsOnce,
   forgetBotWorkspaceAccess,
   botMayUseWorkspace,
+  botSlugPassesAgentPool,
+  personaOwnershipBlocked,
   highAgencyFireRefusal,
   BotWorkspaceError,
   SEED_MARKER,
 } = await import('./bot-workspaces.js')
+const { createAgent } = await import('../agent-registry.js')
 const { workspaceFor, systemPromptFor } = await import('./engine.js')
 const { classifyAiFireResult } = await import('../routine-auto-pause.js')
 type Agent = import('./agent-defs.js').ChatAgent
@@ -399,5 +402,28 @@ describe('High Agency wakes: the fire-time guard', () => {
     expect(highAgencyFireRefusal(routine('old-cos', OTHER))).toBeNull()
     expect(highAgencyFireRefusal({ name: 'nightly-report', objective_template: '{"workspace":"other-co"}' })).toBeNull()
     expect(highAgencyFireRefusal({ name: 'agent:cos:daily', objective_template: '{"workspace":"other-co"}' })).toBeNull()
+  })
+})
+
+describe('personaOwnershipBlocked / botSlugPassesAgentPool: the default roster stays fixed (obj 901026 review fix)', () => {
+  it('a grant never unblocks a protected default-roster slug (cto/cmo/coo/cfo/general)', () => {
+    grantBotWorkspace('cto', GROWTH, 'admin')
+    expect(personaOwnershipBlocked('cto', GROWTH)).toBe(true)
+    expect(botSlugPassesAgentPool('cto', GROWTH)).toBe(false)
+  })
+
+  it('a grant DOES unblock a non-default persona clash (the real reported shape)', () => {
+    createAgent({ slug: 'ops-clash-unit', label: 'Ops Clash (accidental persona row)' })
+    expect(personaOwnershipBlocked('ops-clash-unit', GROWTH)).toBe(true) // no grant yet
+    expect(botSlugPassesAgentPool('ops-clash-unit', GROWTH)).toBe(false)
+    grantBotWorkspace('ops-clash-unit', GROWTH, 'admin')
+    expect(personaOwnershipBlocked('ops-clash-unit', GROWTH)).toBe(false)
+    expect(botSlugPassesAgentPool('ops-clash-unit', GROWTH)).toBe(true)
+    // A workspace it is not granted still blocks it.
+    expect(personaOwnershipBlocked('ops-clash-unit', OTHER)).toBe(true)
+  })
+
+  it('a slug with no agents-table row at all is never "blocked" by persona ownership', () => {
+    expect(personaOwnershipBlocked('not-a-persona-at-all', GROWTH)).toBe(false)
   })
 })

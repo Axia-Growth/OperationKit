@@ -56,6 +56,7 @@ import { botForAgentSlug, registryKey } from '../bots/bot-registry.js'
 import { resolveEffectiveCostCeiling } from '../spend-guard.js'
 import { listWorkspaces } from '../workspaces.js'
 import { narrowToBot } from './bot-workspaces.js'
+import { isAgentChatRunning } from './engine.js'
 import { getHighAgency, highAgencyView, routineNameFor } from './high-agency.js'
 
 /** The bot a view is for: its chat slug + display name. */
@@ -363,7 +364,19 @@ export function buildBotWork(db: Database, bot: BotRef, opts: BotWorkOptions): B
   groups.done = groups.done.slice(0, RECENTLY_DONE_LIMIT)
   const counts = countsOf(groups)
   const focus = focusCard(groups)
-  return { slug: bot.slug, owner_token: botOwnerToken(ident.boardId), workspaces, groups, counts, state: botLiveState(counts), line: botLiveLine(counts, focus) }
+  // obj 901025: a chat turn streaming or running tools for this viewer counts as
+  // "running" too, even with zero cards — the sidebar/header must not read Idle
+  // mid-reply just because no card session is open.
+  const chatActive = isAgentChatRunning(opts.viewer.id, bot.slug)
+  return {
+    slug: bot.slug,
+    owner_token: botOwnerToken(ident.boardId),
+    workspaces,
+    groups,
+    counts,
+    state: botLiveState(counts, chatActive),
+    line: botLiveLine(counts, focus, chatActive),
+  }
 }
 
 function countsOf(groups: Record<WorkGroup, BotWorkCard[]>): BotWorkCounts {
