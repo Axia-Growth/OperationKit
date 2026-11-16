@@ -31,6 +31,7 @@ import type { EmbeddingProvider } from './providers.js'
 import { allDocRows, ensureSchema, ensureVecTable, getDocRow, removeDoc, replaceDocChunks, touchDoc } from './store.js'
 import { isEnvFileName } from '../file-access.js'
 import { redactSecrets } from '../kb-setup/secrets.js'
+import { workspaceOfVaultPath } from '../../lib/kb-workspace-scope.js'
 
 export const EXCLUDE_DIRS = new Set(['.obsidian', '_import', '_system', 'node_modules', '.git', '.trash', '.cc-state'])
 /**
@@ -52,8 +53,15 @@ export interface IndexerDeps {
   log?: (msg: string) => void
 }
 
-/** Workspace label stored with each chunk (KNN pre-filter only; the realpath wall is applied at query time). */
+/**
+ * Workspace label stored with each chunk (KNN pre-filter only; the realpath wall is applied at query time).
+ * A file inside a workspace's custom folder (`vault_path`) is labelled with that
+ * workspace, by the same helper the search wall uses (obj 900963); otherwise the
+ * label comes from the folder layout.
+ */
 export function workspaceLabel(root: string, file: string): string {
+  const custom = workspaceOfVaultPath(file, root)
+  if (custom) return custom
   const rel = path.relative(root, file).split(path.sep)
   if (rel.length >= 3 && rel[0] === 'workspaces') return rel[1]
   return rel.length >= 2 ? rel[0] : ''
@@ -115,7 +123,12 @@ export async function indexFile(deps: IndexerDeps, file: string): Promise<{ outc
       if (getDocRow(db, abs)) removeDoc(db, abs)
       return { outcome: 'ineligible', chunks: 0 }
     }
-    const existing = getDocRow(db, abs)
+    // A changed label (a vault_path set or moved after the file was embedded)
+    // makes the stored rows stale: the KNN pre-filter would look under the
+    // wrong workspace, so the file is embedded again.
+    const label = workspaceLabel(root, abs)
+    const stored = getDocRow(db, abs)
+    const existing = stored && stored.workspace === label ? stored : null
     if (existing && existing.model_id === provider.modelId && existing.mtime_ms === st.mtimeMs && existing.size === st.size) {
       return { outcome: 'skipped', chunks: existing.chunk_count }
     }
@@ -138,7 +151,7 @@ export async function indexFile(deps: IndexerDeps, file: string): Promise<{ outc
     if (!ensureVecTable(db, dim)) return { outcome: 'failed', chunks: 0, error: 'sqlite-vec unavailable' }
     if (vectors.some(v => v.length !== dim)) return { outcome: 'failed', chunks: 0, error: 'inconsistent vector dimensions' }
     replaceDocChunks(db, {
-      path: abs, workspace: workspaceLabel(root, abs), mtimeMs: st.mtimeMs, size: st.size, contentHash: hash, modelId: provider.modelId,
+      path: abs, workspace: label, mtimeMs: st.mtimeMs, size: st.size, contentHash: hash, modelId: provider.modelId,
     }, chunks.map((c, i) => ({ index: c.index, heading: c.heading, line: c.line, text: c.text, vector: vectors[i] })))
     return { outcome: 'embedded', chunks: chunks.length }
   } catch (err) {

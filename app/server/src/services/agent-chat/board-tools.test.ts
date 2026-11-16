@@ -369,3 +369,99 @@ describe('knowledge tools tell a broken setup from an empty knowledge base (obj 
     expect(ok.warning).toBeUndefined()
   })
 })
+
+// obj 900958: a bot told to file work under a card used to write "Parent: #N"
+// in the text and the link was lost. create_objective now takes parent_id.
+describe('chat create_objective files a card under a parent (obj 900958)', () => {
+  const filer: Agent = { ...agent, slug: 'operation-kit-dev', name: 'Operation Kit Dev', tools: ['create_objective', 'get_objective', 'list_objectives'] }
+  // A bot in the bot registry: its cards go through createBotJob, not the legacy insert.
+  const registered: Agent = { ...filer, slug: 'general', name: 'General' }
+  // A bot added after per-bot workspace lists shipped: granted growth only.
+  const scoped: Agent = { ...filer, slug: 'scoped-filer', name: 'Scoped Filer' }
+  const row = (id: number) => getDb().prepare('SELECT parent_id, depth, workspace, origin FROM objectives WHERE id = ?').get(id) as Loose
+  const count = () => (getDb().prepare('SELECT COUNT(*) AS n FROM objectives').get() as Loose).n as number
+  const refused = (fn: () => unknown, re: RegExp) => {
+    const before = count()
+    let err: unknown
+    try { fn() } catch (e) { err = e }
+    expect(err).toBeInstanceOf(ToolUseError)
+    expect((err as Error).message).toMatch(re)
+    expect(count()).toBe(before) // nothing was filed
+  }
+
+  beforeAll(async () => {
+    const { grantBotWorkspace } = await import('./bot-workspaces.js')
+    seedExistingBotsOnce(['general']) // the seed already ran: a no-op, so grant it explicitly too
+    grantBotWorkspace('general', GROWTH, 'test')
+    grantBotWorkspace('scoped-filer', GROWTH, 'test')
+  })
+
+  it('the tool spec offers parent_id, and it is optional', () => {
+    const spec = toolSpecsFor(filer).find(s => s.function.name === 'create_objective') as Loose
+    expect(spec.function.parameters.properties.parent_id).toMatchObject({ type: 'integer' })
+    expect(spec.function.parameters.required).toEqual(['title', 'description'])
+  })
+
+  it('no parent_id = unchanged: a top-level card at depth 0, and no parent_id in the result', () => {
+    const r = runTool(ctx(ALICE, filer), 'create_objective', { title: 'p958 top-level legacy', description: 'd' }).result as Loose
+    expect(row(r.id)).toMatchObject({ parent_id: null, depth: 0, workspace: GROWTH, origin: 'agent_chat' })
+    expect(r).not.toHaveProperty('parent_id')
+    const b = runTool(ctx(ALICE, registered), 'create_objective', { title: 'p958 top-level bot job', description: 'd' }).result as Loose
+    expect(row(b.id)).toMatchObject({ parent_id: null, depth: 0, workspace: GROWTH, origin: 'agent_chat' })
+    expect(b).not.toHaveProperty('parent_id')
+  })
+
+  it('parent_id is stored and depth derived from the parent (legacy insert)', () => {
+    const r = runTool(ctx(ALICE, filer), 'create_objective', { title: 'p958 child legacy', description: 'd', parent_id: ids['growth-queue'] }).result as Loose
+    expect(r.parent_id).toBe(ids['growth-queue'])
+    expect(row(r.id)).toMatchObject({ parent_id: ids['growth-queue'], depth: 1, workspace: GROWTH })
+  })
+
+  it('parent_id is stored and depth derived from the parent (registered bot, createBotJob)', () => {
+    const r = runTool(ctx(ALICE, registered), 'create_objective', { title: 'p958 child bot job', description: 'd', parent_id: ids['growth-queue'] }).result as Loose
+    expect(r.parent_id).toBe(ids['growth-queue'])
+    expect(row(r.id)).toMatchObject({ parent_id: ids['growth-queue'], depth: 1, workspace: GROWTH })
+    // An exact retry (same parent) is still a quiet replay of the same card.
+    const retry = runTool(ctx(ALICE, registered), 'create_objective', { title: 'p958 child bot job', description: 'd', parent_id: ids['growth-queue'] }).result as Loose
+    expect(retry.id).toBe(r.id)
+    // The same request under ANOTHER parent is never answered with the first card
+    // (which sits under the wrong parent): the board's duplicate guard says so.
+    refused(() => runTool(ctx(ALICE, registered), 'create_objective', { title: 'p958 child bot job', description: 'd', parent_id: ids['growth-review-1'] }), new RegExp(`already exists in growth \\(#${r.id},`))
+    expect(row(r.id).parent_id).toBe(ids['growth-queue'])
+  })
+
+  it('a parent in a workspace the bot is not granted is refused as "not found", in the same words as a missing card', () => {
+    // The admin can see other-co; the bot cannot, so the chat cannot either.
+    refused(() => runTool(ctx(ADMIN, scoped), 'create_objective', { title: 'p958 x-ws', description: 'd', parent_id: ids['other-review-SECRET'] }), /^Parent card #\d+ was not found on a board you can see/)
+    refused(() => runTool(ctx(ADMIN, scoped), 'create_objective', { title: 'p958 missing', description: 'd', parent_id: 99999999 }), /^Parent card #\d+ was not found on a board you can see/)
+    // A person outside the parent's workspace gets the same answer, whatever the bot may do.
+    refused(() => runTool(ctx(ALICE, filer), 'create_objective', { title: 'p958 x-person', description: 'd', parent_id: ids['other-review-SECRET'] }), /was not found on a board you can see/)
+    refused(() => runTool(ctx(ALICE, filer), 'create_objective', { title: 'p958 deleted', description: 'd', parent_id: ids['growth-deleted'] }), /was not found on a board you can see/)
+    // The granted workspace still works for the same bot.
+    const ok = runTool(ctx(ADMIN, scoped), 'create_objective', { title: 'p958 scoped ok', description: 'd', parent_id: ids['growth-queue'] }).result as Loose
+    expect(row(ok.id)).toMatchObject({ parent_id: ids['growth-queue'], depth: 1, workspace: GROWTH })
+  })
+
+  it('a grandchild is refused: cards nest one level only', () => {
+    const child = runTool(ctx(ALICE, filer), 'create_objective', { title: 'p958 nest child', description: 'd', parent_id: ids['growth-review-1'] }).result as Loose
+    refused(() => runTool(ctx(ALICE, filer), 'create_objective', { title: 'p958 grandchild', description: 'd', parent_id: child.id }), /nest one level only/)
+    refused(() => runTool(ctx(ALICE, registered), 'create_objective', { title: 'p958 grandchild job', description: 'd', parent_id: child.id }), /nest one level only/)
+  })
+
+  it('a workspace that is not the parent\'s, and a parent_id that is not a card number, are refused', () => {
+    refused(() => runTool(ctx(ALICE, filer), 'create_objective', { title: 'p958 ws clash', description: 'd', parent_id: ids['growth-queue'], workspace: EMPTY_WS }), /lands in that card's workspace \(growth\)/)
+    refused(() => runTool(ctx(ALICE, filer), 'create_objective', { title: 'p958 bad id', description: 'd', parent_id: 'the launch card' }), /parent_id must be a card number/)
+    refused(() => runTool(ctx(ALICE, filer), 'create_objective', { title: 'p958 bad id 2', description: 'd', parent_id: -3 }), /parent_id must be a card number/)
+  })
+
+  it('the per-parent cap on open children holds', () => {
+    const db = getDb()
+    const parent = ids['growth-working-blocked']
+    const ins = db.prepare(`INSERT INTO objectives (title, description, workspace, status, type, category, created_by, parent_id, depth) VALUES (?, '', ?, ?, 'task', 'general', ?, ?, 1)`)
+    for (let i = 0; i < 19; i++) ins.run(`p958 cap filler ${i}`, GROWTH, 'queue', ALICE, parent)
+    ins.run('p958 cap done', GROWTH, 'done', ALICE, parent) // terminal children do not count
+    const last = runTool(ctx(ALICE, filer), 'create_objective', { title: 'p958 cap twentieth', description: 'd', parent_id: parent }).result as Loose
+    expect(row(last.id).parent_id).toBe(parent)
+    refused(() => runTool(ctx(ALICE, filer), 'create_objective', { title: 'p958 cap over', description: 'd', parent_id: parent }), /already has 20 open cards under it \(the limit is 20\)/)
+  })
+})

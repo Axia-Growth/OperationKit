@@ -23,6 +23,8 @@ import { chooseProviderId, createProvider } from './agent-chat/providers.js'
 import type { ChatAgent } from './agent-chat/agent-defs.js'
 import { frameAndScan } from './injection-telemetry.js'
 import { askQuestion, getDecision, recordAnswer, redactDecisionText } from './decisions.js'
+import { AUTO_BRIEFING_FLAG, autoBriefDecision } from './decision-autobrief.js'
+import { fyiSink } from './decision-fyi-sink.js'
 
 export interface DecisionAnswerInput {
   decision: DecisionView
@@ -120,11 +122,15 @@ export function answerPrompt(input: DecisionAnswerInput, botName: string): { sys
   return { system, user: redactDecisionText(user) }
 }
 
-const realAnswerer: DecisionAnswerer = async input => {
-  const agent = pickAgent(input.decision, input.objective)
+/**
+ * One tool-less completion as the bot that owns a decision (shared with the
+ * auto-briefing in decision-autobrief.ts, obj 901151). Throws when no bot is
+ * installed or the reply is empty.
+ */
+export async function completeAsDecisionBot(decision: DecisionView, objective: Objective | null, system: string, user: string): Promise<string> {
+  const agent = pickAgent(decision, objective)
   if (!agent) throw new Error('no bot is installed to answer')
   const provider = createProvider(chooseProviderId(agent, installDefaultProvider()), agent)
-  const { system, user } = answerPrompt(input, agent.name)
   const ac = new AbortController()
   const timer = setTimeout(() => ac.abort(), ANSWER_TIMEOUT_MS)
   timer.unref?.()
@@ -132,10 +138,18 @@ const realAnswerer: DecisionAnswerer = async input => {
     const out = await provider.complete({ system, messages: [{ role: 'user', content: user }], tools: [], agent, signal: ac.signal })
     const text = (out.content ?? '').trim()
     if (!text) throw new Error('the bot gave an empty answer')
-    return { text, by: agent.name }
+    return text
   } finally {
     clearTimeout(timer)
   }
+}
+
+const realAnswerer: DecisionAnswerer = async input => {
+  const agent = pickAgent(input.decision, input.objective)
+  if (!agent) throw new Error('no bot is installed to answer')
+  const { system, user } = answerPrompt(input, agent.name)
+  const text = await completeAsDecisionBot(input.decision, input.objective, system, user)
+  return { text, by: agent.name }
 }
 
 /**
@@ -155,6 +169,14 @@ export function askAndAnswer(
     try {
       const a = await (override ?? realAnswerer)({ decision, objective, question: question.body })
       recordAnswer(db, question.id, { body: a.text, author: a.by })
+      // obj 901151: a decision raised with no briefing takes the bot's answer as
+      // its briefing (and one the server wrote earlier is rewritten with it).
+      const now = getDecision(db, decisionId)
+      if (now && now.state === 'open' && (now.incomplete || now.flags.includes(AUTO_BRIEFING_FLAG))) {
+        await autoBriefDecision(db, decisionId, fyiSink, { fromAnswer: true }).catch(err => {
+          console.warn(`[decisions] could not rewrite the briefing of decision ${decisionId} from the answer:`, err instanceof Error ? err.message : String(err))
+        })
+      }
     } catch (err) {
       const why = err instanceof Error ? err.message : String(err)
       recordAnswer(db, question.id, {

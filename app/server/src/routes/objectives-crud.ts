@@ -133,7 +133,24 @@ router.get('/', (req: AuthRequest, res) => {
 
   let objectives: Objective[]
 
-  if (user.role === 'admin') {
+  if (req.cardBrowser) {
+    // obj 901145: a card browser session sees its card's ONE workspace —
+    // `all` / no filter / a list containing it all mean that workspace, any
+    // other workspace is []. Within it the view is narrowed (never widened) to
+    // what the acting user may see there.
+    const cb = req.cardBrowser
+    if (requested.length > 0 && !requested.includes(cb.workspace)) {
+      res.json([])
+      return
+    }
+    const ownClause = cb.ownOnlyUserId != null
+      ? ` AND (o.assigned_user_id = ? OR o.created_by = ? OR o.id IN (SELECT objective_id FROM objective_assignees WHERE user_id = ?))`
+      : ''
+    const ownParams = cb.ownOnlyUserId != null ? [cb.ownOnlyUserId, cb.ownOnlyUserId, cb.ownOnlyUserId] : []
+    objectives = db
+      .prepare(`SELECT ${LIST_SELECT} FROM ${LIST_FROM} WHERE o.workspace = ? AND ${statusClause}${tombstoneClause}${projectIdClause}${ownClause} ORDER BY o.updated_at DESC${pageClause}`)
+      .all(cb.workspace, ...statusParams, ...projectIdParams, ...ownParams) as Objective[]
+  } else if (user.role === 'admin') {
     // Admins see everything in the requested workspaces (or all when unfiltered).
     if (requested.length > 0) {
       objectives = db

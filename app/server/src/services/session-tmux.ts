@@ -461,7 +461,7 @@ export function spawnInTmux(opts: {
   // obj 901075: tell a fresh worker what it ACTUALLY got — the launcher, or
   // that there is no browser and why. A resumed turn already has it in context.
   if ((cardBrowser || browserFallbackReason) && !resumeSessionId) {
-    const block = buildCardBrowserPromptBlock(browserPlan ? { granted: true } : { granted: false, reason: browserRefusal ?? 'not available' })
+    const block = buildCardBrowserPromptBlock(browserPlan ? { granted: true, ownLoopback: browserPlan.policy.loopbackPortRange } : { granted: false, reason: browserRefusal ?? 'not available' })
     promptForSession = `${promptForSession}\n${block.join('\n')}\n`
   }
   if (useJail) {
@@ -612,6 +612,7 @@ export function spawnInTmux(opts: {
   const unsetSigning = env.CC_STRIP_SIGNING_SECRETS === '1' ? '\nunset JWT_SECRET CC_JWT_SECRET' : ''
   fs.writeFileSync(scriptFile, `#!/bin/bash
 unset ANTHROPIC_API_KEY ANTHROPIC_AUTH_TOKEN OPENAI_API_KEY GEMINI_API_KEY GOOGLE_API_KEY XAI_API_KEY GROK_CODE_XAI_API_KEY${unsetSigning}
+unset CARD_BROWSER_CF_ACCESS_CLIENT_ID CARD_BROWSER_CF_ACCESS_CLIENT_SECRET
 # D2 (obj 900540): the secrets-store KEK is the server's alone. A tmux server
 # started from a container env that still carries the legacy SECRETS_MASTER_KEY
 # must not hand it to a session.

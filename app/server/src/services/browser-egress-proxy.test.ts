@@ -165,3 +165,88 @@ describe('browser egress guard — a stricter policy is actually stricter', () =
     }
   })
 })
+
+describe('browser egress guard — survives a browser that resets its socket (obj 901106)', () => {
+  // Chromium abandons a refused CONNECT (and cancelled navigations) with a TCP
+  // reset. Before obj 901106 that surfaced as an unhandled 'error' on the client
+  // socket and killed the guard, so every later page in the card failed.
+  it('keeps serving after clients reset mid-refusal and mid-request', async () => {
+    const resetAfter = (payload: string) =>
+      new Promise<void>((resolve) => {
+        const sock = net.connect(proxy.port, '127.0.0.1', () => {
+          sock.write(payload, () => {
+            sock.resetAndDestroy()
+            resolve()
+          })
+        })
+        sock.on('error', () => resolve())
+      })
+    for (let i = 0; i < 25; i++) {
+      await resetAfter('CONNECT team.cloudflareaccess.com:443 HTTP/1.1\r\nHost: team.cloudflareaccess.com:443\r\n\r\n')
+      await resetAfter(`CONNECT 127.0.0.1:${originPort} HTTP/1.1\r\nHost: 127.0.0.1:${originPort}\r\n\r\n`)
+      await resetAfter('GET http://not-allowed.example.com/ HTTP/1.1\r\nHost: not-allowed.example.com\r\n\r\n')
+      await resetAfter('NOT A REQUEST\r\n\r\n')
+    }
+    await new Promise((r) => setTimeout(r, 200))
+    const res = await viaProxy(`http://127.0.0.1:${originPort}/still-alive`)
+    expect(res.status).toBe(200)
+    expect(res.body).toBe('origin-ok')
+  })
+
+  it('names Cloudflare Access when it refuses the Access login hop', async () => {
+    const line = await connectVia('mute-term-3e19.cloudflareaccess.com:443')
+    expect(line).toMatch(/^HTTP\/1\.1 403/)
+    const last = proxy.log[proxy.log.length - 1]
+    expect(last.allowed).toBe(false)
+    expect(last.reason).toMatch(/Cloudflare Access login page/)
+    expect(last.reason).toMatch(/--sign-in/)
+  })
+})
+
+// obj 901145: the JAILED worker policy, end to end through a real guard. The
+// worker's own dev server (a real listener on a loopback port) opens with no
+// operator config; the CC API port and private ranges are refused by the guard
+// before any socket is opened.
+describe('worker guard in a jail — the card\'s own dev server opens by default (obj 901145)', () => {
+  let guard: EgressProxyHandle
+  beforeAll(async () => {
+    const { resolveWorkerBrowserPolicy } = await import('../lib/card-browser.js')
+    guard = await startBrowserEgressProxy(resolveWorkerBrowserPolicy({} as NodeJS.ProcessEnv, { ownSandboxLoopback: true }), { port: 0 })
+  })
+  afterAll(async () => { await guard.close() })
+
+  function get(url: string): Promise<{ status: number; body: string }> {
+    return new Promise((resolve, reject) => {
+      const req = http.request(
+        { host: '127.0.0.1', port: guard.port, method: 'GET', path: url, headers: { host: new URL(url).host } },
+        (res) => {
+          let body = ''
+          res.on('data', (c) => { body += c })
+          res.on('end', () => resolve({ status: res.statusCode || 0, body }))
+        },
+      )
+      req.on('error', reject)
+      req.end()
+    })
+  }
+
+  it('reaches a dev server the worker started on localhost / 127.0.0.1', async () => {
+    const res = await get(`http://127.0.0.1:${originPort}/`)
+    expect(res.status).toBe(200)
+    expect(res.body).toBe('origin-ok')
+    // localhost may resolve to ::1 first while the test origin listens on IPv4
+    // only, so assert the GUARD's decision rather than the upstream reply.
+    await get(`http://localhost:${originPort}/`)
+    const last = guard.log[guard.log.length - 1]
+    expect(last.target).toContain(`localhost:${originPort}`)
+    expect(last.allowed).toBe(true)
+  })
+
+  it('refuses the install\'s app port 3002 and another sandbox\'s address', async () => {
+    for (const url of ['http://127.0.0.1:3002/api/health', 'http://localhost:3002/api/health', 'http://172.18.0.7:3912/', 'http://10.0.3.4:5173/']) {
+      const res = await get(url)
+      expect(res.status, url).toBe(403)
+      expect(res.body).not.toBe('origin-ok')
+    }
+  })
+})

@@ -35,7 +35,6 @@
  */
 import type { Database } from 'better-sqlite3'
 import {
-  DEFAULT_AGENT_CONTEXT,
   cardNeedsHuman,
   type ApprovalNeed,
   type BotApprovalEligibility,
@@ -43,7 +42,8 @@ import {
 } from '@operationkit/shared'
 import { isMoneyPath } from './merge-lane.js'
 import { findActiveGrant } from './delegated-approvals.js'
-import { botForAgentSlug, resolveBot } from './bots/bot-registry.js'
+import { resolveBot } from './bots/bot-registry.js'
+import { cardOwnerBot } from './bots/card-owner.js'
 
 /** The card fields eligibility reads. */
 export type ApprovalCard = Pick<
@@ -82,22 +82,6 @@ function needsSecretCount(raw: unknown): number {
     }
   }
   return 0
-}
-
-/**
- * The chat bot slug that filed this card AND works it (agent_context = that
- * slug), or null. A chat-filed card handed to a worker persona is not the chat
- * bot's own work and is left to the ordinary owner_bot rule.
- */
-function chatBotOwnerSlug(db: Database, card: Pick<Objective, 'id' | 'agent_context'>): string | null {
-  const slug = String(card.agent_context ?? '').trim().toLowerCase()
-  if (!slug || slug === DEFAULT_AGENT_CONTEXT) return null
-  try {
-    const row = db.prepare('SELECT agent_slug FROM agent_chat_cards WHERE objective_id = ?').get(card.id) as { agent_slug: string } | undefined
-    return row && row.agent_slug.toLowerCase() === slug ? row.agent_slug : null
-  } catch {
-    return null
-  }
 }
 
 export interface EligibilityInput {
@@ -164,21 +148,11 @@ export function botApprovalEligibility(db: Database, input: EligibilityInput): B
   }
 
   // need === 'close': nothing gated pending. Only the bot's own, reviewed work.
-  const ownerBot = (card.owner_bot ?? '').trim()
-  const owned = ownerBot ? resolveBot(ownerBot, db) : null
-  // The default slug ('general') is on every persona-less card; it is not proof
-  // the General bot did the work (see DEFAULT_AGENT_CONTEXT).
-  const slug = String(card.agent_context ?? '').trim().toLowerCase()
-  const ownedBySlug = !ownerBot && slug && slug !== DEFAULT_AGENT_CONTEXT
-    ? resolved.bot.agent_slugs.some(s => s.toLowerCase() === String(card.agent_context).toLowerCase())
-    : false
-  let isOwn = (owned?.ok && owned.bot.id === bot) || ownedBySlug
-  // A card a CHAT BOT filed and works under its own slug is that chat bot's
-  // work. owner_bot is free text matched by id, name or alias, so a registered
-  // bot that only shares the chat bot's display name must not pass as its owner
-  // (review of PR 797): the closing bot has to be the one the chat SLUG belongs to.
-  const chatSlug = chatBotOwnerSlug(db, card)
-  if (isOwn && chatSlug && botForAgentSlug(chatSlug, db)?.id !== bot) isOwn = false
+  // One rule for "whose card is this" (services/bots/card-owner.ts): owner_bot
+  // when set, else the bot behind agent_context (never the default slug). It
+  // also carries the PR 797 guard: a registered bot that only shares the display
+  // name of the chat bot that filed and works the card is not its owner.
+  const isOwn = cardOwnerBot(card, db)?.botId === bot
   if (!isOwn) {
     return no('not_bot_owned', `Card #${card.id} is not ${bot}'s own work, and ${bot} holds no grant that covers it. A person approves it.`, bot)
   }

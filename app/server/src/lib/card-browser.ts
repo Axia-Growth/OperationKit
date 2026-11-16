@@ -123,12 +123,24 @@ export function parseWorkerLoopbackPorts(env: NodeJS.ProcessEnv = process.env): 
  * Only explicit preview ports (CARD_BROWSER_WORKER_LOOPBACK_PORTS) open, and
  * the API / guard ports are blocked even then. The reviewer policy is untouched.
  */
-export function resolveWorkerBrowserPolicy(env: NodeJS.ProcessEnv = process.env): BrowserPolicy {
+export function resolveWorkerBrowserPolicy(
+  env: NodeJS.ProcessEnv = process.env,
+  opts: { ownSandboxLoopback?: boolean } = {},
+): BrowserPolicy {
   const base = resolveBrowserPolicy(env)
   const loopbackOrigins = new Set<string>(LOOPBACK_ORIGINS)
   const allowed = base.allowedOrigins.filter((o) => !loopbackOrigins.has(o))
   const { ports, warnings } = parseWorkerLoopbackPorts(env)
   for (const p of ports) allowed.push(`http://localhost:${p}`, `http://127.0.0.1:${p}`, `http://[::1]:${p}`)
+  // obj 901145: in a JAIL, loopback is the card's own network namespace —
+  // nothing listens there but the card's own processes, the CC API forwarder
+  // (3002) and the in-jail guard (3099), and both of those are on the block
+  // list below, which decideEgress checks first. So a dev server the worker
+  // starts (vite 5173, a scratch server on 3912 …) is reachable by default.
+  // Never in the app container (tmux mode): loopback there is the app and
+  // every other tmux card, so only the explicit port list applies.
+  const ownRange = opts.ownSandboxLoopback && workerOwnSandboxLoopbackEnabled(env) ? WORKER_OWN_LOOPBACK_RANGE : undefined
+  if (ownRange) allowed.push(...LOOPBACK_ORIGINS)
   const blocked = [...base.blockedOrigins]
   for (const p of workerForbiddenLoopbackPorts(env)) {
     for (const h of ['localhost', '127.0.0.1', '[::1]']) blocked.push(`http://${h}:${p}`, `https://${h}:${p}`)
@@ -137,10 +149,23 @@ export function resolveWorkerBrowserPolicy(env: NodeJS.ProcessEnv = process.env)
     ...base,
     allowedOrigins: [...new Set(allowed)],
     blockedOrigins: [...new Set(blocked)],
-    allowLoopback: ports.length > 0,
+    allowLoopback: ports.length > 0 || !!ownRange,
     loopbackPorts: ports,
+    ...(ownRange ? { loopbackPortRange: { ...ownRange } } : {}),
     warnings: [...base.warnings, ...warnings],
   }
+}
+
+/**
+ * The loopback ports a JAILED worker's browser may open by default (obj
+ * 901145): every unprivileged port of its own sandbox. The forbidden ports
+ * (workerForbiddenLoopbackPorts) are blocked on top of this.
+ */
+export const WORKER_OWN_LOOPBACK_RANGE = Object.freeze({ min: 1024, max: 65535 })
+
+/** `CARD_BROWSER_WORKER_OWN_LOOPBACK=off` turns the jail default off (explicit ports only). */
+export function workerOwnSandboxLoopbackEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
+  return !/^(0|off|no|false)$/i.test((env.CARD_BROWSER_WORKER_OWN_LOOPBACK || '').trim())
 }
 
 /**
@@ -227,7 +252,7 @@ export function buildPlaywrightMcpArgs(
     // that matters most (this app, on 127.0.0.1:3002).
     // A worker policy (loopbackPorts set, obj 901051) ALWAYS forces loopback
     // through the guard, so the preview-port allowlist is actually enforced.
-    if (!policy.allowLoopback || policy.loopbackPorts) args.push('--proxy-bypass', '<-loopback>')
+    if (!policy.allowLoopback || policy.loopbackPorts || policy.loopbackPortRange) args.push('--proxy-bypass', '<-loopback>')
   }
   return args
 }
@@ -339,7 +364,8 @@ export function renderCardBrowserLauncher(): string {
 //   const browser = await launch(); const page = await browser.newPage()
 //
 //   node "$CC_BROWSER_LAUNCHER" check
-//   node "$CC_BROWSER_LAUNCHER" screenshot <url> <out.png> [--width 1440] [--height 900] [--full]
+//   node "$CC_BROWSER_LAUNCHER" screenshot <url> <out.png> [--width 1440] [--height 900] [--full] [--sign-in]
+//   node "$CC_BROWSER_LAUNCHER" sign-in      # proves the card can sign in to this install's site
 //
 // The pinned Chromium, its OS sandbox and the egress guard are applied here and
 // cannot be switched off through launch() options.
@@ -443,6 +469,48 @@ export async function launch(options = {}) {
   return chromium.launch(opts)
 }
 
+// ── Signing in to this install's own site (obj 901106) ──────────────────────
+// The control plane mints a short-lived, read-only session for THIS card (and,
+// when the install has an Access service token, the Cloudflare Access cookie
+// for the public app). Cookie values go straight into the browser context and
+// are never printed or returned.
+function controlPlaneUrl() {
+  return (process.env.CC_CONTROL_PLANE_URL || 'http://127.0.0.1:3002').replace(/\\/+$/, '')
+}
+
+/** Add this card's sign-in cookies to a browser context. Returns metadata only. */
+export async function signIn(context, options = {}) {
+  const token = process.env.CC_SESSION_TOKEN
+  if (!token) refuse('CC_SESSION_TOKEN is not set: this session cannot sign its browser in')
+  if (!context || typeof context.addCookies !== 'function') refuse('signIn(context) needs a browser context (browser.newContext())')
+  let res
+  try {
+    res = await fetch(controlPlaneUrl() + '/api/card-browser/session', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-cc-session-token': token },
+      body: JSON.stringify(options.ttlMinutes ? { ttl_minutes: Number(options.ttlMinutes) } : {}),
+    })
+  } catch (e) {
+    refuse('could not reach the control plane for a sign-in: ' + (e && e.message))
+  }
+  let body = {}
+  try { body = await res.json() } catch {}
+  if (!res.ok || !Array.isArray(body.cookies)) refuse('sign-in refused (HTTP ' + res.status + '): ' + (body.error || 'no session'))
+  await context.addCookies(body.cookies)
+  return { public_url: body.public_url, expires_at: body.expires_at, identity: body.identity, cf_access: body.cf_access }
+}
+
+function isAccessLogin(url) {
+  try { return /\\.cloudflareaccess\\.com$/i.test(new URL(url).hostname) } catch { return false }
+}
+
+function accessHint(signedIn) {
+  if (!signedIn) return 'the site is behind Cloudflare Access and redirected to its login page for people. Re-run with --sign-in.'
+  const cf = signedIn.cf_access || {}
+  if (cf.status === 'ok') return 'the site is behind Cloudflare Access and still redirected to its login page although an Access session was issued (the Access cookie may be scoped to a different application).'
+  return 'the site is behind Cloudflare Access and this install has no working Access service token for the card browser (' + (cf.status || 'unknown') + (cf.reason ? ': ' + cf.reason : '') + '). An operator must add one (CARD_BROWSER_CF_ACCESS_CLIENT_ID / _SECRET).'
+}
+
 function nsOf(pid, kind) {
   try { return fs.readlinkSync('/proc/' + pid + '/ns/' + kind) } catch { return null }
 }
@@ -472,6 +540,7 @@ async function cli(argv) {
   for (let i = 0; i < rest.length; i++) {
     const a = rest[i]
     if (a === '--full') flags.full = true
+    else if (a === '--sign-in') flags.signIn = true
     else if (a.startsWith('--')) flags[a.slice(2)] = rest[++i]
     else positional.push(a)
   }
@@ -494,19 +563,47 @@ async function cli(argv) {
   }
   if (cmd === 'screenshot') {
     const [url, out] = positional
-    if (!url || !out) refuse('usage: screenshot <url> <out.png> [--width N] [--height N] [--full]')
+    if (!url || !out) refuse('usage: screenshot <url> <out.png> [--width N] [--height N] [--full] [--sign-in]')
     const browser = await launch()
     try {
-      const page = await browser.newPage({ viewport: { width: Number(flags.width || 1440), height: Number(flags.height || 900) } })
-      const res = await page.goto(url, { waitUntil: 'networkidle', timeout: 60000 })
+      const context = await browser.newContext({ viewport: { width: Number(flags.width || 1440), height: Number(flags.height || 900) } })
+      const signedIn = flags.signIn ? await signIn(context) : null
+      const page = await context.newPage()
+      let accessRedirect = null
+      page.on('response', (r) => {
+        const loc = r.status() >= 300 && r.status() < 400 ? (r.headers()['location'] || '') : ''
+        if (loc && isAccessLogin(new URL(loc, r.url()).toString())) accessRedirect = new URL(loc, r.url()).hostname
+      })
+      let res
+      try {
+        res = await page.goto(url, { waitUntil: 'networkidle', timeout: 60000 })
+      } catch (e) {
+        if (accessRedirect) refuse('could not open ' + url + ': ' + accessHint(signedIn) + ' (redirected to ' + accessRedirect + ')')
+        throw e
+      }
+      if (accessRedirect || isAccessLogin(page.url())) refuse('could not open ' + url + ': ' + accessHint(signedIn))
       await page.screenshot({ path: out, fullPage: !!flags.full })
-      console.log(JSON.stringify({ ok: true, url, status: res ? res.status() : null, out }))
+      const report = { ok: true, url, final_url: page.url(), status: res ? res.status() : null, out }
+      if (signedIn) report.signed_in_as = signedIn.identity && signedIn.identity.username
+      console.log(JSON.stringify(report))
     } finally {
       await browser.close()
     }
     return
   }
-  refuse('unknown command ' + JSON.stringify(cmd) + ' (use: check | screenshot <url> <out.png>)')
+  if (cmd === 'sign-in') {
+    // Proves the sign-in path without opening a page; prints metadata, never cookies.
+    const browser = await launch()
+    try {
+      const context = await browser.newContext()
+      const info = await signIn(context)
+      console.log(JSON.stringify({ ok: true, ...info }, null, 2))
+    } finally {
+      await browser.close()
+    }
+    return
+  }
+  refuse('unknown command ' + JSON.stringify(cmd) + ' (use: check | sign-in | screenshot <url> <out.png> [--sign-in])')
 }
 
 let isMain = false
@@ -544,7 +641,9 @@ export function buildJailGuardPrefix(guardDirGuest: string): string {
 
 // ── What the worker is told about its browser ───────────────────────────────
 
-export type CardBrowserPromptState = { granted: true } | { granted: false; reason: string }
+export type CardBrowserPromptState =
+  | { granted: true; ownLoopback?: { min: number; max: number } }
+  | { granted: false; reason: string }
 
 /**
  * Prompt block for a worker, written from what its spawn ACTUALLY got (obj
@@ -569,11 +668,14 @@ export function buildCardBrowserPromptBlock(state: CardBrowserPromptState): stri
     'Your session has a pinned, sandboxed Chromium whose traffic goes through the egress guard. Use it only through the launcher:',
     '```bash',
     'node "$CC_BROWSER_LAUNCHER" check                                  # proves it starts (sandbox + guard)',
-    'node "$CC_BROWSER_LAUNCHER" screenshot <url> <out.png> [--width 1440] [--height 900] [--full]',
+    'node "$CC_BROWSER_LAUNCHER" screenshot <url> <out.png> [--width 1440] [--height 900] [--full] [--sign-in]',
     '```',
-    'or from a script: `const { launch } = await import(process.env.CC_BROWSER_LAUNCHER); const browser = await launch()`.',
+    'or from a script: `const { launch, signIn } = await import(process.env.CC_BROWSER_LAUNCHER); const browser = await launch()`.',
+    '- To view this install\'s own site signed in (it may sit behind Cloudflare Access and a login), add `--sign-in`, or call `await signIn(context)` on a `browser.newContext()`. You get a short-lived, READ-ONLY session as this card\'s bot; never sign in with a person\'s password or a copied cookie.',
     '- Do not `npm i playwright` / `npx playwright install` a browser of your own, and do not pass `--no-sandbox` or a proxy: the launcher refuses them and a hand-installed Chromium has no sandbox or guard.',
-    '- The guard allows this install\'s own site only. Localhost, private networks and cloud metadata are refused (the Command Center API port always is); a preview server on localhost works only on a port the operator listed in CARD_BROWSER_WORKER_LOOPBACK_PORTS. A blocked site is policy, not a bug — say which URL was refused.',
+    state.ownLoopback
+      ? `- The guard allows this install's own site, plus a dev server YOU start inside this sandbox on localhost / 127.0.0.1, port ${state.ownLoopback.min}-${state.ownLoopback.max} (e.g. a scratch server on 3912, vite on 5173). The Command Center API port (3002) and the guard port are always refused, as are private networks and cloud metadata. A blocked site is policy, not a bug — say which URL was refused.`
+      : '- The guard allows this install\'s own site only. Localhost, private networks and cloud metadata are refused (the Command Center API port always is); a preview server on localhost works only on a port the operator listed in CARD_BROWSER_WORKER_LOOPBACK_PORTS. A blocked site is policy, not a bug — say which URL was refused.',
     '- If `check` fails (Chromium will not start), carry on with the card without the browser and say which step needed it.',
   ]
 }

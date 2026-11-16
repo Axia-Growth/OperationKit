@@ -145,8 +145,20 @@ export async function startBrowserEgressProxy(
 
   const server = http.createServer()
 
+  // A browser resets sockets routinely: it abandons a refused CONNECT, cancels
+  // a navigation, closes a tab. That must never take the guard down. Before
+  // obj 901106 a reset after a refusal surfaced as an UNHANDLED 'error' on the
+  // client socket and killed the guard process, so every later navigation in
+  // the session failed. Failing closed means refusing one request, not losing
+  // the browser for the rest of the card.
+  server.on('clientError', (_err, socket) => {
+    try { socket.destroy() } catch { /* already gone */ }
+  })
+
   // Plain HTTP through a proxy arrives as an absolute-URI request line.
   server.on('request', (req, res) => {
+    req.on('error', () => res.destroy())
+    res.on('error', () => req.destroy())
     void (async () => {
       let url: URL
       try {
@@ -182,11 +194,16 @@ export async function startBrowserEgressProxy(
         res.end(`card-browser egress guard: upstream error: ${err.message}\n`)
       })
       req.pipe(upstream)
-    })()
+    })().catch(() => {
+      if (!res.headersSent) res.writeHead(502, { 'content-type': 'text/plain' })
+      res.end('card-browser egress guard: internal error\n')
+    })
   })
 
   // HTTPS (and anything else Chromium tunnels) arrives as CONNECT.
   server.on('connect', (req, clientSocket, head) => {
+    // Attach before anything async: the client may reset while we resolve DNS.
+    clientSocket.on('error', () => clientSocket.destroy())
     void (async () => {
       const authority = parseAuthority(req.url ?? '', 443)
       if (!authority) {
@@ -194,6 +211,7 @@ export async function startBrowserEgressProxy(
         return
       }
       const verdict = await check('https', authority.host, authority.port)
+      if (clientSocket.destroyed) return
       if (!verdict.ok) {
         // 403 on the CONNECT: Chromium surfaces this to the page as a navigation
         // failure, which is exactly what we want the agent to see.
@@ -214,7 +232,8 @@ export async function startBrowserEgressProxy(
       const bail = () => { upstream.destroy(); clientSocket.destroy() }
       upstream.on('error', bail)
       clientSocket.on('error', bail)
-    })()
+      clientSocket.on('close', () => upstream.destroy())
+    })().catch(() => clientSocket.destroy())
   })
 
   await new Promise<void>((resolve, reject) => {
@@ -312,7 +331,7 @@ export async function startSharedWorkerBrowserEgressProxy(
   sharedWorker = await startBrowserEgressProxy(policy, { port })
   console.log(
     `[card-browser] WORKER egress guard listening on 127.0.0.1:${sharedWorker.port} ` +
-    `(loopback ${policy.allowLoopback ? `ports ${(policy.loopbackPorts ?? []).join(',')} only` : 'refused'})`,
+    `(loopback ${policy.allowLoopback ? `ports ${(policy.loopbackPorts ?? []).join(',')}${policy.loopbackPortRange ? ` + ${policy.loopbackPortRange.min}-${policy.loopbackPortRange.max}` : ''} only` : 'refused'})`,
   )
   return sharedWorker
 }

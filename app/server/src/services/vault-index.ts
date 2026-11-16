@@ -257,11 +257,35 @@ function matchExpression(query: string): { match: string; expanded: string[] } |
 }
 
 /**
+ * Rows from a ranked query, filtered by `keep`, deepened until `limit` of them
+ * survive (obj 900962). `fetch(depth)` returns the best `depth` rows. With no
+ * scope this is exactly one fetch. With a scope, a page that came back full
+ * but left fewer than `limit` in-scope rows is re-fetched 4x deeper, so decoys
+ * outside the caller's scope cannot crowd an in-scope row out of the result.
+ * It stops when the index has no more rows, so it always terminates.
+ */
+function scopedTop<T>(fetch: (depth: number) => T[], keep: ((rows: T[]) => T[]) | null, limit: number, firstDepth: number): T[] {
+  let depth = firstDepth
+  for (;;) {
+    const rows = fetch(depth)
+    if (!keep) return rows
+    const kept = keep(rows)
+    if (kept.length >= limit || rows.length < depth) return kept
+    depth *= 4
+  }
+}
+
+/**
  * Keyword ranking (obj 900816): the FTS5 rows for `query`, workspace-walled,
  * best first, up to `limit`. Used by the hybrid ranker; throws on index errors
  * (callers decide the fallback).
+ *
+ * `accept` (obj 900962) is the caller's visibility predicate. It is applied
+ * INSIDE the ranking, before the top `limit` is taken, together with the
+ * workspace wall. Without it and without a workspace, the query and its
+ * ordering are what they always were.
  */
-export function keywordRanked(query: string, workspace?: string | null, limit = 50): KeywordRow[] {
+export function keywordRanked(query: string, workspace?: string | null, limit = 50, accept?: (path: string) => boolean): KeywordRow[] {
   const root = knowledgeBaseRoot()
   if (!existsSync(root)) return []
   const m = matchExpression(query)
@@ -271,13 +295,17 @@ export function keywordRanked(query: string, workspace?: string | null, limit = 
   // bm25() returns a negative score; lower (more negative) is more relevant.
   // Boost title and tags columns over body. Over-fetch so the workspace wall
   // below still leaves `limit` rows.
-  const rows = db
-    .prepare('SELECT path, bm25(docs, 10.0, 5.0, 1.0) AS score FROM docs WHERE docs MATCH ? ORDER BY score LIMIT ?')
-    .all(m.match, workspace ? limit * 6 : limit) as KeywordRow[]
+  const stmt = db.prepare('SELECT path, bm25(docs, 10.0, 5.0, 1.0) AS score FROM docs WHERE docs MATCH ? ORDER BY score LIMIT ?')
   // obj 900321 (C13): a workspace argument is a WALL, not a -2.0 bm25 nudge.
   // Out-of-scope docs are removed BEFORE ranking, so no score, stem or synonym
   // expansion can promote another workspace's note into the result set.
-  const ranked = workspace ? filterToWorkspaceScope(rows, workspace, root) : rows
+  const keep = workspace || accept
+    ? (rows: KeywordRow[]) => {
+        const walled = workspace ? filterToWorkspaceScope(rows, workspace, root) : rows
+        return accept ? walled.filter((r) => accept(r.path)) : walled
+      }
+    : null
+  const ranked = scopedTop((depth) => stmt.all(m.match, depth) as KeywordRow[], keep, limit, workspace ? limit * 6 : limit)
   ranked.sort((a, b) => a.score - b.score)
   return ranked.slice(0, limit)
 }
@@ -287,8 +315,10 @@ export function keywordRanked(query: string, workspace?: string | null, limit = 
  * IDs, slugs, quoted phrases. FTS tokenises the token the same way it
  * tokenised the docs, so "obj-900816" matches the adjacent tokens obj, 900816.
  * Returns path → how many distinct tokens matched. Never throws.
+ * `accept` is the caller's visibility predicate, applied before the per-token
+ * caps (obj 900962). Without it the queries are what they always were.
  */
-export function exactPhraseMatches(tokens: string[], workspace?: string | null, perToken = 30): Map<string, number> {
+export function exactPhraseMatches(tokens: string[], workspace?: string | null, perToken = 30, accept?: (path: string) => boolean): Map<string, number> {
   const out = new Map<string, number>()
   try {
     const root = knowledgeBaseRoot()
@@ -299,25 +329,32 @@ export function exactPhraseMatches(tokens: string[], workspace?: string | null, 
     // IDs often live only in the FILE NAME (decisions/2026-11-11-obj900510-….md),
     // so the path is matched too — relative to the root, so the root's own
     // folder names never match.
-    const byPath = db.prepare("SELECT path FROM docs WHERE path LIKE ? ESCAPE '\\' LIMIT 200")
+    const byPath = db.prepare("SELECT path FROM docs WHERE path LIKE ? ESCAPE '\\' LIMIT ?")
     const rootLen = root.endsWith(sep) ? root.length : root.length + 1
+    const inScope = (rows: { path: string }[]) => {
+      const walled = workspace ? filterToWorkspaceScope(rows, workspace, root) : rows
+      return accept ? walled.filter((r) => accept(r.path)) : walled
+    }
+    // Only a caller predicate deepens these queries; the workspace-only path keeps its old depth.
+    const keep = accept ? inScope : null
     for (const t of tokens.slice(0, 8)) {
       const pathHits = new Set<string>()
       if (t.length >= 3) {
         const like = `%${t.replace(/[\\%_]/g, (c) => `\\${c}`)}%`
-        for (const r of byPath.all(like) as { path: string }[]) {
-          if (r.path.slice(rootLen).toLowerCase().includes(t)) pathHits.add(r.path)
-        }
+        const named = (rows: { path: string }[]) => rows.filter((r) => r.path.slice(rootLen).toLowerCase().includes(t))
+        const hits = scopedTop((depth) => byPath.all(like, depth) as { path: string }[], keep ? (rows) => keep(named(rows)) : null, 200, 200)
+        for (const r of named(hits)) pathHits.add(r.path)
       }
       const words = t.toLowerCase().split(/[^\p{L}\p{N}]+/u).filter(Boolean)
       let rows: { path: string }[] = []
       if (words.length) {
         try {
-          rows = stmt.all(`"${words.join(' ')}"`, perToken) as { path: string }[]
+          const phrase = `"${words.join(' ')}"`
+          rows = scopedTop((depth) => stmt.all(phrase, depth) as { path: string }[], keep, perToken, perToken)
         } catch { rows = [] }
       }
       for (const p of pathHits) if (!rows.some((r) => r.path === p)) rows.push({ path: p })
-      const scoped = workspace ? filterToWorkspaceScope(rows, workspace, root) : rows
+      const scoped = inScope(rows)
       for (const r of scoped) out.set(r.path, (out.get(r.path) ?? 0) + 1)
     }
   } catch {

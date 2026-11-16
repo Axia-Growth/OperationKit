@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { Check, Minus } from 'lucide-react'
 import {
   DENY_CHOICE,
+  OWN_ANSWER_CHOICE,
   chosenLabel,
   type DecisionOption,
   type DecisionView,
@@ -9,6 +10,7 @@ import {
 import { api, ApiError } from '../../lib/api'
 import { Badge, Button, cn } from '../ui'
 import { DECISION_QA_POLL_MS, DecisionQA, notifyNeedsYouChanged } from './DecisionQA'
+import { CardThreadLink, DecisionLinkList, LinkedText, OwnAnswerForm } from './DecisionLinks'
 
 /* Decision briefing (obj 901059).
 
@@ -82,7 +84,7 @@ export function OptionCard({
     >
       <div className="flex flex-wrap items-center gap-2">
         <span className="inline-flex h-5 min-w-5 items-center justify-center rounded border border-line bg-surface-2 px-1 font-mono text-xs text-fg-1">{opt.key}</span>
-        <span className="font-medium text-fg-0">{opt.label}</span>
+        <span className="min-w-0 break-words font-medium text-fg-0"><LinkedText text={opt.label} /></span>
         {recommended && <Badge tone="accent">Recommended</Badge>}
         {chosen && <Badge tone="verify">Chosen</Badge>}
       </div>
@@ -91,7 +93,7 @@ export function OptionCard({
           {opt.pros.map((p, i) => (
             <li key={i} className="flex gap-1.5 text-fg-1">
               <Check className="mt-0.5 h-3.5 w-3.5 shrink-0 text-success" aria-hidden="true" />
-              <span><span className="sr-only">Pro: </span>{p}</span>
+              <span className="min-w-0 break-words"><span className="sr-only">Pro: </span><LinkedText text={p} /></span>
             </li>
           ))}
         </ul>
@@ -99,14 +101,14 @@ export function OptionCard({
           {opt.cons.map((c, i) => (
             <li key={i} className="flex gap-1.5 text-fg-1">
               <Minus className="mt-0.5 h-3.5 w-3.5 shrink-0 text-danger" aria-hidden="true" />
-              <span><span className="sr-only">Con: </span>{c}</span>
+              <span className="min-w-0 break-words"><span className="sr-only">Con: </span><LinkedText text={c} /></span>
             </li>
           ))}
         </ul>
       </div>
       <p className="mt-2 text-sm text-fg-2">
         <span className="font-medium text-fg-1">Next: </span>
-        {opt.next}
+        <LinkedText text={opt.next} />
       </p>
       {canChoose && (
         <div className="mt-2">
@@ -120,11 +122,15 @@ export function OptionCard({
   )
 }
 
+/** obj 901151: the server wrote this briefing (decision-autobrief.ts). */
+const AUTO_BRIEFING_FLAG = 'auto_briefing'
+
 export function DecisionBriefing({
   decision: initial,
   onChange,
   botName,
   compact = false,
+  stickyActions = false,
   pollMs = POLL_MS,
 }: {
   decision: DecisionView
@@ -132,6 +138,11 @@ export function DecisionBriefing({
   /** Who answers questions in the thread. */
   botName?: string
   compact?: boolean
+  /**
+   * Pin Approve / Deny / own answer to the bottom of the surrounding scroller
+   * (obj 901139), so a long briefing never pushes the action bar out of reach.
+   */
+  stickyActions?: boolean
   /** How often to check for the bot's answer while a question is pending. */
   pollMs?: number
 }) {
@@ -155,18 +166,19 @@ export function DecisionBriefing({
   const open = decision.state === 'open'
   const who = botName ?? decision.agent_slug ?? 'the bot'
 
-  const decide = async (choice: string, opts: { reopen?: boolean } = {}) => {
+  const decide = async (choice: string, opts: { reopen?: boolean; answer?: string } = {}): Promise<boolean> => {
     setBusy(opts.reopen ? 'reopen' : choice)
     setError(null)
     try {
       const r = await api.post<DecisionDecideResponse>(`/decisions/${decision.id}/decide`, {
         choice,
-        ...(note.trim() ? { note: note.trim() } : {}),
+        ...(opts.answer ? { answer: opts.answer } : note.trim() ? { note: note.trim() } : {}),
         ...(opts.reopen ? { reopen: true } : {}),
       })
       update(r.decision)
       setDenyOpen(false)
       notifyNeedsYouChanged()
+      return true
     } catch (e) {
       // obj 901084: an ask that outlived its card comes back cleared — show that, not a dead button.
       const stale = e instanceof ApiError ? (e.body as { code?: string; decision?: DecisionView } | null) : null
@@ -175,6 +187,7 @@ export function DecisionBriefing({
         notifyNeedsYouChanged()
       }
       setError(e instanceof ApiError || e instanceof Error ? e.message : 'That did not go through')
+      return false
     } finally {
       setBusy(null)
     }
@@ -196,7 +209,9 @@ export function DecisionBriefing({
       <div className="flex flex-wrap items-center gap-2">
         <span className={cn('h-1.5 w-1.5 rounded-full', open ? 'bg-status-human' : 'bg-fg-3')} aria-hidden="true" />
         <span className={cn('text-xs font-semibold uppercase tracking-eyebrow', open ? 'text-status-human' : 'text-fg-3')}>{eyebrow}</span>
-        <span className="text-xs text-fg-3">card #{decision.objective_id}</span>
+        <span className="ml-auto min-w-0">
+          <CardThreadLink objectiveId={decision.objective_id} />
+        </span>
       </div>
 
       {decision.incomplete && (
@@ -205,8 +220,20 @@ export function DecisionBriefing({
         </p>
       )}
 
-      <h3 className="mt-2 text-base font-semibold text-fg-0">{b.question || 'What is being decided was not stated.'}</h3>
-      {b.context && <p className="mt-1 text-sm text-fg-1">{b.context}</p>}
+      {!decision.incomplete && decision.flags.includes(AUTO_BRIEFING_FLAG) && (
+        <p data-testid="decision-auto-briefing" className="mt-2 text-xs text-fg-3">
+          Briefing written automatically from {who}&apos;s {decision.flags.includes('auto_briefing_fallback') ? 'note' : 'note and session summary'}: it stopped without one.
+        </p>
+      )}
+
+      <h3 className="mt-2 break-words text-base font-semibold text-fg-0">{b.question ? <LinkedText text={b.question} /> : 'What is being decided was not stated.'}</h3>
+      {b.context && <p className="mt-1 whitespace-pre-wrap break-words text-sm text-fg-1"><LinkedText text={b.context} /></p>}
+      {decision.raw_note && decision.raw_note !== b.context && (
+        <p className="mt-1 whitespace-pre-wrap break-words text-sm text-fg-2">
+          {decision.flags.includes(AUTO_BRIEFING_FLAG) && <span className="font-medium text-fg-1">Its note: </span>}
+          <LinkedText text={decision.raw_note} />
+        </p>
+      )}
 
       {b.options.length > 0 && (
         <ol className="mt-3 space-y-2" aria-label="Options">
@@ -226,7 +253,7 @@ export function DecisionBriefing({
       {b.recommended_why && (
         <p className="mt-2 text-sm text-fg-2">
           <span className="font-medium text-fg-1">Why {b.recommended}: </span>
-          {b.recommended_why}
+          <LinkedText text={b.recommended_why} />
         </p>
       )}
 
@@ -243,12 +270,20 @@ export function DecisionBriefing({
               : 'border-success/40 bg-success/10 text-fg-0',
           )}
         >
-          <p className="font-medium">{chosenLabel(b, decision.chosen)}{decision.decided_by ? ` · ${decision.decided_by}` : ''}</p>
-          <p className="mt-0.5">{decision.outcome_text ?? 'Recorded.'}</p>
-          {decision.outcome === 'card_done' && decision.chosen !== DENY_CHOICE && decision.can_reopen !== false && (
+          <p className="font-medium">{decision.chosen === OWN_ANSWER_CHOICE ? 'Your own answer' : chosenLabel(b, decision.chosen)}{decision.decided_by ? ` · ${decision.decided_by}` : ''}</p>
+          {decision.chosen === OWN_ANSWER_CHOICE && decision.decision_note && (
+            <blockquote data-testid="decision-own-answer" className="mt-1 whitespace-pre-wrap break-words border-l-2 border-line pl-2 text-fg-1">
+              <LinkedText text={decision.decision_note} />
+            </blockquote>
+          )}
+          {decision.chosen !== OWN_ANSWER_CHOICE && decision.decision_note && (
+            <p className="mt-0.5 break-words text-fg-1">Note: <LinkedText text={decision.decision_note} /></p>
+          )}
+          <p className="mt-0.5 break-words">{decision.outcome_text ? <LinkedText text={decision.outcome_text} /> : 'Recorded.'}</p>
+          {(decision.outcome === 'card_done' || decision.outcome === 'delivered') && decision.chosen !== DENY_CHOICE && decision.can_reopen !== false && (
             <div className="mt-2">
               <Button size="sm" variant="primary" loading={busy === 'reopen'} onClick={() => void decide(decision.chosen as string, { reopen: true })}>
-                Reopen and apply
+                {decision.outcome === 'delivered' ? 'Also reopen this card' : 'Reopen and apply'}
               </Button>
             </div>
           )}
@@ -260,12 +295,21 @@ export function DecisionBriefing({
         </p>
       )}
 
+      {/* Every link the decision mentioned (e.g. the PRs it asked to merge). */}
+      <DecisionLinkList decision={decision} />
+
       {/* Q&A thread with the bot that raised it */}
       <DecisionQA decision={decision} onChange={update} who={who} pollMs={pollMs} />
 
       {/* Approve / deny stays available alongside the thread */}
       {open && (
-        <div className="mt-3 flex flex-wrap items-center gap-2">
+        <div
+          data-testid="decision-actions"
+          className={cn(
+            'mt-3 flex flex-wrap items-center gap-2',
+            stickyActions && cn('sticky bottom-0 z-10 border-t border-line-soft bg-surface-1 pb-1 pt-3', compact ? '-mx-3 px-3' : '-mx-4 px-4'),
+          )}
+        >
           {decision.incomplete && (
             <Button size="sm" variant="primary" loading={busy === 'approve'} onClick={() => void decide('approve')}>Approve as proposed</Button>
           )}
@@ -285,6 +329,14 @@ export function DecisionBriefing({
               <Button size="sm" variant="ghost" onClick={() => setDenyOpen(false)}>Cancel</Button>
             </div>
           )}
+          <OwnAnswerForm
+            className="w-full"
+            decisionId={decision.id}
+            who={who}
+            busy={busy === OWN_ANSWER_CHOICE}
+            disabled={!!busy && busy !== OWN_ANSWER_CHOICE}
+            onSubmit={answer => decide(OWN_ANSWER_CHOICE, { answer })}
+          />
         </div>
       )}
 
@@ -293,9 +345,18 @@ export function DecisionBriefing({
   )
 }
 
+/** The panel's own scroll box: bounded so the card thread below always keeps room (obj 901139). */
+export const CARD_DECISION_SCROLL_CLASS = 'max-h-[min(60vh,40rem)] overflow-y-auto overscroll-contain'
+
 /**
  * Top-of-card panel: the card's open decision, or its latest decided one (so
  * the outcome stays visible after approve/deny). Renders nothing otherwise.
+ *
+ * obj 901139: the panel sits in the card's fixed-height column above the
+ * thread. A long briefing used to grow past the screen, so its buttons and the
+ * thread were cut off with no way to scroll to them. Now the panel is its own
+ * bounded scroller with the action bar pinned to its bottom, and a decided
+ * decision folds to one line (what was chosen, open it for the full briefing).
  */
 export function CardDecisionPanel({ objectiveId, botName }: { objectiveId: number; botName?: string }) {
   const [decision, setDecision] = useState<DecisionView | null>(null)
@@ -319,12 +380,36 @@ export function CardDecisionPanel({ objectiveId, botName }: { objectiveId: numbe
       clearInterval(t)
     }
   }, [objectiveId])
+  const [override, setOverride] = useState<{ id: number; expanded: boolean } | null>(null)
   if (!decision) return null
+  const open = decision.state === 'open'
+  // Open decisions (and a choice still waiting on "Reopen and apply") show in full;
+  // a settled one folds to one line until the person opens it.
+  const actionable = open || ((decision.outcome === 'card_done' || decision.outcome === 'delivered') && decision.chosen !== DENY_CHOICE && decision.can_reopen !== false)
+  const expanded = override?.id === decision.id ? override.expanded : actionable
+  const setExpandedFor = (id: number | null) => setOverride({ id: decision.id, expanded: id != null })
   return (
-    <div className="border-b border-line bg-surface-2/40" data-testid="card-decision-panel">
-      <div className="mx-auto max-w-4xl px-4 py-3">
-        <DecisionBriefing decision={decision} onChange={setDecision} botName={botName} />
-      </div>
+    <div className="shrink-0 border-b border-line bg-surface-2/40" data-testid="card-decision-panel" data-expanded={expanded ? '1' : '0'}>
+      {expanded ? (
+        <div className={CARD_DECISION_SCROLL_CLASS} data-testid="card-decision-scroll">
+          <div className="mx-auto max-w-4xl px-4 py-3">
+            <div className="mb-1 flex justify-end">
+              <Button size="sm" variant="ghost" onClick={() => setExpandedFor(null)} aria-expanded="true">Hide decision</Button>
+            </div>
+            <DecisionBriefing decision={decision} onChange={setDecision} botName={botName} stickyActions />
+          </div>
+        </div>
+      ) : (
+        <div className="mx-auto flex max-w-4xl min-w-0 items-center gap-2 px-4 py-2 text-sm" data-testid="card-decision-folded">
+          <span className={cn('h-1.5 w-1.5 shrink-0 rounded-full', open ? 'bg-status-human' : 'bg-fg-3')} aria-hidden="true" />
+          <span className={cn('shrink-0 text-xs font-semibold uppercase tracking-eyebrow', open ? 'text-status-human' : 'text-fg-3')}>{open ? 'Decision needed' : decision.state === 'decided' ? 'Decided' : 'Withdrawn'}</span>
+          <span className="min-w-0 flex-1 truncate text-fg-1">
+            {chosenLabel(decision.briefing, decision.chosen, decision.decision_note) ?? decision.withdrawn_reason ?? ''}
+            {decision.briefing.question ? ` — ${decision.briefing.question}` : ''}
+          </span>
+          <Button size="sm" variant="ghost" onClick={() => setExpandedFor(decision.id)} aria-expanded="false">Show decision</Button>
+        </div>
+      )}
     </div>
   )
 }

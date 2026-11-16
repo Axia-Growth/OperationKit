@@ -71,6 +71,13 @@ export function verifiedSenderStampsEnabled(db?: Database.Database, env: NodeJS.
 /** Env keys a session must never hold while a trust flag is on. */
 export const SERVER_SIGNING_SECRETS = ['JWT_SECRET', 'CC_JWT_SECRET'] as const
 
+/**
+ * Env keys only the control plane may hold, stripped from EVERY spawn (obj
+ * 901106): the card browser's Cloudflare Access service token. The tmux wrapper
+ * also `unset`s them, in case the tmux server env inherited a copy.
+ */
+export const SERVER_ONLY_SESSION_ENV = ['CARD_BROWSER_CF_ACCESS_CLIENT_ID', 'CARD_BROWSER_CF_ACCESS_CLIENT_SECRET'] as const
+
 export function stripServerSigningSecrets(env: Record<string, string | undefined>): void {
   for (const k of SERVER_SIGNING_SECRETS) delete env[k]
 }

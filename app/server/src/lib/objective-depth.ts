@@ -62,6 +62,19 @@ const TRUE_DEPTH_BODY = `
 export const TRUE_DEPTH_CTE = `WITH RECURSIVE t(id, d) AS (${TRUE_DEPTH_BODY})`
 
 /**
+ * Most non-terminal (not done / cancelled) children one parent may hold. One
+ * number for every path that files a child card (internal bulk create, chat
+ * create_objective), so the guard against runaway spawning cannot drift.
+ */
+export const CHILD_CAP_PER_PARENT = 20
+
+/** Open (non-terminal) children of a card: what CHILD_CAP_PER_PARENT is checked against. */
+export function openChildCount(db: DbLike, parentId: number): number {
+  const row = db.prepare("SELECT COUNT(*) as n FROM objectives WHERE parent_id = ? AND status NOT IN ('done', 'cancelled')").get(parentId) as { n: number }
+  return row.n
+}
+
+/**
  * Depth an inserted child should carry: `parent.depth + 1`, or 0 for a top-level
  * row (and for a parent id that does not resolve — a dangling reference is a
  * root by the rule above, so its child would be depth 1, but the child of a

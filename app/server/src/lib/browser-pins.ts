@@ -28,6 +28,8 @@
  *   5. `bash install/update.sh --config client.conf` (rebuilds the image), then
  *      `bash install/verify.sh --config client.conf` (proves sandbox + policy).
  */
+import fs from 'fs'
+import path from 'path'
 
 /** npm `playwright` / `playwright-core` version installed in the image. */
 export const PLAYWRIGHT_VERSION = '1.65.0'
@@ -64,3 +66,24 @@ export const CHROMIUM_VERSION = '158.0.8127.18'
 
 /** The last Playwright release whose Chromium is known to be behind Chrome stable. */
 export const KNOWN_VULNERABLE_PLAYWRIGHT_BELOW = '1.65.0'
+
+/**
+ * The shared Chromium binary (`PLAYWRIGHT_BROWSERS_PATH`, installed once at
+ * image build by app/Dockerfile — see the module docstring). Picks the newest
+ * `chromium-*` dir rather than hardcoding a version, so a Playwright bump here
+ * does not need a matching literal path edit. Mirrors the resolution
+ * `writeReviewerPlaywrightMcpConfig` (session-reviewer-prompt.ts) does inline
+ * for the MCP-driven reviewer browser; this is the same logic for anything
+ * that drives Chromium in-process instead (card-browser-tools.ts).
+ */
+export function resolveChromiumBinary(browsersRoot = '/usr/local/share/playwright'): string {
+  let chromiumBin = path.join(browsersRoot, 'chromium-1223', 'chrome-linux64', 'chrome')
+  try {
+    const dirs = fs.readdirSync(browsersRoot).filter(d => d.startsWith('chromium-')).sort()
+    for (const d of dirs.reverse()) {
+      const candidate = path.join(browsersRoot, d, 'chrome-linux64', 'chrome')
+      if (fs.existsSync(candidate)) return candidate
+    }
+  } catch { /* keep default */ }
+  return chromiumBin
+}

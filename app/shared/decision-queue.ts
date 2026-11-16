@@ -38,6 +38,15 @@ export interface DecisionQueueItem {
   urgency: DecisionUrgency
 }
 
+/**
+ * A decision the person already answered (obj 901139). Always carries its card,
+ * so a decided item leads back to the card thread instead of a dead "Decided".
+ */
+export interface DecidedHistoryItem {
+  decision: DecisionView
+  card: DecisionQueueCard
+}
+
 export interface DecisionQueueResponse {
   items: DecisionQueueItem[]
   count: number
@@ -85,13 +94,14 @@ export const STACK_SHORTCUTS: { keys: string[]; action: StackAction; label: stri
   { keys: ['Enter'], action: 'approve', label: 'Approve the recommendation' },
   { keys: ['1', '2', '3', '4'], action: 'option', label: 'Choose option A-D' },
   { keys: ['d'], action: 'deny', label: 'Deny (none of these)' },
+  { keys: ['a'], action: 'answer', label: 'Answer in your own words' },
   { keys: ['s', 'j', 'ArrowRight'], action: 'next', label: 'Skip to the next decision' },
   { keys: ['k', 'ArrowLeft'], action: 'prev', label: 'Back to the previous one' },
   { keys: ['q', '/'], action: 'ask', label: 'Ask the bot a question' },
   { keys: ['o'], action: 'open', label: 'Open the card' },
   { keys: ['?'], action: 'help', label: 'Show these shortcuts' },
 ]
-export type StackAction = 'approve' | 'option' | 'deny' | 'next' | 'prev' | 'ask' | 'open' | 'help'
+export type StackAction = 'approve' | 'option' | 'deny' | 'answer' | 'next' | 'prev' | 'ask' | 'open' | 'help'
 
 /** Map a key press to a stack action (+ option index for 1-4). Null = not a shortcut. */
 export function stackActionForKey(key: string): { action: StackAction; index?: number } | null {

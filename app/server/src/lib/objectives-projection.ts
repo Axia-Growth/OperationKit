@@ -123,6 +123,8 @@ export interface ListFilters {
   parentId?: number | 'null'
   /** `?ancestor_id=<id>` — the whole subtree BELOW that node (strict descendants). */
   ancestorId?: number
+  /** `?owned_by_bot=<chat slug>` — only cards that bot owns (services/bots/card-owner.ts). Applied by the route. */
+  ownedByBot?: string
   includeTerminal: boolean
 }
 
@@ -149,6 +151,7 @@ export const SUPPORTED_LIST_PARAMS = [
   'since',
   'parent_id',
   'ancestor_id',
+  'owned_by_bot',
   'include_terminal',
   'limit',
   'offset',
@@ -179,6 +182,7 @@ export function parseListFilters(query: Record<string, unknown>): ListFilters {
     since: typeof query.since === 'string' && query.since ? query.since : undefined,
     parentId: parentIsNull ? 'null' : parseId(query.parent_id),
     ancestorId: parseId(query.ancestor_id),
+    ownedByBot: typeof query.owned_by_bot === 'string' && query.owned_by_bot.trim() ? query.owned_by_bot.trim() : undefined,
     // Row set is unchanged by default (back-compat); callers opt OUT of the tail.
     includeTerminal: !(raw === '0' || raw === 'false' || raw === 'no'),
   }

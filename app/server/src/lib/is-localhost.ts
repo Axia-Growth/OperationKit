@@ -127,3 +127,26 @@ export function isLocalhost(req: Request): boolean {
   if (hasForwardingHeaders(req)) return false
   return isTrustedPeerAddress(socketRemoteAddress(req))
 }
+
+/**
+ * Is this peer a SANDBOX peer — reachable-but-not-authoritative?
+ *
+ * Loopback and the docker bridge gateway are first-party on-box callers. The
+ * extra CIDRs in `INTERNAL_TRUSTED_PEER_CIDRS` are the per-session sandbox
+ * network and nothing else, so a peer that is trusted ONLY because of that
+ * list is a session (or, obj 901027, a `docker exec` into one) and must
+ * authenticate as one rather than riding bare CIDR trust.
+ *
+ * Moved here (from `middleware/internal-board-auth.ts`, obj 900321) so both
+ * that module and `middleware/internal-api-gate.ts` can use it without a
+ * circular import — this file has no dependency on either of them.
+ */
+export function isSandboxPeer(req: Request, env: NodeJS.ProcessEnv = process.env): boolean {
+  const addr = socketRemoteAddress(req)
+  if (!addr) return false
+  if (addr === '::1') return false
+  if (/^127\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(addr)) return false
+  if (/^172\.\d{1,3}\.0\.1$/.test(addr)) return false
+  // Trusted at all? Then it is trusted only via the sandbox CIDR list.
+  return isTrustedPeerAddress(addr, env) && trustedPeerCidrs(env).length > 0
+}

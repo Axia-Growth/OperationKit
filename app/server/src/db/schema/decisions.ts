@@ -56,4 +56,22 @@ export function initDecisionSchema(db: Database.Database): void {
     );
     CREATE INDEX IF NOT EXISTS idx_decision_messages_decision ON decision_messages(decision_id, id);
   `)
+  // obj 901151 — an answer on a finished bot card is DELIVERED to the bot that
+  // owns it (its chat + its next session) instead of dead-ending in "Reopen and
+  // apply". Additive columns: who it went to, and when a session picked it up.
+  const cols = new Set((db.prepare('PRAGMA table_info(decisions)').all() as { name: string }[]).map(c => c.name))
+  const add = (name: string, type: string) => {
+    if (!cols.has(name)) db.exec(`ALTER TABLE decisions ADD COLUMN ${name} ${type}`)
+  }
+  add('delivered_to', 'TEXT')
+  add('delivered_user_id', 'INTEGER')
+  add('delivered_at', 'TEXT')
+  add('delivered_consumed_at', 'TEXT')
+  add('delivered_consumed_by', 'INTEGER')
+  // A session that RENDERED a delivered answer into its prompt claims it; the
+  // claim becomes `delivered_consumed_*` only once that session really started
+  // (a failed spawn's claim is released or lapses, so the answer is not lost).
+  add('delivered_claimed_by', 'INTEGER')
+  add('delivered_claimed_at', 'TEXT')
+  db.exec('CREATE INDEX IF NOT EXISTS idx_decisions_delivered ON decisions(delivered_to, delivered_consumed_at)')
 }

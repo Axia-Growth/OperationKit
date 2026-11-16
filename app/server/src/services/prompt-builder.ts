@@ -18,7 +18,14 @@ import { resolveAgentPromptFile } from './agent-registry.js'
 import { isStrategyTierEnabled } from './strategy-governance.js'
 import { HUMAN_VOICE } from '../lib/human-voice.js'
 import { SOURCING_AUTHORITY, needsSourcingAuthority } from '../lib/sourcing-authority.js'
-import { buildKbAccessBlock, buildVaultCaptureBlock } from './kb-access-prompt.js'
+import {
+  SANDBOX_LIVE_SCRIPT,
+  buildKbAccessBlock,
+  buildSandboxedObjectiveMemoryBlock,
+  buildVaultCaptureBlock,
+  sandboxedLiveOutputLines,
+} from './kb-access-prompt.js'
+import { jailEnabled } from './session-jail.js'
 import {
   readAgentInstructions,
   resolveCardWorker,
@@ -37,6 +44,7 @@ import { resolveWriteWorkspace } from './workspaces.js'
 import { resolveBrandName } from './branding-config.js'
 import { resolveOwnerName } from '../lib/install-defaults.js'
 import { buildDecisionRequestBlock, DECISION_EXAMPLE } from './decision-prompt.js'
+import { takePendingAnswersBlock } from './decision-delivery.js'
 
 export {
   COMPACTION_SESSION_SENTINEL,
@@ -224,19 +232,26 @@ export function buildPrompt(objective: Objective): string {
     )
   }
 
-  parts.push(
-    '',
-    '## Objective Memory',
-    '',
-    `This objective has a persistent memory directory: ${objectiveMemoryDir(objective.id)}/`,
-    'If NOTES.md exists there, read it before starting. As you work, write durable state, decisions, and progress to NOTES.md — follow-up and future sessions on this objective will read it.',
-    '',
-    'That directory holds TWO files with different audiences — keep them separate:',
-    `- \`${objectiveScratchPath(objective.id)}\` — YOUR private scratch. Hypotheses, dead ends, restart state, self-narration. Write freely; nobody grades it. The AI reviewer is deliberately masked off this file, so nothing you need judged may live only here.`,
-    `- \`${objectiveArtifactPath(objective.id)}\` — YOUR final artifact, and the thing consumers actually read. Write it before you finish: what you delivered, where it lives (branch / PR / file paths), and the evidence for each acceptance criterion. This is what the reviewer reads in place of your scratch, so an unstated deliverable is an ungraded deliverable. **EXCEPTION — fan-out workers:** if your brief or acceptance criteria name a DIFFERENT artifact file (e.g. a parent-scoped \`…/objective-memory/<parent>/ARTIFACT-W<N>.md\`), THAT file is what the reviewer grades — not this own-dir ARTIFACT.md. Put the real deliverable + evidence there; do not leave the graded file a skeleton or \`_(in progress)_\` when you route to review.`,
-  )
+  // obj 900955 — a jailed session has no objective-memory folder on disk, so its
+  // block names the session-token route instead. Non-jailed text is unchanged.
+  const jailed = jailEnabled()
+  if (jailed) {
+    parts.push(...buildSandboxedObjectiveMemoryBlock(objective.id))
+  } else {
+    parts.push(
+      '',
+      '## Objective Memory',
+      '',
+      `This objective has a persistent memory directory: ${objectiveMemoryDir(objective.id)}/`,
+      'If NOTES.md exists there, read it before starting. As you work, write durable state, decisions, and progress to NOTES.md — follow-up and future sessions on this objective will read it.',
+      '',
+      'That directory holds TWO files with different audiences — keep them separate:',
+      `- \`${objectiveScratchPath(objective.id)}\` — YOUR private scratch. Hypotheses, dead ends, restart state, self-narration. Write freely; nobody grades it. The AI reviewer is deliberately masked off this file, so nothing you need judged may live only here.`,
+      `- \`${objectiveArtifactPath(objective.id)}\` — YOUR final artifact, and the thing consumers actually read. Write it before you finish: what you delivered, where it lives (branch / PR / file paths), and the evidence for each acceptance criterion. This is what the reviewer reads in place of your scratch, so an unstated deliverable is an ungraded deliverable. **EXCEPTION — fan-out workers:** if your brief or acceptance criteria name a DIFFERENT artifact file (e.g. a parent-scoped \`…/objective-memory/<parent>/ARTIFACT-W<N>.md\`), THAT file is what the reviewer grades — not this own-dir ARTIFACT.md. Put the real deliverable + evidence there; do not leave the graded file a skeleton or \`_(in progress)_\` when you route to review.`,
+    )
+  }
 
-  parts.push('', ...buildLiveProgressBlock(objective.id, objectiveMemoryDir(objective.id)))
+  parts.push('', ...buildLiveProgressBlock(objective.id, objectiveMemoryDir(objective.id), jailed))
 
   parts.push(
     '',
@@ -632,6 +647,14 @@ export function buildPrompt(objective: Objective): string {
   // (context / one question / 2-4 options with pros, cons, next / recommendation),
   // plus the questions the person had to ask on recent decisions.
   parts.push(...buildDecisionRequestBlock({ objectiveId: objective.id, workspace: objective.workspace ?? null, owner, isJob: objective.routine_id != null }))
+  // obj 901151: answers the owner gave on this bot's earlier, already-finished
+  // cards (e.g. a High Agency wake's ask approved after the wake ended) are
+  // handed to the bot's next session here, once.
+  try {
+    parts.push(...takePendingAnswersBlock(getDb(), objective, owner))
+  } catch (err) {
+    console.warn(`[prompt-builder] pending decision answers for card ${objective.id}:`, err instanceof Error ? err.message : String(err))
+  }
 
   // Jobs disposition — routine-spawned objectives ("jobs") must record an
   // end-of-run disposition so they land in the right lane on the Jobs board.
@@ -648,18 +671,18 @@ export function buildPrompt(objective: Objective): string {
       "  -H 'Content-Type: application/json' \\",
       `  -d '{"disposition":"complete"}'`,
       '',
-      '# You saw a concrete way to improve our system, or have a question (no choice needed):',
+      `# Nothing to decide, but worth knowing (an FYI: an improvement you noticed, things to check later). Goes to the activity feed, not to Needs you:`,
       `curl -s -X POST http://localhost:3002/api/internal/objectives/${objective.id}/job-disposition \\`,
       "  -H 'Content-Type: application/json' \\",
-      `  -d '{"disposition":"needs_review","note":"<one-line reason ${owner} should look>"}'`,
+      `  -d '{"disposition":"complete","note":"<one-line FYI>"}'`,
       '',
-      `# You need ${owner} to DECIDE something: add the decision briefing (required fields, see "Asking ${owner} for a decision"):`,
+      `# You need ${owner} to DECIDE or approve something: needs_review WITH the decision briefing (required fields, see "Asking ${owner} for a decision"):`,
       `curl -s -X POST http://localhost:3002/api/internal/objectives/${objective.id}/job-disposition \\`,
       "  -H 'Content-Type: application/json' \\",
       `  -d '{"disposition":"needs_review","note":"<one line>","decision":${DECISION_EXAMPLE.replace(/'/g, '’')}}'`,
       '```',
       '',
-      `Use \`needs_review\` only when you genuinely want ${owner}'s attention (a question, a decision, or a system-improvement opportunity you noticed while running). Otherwise use \`complete\`. A decision without the briefing shows on the card as "no briefing given", and a briefing with no question or fewer than two options is refused (400) with what is missing.`,
+      `Use \`needs_review\` only when ${owner} has to choose or approve something, and always with the \`decision\` briefing. Otherwise use \`complete\`. A needs_review with no briefing is rewritten into one automatically from your summary (or filed as an FYI), and a briefing with no question or fewer than two options is refused (400) with what is missing.`,
       '',
       `If ${owner} later replies in this thread asking you to "create an objective for X", create it with \`POST http://localhost:3002/api/internal/objectives\` (a JSON array of objective objects). Include \`"source_job_id":${objective.id}\` on each so the new card links back to this job. Then reply telling ${owner} the new objective id(s). Example:`,
       '```bash',
@@ -684,20 +707,25 @@ export function buildPrompt(objective: Objective): string {
  */
 export const CC_LIVE_SCRIPT = '/home/operator/projects/operationkit/scripts/cc-live.mjs'
 
-export function buildLiveProgressBlock(objectiveId: number, memoryDir: string): string[] {
+export function buildLiveProgressBlock(objectiveId: number, memoryDir: string, jailed = false): string[] {
+  // obj 900955 — in a jail neither the host helper path nor the memory folder exists.
+  const script = jailed ? SANDBOX_LIVE_SCRIPT : CC_LIVE_SCRIPT
+  const outputs = jailed
+    ? sandboxedLiveOutputLines(objectiveId)
+    : [`- Partial outputs go in \`${memoryDir}/live/\` — listed and readable through the API while you run (secret-redacted). Your scratch file is never served.`]
   return [
     '## Live progress (keep the card readable while you run)',
     '',
     `${capitalizeFirst(resolveOwnerName())} and their bots ask "how's it going?" mid-run through GET /api/objectives/${objectiveId}/progress. Write a snapshot at each meaningful step — when you start, at each milestone, before any long wait, and when blocked:`,
     '```bash',
-    `node ${CC_LIVE_SCRIPT} progress ${objectiveId} --step 2 --of 5 --label "what you are doing now" --note "short status, counts so far" [--artifact live/partial.csv]`,
+    `node ${script} progress ${objectiveId} --step 2 --of 5 --label "what you are doing now" --note "short status, counts so far" [--artifact live/partial.csv]`,
     '```',
-    `- Partial outputs go in \`${memoryDir}/live/\` — listed and readable through the API while you run (secret-redacted). Your scratch file is never served.`,
+    ...outputs,
     '- Keep notes short and factual (numbers, what is next). Never paste secret values — they are redacted anyway.',
     '- Parallel sub-jobs: when the work splits into 2+ INDEPENDENT, sizable pieces (e.g. N vendors to evaluate, N repos to audit), fan them out as child cards instead of running them in series:',
     '```bash',
-    `node ${CC_LIVE_SCRIPT} fanout ${objectiveId} --spec /tmp/children-${objectiveId}.json --max 3   # spec: JSON array of {title, description}`,
-    `node ${CC_LIVE_SCRIPT} children ${objectiveId}   # each child's latest progress + final result`,
+    `node ${script} fanout ${objectiveId} --spec /tmp/children-${objectiveId}.json --max 3   # spec: JSON array of {title, description}`,
+    `node ${script} children ${objectiveId}   # each child's latest progress + final result`,
     '```',
     '  The server starts children up to --max (bounded by the shared account pool) and the rest as siblings finish. Aggregate their results into your ARTIFACT.md when they are done. Do not fan out small or sequential steps.',
   ]

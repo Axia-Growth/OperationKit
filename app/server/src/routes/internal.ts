@@ -1,6 +1,7 @@
 import { Router } from 'express'
 import { registerInternalDeployRoutes } from './internal-deploy.js'
 import { registerInternalProgressRoutes } from './internal-progress.js'
+import { registerInternalMemoryRoutes } from './internal-memory.js'
 import { registerInternalHermesRoutes } from './internal-hermes.js'
 import { registerInternalCreateRoutes } from './internal-create.js'
 import { registerInternalPreviewRoutes } from './internal-preview.js'
@@ -17,6 +18,8 @@ registerInternalCreateRoutes(router)
 registerInternalPreviewRoutes(router)
 registerInternalProgressRoutes(router)
 registerInternalGmailRoutes(router)
+// obj 900955: a sandboxed card writes ARTIFACT.md / scratch / live files here (own session token only).
+registerInternalMemoryRoutes(router)
 registerInternalHermesRoutes(router)
 registerInternalReposRoutes(router)
 // obj 900972: what a card session of a Full access bot may do (session token only).

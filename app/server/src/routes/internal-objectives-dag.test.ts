@@ -216,3 +216,19 @@ describe('depth is transitively correct over the API (obj 707003)', () => {
     expect(byId.get(grandchild)).toBe(2)
   })
 })
+
+describe('?owned_by_bot= — a bot\'s own cards, by the one ownership rule (obj 900956)', () => {
+  it('lists a card by owner_bot or by agent_context, and nothing else', async () => {
+    const db = getDb()
+    const add = db.prepare("INSERT INTO objectives (title, status, agent_context, owner_bot, workspace, depth) VALUES (?, 'queue', ?, ?, 'example', 0)")
+    // Filed from chat by the Operation Kit bot, worked by another agent.
+    const viaOwnerBot = Number(add.run('chat-filed', 'cto', 'Operation Kit').lastInsertRowid)
+    // owner_bot says another bot: agent_context does not make it Operation Kit's.
+    add.run('someone-elses', 'cto', 'Grok: General')
+    const res = await list('?owned_by_bot=operation-kit&fields=minimal')
+    expect(res.status).toBe(200)
+    expect(ids(res.body as Record<string, unknown>[])).toEqual([viaOwnerBot])
+    expect(res.headers.get('x-total-count')).toBe('1')
+    expect(await rows('?owned_by_bot=no-such-bot')).toEqual([])
+  })
+})

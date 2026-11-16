@@ -4,6 +4,7 @@
 
 import { Router } from 'express'
 import { getDb } from '../db/index.js'
+import { knowledgeBaseRoot } from '../lib/knowledge-base-root.js'
 import { requireAuth, requireAdmin, type AuthRequest } from '../middleware/auth.js'
 import {
   rebuildContactsIndex,
@@ -24,13 +25,14 @@ const router = Router()
 router.use(requireAuth)
 router.use(requireAdmin)
 
-const VAULT_BASE = process.env.VAULT_PATH || '/home/operator/second-brain'
+/** The install's ONE knowledge base root, resolved per request (VAULT_PATH is an accepted alias there). */
+export function contactsVaultBase(): string { return knowledgeBaseRoot() }
 
 // POST /api/contacts/reindex — rebuild contacts_index from vault.
 router.post('/reindex', (req: AuthRequest, res) => {
   const dryRun = req.query.dryRun === '1' || req.query.dryRun === 'true'
-  const result = rebuildContactsIndex(getDb(), VAULT_BASE, { dryRun })
-  res.json({ vault_root: VAULT_BASE, ...result })
+  const result = rebuildContactsIndex(getDb(), contactsVaultBase(), { dryRun })
+  res.json({ vault_root: contactsVaultBase(), ...result })
 })
 
 // GET /api/contacts?sort=overdue|name|recent&tag=...&workspace=...
@@ -40,7 +42,7 @@ router.get('/', (req: AuthRequest, res) => {
   const tag = typeof req.query.tag === 'string' && req.query.tag ? req.query.tag : undefined
   const workspace = typeof req.query.workspace === 'string' && req.query.workspace ? req.query.workspace : undefined
   const rows = listContacts(getDb(), { sort, tag, workspace })
-  res.json({ contacts: rows, vault_root: VAULT_BASE })
+  res.json({ contacts: rows, vault_root: contactsVaultBase() })
 })
 
 // POST /api/contacts — create a new contact (writes .md file + indexes).
@@ -51,7 +53,7 @@ router.post('/', (req: AuthRequest, res) => {
     return
   }
   try {
-    const created = createContact(getDb(), VAULT_BASE, body)
+    const created = createContact(getDb(), contactsVaultBase(), body)
     const summary = getContactByPath(getDb(), created.vault_path)
     res.status(201).json({ ...created, contact: summary })
   } catch (err) {
@@ -86,7 +88,7 @@ router.post('/extract/apply', (req: AuthRequest, res) => {
     return
   }
   try {
-    const result = applyExtractDiff(getDb(), VAULT_BASE, diff)
+    const result = applyExtractDiff(getDb(), contactsVaultBase(), diff)
     res.json(result)
   } catch (err) {
     res.status(500).json({ error: err instanceof Error ? err.message : 'apply failed' })
@@ -107,7 +109,7 @@ router.get('/by-path', (req: AuthRequest, res) => {
     res.status(404).json({ error: 'Contact not found' })
     return
   }
-  const file = readContactFile(VAULT_BASE, vaultPath)
+  const file = readContactFile(contactsVaultBase(), vaultPath)
   res.json({
     contact: summary,
     absolute_path: file?.absolute || null,
@@ -128,7 +130,7 @@ router.patch('/by-path', (req: AuthRequest, res) => {
     return
   }
   try {
-    const updated = patchContact(getDb(), VAULT_BASE, vaultPath, patch)
+    const updated = patchContact(getDb(), contactsVaultBase(), vaultPath, patch)
     res.json({ contact: updated })
   } catch (err) {
     const message = err instanceof Error ? err.message : 'patch failed'

@@ -24,6 +24,17 @@ export const SECRET_TOOLS = ['secrets'] as const
 // The other bot is woken with the message and its reply comes back on the same
 // thread. Only bots that may work in the same workspace can be reached.
 export const BOT_MESSAGE_TOOLS = ['bot_messages'] as const
+// obj 901027: look inside a card's own sandbox (list/read its objective-memory
+// files, read its progress log and transcript, run a command in its live
+// jail) — gated to cards this bot owns or has Full access to, explicit opt-in
+// only because sandbox_run executes a shell command.
+export const CARD_SANDBOX_TOOLS = ['card_sandbox'] as const
+// obj 901027: a disposable headless-browser screenshot tool for chat, so an
+// any-model bot can look at a page directly instead of asking a card session
+// to do it. Explicit opt-in (security review, obj 901027): it can reach
+// arbitrary URLs and name a card to screenshot "for", so — like card_sandbox —
+// "All tools" must not hand it to a bot that was never meant to have it.
+export const CARD_BROWSER_TOOLS = ['card_browser'] as const
 // obj 901059: ask the person for a decision on a card, with a structured briefing
 // (context, one question, 2-4 options with pros/cons/next, recommendation). It
 // only ASKS: the person answers on the card or in chat, never the bot.
@@ -34,7 +45,7 @@ export const DECISION_TOOLS = ['raise_decision'] as const
  * named — in the agent file (`tools: [all, secrets]` works) or ticked on the bot
  * page — so switching on "All tools" never also hands a bot your credentials.
  */
-export const EXPLICIT_ONLY_TOOLS: ReadonlySet<string> = new Set<string>([...SECRET_TOOLS])
+export const EXPLICIT_ONLY_TOOLS: ReadonlySet<string> = new Set<string>([...SECRET_TOOLS, ...CARD_SANDBOX_TOOLS, ...CARD_BROWSER_TOOLS])
 
 export const KNOWN_TOOL_NAMES: ReadonlySet<string> = new Set<string>([
   ...KNOWLEDGE_TOOLS,
@@ -45,6 +56,8 @@ export const KNOWN_TOOL_NAMES: ReadonlySet<string> = new Set<string>([
   ...WEB_TOOLS,
   ...SECRET_TOOLS,
   ...BOT_MESSAGE_TOOLS,
+  ...CARD_SANDBOX_TOOLS,
+  ...CARD_BROWSER_TOOLS,
   ...DECISION_TOOLS,
 ])
 
@@ -65,7 +78,7 @@ export function listsAllTools(tools: readonly string[]): boolean {
   return tools.some(t => ALL_TOOLS_TOKENS.has(t.trim().toLowerCase()))
 }
 
-export type ToolGroup = 'web' | 'knowledge' | 'board' | 'bots' | 'connectors' | 'integrations' | 'secrets' | 'images'
+export type ToolGroup = 'web' | 'knowledge' | 'board' | 'bots' | 'connectors' | 'integrations' | 'secrets' | 'sandbox' | 'images'
 
 export interface ToolCatalogEntry {
   name: string
@@ -96,4 +109,6 @@ export const TOOL_CATALOG: readonly ToolCatalogEntry[] = [
   { name: 'calendar', label: 'Calendar (drafts only)', description: 'Read the calendar and draft events. Nothing is added without a click.', group: 'connectors' },
   { name: 'mcp', label: 'Workspace integrations (MCP)', description: 'Tools from the MCP servers connected to the workspace.', group: 'integrations' },
   { name: 'secrets', label: 'Use secrets by name', description: 'Call an API with a named secret. The server adds the key; the bot never sees it. Only hosts allowed in Settings → Secrets.', group: 'secrets', explicit_only: true },
+  { name: 'card_sandbox', label: 'Inspect card sandboxes', description: 'Look inside a card you own (or have Full access to): list its files, read its log and transcript, and run a command in its live sandbox. Every call is logged. Never has Shared secrets.', group: 'sandbox', explicit_only: true },
+  { name: 'card_browser', label: 'Browser (screenshots)', description: 'Open a web page in a disposable, sandboxed headless browser and take a screenshot. Loopback, private-network and metadata destinations are always refused.', group: 'sandbox', explicit_only: true },
 ]

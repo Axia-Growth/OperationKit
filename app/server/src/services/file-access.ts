@@ -73,18 +73,9 @@ export function defaultFileRoots(): FileRoot[] {
   ]
 }
 
-/** @deprecated Use {@link defaultFileRoots}; kept so existing importers/tests keep compiling. */
-export const DEFAULT_FILE_ROOTS: FileRoot[] = [
-  { id: 'vault', path: '/home/operator/second-brain', kind: 'vault' },
-  { id: 'uploads', path: '/app/data/uploads', kind: 'uploads' },
-]
-
 export function defaultSharedPaths(): string[] {
   return [path.join(knowledgeBaseRoot(), 'shared')]
 }
-
-/** @deprecated Use {@link defaultSharedPaths}. */
-export const DEFAULT_SHARED_PATHS = ['/home/operator/second-brain/shared']
 
 export const DEFAULT_MAX_DOWNLOAD_BYTES = 200 * 1024 * 1024
 

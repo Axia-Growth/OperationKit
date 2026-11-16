@@ -42,9 +42,24 @@
  *
  * Per-route `isLocalhost` checks are deliberately left in place behind this —
  * defense in depth, and several routes need a finer-grained rule than the gate.
+ *
+ * ## Sandbox-CIDR peers are NOT bare-localhost (obj 901027)
+ *
+ * `isLocalhost` (via `isTrustedPeerAddress`) folds `INTERNAL_TRUSTED_PEER_CIDRS`
+ * — the per-session jail network (obj 900113) — into "on-box", so any process
+ * inside a jailed session's own network namespace reached the WHOLE internal
+ * surface (deploy, objective writes, the secrets broker, …) with zero
+ * credential. That was flagged for board READS first (obj 900321,
+ * `middleware/internal-board-auth.ts`'s `isSandboxPeer`); a 901027 security
+ * review found the same hole reachable from `card-sandbox-tools.ts`'s
+ * `sandbox_run` — a chat-driven shell inside the card's OWN jail can
+ * `curl localhost:3002/api/internal/...` and get this same free pass. A jail
+ * peer is on-box for REACHABILITY, never for AUTHORITY: it must present
+ * `X-Internal-Secret` / the objectives token like any other off-box caller.
+ * Genuine loopback and the docker-bridge-gateway address are unaffected.
  */
 import type { NextFunction, Request, Response } from 'express'
-import { isLocalhost } from '../lib/is-localhost.js'
+import { isLocalhost, isSandboxPeer } from '../lib/is-localhost.js'
 import { hasValidInternalSecret } from './internal-secret.js'
 import { hasValidObjectivesToken } from './objectives-token.js'
 
@@ -65,6 +80,15 @@ export function hasInternalApiCredential(req: Request): boolean {
 export function internalApiGate(req: Request, res: Response, next: NextFunction): void {
   if (hasInternalApiCredential(req)) {
     next()
+    return
+  }
+  // A sandbox-CIDR-only peer never gets the bare-localhost allowance, even
+  // when internalApiRequiresSecret() is off — it was never "local origin" in
+  // the sense that allowance means, only reachable via the jail network.
+  if (isSandboxPeer(req)) {
+    res.status(403).json({
+      error: 'Internal API: a sandboxed session peer must present X-Internal-Secret or the objectives token — reachability on the jail network is not authority.',
+    })
     return
   }
   if (!internalApiRequiresSecret() && isLocalhost(req)) {

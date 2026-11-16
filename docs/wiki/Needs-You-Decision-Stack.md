@@ -112,3 +112,22 @@ Shortcuts pause while typing in a box; Esc leaves the box. The table lives in
   tokens only), Skip / Back with keys and buttons, option key → outcome → next, Enter,
   Deny with note, Reopen and apply, stale, Q&A side thread, shortcuts dialog, badge
   count, resolved chat post, no-briefing chat post.
+
+## Bare stops, stale asks and Approve on a finished card (obj 901151)
+
+A `needs_review` with no briefing is never
+shown as "No briefing given": the stack and badge hide `incomplete` decisions (`STACK_SQL` in
+`services/decision-queue.ts`), and once the card stops running `services/decision-autobrief.ts` makes ONE tool-less
+model call that either writes a full briefing (flag `auto_briefing`) or classifies the stop as an FYI (withdrawn,
+`activity_log` `milestone` with `metadata.kind='fyi_report'`, job disposition set to `complete`). No model = a
+deterministic go-ahead/hold briefing from the bot's own words (`auto_briefing_fallback`). A bot's Q&A answer on a
+briefing-less decision becomes its briefing. The HA wake brief and worker prompt require a briefing whenever the
+session stops for the owner (`stopForOwnerRules` in `decision-prompt.ts`). Every card that reaches done/cancelled
+settles its asks at once through `onObjectiveEnded` in `ws/index.ts` (fires on every `objective_updated` broadcast;
+wired by `services/decision-card-end.ts`); the 15 s poller pass is the backstop. The stack never lists an ask on a
+cancelled or done card, except a job that ended BY asking with a real briefing (the routine/HA wake case: the
+poller must auto-close job cards). Approve on such a finished card a BOT owns (`cardOwnerBot`) is outcome
+`delivered` (`services/decision-delivery.ts`): recorded, posted to the bot's chat, and handed to the bot's next card
+session's prompt once (`takePendingAnswersBlock`): same workspace only, and an answer on a routine card (a High Agency
+wake) only to the next run of that routine. The prompt CLAIMS it; it is consumed only after the spawn really started
+(`confirmPendingAnswers`), and a failed spawn releases it. "Reopen and apply" stays optional and consumes the delivery.

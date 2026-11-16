@@ -501,6 +501,69 @@ export function buildJailExecArgv(id: string | number, command: string): string[
   return ['exec', jailName(id), 'sh', '-lc', command]
 }
 
+/**
+ * obj 901027 security review (first + second pass) — the argv
+ * `card-sandbox-tools.ts`'s `sandbox_run` uses instead of the plain
+ * `buildJailExecArgv`.
+ *
+ * `docker exec` inherits the target container's FULL env by default — the same
+ * `--env-file` the card session's own worker was started with, including any
+ * scoped GH/workspace secrets. A chat-driven `sandbox_run` must not see those,
+ * so this wraps the command in `env -i <allowlist>` to start from an EMPTY
+ * environment rather than trying to redact afterwards (redaction of command
+ * output catches known secret shapes, not an unknown one, and does nothing for
+ * `env`/`printenv` itself). Only PATH/HOME/LANG are set.
+ *
+ * The first review round noted `env -i` alone is not enough on its own, and
+ * the second round confirmed both gaps with a live counter-check inside an
+ * equivalent sandboxed container (`unshare --user --net` → `Operation not
+ * permitted`, i.e. the obvious network-namespace fix for the first gap does
+ * NOT reliably work here — seccomp inside a typical hardened container blocks
+ * it even when the kernel's own `unprivileged_userns_clone` sysctl allows it,
+ * so this file does not attempt it):
+ *
+ *   1. The jail's network is reachable regardless of env: nothing here cuts
+ *      off `curl localhost:3002/...` (the obj 900113 loopback forwarder) or
+ *      the jail's own docker-network CIDR, and `INTERNAL_TRUSTED_PEER_CIDRS`
+ *      used to treat that whole subnet as on-box authority with no
+ *      credential. Fixed at the OTHER end instead, in
+ *      `middleware/internal-api-gate.ts` (`isSandboxPeer`): a peer trusted
+ *      only via that CIDR list must now present `X-Internal-Secret` /
+ *      the objectives token like any off-box caller — reachability on the
+ *      jail network is no longer authority, whatever runs inside the jail.
+ *   2. `docker exec` by default runs as the SAME uid as the jail's PID 1 (the
+ *      card's own worker session), so `cat /proc/1/environ` (or any other
+ *      live PID in the jail) printed the worker's real env — including its
+ *      `--env-file` secrets — straight past the `env -i` wrapper entirely,
+ *      because Linux's ptrace/procfs access check is UID-based, not
+ *      env-based. `--user ${SANDBOX_EXEC_USER}` (below) execs as a uid that
+ *      owns nothing else in the jail, so that same kernel check now denies
+ *      it: a different real uid with no CAP_SYS_PTRACE cannot read another
+ *      uid's `/proc/<pid>/environ`, full stop — this is a kernel invariant
+ *      `docker exec --user` gets you for free, not something that depends on
+ *      file permissions on disk.
+ *
+ * `sh -c`, not `sh -lc`: `-l` sources `/etc/profile` and the user's own
+ * profile scripts, which is an unnecessary and unaudited extra attack surface
+ * for a tool whose whole point is running an UNTRUSTED, chat-supplied command.
+ *
+ * `timeout -k 5 <seconds>s` runs INSIDE the jail, so the deadline kills the
+ * command itself (SIGTERM, then SIGKILL after a 5s grace) — the Node-side
+ * `execFile` timeout only ever killed the `docker exec` CLI, leaving the
+ * command running headless in the container past its timeout.
+ */
+export const SANDBOX_EXEC_USER = '65000:65000'
+
+export function buildJailSandboxExecArgv(id: string | number, command: string, timeoutMs: number): string[] {
+  const seconds = Math.max(1, Math.ceil(timeoutMs / 1000))
+  return [
+    'exec', '--user', SANDBOX_EXEC_USER, jailName(id),
+    'timeout', '-k', '5', `${seconds}s`,
+    'env', '-i', 'PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin', `HOME=${JAIL_HOME_PATH}`, 'LANG=C.UTF-8',
+    'sh', '-c', command,
+  ]
+}
+
 export function buildJailDestroyArgv(id: string | number): string[] {
   return ['rm', '-f', jailName(id)]
 }

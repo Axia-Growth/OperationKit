@@ -9,10 +9,11 @@ import Database from 'better-sqlite3'
 import { randomUUID } from 'crypto'
 import fs from 'fs'
 import path from 'path'
+import { knowledgeBaseRoot } from '../lib/knowledge-base-root.js'
 import { listRecentMeetings, getMeeting, type GranolaTranscript } from '../services/granola-client.js'
 
 const DB_PATH = process.env.DB_PATH || '/app/data/command-center.db'
-const VAULT_BASE = process.env.VAULT_PATH || '/home/operator/second-brain'
+const VAULT_BASE = knowledgeBaseRoot()
 const ts = () => new Date().toISOString()
 
 // ── LLM Classifier ───────────────────────────────────────────────────────────

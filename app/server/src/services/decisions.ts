@@ -34,6 +34,7 @@ import type Database from 'better-sqlite3'
 import {
   DENY_CHOICE,
   DECISION_LIMITS,
+  OWN_ANSWER_CHOICE,
   chosenLabel,
   optionFor,
   validateDecisionBriefing,
@@ -102,6 +103,7 @@ interface DecisionRow {
   outcome: DecisionOutcome | null
   outcome_text: string | null
   withdrawn_reason: string | null
+  delivered_to?: string | null
   created_at: string
   updated_at: string
 }
@@ -158,6 +160,7 @@ function toView(db: Database.Database, row: DecisionRow): DecisionView {
     outcome: row.outcome,
     outcome_text: row.outcome_text,
     withdrawn_reason: row.withdrawn_reason,
+    delivered_to: row.delivered_to ?? null,
     thread: threadOf(db, row.id),
     created_at: row.created_at,
     updated_at: row.updated_at,
@@ -333,6 +336,8 @@ export function resolveChoice(d: DecisionView, choice: unknown): string | null {
   if (typeof choice !== 'string' || !choice.trim()) return null
   const c = choice.trim()
   if (c.toLowerCase() === DENY_CHOICE) return DENY_CHOICE
+  // obj 901139: the person's own words instead of an option (the route requires the text).
+  if (c.toLowerCase() === OWN_ANSWER_CHOICE) return OWN_ANSWER_CHOICE
   // A flagged (incomplete) decision has no options; "approve" then means "go ahead as proposed".
   if (d.incomplete && c.toLowerCase() === 'approve') return 'approve'
   const byKey = d.briefing.options.find(o => o.key === c.toUpperCase())
@@ -356,14 +361,14 @@ export function recordChoice(
     .prepare(
       "UPDATE decisions SET state = 'decided', chosen = ?, decided_by = ?, decided_at = datetime('now'), decision_note = ?, updated_at = datetime('now') WHERE id = ? AND state = 'open'",
     )
-    .run(p.choice, p.by, p.note?.trim() ? p.note.trim().slice(0, 1000) : null, id)
+    .run(p.choice, p.by, p.note?.trim() ? p.note.trim().slice(0, p.choice === OWN_ANSWER_CHOICE ? DECISION_LIMITS.ownAnswerMax : 1000) : null, id)
   if (res.changes === 0) {
     const cur = getDecision(db, id)
     if (!cur) throw new DecisionError('Decision not found', 404)
     throw new DecisionError(
       cur.state === 'withdrawn'
         ? 'This decision was withdrawn (a newer decision replaced it, or the card no longer needs it). Answer the latest one instead.'
-        : `This decision was already answered: ${chosenLabel(cur.briefing, cur.chosen) ?? cur.chosen}`,
+        : `This decision was already answered: ${chosenLabel(cur.briefing, cur.chosen, cur.decision_note) ?? cur.chosen}`,
       409,
     )
   }
@@ -393,6 +398,8 @@ export interface DecisionLogEntry {
   recommended: string | null
   chosen: string | null
   chosen_label: string | null
+  /** The person's note, or their own answer when `chosen` is OWN_ANSWER_CHOICE (obj 901139). */
+  decision_note: string | null
   followed_recommendation: boolean | null
   decided_by: string | null
   decided_at: string | null
@@ -461,7 +468,8 @@ export function decisionLog(db: Database.Database, q: DecisionLogQuery = {}): De
       options: b.options.map(o => ({ key: o.key, label: o.label })),
       recommended: r.recommended,
       chosen,
-      chosen_label: chosenLabel(b, chosen),
+      chosen_label: chosenLabel(b, chosen, r.decision_note),
+      decision_note: r.decision_note,
       followed_recommendation: chosen && r.recommended && optionFor(b, r.recommended) ? chosen === r.recommended : null,
       decided_by: r.decided_by,
       decided_at: r.decided_at,
@@ -566,6 +574,7 @@ export function renderDecisionLogMarkdown(workspace: string, entries: DecisionLo
       lines.push(`  A: ${q.answer ? oneLine(q.answer) : '_(no answer)_'}`)
     }
     lines.push(`**Result:** ${e.state === 'decided' ? `${e.chosen_label ?? e.chosen}${e.decided_by ? ` by ${e.decided_by}` : ''}` : e.state}`)
+    if (e.chosen === OWN_ANSWER_CHOICE && e.decision_note) lines.push(`**Own answer:** ${oneLine(e.decision_note)}`)
     if (e.outcome_text) lines.push(`**Outcome:** ${oneLine(e.outcome_text)}`)
     lines.push('')
   }

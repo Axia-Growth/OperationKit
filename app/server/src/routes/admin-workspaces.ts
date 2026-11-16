@@ -33,6 +33,7 @@ import {
 import { listPosthogBotDevItems } from '../services/dev-items.js'
 import { upsertWorkspacesJsonProject } from '../services/workspaces-json.js'
 import { ensureRepoCredentialHelper } from '../services/repo-git-auth.js'
+import { vaultPathConflict } from '../lib/kb-workspace-scope.js'
 import type { IntegrationKind } from '@operationkit/shared'
 
 const router = Router()
@@ -53,6 +54,42 @@ function syncRegisteredRepo(workspace: string, name: string, repoPath: string): 
 
 function isValidWorkspace(ws: unknown): ws is string {
   return typeof ws === 'string' && workspaceExists(ws)
+}
+
+/**
+ * Read `vault_path` from a request body for workspace `slug` (obj 901152).
+ * `undefined` = not sent. `null` (or a blank string) clears it. Anything else
+ * must be an absolute path that is this workspace's OWN folder: one that
+ * overlaps the knowledge base root or another live workspace's folder (inside
+ * it, equal to it or containing it) is a 400 naming the other workspace. The
+ * scope rule (`workspaceVaultRoot`) applies the same check, so a row saved
+ * before this validation is refused at read time too.
+ */
+function parseVaultPath(
+  value: unknown,
+  slug: string,
+  res: import('express').Response,
+): { ok: true; value: string | null | undefined } | { ok: false } {
+  if (value === undefined) return { ok: true, value: undefined }
+  if (value === null) return { ok: true, value: null }
+  if (typeof value !== 'string') {
+    res.status(400).json({ error: 'vault_path must be a string or null', code: 'vault_path_invalid' })
+    return { ok: false }
+  }
+  const trimmed = value.trim()
+  if (!trimmed) return { ok: true, value: null }
+  const conflict = vaultPathConflict(slug, trimmed)
+  if (conflict) {
+    res.status(400).json({
+      error: conflict.kind === 'invalid'
+        ? conflict.message
+        : `${conflict.message}. A workspace's vault_path must be its own folder, not shared with or nested in another workspace's notes.`,
+      code: conflict.kind === 'invalid' ? 'vault_path_invalid' : 'vault_path_overlap',
+      conflict,
+    })
+    return { ok: false }
+  }
+  return { ok: true, value: trimmed }
 }
 
 // GET /api/admin/workspaces — full list including archived (admin view).
@@ -100,13 +137,15 @@ router.post('/', (req: AuthRequest, res) => {
   if (writeRoots === null) return
   const agentPool = parseStringArray(body.default_agent_pool, 'default_agent_pool', res)
   if (agentPool === null) return
+  const vault = parseVaultPath(body.vault_path, slug, res)
+  if (!vault.ok) return
 
   const ws = createWorkspace({
     slug,
     name,
     short_label: typeof body.short_label === 'string' ? body.short_label : null,
     badge_color: typeof body.badge_color === 'string' ? body.badge_color : null,
-    vault_path: typeof body.vault_path === 'string' ? body.vault_path : null,
+    vault_path: vault.value ?? null,
     doc_read_roots: readRoots,
     doc_write_roots: writeRoots,
     default_agent_pool: agentPool,
@@ -130,7 +169,9 @@ router.patch('/:slug', (req: AuthRequest, res) => {
   if (typeof body.name === 'string') patch.name = body.name.trim()
   if (body.short_label === null || typeof body.short_label === 'string') patch.short_label = body.short_label as string | null
   if (body.badge_color === null || typeof body.badge_color === 'string') patch.badge_color = body.badge_color as string | null
-  if (body.vault_path === null || typeof body.vault_path === 'string') patch.vault_path = body.vault_path as string | null
+  const vault = parseVaultPath(body.vault_path, slug, res)
+  if (!vault.ok) return
+  if (vault.value !== undefined) patch.vault_path = vault.value
   if (body.doc_read_roots !== undefined) {
     const arr = parseStringArray(body.doc_read_roots, 'doc_read_roots', res)
     if (arr === null) return

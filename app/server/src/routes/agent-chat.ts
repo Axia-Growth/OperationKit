@@ -64,6 +64,7 @@ import { dropFullAccessForRevokedWorkspaces } from '../services/agent-chat/bot-f
 import { getUserWorkspaces } from '../middleware/workspace.js'
 import { logActivity } from './feed.js'
 import { getAttachment, ImageRejected, parseIncomingImages, type IncomingImage } from '../services/agent-chat/attachments.js'
+import { getSandboxScreenshot } from '../services/agent-chat/sandbox-screenshots.js'
 import {
   createThread,
   deleteThread,
@@ -785,6 +786,30 @@ router.get('/attachments/:id', (req: AuthRequest, res) => {
     'Cache-Control': 'private, max-age=3600',
   })
   res.end(a.bytes)
+})
+
+/**
+ * One card_browser screenshot (obj 901027 security review). Same per-person
+ * ownership rule as /attachments/:id: only the person who was chatting with
+ * the bot when the shot was taken may fetch it — never the raw base64 inline
+ * in a tool result.
+ */
+router.get('/sandbox-screenshots/:id', (req: AuthRequest, res) => {
+  const id = Number(req.params.id)
+  const s = Number.isInteger(id) ? getSandboxScreenshot(id) : null
+  if (!s || s.user_id !== req.user!.id) {
+    res.status(404).json({ error: 'Screenshot not found' })
+    return
+  }
+  res.set({
+    'Content-Type': s.media_type,
+    'Content-Length': String(s.bytes.length),
+    'Content-Disposition': 'inline; filename="screenshot.png"',
+    'X-Content-Type-Options': 'nosniff',
+    'Content-Security-Policy': "default-src 'none'; sandbox",
+    'Cache-Control': 'private, max-age=3600',
+  })
+  res.end(s.bytes)
 })
 
 // ── drafts: only the owning person, only from a signed-in browser ──

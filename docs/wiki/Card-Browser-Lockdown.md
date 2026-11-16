@@ -136,6 +136,21 @@ or the app's `PORT`: those are dropped with a warning and blocked by origin and
 by port even under a `*` allowlist. Private networks, link-local, ULA and cloud
 metadata stay refused. The reviewer policy is unchanged.
 
+**Own-sandbox dev servers open by default in a jail (obj 901145).** A jail runs in
+its own network namespace, so its loopback holds nothing but the card's own
+processes, the CC API forwarder (`3002`) and the in-jail guard (`3099`). The
+jail plan therefore calls `resolveWorkerBrowserPolicy(env, { ownSandboxLoopback: true })`,
+which allows `localhost` / `127.0.0.1` / `[::1]` on ports `1024-65535`
+(`WORKER_OWN_LOOPBACK_RANGE`, carried as `policy.loopbackPortRange`). A dev
+server the worker starts (a scratch server on 3912, vite on 5173) is reachable
+with no operator config. The forbidden ports above stay on the block list, which
+`decideEgress` checks first, so `3002` and the guard ports are still refused.
+Another card's sandbox is reachable only by its docker-network address, which
+the private-network block refuses, and a public name that resolves to loopback
+is still refused as DNS rebinding. Tmux mode never gets this default: loopback
+there is the app and every other tmux card, so only the explicit port list
+applies. `CARD_BROWSER_WORKER_OWN_LOOPBACK=off` turns the jail default off.
+
 | | tmux mode (`SESSION_ISOLATION` unset) — only with `CARD_BROWSER_WORKER_IN_APP_CONTAINER=on` | jail mode (`SESSION_ISOLATION=docker`) |
 | --- | --- | --- |
 | Chromium | the app image's pinned install | a **separate** jail image, `ok-jail-browser:local`, built from `app/jail/Dockerfile` with `WITH_BROWSER=1` and the same pins. The stock `ok-jail:local` has no Chromium and no libs. |
@@ -188,9 +203,10 @@ network the card was given.
 **Proof.** `.github/workflows/jail-browser-proof.yml` builds both jail images
 and runs `scripts/jail-browser-proof.sh`: a stock jail has no Chromium; a
 browser jail started with the production argv launches Chromium with its
-renderers in their own namespaces, is refused a loopback preview by default,
-loads it once its port is in `CARD_BROWSER_WORKER_LOOPBACK_PORTS`, is refused
-`127.0.0.1:3002` even when that port is listed, and is refused `example.com`,
+renderers in their own namespaces, loads its own loopback preview by default
+(obj 901145), is refused it with `CARD_BROWSER_WORKER_OWN_LOOPBACK=off` and
+loads it again once its port is in `CARD_BROWSER_WORKER_LOOPBACK_PORTS`, is refused
+`127.0.0.1:3002` by default and even when that port is listed, and is refused `example.com`,
 the metadata endpoint, `--no-sandbox` and a missing guard. Hosts that block unprivileged user namespaces
 (`kernel.apparmor_restrict_unprivileged_userns=1` on Ubuntu 23.10+, or
 `kernel.unprivileged_userns_clone=0`) make `check` fail with "No usable
@@ -247,9 +263,128 @@ is testable, not so it is convenient.
 | `CARD_BROWSER_WORKER_IN_APP_CONTAINER` | `off` | let a worker on the tmux path run Chromium in the app container (warned at boot) |
 | `CARD_BROWSER_WORKER_PROXY_PORT` | `3098` | port of the worker-only guard (tmux opt-in) |
 | `CARD_BROWSER_WORKER_LOOPBACK_PORTS` | *(empty)* | loopback preview ports a worker browser may reach; never 3002 or a guard port |
+| `CARD_BROWSER_WORKER_OWN_LOOPBACK` | `on` | in a jail, the worker browser may reach its own sandbox's loopback ports 1024-65535 (never 3002 or a guard port); `off` = explicit ports only |
 
 `CARD_BROWSER_ALLOW_LOOPBACK` applies to reviewer and arena browsers only; a
 worker browser ignores it.
+
+## Sites behind Cloudflare Access (obj 901106)
+
+**Symptom.** A card opens the install's own public URL and gets
+`net::ERR_TUNNEL_CONNECTION_FAILED`, while `check` passes and 3002 / metadata
+are refused as intended.
+
+**Cause.** The guard allows the install's host and the CONNECT to it succeeds.
+But when the site sits behind Cloudflare Access, the first response is a
+`302` to `https://<team>.cloudflareaccess.com/cdn-cgi/access/login/…`, the
+Access sign-in for people. That host is not on the allowlist, so the guard
+refuses that hop with a 403, and Chromium reports the 403 as a tunnel failure.
+This is correct: the Access login (email code / identity provider) is no place
+for a bot. Since obj 901106 the refusal says
+`… is the Cloudflare Access login page …`, and the launcher prints
+`the site is behind Cloudflare Access … Re-run with --sign-in` instead of the
+bare Chromium error.
+
+A second bug made this worse. A browser that reset its socket after a refusal
+crashed the in-jail guard with an unhandled `ECONNRESET`, and every later
+navigation in that card then failed. The guard now handles errors on every
+socket.
+
+**The sanctioned way in: `--sign-in`.**
+
+```bash
+node "$CC_BROWSER_LAUNCHER" sign-in                          # metadata only, never cookie values
+node "$CC_BROWSER_LAUNCHER" screenshot https://<your-domain>/ out.png --sign-in
+# from a script:
+const { launch, signIn } = await import(process.env.CC_BROWSER_LAUNCHER)
+const browser = await launch(); const ctx = await browser.newContext(); await signIn(ctx)
+```
+
+The launcher calls `POST /api/card-browser/session` with the card's own
+`CC_SESSION_TOKEN`. No other credential is accepted. It gets back cookies for
+the public host and puts them straight into the browser context:
+
+| cookie | what it is | lifetime |
+|---|---|---|
+| `token` = `ccb_…` | a **card browser session**, not a login JWT. HMAC'd under its own label, so it cannot be replayed as a login or session token, and a card cannot forge one (JWT_SECRET is stripped from every session env). | 30 min (max 60) |
+| `CF_Authorization` | the Access session cookie that Cloudflare issues for this one application. The **control plane** gets it by presenting the install's Access service token. The service token itself never reaches the card. | the browser cookie is capped at the app session, but see below |
+
+The `ccb_` session is the card's bot (`owner_bot`, else `agent_context`), shown
+as `bot:<slug> (card #<id>)`. It is:
+
+* **read-only.** GET/HEAD/OPTIONS only (plus logout). Any write is a `403 card_browser_read_only`.
+* **membership-free.** Its role is `member` and its user id is SYNTHETIC
+  (`-<card id>`, `cardBrowserSyntheticUserId`). No `users`, `user_workspaces`,
+  `objective_assignees`, `created_by` or `assigned_user_id` row can match it, so a
+  membership or ownership check never passes through the acting user (who is
+  often an admin in several workspaces). The acting user is kept on the
+  principal for the audit log only. `requireAdmin` refuses it.
+* **limited to a route allowlist** (`CARD_BROWSER_GET_ROUTES`): `/api/auth/me`,
+  `/api/workspaces`, `/api/objectives` + `/api/objectives/:id`,
+  `/api/docs/{tree,file,search,related}`, `/api/files/{search,stat,download}`.
+  Each is pinned to the card's ONE workspace: `/me` and `/api/workspaces`
+  report only it; docs/files go through `req.sessionFile` like a session-token
+  caller, and are refused (`403 session_kb_disabled`) while the install has
+  session KB access off (`sessionKbAccessEnabled`, obj 901145). The objectives
+  list and a single card are the card's workspace only (obj 901145; it used to
+  be `[]`), narrowed to the acting user's view there: an admin or a member with
+  `objective_visibility='all'` sees every card in it, an 'own' member only
+  their own (`CardBrowserPrincipal.ownOnlyUserId`). Any other workspace is
+  `[]` / `403`. Anything else
+  (secrets broker, secrets, settings/connectors, users, api keys, agent keys,
+  costs, shell, assistant, mcp, agent chat, flows, decisions, …) is
+  `403 card_browser_route_not_allowed` before a handler runs.
+  `requireWorkspaceAccess` also refuses any workspace but the card's for this
+  principal. Covered by `routes/card-browser-scope.test.ts` for a member and
+  an admin acting user.
+* **why it is not refused on the loopback/forwarder path.** A ccb token can
+  be presented to `:3002` directly by anything in the jail. That is accepted on
+  purpose: the only thing that can mint one is the card's own
+  `CC_SESSION_TOKEN`, which already reads the same workspace's docs and files
+  directly, and the ccb session reaches a strict SUBSET of that (the allowlist,
+  pinned to the same workspace, read-only). A "public host only" check would
+  have to trust `Host` / `CF-*` headers, which a jailed process can forge, so
+  it would add no boundary.
+* **bound to the live card.** It is re-checked on every request and ends as soon
+  as the card leaves `working` / `ai_review`.
+* **off with one switch:** `settings.card_browser_sign_in = '0'` (or
+  `CC_CARD_BROWSER_SIGN_IN=0`). This also ends sessions already handed out.
+
+The browser's WebSocket live-tail stays cookie-login-only, so a signed-in card
+browser sees the board without live updates. The guard does not change. 3002,
+the internal API, loopback, metadata and private ranges stay blocked, and the
+Access login host stays refused.
+
+**What the operator has to do (one-time, in Cloudflare Zero Trust).** Without
+an Access service token, `sign-in` reports `cf_access: not_configured` and the
+browser still lands on the Access login. To turn it on:
+
+1. Zero Trust → Access → Service Auth → **Create service token** (e.g.
+   `operation-kit-card-browser`, 1 year).
+2. On the Access application that protects the install's domain, **add a policy**
+   with Action **Service Auth** and Include **Service Token =
+   operation-kit-card-browser**. Do not use Bypass, which would open the site
+   to everyone.
+3. Put the two values in the **app container's environment**, next to
+   `JWT_SECRET`, not in a card or a shared secret:
+   `CARD_BROWSER_CF_ACCESS_CLIENT_ID`, `CARD_BROWSER_CF_ACCESS_CLIENT_SECRET`.
+   Both names are stripped from every card's spawn env and `unset` in the tmux
+   wrapper, so a card never holds them even if they reach the server env some
+   other way.
+   On the operator droplet a compose env change means a container recreate.
+   That kills tmux sessions, so plan it. The alternative is a **global** entry
+   in Settings → Secrets, which the server loads into its own env at boot.
+   It is safe from cards because of the strip above, but it is still a stored
+   secret, so that choice is the operator's.
+4. **Set a short session duration on that Service Auth policy (e.g. 30 minutes).**
+   The `CF_Authorization` value is a JWT that Cloudflare honours for the
+   policy's (or application's) session duration. Capping the browser cookie's
+   expiry does not shorten that: the card's processes can read the value from
+   the `/api/card-browser/session` response and replay it until Cloudflare's
+   own expiry. The default application session can be 24 h, so set the policy
+   session duration to match the 30-minute app session.
+5. Restart the backend (`self-deploy.sh backend`), then from any card run
+   `node "$CC_BROWSER_LAUNCHER" sign-in`. It should report `cf_access: {status: "ok"}`.
 
 ## Proving it
 

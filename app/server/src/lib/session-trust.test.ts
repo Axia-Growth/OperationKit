@@ -69,6 +69,12 @@ describe('applySessionTrustEnv', () => {
     expect(env).toEqual({ JWT_SECRET: 'x', A: '1' })
   })
 
+  it('every flag off: still drops the card browser Access service token (obj 901106)', () => {
+    const env: Record<string, string> = { A: '1', CARD_BROWSER_CF_ACCESS_CLIENT_ID: 'id', CARD_BROWSER_CF_ACCESS_CLIENT_SECRET: 's' }
+    applySessionTrustEnv(env, obj, 1)
+    expect(env).toEqual({ A: '1' })
+  })
+
   it('stamps flag: drops the signing key so a session cannot mint an owner cookie', () => {
     setFlag(trust.VERIFIED_SENDER_FLAG, true)
     const env: Record<string, string> = { JWT_SECRET: 'x', CC_JWT_SECRET: 'y', A: '1' }

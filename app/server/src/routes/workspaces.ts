@@ -10,6 +10,11 @@ router.use(requireAuth)
 // Admins see every active workspace; members see only the slugs they're in.
 router.get('/', (req: AuthRequest, res) => {
   const all = listWorkspaces()
+  // obj 901106: a card browser session sees only its card's workspace.
+  if (req.cardBrowser) {
+    res.json(all.filter(w => w.slug === req.cardBrowser!.workspace))
+    return
+  }
   if (req.user!.role === 'admin') {
     res.json(all)
     return

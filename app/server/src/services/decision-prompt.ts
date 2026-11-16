@@ -20,6 +20,25 @@ export const DECISION_BRIEFING_RULES = [
   'A request with no question or fewer than two options is refused. Do not also ask in prose: the card renders the briefing, a Q&A thread for questions, and the Approve/Deny buttons.',
 ]
 
+/**
+ * obj 901151 — the rule for STOPPING for the owner. A stop that needs the owner
+ * is a decision with a briefing; a stop that only informs (an FYI) is not an
+ * ask at all and finishes as `complete`, so it lands in the activity feed and
+ * never in Needs you. A bare needs_review note is still accepted, but the
+ * server then writes the briefing itself from the note and the session
+ * summary (services/decision-autobrief.ts), or files it as an FYI.
+ */
+export function stopForOwnerRules(owner: string, how: 'disposition' | 'api'): string[] {
+  const raise = how === 'disposition'
+    ? 'record `needs_review` WITH a `decision` object (the briefing)'
+    : 'raise a decision with the briefing (POST /api/decisions, or `raise_decision` in chat)'
+  return [
+    `**Stopping for ${owner}.** Whenever you stop because ${owner} has to choose something (approve a send, spend, merge or deploy; pick between approaches; unblock you), you MUST ${raise}: where things stand, what is being decided, 2-4 options with pros and cons, and your recommendation. Never stop for ${owner} with a plain note.`,
+    `**An FYI is not an ask.** If there is nothing for ${owner} to decide (what you did, things to keep an eye on, checks for later), do not ask: put it in your report and finish as \`complete\`. It goes to the activity feed, not to Needs you.`,
+    'A bare `needs_review` note with no briefing is turned into one automatically from your summary (or filed as an FYI), which is always worse than writing the briefing yourself.',
+  ]
+}
+
 /** Example payload, as JSON text, for prompts. */
 export const DECISION_EXAMPLE = JSON.stringify({
   context: 'The weekly outreach batch is drafted: 40 leads, reviewed against the ICP. Sending is the last step before replies start landing in the inbox.',
@@ -56,6 +75,7 @@ export function buildDecisionRequestBlock(p: { objectiveId: number; workspace: s
       : `curl -s -X POST http://localhost:3002/api/decisions -H "X-CC-Session-Token: $CC_SESSION_TOKEN" -H 'Content-Type: application/json' \\\n  -d '${DECISION_EXAMPLE.replace(/'/g, "’")}'`,
     '```',
     p.isJob ? '' : 'A 400 lists exactly what is missing; fix it and send again. Then stop and wait: do not act on any option until the answer arrives.',
+    ...stopForOwnerRules(p.owner, p.isJob ? 'disposition' : 'api'),
     ...(fb.length ? ['', ...fb] : []),
   ].filter(l => l !== '')
 }

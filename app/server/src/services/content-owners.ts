@@ -11,8 +11,10 @@ import { CONTENT_ROUTINE_PREFIX } from '../db/schema/content.js'
 import { chownToVaultUser } from './vault-fs.js'
 import { getSecret, getSecretValue, setSecret, deleteSecret } from './secrets-store.js'
 import type { RoutineRow } from './routine-scheduler.js'
+import { knowledgeBaseRoot } from '../lib/knowledge-base-root.js'
 
-export const VAULT_BASE = process.env.VAULT_PATH || '/home/operator/second-brain'
+/** The install's ONE knowledge base root, resolved per call (VAULT_PATH is an accepted alias there). */
+export function vaultBase(): string { return knowledgeBaseRoot() }
 export const AI_WORKSPACE = process.env.AI_WORKSPACE || '/home/operator/ai-workspace'
 
 /** Per-user Granola credential. Stored user-scoped in the native secrets store. */
@@ -42,7 +44,7 @@ export interface OwnerPaths {
 }
 
 export function ownerPaths(owner: ContentOwner): OwnerPaths {
-  const wsRoot = path.join(VAULT_BASE, 'workspaces', owner.vault_workspace)
+  const wsRoot = path.join(vaultBase(), 'workspaces', owner.vault_workspace)
   const founderPackDir = path.join(
     AI_WORKSPACE, 'skills', 'li-post-writer', 'references', 'founders', owner.founder_slug
   )
@@ -163,7 +165,7 @@ export function routineTemplate(owner: ContentOwner): string {
       `Pull recent Granola meeting transcripts (default lookback 14 days) using THIS OWNER'S\n` +
       `Granola API key — resolve it with scripts/owner-resolve.mjs, never a global env var.\n` +
       `For each NEW meeting write the content streams into\n` +
-      `${VAULT_BASE}/workspaces/${owner.vault_workspace}/ exactly per the skill:\n` +
+      `${vaultBase()}/workspaces/${owner.vault_workspace}/ exactly per the skill:\n` +
       `raw meeting note (content/granola/), LinkedIn draft(s) = the posting queue\n` +
       `(content/drafts/), short-form hooks (content/hooks/), ideas (inbox/ideas.md) and\n` +
       `open loops (loops/). Idempotency lives in content/granola/.processed.json.\n\n` +

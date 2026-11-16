@@ -152,6 +152,23 @@ describe('PreviewBoard — header need-you count vs Needs You column (obj 900669
   const columnCount = (status: string) =>
     container.querySelector(`[data-testid="column-count-${status}"]`)?.textContent ?? null
 
+  // obj 901131: an over-wide card used to make a lane scroll sideways (the
+  // list's overflow-y:auto implies overflow-x:auto), so every tile in Needs
+  // You drifted left. Every lane list scrolls down only and may shrink.
+  it('every column list scrolls vertically only, so no card can drag the lane sideways', async () => {
+    mockObjectives = [card(1, 'review'), card(2, 'working', 'cc-2-1'), card(3, 'queue')]
+    flushSync(() => root.render(<PreviewBoard workspaces={['example' as Workspace]} />))
+    await flush()
+    const lists = Array.from(container.querySelectorAll('[data-testid^="column-list-"]'))
+    expect(lists.map(l => l.getAttribute('data-testid'))).toContain('column-list-review')
+    expect(lists.length).toBe(container.querySelectorAll('section[data-status]').length)
+    for (const l of lists) {
+      expect(l.className).toMatch(/\boverflow-x-hidden\b/)
+      expect(l.className).toMatch(/\boverflow-y-auto\b/)
+      expect(l.className).toMatch(/\bmin-w-0\b/)
+    }
+  })
+
   it('header count equals the cards in Needs You; agent-occupied review cards sit in Working', async () => {
     // Live board shape on 2026-11-12: 12 cards had status=review, five of them
     // with a worker session running on them.

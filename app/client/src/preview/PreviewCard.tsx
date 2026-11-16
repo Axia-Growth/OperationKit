@@ -67,7 +67,8 @@ export function PreviewCard({
           )}
           <RowButton
             onClick={() => onOpen(objective)}
-            className="min-w-0 flex-1 rounded-sm text-base font-medium leading-snug text-fg-0 hover:text-accent"
+            data-testid="card-title"
+            className="min-w-0 flex-1 break-words rounded-sm text-base font-medium leading-snug text-fg-0 [overflow-wrap:anywhere] hover:text-accent"
           >
             {objective.title}
           </RowButton>
@@ -83,16 +84,16 @@ export function PreviewCard({
           )}
         </div>
         {(objective.last_session_summary || objective.description) && (
-          <p className="mt-1.5 line-clamp-2 pl-7 text-xs leading-relaxed text-fg-2">
+          <p data-testid="card-summary" className="mt-1.5 line-clamp-2 min-w-0 break-words pl-7 text-xs leading-relaxed text-fg-2 [overflow-wrap:anywhere]">
             {objective.last_session_summary || objective.description}
           </p>
         )}
-        <div className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 pl-7 text-xs text-fg-2">
+        <div className="mt-1.5 flex min-w-0 flex-wrap items-center gap-x-2 gap-y-0.5 pl-7 text-xs text-fg-2">
           {/* obj 901080: the card number bots and messages use; click copies it. */}
           <CardNumber id={objective.id} />
           <span className={meta.tone}>{meta.label}</span>
           {isLive && <LiveBadge />}
-          {objective.project && <span>{objective.project}</span>}
+          {objective.project && <span className="min-w-0 max-w-full truncate" title={objective.project}>{objective.project}</span>}
           {/* obj 900869: the owner — the bot while it works, the person once it needs one. */}
           <OwnerTag objective={objective} />
           {objective.pr_url && (
@@ -100,21 +101,21 @@ export function PreviewCard({
               href={objective.pr_url}
               target="_blank"
               rel="noopener noreferrer"
-              className="inline-flex items-center gap-1 text-status-done hover:underline"
+              className="inline-flex min-w-0 max-w-full items-center gap-1 text-status-done hover:underline"
               onClick={e => e.stopPropagation()}
             >
-              <GitPullRequest className="h-3 w-3" />
-              PR #{objective.pr_number ?? ''}
+              <GitPullRequest className="h-3 w-3 shrink-0" />
+              <span className="truncate">PR #{objective.pr_number ?? ''}</span>
             </a>
           )}
           <span className="ml-auto tabular-nums text-fg-3" title={formatDateTime(objective.updated_at).title}>{formatDateTime(objective.updated_at).label}</span>
         </div>
         {/* Board-Project chip + org chip — only rendered when data is present (obj 710597) */}
         {(objective.project_name || (objective.workspace && showOrgChip)) && (
-          <div className="mt-1 flex flex-wrap items-center gap-1.5 pl-7 text-xs text-fg-2">
+          <div className="mt-1 flex min-w-0 flex-wrap items-center gap-1.5 pl-7 text-xs text-fg-2">
             {objective.project_name && (
               <span
-                className="inline-flex items-center gap-1 rounded-full border border-line px-1.5 py-px"
+                className="inline-flex min-w-0 max-w-full items-center gap-1 rounded-full border border-line px-1.5 py-px"
                 title={`Project: ${objective.project_name}`}
                 data-testid="project-chip"
               >
@@ -125,19 +126,19 @@ export function PreviewCard({
                     aria-hidden="true"
                   />
                 ) : (
-                  <Folder className="h-2.5 w-2.5 opacity-60" aria-hidden="true" />
+                  <Folder className="h-2.5 w-2.5 shrink-0 opacity-60" aria-hidden="true" />
                 )}
-                {objective.project_name}
+                <span className="truncate">{objective.project_name}</span>
               </span>
             )}
             {objective.workspace && showOrgChip && (
               <span
-                className="inline-flex items-center gap-1 rounded-full border border-line/80 bg-surface-2 px-1.5 py-px font-medium"
+                className="inline-flex min-w-0 max-w-full items-center gap-1 rounded-full border border-line/80 bg-surface-2 px-1.5 py-px font-medium"
                 title={`Workspace: ${workspaceLabel ? workspaceLabel(objective.workspace) : objective.workspace}`}
                 data-testid="org-chip"
               >
-                <Building2 className="h-2.5 w-2.5 opacity-60" aria-hidden="true" />
-                {workspaceLabel ? workspaceLabel(objective.workspace) : objective.workspace}
+                <Building2 className="h-2.5 w-2.5 shrink-0 opacity-60" aria-hidden="true" />
+                <span className="truncate">{workspaceLabel ? workspaceLabel(objective.workspace) : objective.workspace}</span>
               </span>
             )}
           </div>
@@ -145,7 +146,7 @@ export function PreviewCard({
         {children && children.length > 0 && (
           <PreviewWorkers workers={children} onOpen={onOpen} onEdit={onEdit} />
         )}
-        <div className="mt-2 flex items-center justify-end gap-1.5 pl-7">
+        <div className="mt-2 flex min-w-0 flex-wrap items-center justify-end gap-1.5 pl-7">
           {hasThread && (
             <Button size="xs" variant="ghost" onClick={() => onOpen(objective)}>
               View

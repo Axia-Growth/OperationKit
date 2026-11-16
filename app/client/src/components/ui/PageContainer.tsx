@@ -24,7 +24,10 @@ export function PageContainer({
   const max =
     width === 'full' ? 'max-w-none' : width === 'wide' ? 'max-w-[1600px]' : 'max-w-[1200px]'
   return (
-    <div className={scroll === 'page' ? 'overflow-x-clip' : 'h-full overflow-y-auto overflow-x-clip'}>
+    // `relative` (obj 901139): the scroller is the containing block for absolute
+    // descendants, so an sr-only label can never escape it and make the DOCUMENT
+    // taller than the screen (a second scroller that stole the swipe on phones).
+    <div data-testid="page-scroller" className={scroll === 'page' ? 'overflow-x-clip' : 'relative h-full overflow-y-auto overflow-x-clip'}>
       <div className={cn('mx-auto w-full min-w-0 px-4 py-5 sm:px-6 sm:py-7', max, className)}>
         {children}
       </div>

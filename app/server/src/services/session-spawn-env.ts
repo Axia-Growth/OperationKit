@@ -37,6 +37,7 @@ import {
   mintSessionToken,
   readSettingFlag,
   stripServerSigningSecrets,
+  SERVER_ONLY_SESSION_ENV,
 } from '../lib/session-trust.js'
 import { sessionKbAccessEnabled, verifiedSenderStampsEnabled } from '../lib/session-trust.js'
 import { resolveWriteWorkspace } from './workspaces.js'
@@ -597,6 +598,10 @@ export function applySessionTrustEnv(
   objective: Pick<Objective, 'id' | 'workspace'>,
   actingUserId: number | null,
 ): void {
+  // obj 901106: the card browser's Cloudflare Access service token belongs to the
+  // control plane alone (it trades it for a short-lived Access cookie). Never in
+  // a card's env, flags or no flags — even if an operator stored it in Settings.
+  for (const k of SERVER_ONLY_SESSION_ENV) delete env[k]
   const stamps = verifiedSenderStampsEnabled()
   const secretAccess = readSettingFlag(SESSION_SECRET_ACCESS_FLAG)
   // obj 900204 — knowledge-base access needs the SAME objective-scoped token.

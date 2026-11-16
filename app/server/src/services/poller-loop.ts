@@ -45,7 +45,7 @@ import { maybeRunStallWatchdog } from './stall-watchdog.js'
 import { handleAbnormalEnd, ABNORMAL_END_START_REASON } from './abnormal-end-retry.js'
 import { runBotThreadDeliveryTick } from './bots/bot-thread-delivery.js'
 import { maybeRunBotAttentionTick } from './agent-chat/bot-attention.js'
-import { maybeSweepStaleDecisions } from './decision-queue.js'
+import { maybeRunDecisionUpkeep } from './decision-card-end.js'
 import { listAgents as listChatAgents } from './agent-chat/engine.js'
 import { logObjectiveAudit, isClearDeadSessionEnabled } from './objective-audit.js'
 import { deriveBranchName } from './branch-scope.js'
@@ -312,8 +312,10 @@ export async function pollActiveSessions(): Promise<void> {
 
   // obj 901084 — an ask that outlived its card clears itself ("no longer needed
   // (card finished)") BEFORE the needs-you pass, so that pass drops the post too.
+  // obj 901151: the same pass then briefs every no-briefing ask (or files it as
+  // an FYI); the card-ended hook does both at once, this is the backstop.
   try {
-    maybeSweepStaleDecisions(getDb())
+    maybeRunDecisionUpkeep(getDb())
   } catch (err) {
     console.error('[state-poller] sweepStaleDecisions failed:', err)
   }

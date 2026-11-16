@@ -173,7 +173,9 @@ export function planJailCardBrowser(opts: {
   /** Override the image-presence probe (tests). */
   imagePresent?: (image: string) => boolean
 }): CardBrowserResult {
-  const policy = opts.policy ?? resolveWorkerBrowserPolicy(opts.env)
+  // A jail has its own network namespace, so its loopback is this card's own
+  // sandbox: the worker's dev servers open by default (obj 901145).
+  const policy = opts.policy ?? resolveWorkerBrowserPolicy(opts.env, { ownSandboxLoopback: true })
   const own = opts.ops?.ownForJail ?? (() => {})
   const image = jailBrowserImage(opts.env)
   const imagePresent = opts.imagePresent ?? jailBrowserImagePresent

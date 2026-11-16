@@ -11,7 +11,7 @@ import { checkAgentInWorkspacePool, defaultAgentForWorkspace } from './objective
 import { resolveObjectiveModel } from '../services/model-registry.js'
 import type { Objective } from '@operationkit/shared'
 import { hasValidObjectivesToken } from '../middleware/objectives-token.js'
-import { depthForParent } from '../lib/objective-depth.js'
+import { CHILD_CAP_PER_PARENT, depthForParent } from '../lib/objective-depth.js'
 import { inheritedOwnership } from '../lib/objective-ownership.js'
 import { getEffectiveGateMode, isRegisteredFrontendRepo, criteriaHaveUiBar, buildDsConformanceCriteria, repoHasE2eSuite, criteriaHaveQaBar, buildQaConformanceCriteria } from '../services/design-context.js'
 import { isBlockedRegistryEnabled, isBlockedRegistryKilled, findBlockingRule } from '../services/governance.js'
@@ -33,6 +33,8 @@ import { applyTruthfulOutcome } from '../services/session-outcome.js'
 import { livingDocsName, findOpenLivingDocsCard, noteStillPending } from '../lib/living-docs-dedupe.js'
 import { findOpenDuplicate, recordDedupe, isDuplicateGuardEnabled, duplicateGuardWindowHours } from '../lib/objective-dedupe.js'
 import { botMayUseWorkspace, highAgencyRoutineSlug } from '../services/agent-chat/bot-workspaces.js'
+import { resolveItemOwnerBot } from '../services/bots/internal-owner-bot.js'
+import { botForAgentSlug } from '../services/bots/bot-registry.js'
 
 // Strategy Layer (P0) — bounded delegation-nesting controls.
 //   Canonical hierarchy (see docs/terminology-glossary.md):
@@ -104,6 +106,9 @@ router.post('/objectives', async (req, res) => {
     /** obj 64 Part C: create this item even when an open same-title twin exists in the
      *  duplicate-guard window. Not persisted — it only bypasses the guard. */
     force?: boolean
+    /** obj 900957: the bot that owns this card. Optional; absent, null or blank =
+     *  unowned. Must name a bot on this install (services/bots/internal-owner-bot.ts). */
+    owner_bot?: string | null
   }>
 
   if (!Array.isArray(items) || items.length === 0) {
@@ -131,7 +136,7 @@ router.post('/objectives', async (req, res) => {
     'parent_id', 'completion_goal', 'workflow_hint', 'effort', 'model', 'type',
     'delegate_mode', 'create_pr', 'acceptance_criteria', 'source_job_id', 'origin',
     // needs_browser: accepted and IGNORED since obj 901075 (every worker gets the browser).
-    'force', 'needs_browser',
+    'force', 'needs_browser', 'owner_bot',
   ])
   // Near-miss hints for the names ad-hoc curl callers actually reach for. The
   // `agent` / `agent_context` confusion is not hypothetical — it is what the
@@ -145,6 +150,8 @@ router.post('/objectives', async (req, res) => {
     criteria: 'acceptance_criteria',
     priority: 'effort',
   }
+  // obj 900957: each item's validated owner_bot, by index (value null = unowned).
+  const ownerBots: Array<{ value: string | null; botId: string | null; slugs: string[] }> = []
   for (let i = 0; i < items.length; i++) {
     const item = items[i]
     if (item == null || typeof item !== 'object' || Array.isArray(item)) {
@@ -168,6 +175,14 @@ router.post('/objectives', async (req, res) => {
       })
       return
     }
+    // obj 900957: same shape check as the public create route, then the name
+    // must be a bot on this install — a typo is a 400 that lists the bots.
+    const ownerBot = resolveItemOwnerBot(item.owner_bot, getDb())
+    if (!ownerBot.ok) {
+      res.status(400).json({ error: `Item ${i}: ${ownerBot.error}`, known_bots: ownerBot.known })
+      return
+    }
+    ownerBots[i] = { value: ownerBot.value, botId: ownerBot.botId, slugs: ownerBot.slugs }
     // `type` used to fall back to 'task' for any unrecognized value — the same
     // silent-coercion class as create_pr, so it is rejected too.
     if (item.type !== undefined && item.type !== 'project' && item.type !== 'bug' && item.type !== 'task') {
@@ -237,6 +252,18 @@ router.post('/objectives', async (req, res) => {
       })
       return
     }
+    // obj 900957: a wake files cards for ITS OWN bot. Naming another bot as the
+    // owner would hand that bot a card (and the right to close it) it never asked for.
+    const owner = ownerBots[i]
+    const isWakeBot =
+      owner.slugs.includes(botSlug.toLowerCase()) ||
+      (owner.botId != null && botForAgentSlug(botSlug, getDb())?.id === owner.botId)
+    if (owner.value && !isWakeBot) {
+      res.status(403).json({
+        error: `Item ${i} ('${item.title.trim()}'): owner_bot '${owner.value}' is not bot '${botSlug}', whose High Agency wake is filing this card`,
+      })
+      return
+    }
   }
 
   const db = getDb()
@@ -256,7 +283,6 @@ router.post('/objectives', async (req, res) => {
   // CHECK 2 falls back to the EXACT legacy `parent.parent_id != null` rule when
   // the flag is off, so any grandchild is rejected regardless of stored depth.
   // See the tests for the proof that flag-off behavior is identical to today.
-  const CHILD_CAP_PER_PARENT = 20
   const parentChildCounts = new Map<number, number>()
   // Resolved once in this loop, reused by the INSERT below to derive each
   // child's depth as parent.depth + 1 (never trust a client-supplied depth).
@@ -403,8 +429,8 @@ router.post('/objectives', async (req, res) => {
     // below), so both fell through to their `NOT NULL DEFAULT 0` column
     // definitions no matter what the caller posted. Boolean->integer coercion
     // mirrors the authenticated sibling route (objectives.ts `create_pr ? 1 : 0`).
-    `INSERT INTO objectives (title, description, agent_context, workspace, project, project_id, category, parent_id, depth, completion_goal, workflow_hint, effort, model, type, acceptance_criteria, source_job_id, origin, strategy_id, create_pr, delegate_mode, created_by, assigned_user_id, agent_key_id, agent_key_label)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    `INSERT INTO objectives (title, description, agent_context, workspace, project, project_id, category, parent_id, depth, completion_goal, workflow_hint, effort, model, type, acceptance_criteria, source_job_id, origin, strategy_id, create_pr, delegate_mode, created_by, assigned_user_id, agent_key_id, agent_key_label, owner_bot)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   )
 
   // ── KL-11 blocked-combos registry (obj-2509) ─────────────────────────────
@@ -441,10 +467,12 @@ router.post('/objectives', async (req, res) => {
   const refusedMeta: Array<{ workspace: string; project: string | null }> = []
   const forcedOver: Array<{ title: string; workspace: string; project: string | null; existingId: number; newIdx: number }> = []
 
-  const created: Array<{ id: number; title: string }> = []
+  const created: Array<{ id: number; title: string; owner_bot?: string }> = []
   const insertAll = db.transaction(() => {
-    for (const item of items) {
+    for (let idx = 0; idx < items.length; idx++) {
+      const item = items[idx]
       if (!item.title?.trim()) continue
+      const itemOwnerBot = ownerBots[idx]?.value ?? null
       const docsName = item.origin === 'retro' ? null : livingDocsName(item.title)
       if (docsName) {
         const open = findOpenLivingDocsCard(db, resolveWriteWorkspace(item.workspace), docsName)
@@ -586,8 +614,9 @@ router.post('/objectives', async (req, res) => {
         owner.assigned_user_id,
         owner.agent_key_id,
         owner.agent_key_label,
+        itemOwnerBot,
       )
-      created.push({ id: result.lastInsertRowid as number, title: item.title.trim() })
+      created.push({ id: result.lastInsertRowid as number, title: item.title.trim(), ...(itemOwnerBot ? { owner_bot: itemOwnerBot } : {}) })
       if (forcedOverId != null) {
         forcedOver.push({ title: item.title.trim(), workspace: itemWorkspace, project: item.project || null, existingId: forcedOverId, newIdx: created.length - 1 })
       }

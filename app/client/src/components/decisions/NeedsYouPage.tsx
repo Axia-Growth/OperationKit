@@ -1,9 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
-import { ArrowLeft, ArrowRight, CheckCircle2, CornerDownLeft, Keyboard, Layers, TriangleAlert } from 'lucide-react'
+import { ArrowLeft, ArrowRight, CheckCircle2, ChevronDown, ChevronRight, CornerDownLeft, History, Keyboard, Layers, TriangleAlert } from 'lucide-react'
 import {
   DENY_CHOICE,
   NO_BRIEFING_TEXT,
+  OWN_ANSWER_CHOICE,
+  chosenLabel,
   STACK_SHORTCUTS,
   URGENCY_LABELS,
   hasNoBriefing,
@@ -11,6 +13,7 @@ import {
   stackActionForKey,
   stackAfterAnswer,
   stackMove,
+  type DecidedHistoryItem,
   type DecisionOutcome,
   type DecisionQueueItem,
   type DecisionView,
@@ -18,7 +21,8 @@ import {
 import { api, ApiError } from '../../lib/api'
 import { Badge, Button, EmptyState, Modal, PageContainer, PageHeader, Skeleton, cn } from '../ui'
 import { ago } from '../agent-chat/BotLiveStatus'
-import { OptionCard, type DecisionDecideResponse } from './DecisionBriefing'
+import { DecisionBriefing, OptionCard, type DecisionDecideResponse } from './DecisionBriefing'
+import { CardThreadLink, DecisionLinkList, LinkedText, OwnAnswerForm } from './DecisionLinks'
 import { DecisionQA, notifyNeedsYouChanged } from './DecisionQA'
 
 /* The "Needs you" stack (obj 901084).
@@ -90,6 +94,7 @@ export function NeedsYouPage({ autoAdvanceMs = AUTO_ADVANCE_MS, pollMs = POLL_MS
   const [cleared, setCleared] = useState(0)
   const qaRef = useRef<HTMLInputElement | null>(null)
   const noteRef = useRef<HTMLInputElement | null>(null)
+  const answerRef = useRef<HTMLTextAreaElement | null>(null)
   const advanceTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   // The ids as they were when the current result was shown (for "what comes next").
   const idsAtAnswer = useRef<number[]>([])
@@ -179,8 +184,8 @@ export function NeedsYouPage({ autoAdvanceMs = AUTO_ADVANCE_MS, pollMs = POLL_MS
     advanceRef.current = advance
   }, [advance])
 
-  const decide = async (choice: string, opts: { reopen?: boolean } = {}) => {
-    if (!current || busy) return
+  const decide = async (choice: string, opts: { reopen?: boolean; answer?: string } = {}): Promise<boolean> => {
+    if (!current || busy) return false
     const d = current.decision
     setBusy(opts.reopen ? 'reopen' : choice)
     setError(null)
@@ -188,6 +193,7 @@ export function NeedsYouPage({ autoAdvanceMs = AUTO_ADVANCE_MS, pollMs = POLL_MS
       const r = await api.post<DecisionDecideResponse>(`/decisions/${d.id}/decide`, {
         choice,
         ...(note.trim() && choice === DENY_CHOICE ? { note: note.trim() } : {}),
+        ...(opts.answer ? { answer: opts.answer } : {}),
         ...(opts.reopen ? { reopen: true } : {}),
       })
       updateDecision(r.decision)
@@ -199,6 +205,7 @@ export function NeedsYouPage({ autoAdvanceMs = AUTO_ADVANCE_MS, pollMs = POLL_MS
         canReopen: !!r.can_reopen && r.decision.chosen !== DENY_CHOICE,
         chosen: r.decision.chosen,
       })
+      return true
     } catch (e) {
       const body = e instanceof ApiError ? (e.body as { code?: string; decision?: DecisionView } | null) : null
       if (body?.code === 'decision_stale') {
@@ -207,6 +214,7 @@ export function NeedsYouPage({ autoAdvanceMs = AUTO_ADVANCE_MS, pollMs = POLL_MS
       } else {
         setError(e instanceof Error ? e.message : 'That did not go through')
       }
+      return false
     } finally {
       setBusy(null)
     }
@@ -279,6 +287,10 @@ export function NeedsYouPage({ autoAdvanceMs = AUTO_ADVANCE_MS, pollMs = POLL_MS
         e.preventDefault()
         setDenyOpen(true)
         setTimeout(() => noteRef.current?.focus(), 0)
+        return
+      case 'answer':
+        e.preventDefault()
+        answerRef.current?.focus()
         return
       case 'next':
       case 'prev':
@@ -381,6 +393,7 @@ export function NeedsYouPage({ autoAdvanceMs = AUTO_ADVANCE_MS, pollMs = POLL_MS
             <p className="pb-6 text-center text-xs text-fg-3">{cleared} stale ask{cleared === 1 ? ' was' : 's were'} cleared: the card finished, so no answer was needed.</p>
           )}
         </div>
+        <RecentDecisions refreshKey={answered} />
         {helpModal}
       </PageContainer>
     )
@@ -446,22 +459,28 @@ export function NeedsYouPage({ autoAdvanceMs = AUTO_ADVANCE_MS, pollMs = POLL_MS
                 <TriangleAlert className="mt-0.5 h-4 w-4 shrink-0 text-warning" aria-hidden="true" />
                 <div>
                   <p className="font-medium">{NO_BRIEFING_TEXT}</p>
-                  {d.raw_note && <p className="mt-1 text-fg-1">What {who} said: “{d.raw_note}”</p>}
+                  {d.raw_note && <p className="mt-1 whitespace-pre-wrap break-words text-fg-1">What {who} said: “<LinkedText text={d.raw_note} />”</p>}
                 </div>
               </div>
+            )}
+
+            {!noBriefing && d.flags.includes('auto_briefing') && (
+              <p data-testid="stack-auto-briefing" className="mt-3 text-xs text-fg-3">
+                {who} stopped without a briefing, so this one was written automatically from its {d.flags.includes('auto_briefing_fallback') ? 'note' : 'note and session summary'}.
+              </p>
             )}
 
             {b.context && !(noBriefing && b.context === d.raw_note) && (
               <section className="mt-4" aria-labelledby={`ctx-${d.id}`}>
                 <h3 id={`ctx-${d.id}`} className="text-xs font-semibold uppercase tracking-eyebrow text-fg-3">Where things stand</h3>
-                <p className="mt-1 text-sm text-fg-1">{b.context}</p>
+                <p className="mt-1 whitespace-pre-wrap break-words text-sm text-fg-1"><LinkedText text={b.context} /></p>
               </section>
             )}
 
             <section className="mt-4" aria-labelledby={`q-${d.id}`}>
               <h3 className="text-xs font-semibold uppercase tracking-eyebrow text-fg-3">The decision</h3>
-              <h2 id={`q-${d.id}`} data-testid="stack-question" className="mt-1 text-lg font-semibold leading-snug text-fg-0">
-                {b.question || 'What is being decided was not stated.'}
+              <h2 id={`q-${d.id}`} data-testid="stack-question" className="mt-1 break-words text-lg font-semibold leading-snug text-fg-0">
+                {b.question ? <LinkedText text={b.question} /> : 'What is being decided was not stated.'}
               </h2>
             </section>
 
@@ -485,9 +504,11 @@ export function NeedsYouPage({ autoAdvanceMs = AUTO_ADVANCE_MS, pollMs = POLL_MS
             {recommended && b.recommended_why && (
               <p className="mt-3 rounded-md border border-[color:var(--accent-line)] bg-surface-2 px-3 py-2 text-sm text-fg-1" data-testid="stack-recommendation">
                 <span className="font-medium text-fg-0">Recommended: {recommended.key}) {recommended.label}. </span>
-                {b.recommended_why}
+                <LinkedText text={b.recommended_why} />
               </p>
             )}
+
+            <DecisionLinkList decision={d} />
 
             {/* The result, then the next one slides in. */}
             {result && result.decisionId === d.id ? (
@@ -503,7 +524,7 @@ export function NeedsYouPage({ autoAdvanceMs = AUTO_ADVANCE_MS, pollMs = POLL_MS
                     : 'border-success/40 bg-success/10',
                 )}
               >
-                <p>{result.text}</p>
+                <p className="break-words"><LinkedText text={result.text} /></p>
                 <div className="mt-2 flex flex-wrap items-center gap-2">
                   {result.canReopen && result.chosen && (
                     <Button size="sm" variant="primary" loading={busy === 'reopen'} onClick={() => void decide(result.chosen as string, { reopen: true })}>
@@ -514,10 +535,13 @@ export function NeedsYouPage({ autoAdvanceMs = AUTO_ADVANCE_MS, pollMs = POLL_MS
                     {result.canReopen ? 'Leave it closed, next' : total > 1 ? 'Next now' : 'Done'} <ArrowRight className="ml-1 h-3.5 w-3.5" aria-hidden="true" />
                   </Button>
                   {!result.canReopen && <span className="text-xs text-fg-3">Moving on in a moment…</span>}
+                  <CardThreadLink objectiveId={current.card.id} className="ml-auto" />
                 </div>
               </div>
             ) : (
-              <div className="mt-4 border-t border-line-soft pt-3">
+              // obj 901139: pinned to the bottom of the page scroller, so Approve / Deny /
+              // own answer stay reachable while a long briefing scrolls under them.
+              <div data-testid="stack-actions" className="sticky bottom-0 z-10 -mx-4 mt-4 rounded-b-lg border-t border-line-soft bg-surface-1 px-4 pb-1 pt-3 sm:-mx-5 sm:px-5">
                 {denyOpen ? (
                   <form onSubmit={submitDeny} className="flex flex-wrap items-center gap-2" data-testid="stack-deny-form">
                     <label htmlFor={`stack-note-${d.id}`} className="sr-only">Why not (optional)</label>
@@ -553,6 +577,15 @@ export function NeedsYouPage({ autoAdvanceMs = AUTO_ADVANCE_MS, pollMs = POLL_MS
                     </span>
                   </div>
                 )}
+                <OwnAnswerForm
+                  className="mt-3"
+                  decisionId={d.id}
+                  who={who}
+                  inputRef={answerRef}
+                  busy={busy === OWN_ANSWER_CHOICE}
+                  disabled={locked && busy !== OWN_ANSWER_CHOICE}
+                  onSubmit={answer => decide(OWN_ANSWER_CHOICE, { answer })}
+                />
                 {error && <p role="alert" className="mt-2 text-sm text-danger">{error}</p>}
               </div>
             )}
@@ -562,7 +595,8 @@ export function NeedsYouPage({ autoAdvanceMs = AUTO_ADVANCE_MS, pollMs = POLL_MS
         {/* Q&A side thread: ask the bot before choosing. */}
         <aside
           aria-label={`Ask ${who} about this decision`}
-          className="flex min-h-[14rem] flex-col rounded-lg border border-line bg-surface-1 p-4 lg:sticky lg:top-4 lg:max-h-[calc(100vh-10rem)]"
+          data-testid="stack-qa"
+          className="relative flex min-h-[14rem] flex-col rounded-lg border border-line bg-surface-1 p-4 lg:sticky lg:top-4 lg:max-h-[calc(100vh-10rem)]"
         >
           <DecisionQA key={d.id} ref={qaRef} decision={d} onChange={updateDecision} who={who} variant="panel" />
           <p className="mt-2 text-xs text-fg-3">Press <Kbd>Q</Kbd> to ask, <Kbd>Esc</Kbd> to go back to the decision.</p>
@@ -573,7 +607,73 @@ export function NeedsYouPage({ autoAdvanceMs = AUTO_ADVANCE_MS, pollMs = POLL_MS
           <Layers className="h-3.5 w-3.5" aria-hidden="true" /> {total - 1} more after this one.
         </p>
       )}
+      <RecentDecisions refreshKey={answered} />
       {helpModal}
     </PageContainer>
+  )
+}
+
+interface HistoryItem extends DecidedHistoryItem {
+  card: DecidedHistoryItem['card'] & { bot_name?: string | null }
+}
+
+/**
+ * "Your recent decisions" (obj 901139). Operator approved a decision, found it again
+ * under his previous decisions, and it only said "Decided" with no way back to the
+ * card. Each row here names the card, links its thread, and opens to the full
+ * briefing, the choice (or own answer), the outcome line and every link it
+ * mentioned (the PRs of a "merge these PRs" ask).
+ */
+export function RecentDecisions({ refreshKey = 0, limit = 15 }: { refreshKey?: number; limit?: number }) {
+  const [items, setItems] = useState<HistoryItem[] | null>(null)
+  const [openId, setOpenId] = useState<number | null>(null)
+  useEffect(() => {
+    let alive = true
+    api
+      .get<{ items: HistoryItem[] }>(`/decisions/queue/history?limit=${limit}`)
+      .then(r => { if (alive) setItems(r.items) })
+      .catch(() => { if (alive) setItems([]) })
+    return () => { alive = false }
+  }, [refreshKey, limit])
+  if (!items?.length) return null
+  const replace = (d: DecisionView) => setItems(prev => (prev ?? []).map(i => (i.decision.id === d.id ? { ...i, decision: d } : i)))
+  return (
+    <section className="mt-6" aria-labelledby="recent-decisions-title" data-testid="recent-decisions">
+      <h2 id="recent-decisions-title" className="flex items-center gap-1.5 text-sm font-semibold text-fg-0">
+        <History className="h-4 w-4 text-fg-3" aria-hidden="true" /> Your recent decisions
+      </h2>
+      <ul className="mt-2 divide-y divide-line-soft rounded-lg border border-line bg-surface-1">
+        {items.map(i => {
+          const d = i.decision
+          const open = openId === d.id
+          const label = d.chosen === OWN_ANSWER_CHOICE ? 'Own answer' : (chosenLabel(d.briefing, d.chosen) ?? 'Decided')
+          return (
+            <li key={d.id} data-testid="recent-decision" data-decision-id={d.id}>
+              <button
+                type="button"
+                aria-expanded={open}
+                aria-controls={`recent-${d.id}`}
+                onClick={() => setOpenId(open ? null : d.id)}
+                className="flex w-full min-w-0 items-start gap-2 px-3 py-2.5 text-left hover:bg-surface-2"
+              >
+                {open ? <ChevronDown className="mt-0.5 h-4 w-4 shrink-0 text-fg-3" aria-hidden="true" /> : <ChevronRight className="mt-0.5 h-4 w-4 shrink-0 text-fg-3" aria-hidden="true" />}
+                <span className="min-w-0 flex-1">
+                  <span className="block break-words text-sm text-fg-0">{d.briefing.question || 'No question given'}</span>
+                  <span className="mt-0.5 block truncate text-xs text-fg-2">
+                    {label} · <span className="font-mono">#{i.card.id}</span> {i.card.title}
+                  </span>
+                </span>
+                <span className="shrink-0 text-xs text-fg-3">{ago(d.decided_at ?? d.updated_at)}</span>
+              </button>
+              {open && (
+                <div id={`recent-${d.id}`} className="px-3 pb-3">
+                  <DecisionBriefing decision={d} onChange={replace} botName={i.card.bot_name ?? i.card.bot ?? undefined} compact />
+                </div>
+              )}
+            </li>
+          )
+        })}
+      </ul>
+    </section>
   )
 }

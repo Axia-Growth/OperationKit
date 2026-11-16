@@ -3,6 +3,7 @@ import { MessageCircleQuestion } from 'lucide-react'
 import type { DecisionView } from '@operationkit/shared'
 import { api } from '../../lib/api'
 import { Button, cn } from '../ui'
+import { LinkedText } from './DecisionLinks'
 
 /* The Q&A thread on a decision (obj 901059, shared by the card / chat briefing
    and the Needs you stack, obj 901084): the person asks, the bot that raised the
@@ -100,7 +101,7 @@ export const DecisionQA = forwardRef<HTMLInputElement, {
               )}
             >
               <span className="font-medium">{m.role === 'human' ? (m.author ?? 'You') : m.role === 'bot' ? (m.author ?? who) : 'Update'}: </span>
-              <span className="whitespace-pre-wrap break-words">{m.body}</span>
+              <span className="whitespace-pre-wrap break-words"><LinkedText text={m.body} /></span>
               {m.role === 'human' && m.status === 'pending' && (
                 <span className="ml-1 text-xs text-fg-3">({who} is answering…)</span>
               )}

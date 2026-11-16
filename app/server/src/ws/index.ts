@@ -284,7 +284,39 @@ export function shouldDeliver(message: ServerMessage, client: ConnectedClient): 
   }
 }
 
+/**
+ * obj 901151 — "a card just ended" observers. Every path that moves a card to
+ * done/cancelled broadcasts `objective_updated`, so this is the one place an
+ * end-of-card reaction (withdrawing its stale Needs you asks) can hook without
+ * chasing every UPDATE. Listeners run deferred (never inside the caller's
+ * statement or transaction) and a throwing listener never breaks a broadcast.
+ */
+export type ObjectiveEndedListener = (objectiveId: number, status: 'done' | 'cancelled') => void
+const endedListeners = new Set<ObjectiveEndedListener>()
+export function onObjectiveEnded(fn: ObjectiveEndedListener): () => void {
+  endedListeners.add(fn)
+  return () => { endedListeners.delete(fn) }
+}
+
+function notifyEnded(message: ServerMessage): void {
+  if (message.type !== 'objective_updated' || !endedListeners.size) return
+  const o = message.payload as { id?: unknown; status?: unknown } | null
+  const status = o?.status
+  const id = Number(o?.id)
+  if ((status !== 'done' && status !== 'cancelled') || !Number.isInteger(id)) return
+  for (const fn of endedListeners) {
+    setImmediate(() => {
+      try {
+        fn(id, status)
+      } catch (err) {
+        console.warn(`[ws] card-ended listener failed for card ${id}:`, err instanceof Error ? err.message : String(err))
+      }
+    })
+  }
+}
+
 export function broadcast(message: ServerMessage): void {
+  notifyEnded(message)
   const serialized = JSON.stringify(message)
   for (const client of clients) {
     if (client.ws.readyState !== WebSocket.OPEN) continue

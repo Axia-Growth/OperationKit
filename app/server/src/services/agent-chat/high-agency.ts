@@ -40,7 +40,7 @@
 //     workflow as a DRAFT (publishing stays the owner's click). Neither grants
 //     send, spend, merge or deploy; those go to the owner's decision queue.
 import { getDb } from '../../db/index.js'
-import { DECISION_BRIEFING_RULES, DECISION_EXAMPLE, decisionFeedbackForPrompt } from '../decision-prompt.js'
+import { DECISION_BRIEFING_RULES, DECISION_EXAMPLE, decisionFeedbackForPrompt, stopForOwnerRules } from '../decision-prompt.js'
 import { getUserWorkspaces } from '../../middleware/workspace.js'
 import { listWorkspaces } from '../workspaces.js'
 import { logActivity } from '../../routes/feed.js'
@@ -49,6 +49,7 @@ import { resumeRoutine } from '../routine-auto-pause.js'
 import type { ChatAgent } from './agent-defs.js'
 import { botMayUseWorkspace, botWorkspaceAllowlist, narrowToBot } from './bot-workspaces.js'
 import { cardModelForBot } from './bot-card-model.js'
+import { ownerBotName } from './full-access-tools.js'
 import {
   DEFAULT_INSTALL_TIMEZONE,
   DEFAULT_LEVEL,
@@ -261,6 +262,19 @@ type BriefSettings = Pick<HighAgencySettings, 'level' | 'workspace' | 'allow_car
  * loop, verbatim), who it is (a snapshot of its own instructions), then HOW to
  * do each step on this board and exactly what it may and may not do.
  */
+/**
+ * The owner_bot a wake puts on the project card it files: the same name a
+ * chat-filed card gets (`ownerBotName`). Null when the bot has no usable owner
+ * name, or when there is no database to check the bot registry against.
+ */
+function projectOwnerBot(agent: Pick<ChatAgent, 'slug' | 'name'>): string | null {
+  try {
+    return ownerBotName(agent)
+  } catch {
+    return null
+  }
+}
+
 export function buildHighAgencyBrief(agent: BriefAgent, s: BriefSettings, owner = 'the owner'): string {
   const ws = s.workspace ?? 'general'
   const persona = agent.system_prompt.trim()
@@ -283,13 +297,13 @@ export function buildHighAgencyBrief(agent: BriefAgent, s: BriefSettings, owner 
     '',
     '## How to do each step on this board',
     '',
-    `A card you OWN is a card in workspace \`${ws}\` whose agent_context is \`${agent.slug}\`. That is the whole list you close out, and the only cards you change.`,
+    `A card you OWN is a card in workspace \`${ws}\` whose owner bot is you: its owner_bot names you, or, when it has no owner_bot, its agent_context is \`${agent.slug}\`. A card you filed from chat is yours even when another agent works it. The first command below lists them. That is the whole list you close out, and the only cards you change.`,
     '',
     '**1. Orient.**',
     '   ```bash',
     `   curl -sG "http://localhost:3002/api/docs/search" ${H} --data-urlencode 'q=<your area> objectives'`,
-    `   curl -s "http://localhost:3002/api/internal/objectives?workspace=${ws}&include_terminal=0&fields=minimal" ${H} \\`,
-    `     | node -e 'const a=JSON.parse(require("fs").readFileSync(0,"utf8"));for(const o of a.filter(o=>o.agent_context==="${agent.slug}"))console.log(o.id,o.status,o.title)'`,
+    `   curl -s "http://localhost:3002/api/internal/objectives?workspace=${ws}&include_terminal=0&fields=minimal&owned_by_bot=${agent.slug}" ${H} \\`,
+    `     | node -e 'const a=JSON.parse(require("fs").readFileSync(0,"utf8"));for(const o of a)console.log(o.id,o.status,o.title)'`,
     '   ```',
     `   Read one card in full (description, success criteria, last summary) with \`curl -s http://localhost:3002/api/internal/objectives/<id> ${H}\`. Earlier wakes are the cards titled "${highAgencyTitle(agent)}"; read the last one's report so you do not repeat it.`,
     '   Then read what the daily supervisor flagged on YOUR cards (orphaned, duplicate, stalled or over-budget work). Fix those first in step 2, on your own cards; a flag clears itself on the next daily review once the card is fixed:',
@@ -304,11 +318,19 @@ export function buildHighAgencyBrief(agent: BriefAgent, s: BriefSettings, owner 
     '',
   ]
   if (s.allow_cards) {
+    // obj 900957: the project card names this bot as its owner (owner_bot) and is
+    // worked by the workspace's normal worker agent (agent_context left out, so the
+    // route picks it). A bot with no usable owner name keeps the old form.
+    const ownerBot = projectOwnerBot(agent)
+    const ownership = ownerBot
+      ? `owner_bot \`${ownerBot}\` (the workspace's normal worker agent does the work, so leave agent_context out)`
+      : `agent_context \`${agent.slug}\``
+    const ownerField = ownerBot ? `"owner_bot":"${ownerBot}"` : `"agent_context":"${agent.slug}"`
     lines.push(
-      `**4. File and start the project** — at most ${MAX_NEW_PROJECTS_PER_WAKE} new card on this wake. You own it: agent_context \`${agent.slug}\`, workspace \`${ws}\`, linked to this wake with \`source_job_id\`:`,
+      `**4. File and start the project** — at most ${MAX_NEW_PROJECTS_PER_WAKE} new card on this wake. You own it: ${ownership}, workspace \`${ws}\`, linked to this wake with \`source_job_id\`:`,
       '   ```bash',
       '   curl -s -X POST http://localhost:3002/api/internal/objectives -H \'Content-Type: application/json\' \\',
-      `     -d '[{"title":"<project>","description":"<rationale (why this, why now) + what to do>","acceptance_criteria":[{"id":"c1","criterion":"<success criterion>"}],"completion_goal":"<the metric that shows it worked>","agent_context":"${agent.slug}","workspace":"${ws}","type":"task","source_job_id":'"$CC_OBJECTIVE_ID"'}]'`,
+      `     -d '[{"title":"<project>","description":"<rationale (why this, why now) + what to do>","acceptance_criteria":[{"id":"c1","criterion":"<success criterion>"}],"completion_goal":"<the metric that shows it worked>",${ownerField},"workspace":"${ws}","type":"task","source_job_id":'"$CC_OBJECTIVE_ID"'}]'`,
       '   curl -s -X PATCH http://localhost:3002/api/internal/objectives/<new id>/status -H \'Content-Type: application/json\' -d \'{"status":"working"}\'',
       '   ```',
       '   A 409 with `existing_id` means that card already exists — do not file a twin; manage the existing one. "Manage it toward completion" means: the project runs as its own card, and every later wake\'s close-out pass checks it against its success criteria and steers, closes or cancels it. Do not hold this wake card open to babysit it.',
@@ -331,14 +353,16 @@ export function buildHighAgencyBrief(agent: BriefAgent, s: BriefSettings, owner 
     '',
     `**Decision queue.** Anything that needs a send, spend or deploy — or ${owner}'s judgement — is an ask, not an action: write the exact ask (what, why, cost) in your report and record this wake's disposition as \`needs_review\`.`,
     '',
-    `**A decision needs a briefing.** When the ask is a CHOICE for ${owner}, put it in the disposition as a \`decision\` object so the card and ${owner}'s chat show what is being decided (a plain note shows as "no briefing given"):`,
+    `**A decision needs a briefing.** Every ask is a CHOICE for ${owner}: put it in the disposition as a \`decision\` object so Needs you, the card and ${owner}'s chat show where things stand and what is being decided:`,
     ...DECISION_BRIEFING_RULES.map(l => `   ${l}`),
     '   ```bash',
     `   curl -s -X POST http://localhost:3002/api/internal/objectives/$CC_OBJECTIVE_ID/job-disposition -H 'Content-Type: application/json' -d '{"disposition":"needs_review","note":"<one line>","decision":${DECISION_EXAMPLE.replace(/'/g, '’')}}'`,
     '   ```',
     ...decisionFeedbackForPrompt(ws, owner).map(l => `   ${l}`),
     '',
-    '**5. Report.** Finish with the short report note (closed / started or why nothing / risks and asks), then record the disposition — `needs_review` if you started a project or have an ask, otherwise `complete`:',
+    ...stopForOwnerRules(owner, 'disposition').map(l => `   ${l}`),
+    '',
+    '**5. Report.** Finish with the short report note (closed / started or why nothing / risks and asks), then record the disposition: `needs_review` WITH a `decision` briefing only when you have an ask for the owner to decide; otherwise `complete` (an FYI, a project you started, or things to check later are `complete`, with the report as the note):',
     '   ```bash',
     '   curl -s -X POST http://localhost:3002/api/internal/objectives/$CC_OBJECTIVE_ID/job-disposition -H \'Content-Type: application/json\' -d \'{"disposition":"complete","note":"<one-line report>"}\'',
     '   ```',
@@ -350,7 +374,7 @@ export function buildHighAgencyBrief(agent: BriefAgent, s: BriefSettings, owner 
     '## Limits on a wake',
     '',
     `- At most ${MAX_NEW_PROJECTS_PER_WAKE} new project per wake. Close out first; no busywork, filler cards or chores.`,
-    `- Change, close or cancel only cards you own (agent_context \`${agent.slug}\`). Stay in workspace \`${ws}\`.`,
+    `- Change, close or cancel only cards you own (the list from step 1). Stay in workspace \`${ws}\`.`,
     `- Never send email or messages to people, spend money, merge, deploy, publish a workflow or approve its send/spend steps, or grant yourself a permission. Those go to ${owner}'s decision queue.`,
     '- Stay inside this card\'s spend cap and the cap on any card you file.',
   )

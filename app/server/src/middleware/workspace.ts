@@ -27,6 +27,18 @@ export function userHasWorkspace(userId: number, workspace: string): boolean {
  */
 export function requireWorkspaceAccess(req: AuthRequest, res: Response, next: NextFunction): void {
   const ws = (req.query.workspace as string | undefined) ?? (req.body?.workspace as string | undefined)
+  // obj 901106: a card browser session has exactly ONE workspace (its card's).
+  // Its synthetic user id is in no user_workspaces row, so membership can never
+  // widen it; any other named workspace is refused here, and `all` / missing is
+  // left to the handler, which sees no memberships for that id.
+  if (req.cardBrowser) {
+    if (ws && ws !== 'all' && ws !== req.cardBrowser.workspace) {
+      res.status(403).json({ error: `No access to workspace '${ws}'`, code: 'card_browser_workspace' })
+      return
+    }
+    next()
+    return
+  }
   if (!ws || ws === 'all') {
     next()
     return

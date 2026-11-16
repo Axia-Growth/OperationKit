@@ -5,6 +5,14 @@ import { isApiKey, userFromApiKey } from '../lib/api-keys.js'
 import { resolveAgentKey, touchAgentKey, type AgentKeyPrincipal } from '../lib/agent-keys.js'
 import { cfAccessIdentifies } from '../lib/cf-access-identity.js'
 import { getDb } from '../db/index.js'
+import { sessionKbAccessEnabled } from '../lib/session-trust.js'
+import {
+  cardBrowserRequestVerdict,
+  isCardBrowserSessionToken,
+  resolveCardBrowserSession,
+  type CardBrowserPrincipal,
+} from '../lib/card-browser-session.js'
+import type {} from './session-file-access.js'
 
 const TOKEN_EXPIRY = '7d'
 const MIN_SECRET_LEN = 16
@@ -46,7 +54,9 @@ export interface AuthRequest extends Request {
   /** Set when the request authenticated with a named agent API key (obj 714090). */
   agentKey?: AgentKeyPrincipal
   /** How the caller authenticated. Absent before requireAuth / the agent-key guard ran. */
-  authVia?: 'session' | 'legacy_api_key' | 'agent_api_key' | 'session_token'
+  authVia?: 'session' | 'legacy_api_key' | 'agent_api_key' | 'session_token' | 'card_browser'
+  /** Set only for a card browser session (`ccb_…`, obj 901106). */
+  cardBrowser?: CardBrowserPrincipal
   /**
    * This request is backed by a verified Cloudflare Access identity — either the
    * cookie was minted from one (`cfa`, obj 720332), or the request itself still
@@ -146,6 +156,32 @@ export async function requireAuth(req: AuthRequest, res: Response, next: NextFun
   const token = extractToken(req)
   if (!token) {
     res.status(401).json({ error: 'Authentication required' })
+    return
+  }
+
+  // obj 901106: a card browser session (`ccb_…`), minted by POST
+  // /api/card-browser/session for ONE running card. Read-only, de-escalated to
+  // `member` under a SYNTHETIC user id that holds no membership (the acting
+  // user is kept for audit only), limited to the CARD_BROWSER_GET_ROUTES
+  // allowlist, pinned to the card's ONE workspace, and re-checked against the
+  // live card each request.
+  if (isCardBrowserSessionToken(token)) {
+    const r = resolveCardBrowserSession(getDb(), token)
+    if (!r.ok) {
+      res.status(r.status).json({ error: r.error, code: r.code })
+      return
+    }
+    // obj 901145: the install's session KB switch covers card browsers too.
+    const verdict = cardBrowserRequestVerdict(req.method, req.originalUrl || req.url, { kbAccess: sessionKbAccessEnabled(getDb()) })
+    if (!verdict.ok) {
+      res.status(403).json({ error: verdict.error, code: verdict.code })
+      return
+    }
+    req.user = r.principal.user
+    req.sessionFile = { objectiveId: r.principal.objectiveId, workspace: r.principal.workspace }
+    req.cardBrowser = r.principal
+    req.authVia = 'card_browser'
+    next()
     return
   }
 

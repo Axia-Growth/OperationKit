@@ -230,6 +230,28 @@ describe('internalApiGate', () => {
     }
   })
 
+  it('obj 901027: rejects a sandbox_run-style caller — a peer trusted only via INTERNAL_TRUSTED_PEER_CIDRS, no credential', async () => {
+    const prev = process.env.INTERNAL_TRUSTED_PEER_CIDRS
+    process.env.INTERNAL_TRUSTED_PEER_CIDRS = '172.30.250.0/24'
+    try {
+      // Would have been treated as "local origin" before the fix: it is
+      // trusted ONLY via the jail-network CIDR, exactly what a `docker exec`
+      // into a card's own sandbox (card-sandbox-tools.ts sandbox_run) looks
+      // like from the server's point of view.
+      const res = await get('/api/internal/objectives', { 'x-test-peer': '172.30.250.9' })
+      expect(res.status).toBe(403)
+      // It still works if it presents a real credential, same as any off-box caller.
+      const withSecret = await get('/api/internal/objectives', {
+        'x-test-peer': '172.30.250.9',
+        'x-internal-secret': getInternalApiSecret(),
+      })
+      expect(withSecret.status).toBe(200)
+    } finally {
+      if (prev === undefined) delete process.env.INTERNAL_TRUSTED_PEER_CIDRS
+      else process.env.INTERNAL_TRUSTED_PEER_CIDRS = prev
+    }
+  })
+
   it('INTERNAL_API_REQUIRE_SECRET=1 makes the secret mandatory for local callers too', async () => {
     process.env.INTERNAL_API_REQUIRE_SECRET = '1'
     const bare = await get('/api/internal/objectives', { 'x-test-peer': '127.0.0.1' })

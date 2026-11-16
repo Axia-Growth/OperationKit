@@ -485,9 +485,62 @@ describe('the worker browser can never reach the Command Center API over loopbac
     return s.args
   }
 
-  it('jail mode, default env: the embedded runner policy has allowLoopback false and refuses 127.0.0.1/localhost/[::1]:3002', async () => {
+  // obj 901145: a jail is the card's own network namespace, so a dev server the
+  // worker starts there opens BY DEFAULT — with 3002 (the CC API forwarder), the
+  // guard ports, other sandboxes, private ranges and metadata still refused.
+  it('jail mode, default env: the worker OWN dev server opens with no config; 3002, guard ports, other sandboxes and metadata stay refused', async () => {
     const { decideEgress } = await import('../lib/browser-policy.js')
+    const plan = await jailPlan({ OK_DOMAIN: 'ops.example.com' })
+    const embedded = embeddedRunnerPolicy()
+    expect(embedded.loopbackPortRange).toEqual({ min: 1024, max: 65535 })
+    expect(plan.policy.allowLoopback).toBe(true)
+    for (const policy of [embedded, plan.policy]) {
+      // allowed: the worker's own preview/scratch servers, every loopback spelling
+      for (const port of [3912, 3922, 5173, 8080]) {
+        for (const [host, ip] of [['localhost', '127.0.0.1'], ['127.0.0.1', '127.0.0.1'], ['[::1]', '::1']]) {
+          expect(decideEgress(policy, { scheme: 'http', host, port }, [ip]).allow, `${host}:${port}`).toBe(true)
+        }
+      }
+      // refused: the install's app port (CC API forwarder) and the guard ports
+      for (const port of [3002, 3099, 3098]) {
+        for (const [url, host, ip] of API) {
+          const u = url.replace('3002', String(port))
+          expect(decideEgress(policy, { scheme: 'http', host, port }, [ip]).allow, u).toBe(false)
+          expect(decideEgress(policy, { scheme: 'https', host, port }, [ip]).allow, u).toBe(false)
+        }
+      }
+      // refused: privileged ports, and odd loopback spellings not on the allowlist
+      expect(decideEgress(policy, { scheme: 'http', host: '127.0.0.1', port: 80 }, ['127.0.0.1']).allow).toBe(false)
+      expect(decideEgress(policy, { scheme: 'http', host: '127.0.0.2', port: 3002 }, ['127.0.0.2']).allow).toBe(false)
+      expect(decideEgress(policy, { scheme: 'http', host: '0.0.0.0', port: 3002 }, ['0.0.0.0']).allow).toBe(false)
+      // refused: ANOTHER card's sandbox — reachable only by its docker-network
+      // address, never by this jail's loopback — by literal IP and by name
+      for (const other of ['172.18.0.7', '10.0.3.4', '192.168.5.9']) {
+        expect(decideEgress(policy, { scheme: 'http', host: other, port: 3912 }, [other]).allow, other).toBe(false)
+        expect(decideEgress(policy, { scheme: 'https', host: 'ops.example.com', port: 443 }, [other]).allow, other).toBe(false)
+      }
+      // refused: a public name rebinding to loopback, and metadata
+      expect(decideEgress(policy, { scheme: 'https', host: 'ops.example.com', port: 3912 }, ['127.0.0.1']).allow).toBe(false)
+      expect(decideEgress(policy, { scheme: 'http', host: '169.254.169.254', port: 80 }, ['169.254.169.254']).allow).toBe(false)
+    }
+    // Chromium still sends loopback through the guard, which enforces all of the above.
+    const args = mcpArgs(plan.jail!.mcpConfigHostPath)
+    expect(args[args.indexOf('--proxy-bypass') + 1]).toBe('<-loopback>')
+    expect(args[args.indexOf('--blocked-origins') + 1]).toContain('http://localhost:3002')
+  })
+
+  it('the worker prompt names the own-sandbox range only when the plan has it', async () => {
+    const { buildCardBrowserPromptBlock } = await import('../lib/card-browser.js')
     const plan = await jailPlan({})
+    const text = buildCardBrowserPromptBlock({ granted: true, ownLoopback: plan.policy.loopbackPortRange }).join('\n')
+    expect(text).toMatch(/dev server YOU start inside this sandbox/)
+    expect(text).toMatch(/3002\) and the guard port are always refused/)
+    expect(buildCardBrowserPromptBlock({ granted: true }).join('\n')).toMatch(/CARD_BROWSER_WORKER_LOOPBACK_PORTS/)
+  })
+
+  it('jail mode, CARD_BROWSER_WORKER_OWN_LOOPBACK=off: the embedded runner policy has allowLoopback false and refuses 127.0.0.1/localhost/[::1]:3002', async () => {
+    const { decideEgress } = await import('../lib/browser-policy.js')
+    const plan = await jailPlan({ CARD_BROWSER_WORKER_OWN_LOOPBACK: 'off' })
     const embedded = embeddedRunnerPolicy()
     expect(embedded.allowLoopback).toBe(false)
     expect(plan.policy.allowLoopback).toBe(false)
@@ -530,14 +583,19 @@ describe('the worker browser can never reach the Command Center API over loopbac
   })
 
   it('CARD_BROWSER_ALLOW_LOOPBACK=on does not open loopback for a worker', async () => {
-    const plan = await jailPlan({ CARD_BROWSER_ALLOW_LOOPBACK: 'on' })
+    const plan = await jailPlan({ CARD_BROWSER_ALLOW_LOOPBACK: 'on', CARD_BROWSER_WORKER_OWN_LOOPBACK: 'off' })
     expect(plan.policy.allowLoopback).toBe(false)
     expect(embeddedRunnerPolicy().allowLoopback).toBe(false)
+    // tmux mode (the app container: loopback is the app and every other tmux
+    // card) never gets the own-sandbox default, whatever the env says.
+    const tmux = await tmuxPlan({ CARD_BROWSER_WORKER_IN_APP_CONTAINER: 'on', CARD_BROWSER_ALLOW_LOOPBACK: 'on' })
+    expect(tmux.policy.allowLoopback).toBe(false)
+    expect(tmux.policy.loopbackPortRange).toBeUndefined()
   })
 
   it('CARD_BROWSER_WORKER_LOOPBACK_PORTS opens only those preview ports; 3002 and the guard ports can never be listed', async () => {
     const { decideEgress } = await import('../lib/browser-policy.js')
-    await jailPlan({ CARD_BROWSER_WORKER_LOOPBACK_PORTS: '5173;3002;3099;3098' })
+    await jailPlan({ CARD_BROWSER_WORKER_LOOPBACK_PORTS: '5173;3002;3099;3098', CARD_BROWSER_WORKER_OWN_LOOPBACK: 'off' })
     const p = embeddedRunnerPolicy()
     expect(p.loopbackPorts).toEqual([5173])
     expect(p.warnings.join('\n')).toMatch(/ignoring 3002/)
