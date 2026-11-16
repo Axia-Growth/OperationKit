@@ -340,7 +340,7 @@ describe('approve / deny — a clear outcome, never a dead click', () => {
     const d = (await raise(id)).json.decision
     const r = await call('POST', `/api/decisions/${d.id}/decide`, { cookie: adminCookie, body: { choice: 'Z' } })
     expect(r.status).toBe(400)
-    expect(r.json.valid_choices).toEqual(['A', 'B', 'deny'])
+    expect(r.json.valid_choices).toEqual(['A', 'B', 'deny', 'own'])
   })
 
   it('the card message route explains a done card plainly (no more "reopen it before sending")', async () => {
@@ -489,5 +489,118 @@ describe('secrets never leak through briefings, the Q&A thread, the KB log or pr
     }, 'Outreach Bot')
     expect(user).toContain(`Pasted ${REDACTED} here`)
     expect(user).not.toContain(SECRET)
+  })
+})
+
+// obj 901139 — Operator: "every decision needs a free-text reply box … so I can answer
+// with my own decision (e.g. 'you merge the PRs, not me')", and a decided item must
+// lead back to its card instead of a dead "Decided".
+describe('own answer — the person answers in their own words (obj 901139)', () => {
+  const own = 'You merge the PRs, not me. Merge https://github.com/acme/app/pull/821 first.'
+  const jsonlEvents = (id: number) => {
+    const file = path.join(TMP, `cc-${id}-1.jsonl`)
+    return fs.existsSync(file) ? fs.readFileSync(file, 'utf8').trim().split('\n').map(l => JSON.parse(l)) : []
+  }
+
+  it('records it in the decision log as the choice, posts it into the card thread as the person, resumes the worker and clears the ask', async () => {
+    const id = card('review')
+    const d = (await raise(id)).json.decision
+    expect((await call('GET', '/api/decisions/queue', { cookie: adminCookie })).json.items.map((i: any) => i.decision.id)).toContain(d.id)
+
+    const r = await call('POST', `/api/decisions/${d.id}/decide`, { cookie: adminCookie, body: { choice: 'own', answer: own } })
+    expect(r.status).toBe(200)
+    expect(r.json.decision).toMatchObject({ state: 'decided', chosen: 'own', decision_note: own, decided_by: 'operator', outcome: 'sent' })
+    expect(r.json.outcome_text).toContain('You answered in your own words')
+    expect(r.json.outcome_text).toContain('You merge the PRs, not me.')
+
+    // Posted into the card thread (the jsonl the card viewer renders) under the person's verified stamp.
+    const followups = jsonlEvents(id).filter(e => e.type === 'followup')
+    expect(followups).toHaveLength(1)
+    expect(followups[0].text).toContain(`Decision #${d.id}: ${briefing.question}`)
+    expect(followups[0].text).toContain(own)
+    expect(JSON.stringify(followups[0].sender)).toMatch(/owner|verified/i)
+
+    // The worker is resumed with the answer as THE decision, not a note on an option.
+    expect(status(id)).toBe('working')
+    await tick()
+    expect(sendFollowUp).toHaveBeenCalledTimes(1)
+    const text = (sendFollowUp.mock.calls[0] as unknown as [string, string])[1]
+    expect(text).toContain('The owner answered in their own words, and that answer is the decision')
+    expect(text).toContain(own)
+    expect(text).not.toMatch(/Answer: option [AB]/)
+
+    // The ask is cleared from the queue and the badge…
+    const q = await call('GET', '/api/decisions/queue', { cookie: adminCookie })
+    expect(q.json.items.map((i: any) => i.decision.id)).not.toContain(d.id)
+    // …and the learning log records it as the person's choice, with the words.
+    const entry = decisionLog(getDb(), { objective_id: id })[0]
+    expect(entry).toMatchObject({ chosen: 'own', decision_note: own, decided_by: 'operator', followed_recommendation: false })
+    expect(entry.chosen_label).toMatch(/^Own answer: “You merge the PRs, not me\./)
+  })
+
+  it('refuses an own answer with no text, and leaves the decision open', async () => {
+    const id = card('review')
+    const d = (await raise(id)).json.decision
+    const r = await call('POST', `/api/decisions/${d.id}/decide`, { cookie: adminCookie, body: { choice: 'own', answer: '   ' } })
+    expect(r.status).toBe(400)
+    expect(r.json.code).toBe('answer_required')
+    expect((await call('GET', `/api/decisions/${d.id}`, { cookie: adminCookie })).json.decision.state).toBe('open')
+    expect(sendFollowUp).not.toHaveBeenCalled()
+  })
+
+  it('only a person in the web UI may give one — a worker token or Bearer token cannot answer its own decision', async () => {
+    const id = card('review')
+    const d = (await raise(id)).json.decision
+    expect((await call('POST', `/api/decisions/${d.id}/decide`, { headers: token(id), body: { choice: 'own', answer: 'ship it' } })).status).toBe(401)
+    expect((await call('POST', `/api/decisions/${d.id}/decide`, { headers: { Authorization: bearerAdmin }, body: { choice: 'own', answer: 'ship it' } })).status).toBe(403)
+  })
+
+  it('on a job that ended by asking: recorded, nothing sent, and Reopen and apply delivers the same words', async () => {
+    const id = card('working', { routine_id: 9139 })
+    await call('POST', `/api/internal/objectives/${id}/job-disposition`, { body: { disposition: 'needs_review', note: 'merge?', decision: briefing } })
+    getDb().prepare("UPDATE objectives SET status = 'done' WHERE id = ?").run(id)
+    const d = (await call('GET', `/api/decisions?objective_id=${id}`, { cookie: adminCookie })).json.decisions[0]
+    const r = await call('POST', `/api/decisions/${d.id}/decide`, { cookie: adminCookie, body: { choice: 'own', answer: own } })
+    expect(r.json.outcome).toBe('card_done')
+    expect(r.json.can_reopen).toBe(true)
+    expect(sendFollowUp).not.toHaveBeenCalled()
+    const re = await call('POST', `/api/decisions/${d.id}/decide`, { cookie: adminCookie, body: { choice: 'own', reopen: true } })
+    expect(re.json.outcome).toBe('reopened')
+    await tick()
+    expect((sendFollowUp.mock.calls[0] as unknown as [string, string])[1]).toContain(own)
+  })
+})
+
+describe('decided history — a decided item leads back to its card (obj 901139)', () => {
+  it("lists the person's decided items newest first, each with its card, full briefing, choice, outcome and links", async () => {
+    const id = card('review')
+    const d = (await raise(id, {
+      ...briefing,
+      context: 'Three PRs are green: https://github.com/acme/app/pull/821 and https://github.com/acme/app/pull/828. See card #42 for the lane bug.',
+    })).json.decision
+    await call('POST', `/api/decisions/${d.id}/decide`, { cookie: adminCookie, body: { choice: 'A' } })
+
+    const r = await call('GET', '/api/decisions/queue/history', { cookie: adminCookie })
+    expect(r.status).toBe(200)
+    const item = r.json.items.find((i: any) => i.decision.id === d.id)
+    expect(r.json.items[0].decision.id).toBe(d.id)
+    expect(item.card).toMatchObject({ id, status: 'working' })
+    expect(item.card.title).toMatch(/^Outreach batch/)
+    expect(item.decision).toMatchObject({ state: 'decided', chosen: 'A', outcome: 'sent' })
+    expect(item.decision.outcome_text).toContain('You chose A: Send today')
+    expect(item.decision.briefing.context).toContain('https://github.com/acme/app/pull/821')
+    // Open decisions are not history.
+    expect(r.json.items.every((i: any) => i.decision.state === 'decided')).toBe(true)
+  })
+
+  it("a member sees only decisions on their own cards; an agent key or worker token gets none", async () => {
+    const mine = card('review')
+    getDb().prepare('UPDATE objectives SET created_by = 2 WHERE id = ?').run(mine)
+    const d = (await raise(mine)).json.decision
+    await call('POST', `/api/decisions/${d.id}/decide`, { cookie: memberCookie, body: { choice: 'B' } })
+    const r = await call('GET', '/api/decisions/queue/history', { cookie: memberCookie })
+    expect(r.status).toBe(200)
+    expect(r.json.items.map((i: any) => i.card.id)).toEqual([mine])
+    expect((await call('GET', '/api/decisions/queue/history', { headers: token(mine) })).status).toBe(401)
   })
 })

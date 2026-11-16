@@ -198,6 +198,47 @@ export function initAgentChatSchema(db: Database.Database): void {
     );
     CREATE INDEX IF NOT EXISTS idx_bot_full_access_audit_slug ON agent_chat_bot_full_access_audit(slug, id);
 
+    -- Card sandbox + browser tools for chat bots (obj 901027):
+    -- services/agent-chat/card-sandbox-tools.ts and card-browser-tools.ts. A
+    -- bot with the card_sandbox tool can look inside a card it owns (worker
+    -- agent_context, or owner_bot) or has Full access to: list and read
+    -- objective-memory files, read the progress/transcript log, and run a
+    -- command in its live jail sandbox. A bot with card_browser can open a page
+    -- in a disposable headless Chromium and screenshot it. Append-only: every
+    -- call is one row here, allowed or refused, never updated.
+    CREATE TABLE IF NOT EXISTS agent_chat_sandbox_audit (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      event TEXT NOT NULL CHECK (event IN ('ability_used', 'ability_refused')),
+      slug TEXT NOT NULL,
+      workspace TEXT,
+      actor_user_id INTEGER,
+      ability TEXT NOT NULL,
+      objective_id INTEGER,
+      detail TEXT,
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+    CREATE INDEX IF NOT EXISTS idx_sandbox_audit_slug ON agent_chat_sandbox_audit(slug, id);
+
+    -- A chat browser screenshot's bytes (obj 901027 security review). card_browser
+    -- used to hand the PNG back inline as a base64 data URL in the tool result;
+    -- it is now stored here instead and served through one owner-checked route
+    -- (GET /api/agent-chat/sandbox-screenshots/:id, same shape as
+    -- agent_chat_attachments / GET .../attachments/:id), returning a reference.
+    -- user_id is the person chatting with the bot when the screenshot was taken
+    -- — the same per-person ownership rule attachments use.
+    CREATE TABLE IF NOT EXISTS agent_chat_sandbox_screenshots (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id INTEGER NOT NULL,
+      agent_slug TEXT NOT NULL,
+      objective_id INTEGER,
+      final_url TEXT NOT NULL,
+      media_type TEXT NOT NULL DEFAULT 'image/png',
+      size INTEGER NOT NULL DEFAULT 0,
+      bytes BLOB NOT NULL,
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+    CREATE INDEX IF NOT EXISTS idx_sandbox_screenshots_user ON agent_chat_sandbox_screenshots(user_id, id);
+
     -- The Bots sidebar (obj 900798): each person's OWN arrangement of the bot
     -- list. Sections are named groups ("Development", "Marketing") in the
     -- person's order; a bot sits in at most one of them (section_id NULL =

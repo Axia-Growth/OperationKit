@@ -269,3 +269,69 @@ describe('the egress guard policy a worker browser runs under refuses internal a
     expect(decideEgress(wide, t('rebind.example.com'), ['127.0.0.1']).allow).toBe(false)
   })
 })
+
+describe('launcher sign-in to the install\'s own site (obj 901106)', () => {
+  let dir: string
+  let mod: { signIn: (ctx: unknown, o?: Record<string, unknown>) => Promise<Record<string, unknown>> }
+  let cp: import('http').Server
+  let lastHeaders: Record<string, unknown> = {}
+  let reply: { status: number; body: unknown } = { status: 200, body: {} }
+  const saved: Record<string, string | undefined> = {}
+  const KEYS = ['CC_SESSION_TOKEN', 'CC_CONTROL_PLANE_URL']
+
+  beforeAll(async () => {
+    const http = await import('http')
+    dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cc-launcher-signin-'))
+    const file = path.join(dir, 'cc-browser.mjs')
+    fs.writeFileSync(file, renderCardBrowserLauncher())
+    mod = await import(pathToFileURL(file).href)
+    cp = http.createServer((req, res) => {
+      lastHeaders = { ...req.headers, _url: req.url, _method: req.method }
+      res.writeHead(reply.status, { 'content-type': 'application/json' })
+      res.end(JSON.stringify(reply.body))
+    })
+    await new Promise<void>((r) => cp.listen(0, '127.0.0.1', () => r()))
+    for (const k of KEYS) saved[k] = process.env[k]
+    process.env.CC_CONTROL_PLANE_URL = `http://127.0.0.1:${(cp.address() as net.AddressInfo).port}`
+  })
+  afterAll(async () => {
+    await new Promise<void>((r) => cp.close(() => r()))
+    for (const k of KEYS) { if (saved[k] === undefined) delete process.env[k]; else process.env[k] = saved[k] }
+    fs.rmSync(dir, { recursive: true, force: true })
+  })
+
+  it('asks the control plane with the card token and puts the cookies in the context, never in the result', async () => {
+    process.env.CC_SESSION_TOKEN = 'ccs_card.token'
+    const cookies = [{ name: 'token', value: 'ccb_secret.mac', domain: 'ai.x.test', path: '/' }]
+    reply = { status: 200, body: { ok: true, public_url: 'https://ai.x.test', expires_at: 'soon', identity: { username: 'bot:opkit-dev (card #7)' }, cf_access: { status: 'ok' }, cookies } }
+    const added: unknown[] = []
+    const info = await mod.signIn({ addCookies: async (c: unknown[]) => { added.push(...c) } })
+    expect(lastHeaders._method).toBe('POST')
+    expect(lastHeaders._url).toBe('/api/card-browser/session')
+    expect(lastHeaders['x-cc-session-token']).toBe('ccs_card.token')
+    expect(added).toEqual(cookies)
+    expect(info).toEqual({ public_url: 'https://ai.x.test', expires_at: 'soon', identity: { username: 'bot:opkit-dev (card #7)' }, cf_access: { status: 'ok' } })
+    expect(JSON.stringify(info)).not.toContain('ccb_secret')
+  })
+
+  it('refuses clearly when the control plane says no, or the session has no card token', async () => {
+    process.env.CC_SESSION_TOKEN = 'ccs_card.token'
+    reply = { status: 401, body: { error: 'Card #7 is not running' } }
+    await expect(mod.signIn({ addCookies: async () => {} })).rejects.toThrow(/sign-in refused \(HTTP 401\): Card #7 is not running/)
+    delete process.env.CC_SESSION_TOKEN
+    await expect(mod.signIn({ addCookies: async () => {} })).rejects.toThrow(/CC_SESSION_TOKEN is not set/)
+  })
+
+  it('the launcher explains a Cloudflare Access redirect instead of a bare tunnel error', () => {
+    const src = renderCardBrowserLauncher()
+    expect(src).toContain("'--sign-in'")
+    expect(src).toContain('behind Cloudflare Access')
+    expect(src).toContain("cmd === 'sign-in'")
+  })
+
+  it('the worker prompt tells a granted card how to sign in, read-only', () => {
+    const block = buildCardBrowserPromptBlock({ granted: true }).join('\n')
+    expect(block).toContain('--sign-in')
+    expect(block).toMatch(/READ-ONLY session as this card's bot/)
+  })
+})

@@ -10,8 +10,7 @@ import { getWorkspace } from '../services/workspaces.js'
 import { resolveAvailable } from '../services/resource-assignments.js'
 import { DEFAULT_AGENT_CONTEXT, cardOwner, type NeedsSecretItem, type Objective } from '@operationkit/shared'
 import { listBots, registryKey, type BotDefinition } from '../services/bots/bot-registry.js'
-import { loadChatAgents, builtinsEnabled } from '../services/agent-chat/agent-defs.js'
-import { allBotConfigs, applyBotConfig } from '../services/agent-chat/bot-config.js'
+import { clearInstalledChatBotCache, installedChatBots } from '../services/bots/card-owner.js'
 
 /**
  * Lightweight card projection for the board LIST (obj 700512). This is EVERY
@@ -84,6 +83,13 @@ export const LIST_FROM = 'objectives o LEFT JOIN projects p ON p.id = o.project_
  */
 export function canReadObjective(req: AuthRequest, objective: Objective): boolean {
   const user = req.user!
+  // obj 901145: a card browser session reads only its card's workspace,
+  // narrowed to the acting user's view there (CardBrowserPrincipal.ownOnlyUserId).
+  if (req.cardBrowser) {
+    if (objective.workspace !== req.cardBrowser.workspace) return false
+    const own = req.cardBrowser.ownOnlyUserId
+    return own == null || userOwnsObjective(own, objective)
+  }
   if (user.role === 'admin') return true
   const membership = getUserWorkspaces(user.id).find(m => m.workspace === objective.workspace)
   if (!membership) return false
@@ -162,24 +168,7 @@ function cachedBots(): BotDefinition[] {
  * the bot's display name — the same id its Work tab's "Open on board" link uses
  * (bot-work.ts botIdentity: registry id, else the bot's name).
  */
-let chatBotCache: { at: number; bots: Array<{ slug: string; name: string }> } | null = null
-
-function cachedChatBots(): Array<{ slug: string; name: string }> {
-  const now = Date.now()
-  if (!chatBotCache || now - chatBotCache.at > BOT_CACHE_MS) {
-    let bots: Array<{ slug: string; name: string }> = []
-    try {
-      const loaded = loadChatAgents({ env: process.env, includeDemo: false, includeBuiltins: builtinsEnabled(process.env) })
-      let configs: ReturnType<typeof allBotConfigs> = new Map()
-      try { configs = allBotConfigs() } catch { /* no table yet → every bot is its file */ }
-      bots = loaded.agents.map(a => applyBotConfig(a, configs.get(a.slug))).map(a => ({ slug: a.slug, name: a.name }))
-    } catch {
-      bots = []
-    }
-    chatBotCache = { at: now, bots }
-  }
-  return chatBotCache.bots
-}
+const cachedChatBots = installedChatBots
 
 function matchChatBot(raw: string | null | undefined): { slug: string; name: string } | null {
   const key = raw ? registryKey(raw) : ''
@@ -205,7 +194,7 @@ function hasInstalledChatAgent(b: BotDefinition): boolean {
 /** Test seam: forget the cached registry (a test that edits settings.bot_registry). */
 export function clearBotOwnerCache(): void {
   botCache = null
-  chatBotCache = null
+  clearInstalledChatBotCache()
 }
 
 export interface ResolvedBotOwner {

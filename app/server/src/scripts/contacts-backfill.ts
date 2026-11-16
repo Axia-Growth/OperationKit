@@ -11,6 +11,7 @@
 // Idempotent. Safe to re-run. Reads VAULT_PATH and DB_PATH from env, matching
 // granola-ingest.ts conventions.
 
+import { knowledgeBaseRoot } from '../lib/knowledge-base-root.js'
 import Database from 'better-sqlite3'
 import {
   rebuildContactsIndex,
@@ -19,7 +20,7 @@ import {
 } from '../services/contacts.js'
 
 const DB_PATH = process.env.DB_PATH || '/app/data/command-center.db'
-const VAULT_BASE = process.env.VAULT_PATH || '/home/operator/second-brain'
+const VAULT_BASE = knowledgeBaseRoot()
 
 interface Args {
   dryRun: boolean

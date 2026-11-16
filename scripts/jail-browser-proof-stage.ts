@@ -27,15 +27,21 @@ fs.mkdirSync(path.join(home, '.cc'), { recursive: true })
 fs.mkdirSync(work, { recursive: true })
 
 // The planner's own WORKER policy (obj 901051), from a stock env (no install
-// domain): loopback refused, metadata + private network blocked, everything else
-// refused. `--loopback-ports P` = an operator's CARD_BROWSER_WORKER_LOOPBACK_PORTS.
+// domain): the jail's OWN loopback ports open (obj 901145) except 3002 and the
+// guard ports; metadata + private network blocked, everything else refused.
+// `--loopback-ports P` = an operator's CARD_BROWSER_WORKER_LOOPBACK_PORTS;
+// `--own-loopback off` = CARD_BROWSER_WORKER_OWN_LOOPBACK=off.
 const loopbackPorts = flag('--loopback-ports')
+const ownLoopback = flag('--own-loopback')
+const stageEnv: NodeJS.ProcessEnv = {}
+if (loopbackPorts) stageEnv.CARD_BROWSER_WORKER_LOOPBACK_PORTS = loopbackPorts
+if (ownLoopback) stageEnv.CARD_BROWSER_WORKER_OWN_LOOPBACK = ownLoopback
 const r = planJailCardBrowser({
   sessionId,
   scriptDirHost: path.join(home, '.cc'),
   scriptDirGuest: `${JAIL_HOME_PATH}/.cc`,
   jailHomeGuest: JAIL_HOME_PATH,
-  env: loopbackPorts ? { CARD_BROWSER_WORKER_LOOPBACK_PORTS: loopbackPorts } : {},
+  env: stageEnv,
   // jail-browser-proof.sh already checked both images exist (and tags them :proof,
   // not the :local name the planner probes for), so skip the presence probe here.
   imagePresent: () => true,

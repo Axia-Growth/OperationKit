@@ -133,6 +133,38 @@ fi
 echo "control: jail B CAN read its own B.txt ->"
 jexec "$B" 'cat /workspace/B.txt; echo "exit=$?"'
 
+row 18 "obj 901027 sandbox_run round 2: --user \$SANDBOX_EXEC_USER cannot read PID 1's /proc/environ"
+C=ok-jail-w8c
+docker rm -f "$C" >/dev/null 2>&1 || true
+CANARY="canary-secret-$(date -u +%s)"
+ENVFILE=$(mktemp)
+printf 'GH_TOKEN=%s\n' "$CANARY" > "$ENVFILE"
+set -x
+docker run -d \
+  --name "$C" \
+  --user 1000:1000 \
+  --cap-drop ALL \
+  --security-opt no-new-privileges \
+  --read-only \
+  --tmpfs /tmp:rw,nosuid,nodev,size=64m \
+  --env-file "$ENVFILE" \
+  -v "$A_DIR:/workspace:rw" \
+  -w /workspace \
+  "$IMAGE" sleep infinity
+set +x
+echo "control: docker exec --user 1000:1000 (same uid as PID 1) CAN read it ->"
+docker exec --user 1000:1000 "$C" sh -c 'cat /proc/1/environ | tr "\0" "\n"' 2>&1
+SAME_UID_OUT=$(docker exec --user 1000:1000 "$C" sh -c 'cat /proc/1/environ' 2>&1)
+echo "the fix: docker exec --user 65000:65000 (SANDBOX_EXEC_USER, session-jail.ts) ->"
+docker exec --user 65000:65000 "$C" sh -c 'cat /proc/1/environ' 2>&1
+DIFF_UID_OUT=$(docker exec --user 65000:65000 "$C" sh -c 'cat /proc/1/environ' 2>&1)
+rm -f "$ENVFILE"; docker rm -f "$C" >/dev/null 2>&1 || true
+if printf '%s' "$SAME_UID_OUT" | grep -q "$CANARY" && ! printf '%s' "$DIFF_UID_OUT" | grep -q "$CANARY"; then
+  ok "a different uid cannot read PID 1's environ; the same uid still can (control passed)"
+else
+  bad "either the same-uid control did not see the canary, or the different uid DID — the fix does not hold"
+fi
+
 row 7 'teardown leaves no ok-jail-* containers'
 cleanup
 docker ps -a --filter 'name=ok-jail-' --format 'table {{.Names}}\t{{.Status}}\t{{.CreatedAt}}'

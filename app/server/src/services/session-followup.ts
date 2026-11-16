@@ -14,6 +14,7 @@ import { systemSender } from '../lib/message-provenance.js'
 import { stampAndFrameForSession } from '../lib/relay-framing.js'
 import { verifiedSenderStampsEnabled } from '../lib/session-trust.js'
 import { getDb } from '../db/index.js'
+import { confirmPendingAnswers, releasePendingAnswers } from './decision-delivery.js'
 import {
   recordSessionStart,
   enqueueSession,
@@ -209,6 +210,21 @@ export function followUpSessionText(message: string, sender?: MessageSender): st
 }
 
 export function sendFollowUp(
+  sessionId: string,
+  message: string,
+  objective: Objective,
+  opts?: { skipJsonl?: boolean; sender?: MessageSender; sessionTextOverride?: string },
+): string {
+  try {
+    return sendFollowUpInner(sessionId, message, objective, opts)
+  } catch (err) {
+    // obj 901151: a fresh-prompt respawn that failed gives its claimed answers back.
+    releasePendingAnswers(getDb(), objective.id)
+    throw err
+  }
+}
+
+function sendFollowUpInner(
   sessionId: string,
   message: string,
   objective: Objective,
@@ -459,6 +475,9 @@ export function sendFollowUp(
     requestedModel: objective.model || undefined,
   }
   registerActiveSession(sessionId, newSession)
+  // obj 901151: the session really started, so the answers its fresh prompt
+  // carries are consumed (a --resume passes only the follow-up text, no prompt).
+  if (!resumeSessionId) confirmPendingAnswers(getDb(), objective.id)
   // obj 900547 — the liveness snapshots (host `tmux ls` 1s, jail `docker ps` 2s)
   // were taken BEFORE this spawn. A poll that reads them in the same window sees
   // no process plus the previous turn's `result` in the shared transcript,

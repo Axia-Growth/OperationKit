@@ -26,6 +26,7 @@ import feedRouter from './routes/feed.js'
 import shellRouter from './routes/shell.js'
 import docsRouter from './routes/docs.js'
 import filesRouter from './routes/files.js'
+import cardBrowserSessionRouter from './routes/card-browser-session.js'
 import secretsBrokerRouter from './routes/secrets-broker.js'
 import agentMcpRouter from './routes/agent-mcp.js'
 import briefingRouter from './routes/briefing.js'
@@ -183,6 +184,8 @@ if (process.env.NODE_ENV === 'production' && !process.env.UPTIMEROBOT_WEBHOOK_TO
 import { reconcileFromHistory, enqueueSession } from './services/account-router.js'
 import { shouldRefusePrimaryBind } from './services/primary-server-guard.js'
 import { detectScratchInstance } from './services/scratch-instance.js'
+import { startDecisionCardEndHook } from './services/decision-card-end.js'
+import { setBriefingModel } from './services/decision-autobrief.js'
 import { extractUsageForSessionId, setQueueDrainCallback } from './services/session-manager.js'
 import { startKbSemanticScheduler } from './services/kb-semantic/service.js'
 try {
@@ -270,6 +273,7 @@ app.use('/api/costs', costsRouter)  // /api/costs/summary, /daily, /by-objective
 app.use('/api', feedRouter)  // /api/projects/:project/feed, /api/feed/all
 app.use('/api/docs', docsRouter)  // /api/docs/tree, /api/docs/file
 app.use('/api/files', filesRouter)  // read-only workspace-scoped search/stat/download of non-markdown files (obj 715485)
+app.use('/api/card-browser', cardBrowserSessionRouter)  // POST /session: a card's browser gets a short-lived, read-only sign-in to the public site (CC_SESSION_TOKEN only; obj 901106)
 app.use('/api/secrets-broker', secretsBrokerRouter)  // use-without-reveal: list secret names + host-allowlisted HTTPS proxy (obj 715532)
 app.use('/api', agentMcpRouter)  // POST /api/mcp — unified MCP server: knowledge (obj 716490) + board control (obj 714092/718417); tools forward to the REST routes over loopback
 app.use('/api/briefing', briefingRouter)  // /api/briefing/briefing — board briefing for the Agent API/MCP (the assistant chat itself was removed, obj 720115)
@@ -490,6 +494,12 @@ try {
 // serves HTTP + WebSocket; it just starts no poller, reaper, scheduler, watchdog,
 // bridge or queue drain. Override: CC_HOST_INSTANCE=1. See services/scratch-instance.ts.
 const scratchVerdict = detectScratchInstance(import.meta.url)
+// obj 901151: the moment ANY card ends (every path broadcasts objective_updated),
+// its stale Needs you asks are withdrawn and a no-briefing ask is briefed or
+// filed as an FYI. Runs on a scratch copy too (DB writes on its own DB), but a
+// scratch copy never spends a model call: it uses the deterministic briefing.
+if (scratchVerdict.scratch) setBriefingModel(null)
+startDecisionCardEndHook()
 if (scratchVerdict.scratch) {
   console.warn(
     `[startup] SCRATCH instance (${scratchVerdict.reason}) — host daemons NOT started ` +

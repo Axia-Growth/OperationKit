@@ -10,6 +10,7 @@ import { getDb } from '../db/index.js'
 import { isUiInjectionActive, repoHasE2eSuite } from './design-context.js'
 import { resolveWriteWorkspace } from './workspaces.js'
 import { resolveOwnerName } from '../lib/install-defaults.js'
+import { jailEnabled } from './session-jail.js'
 
 /**
  * Delegator playbook — injected into the prompt for objectives whose
@@ -236,6 +237,17 @@ export function buildReviewerArtifactBlock(objective: Objective): string {
   return lines.join('\n')
 }
 
+/**
+ * Where a delegator/strategy session keeps its save file. A jailed session has no
+ * host folder (obj 900955), so it is pointed at the memory route its prompt
+ * already describes; the non-jailed text is unchanged.
+ */
+function delegatorScratchPointer(id: number): string {
+  return jailEnabled()
+    ? 'read and saved through the memory route under "Objective Memory"'
+    : `/home/operator/ai-workspace/objective-memory/${id}/NOTES.md`
+}
+
 export function buildDelegatorBlock(objective: Objective): string[] {
   const ws = resolveWriteWorkspace(objective.workspace)
   const id = objective.id
@@ -294,7 +306,7 @@ export function buildDelegatorBlock(objective: Objective): string[] {
     '## Workflow',
     '1. PLAN. Break the objective into 2-5 independent worker tasks. Write the plan and a',
     `   CHILD REGISTRY table (child_id | task | status | verdict) to your NOTES.md`,
-    `   (/home/operator/ai-workspace/objective-memory/${id}/NOTES.md). NOTES.md is your save file:`,
+    `   (${delegatorScratchPointer(id)}). NOTES.md is your save file:`,
     '   on every wake you reconstruct your full state from it.',
     '2. SPAWN workers, at most 5 running at once. Record each returned child id in the registry,',
     '   then start it.',
@@ -388,7 +400,7 @@ export function buildStrategyBlock(objective: Objective): string[] {
     '## The DECISION LOOP (this is your workflow — bounded, data-driven, append-only)',
     '1. PLAN. Decompose the strategy into an ordered/contingent sequence of PROJECTS. Write a',
     `   PROJECT REGISTRY table (project_id | objective | status | verdict | decision) to your NOTES.md`,
-    `   (/home/operator/ai-workspace/objective-memory/${id}/NOTES.md). NOTES.md is your save file: on every`,
+    `   (${delegatorScratchPointer(id)}). NOTES.md is your save file: on every`,
     '   wake you reconstruct your full state from it in ONE read.',
     gateArmed
       ? `2. PARK THE FIRST PROJECT FOR APPROVAL. The human gate is ARMED — you may NOT spawn directly. POST a Decision Request (see "The human gate" below) describing the first project and await ${resolveOwnerName()}’s approval. Record it in the registry. END YOUR TURN.`

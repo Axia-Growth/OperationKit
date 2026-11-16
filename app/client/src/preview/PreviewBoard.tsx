@@ -498,7 +498,10 @@ export function PreviewBoard({ workspaces }: PreviewBoardProps) {
                 <span data-testid={`column-count-${status}`} className="ml-auto text-xs tabular-nums text-fg-3">{grouped[status].length}</span>
               </div>
             </div>
-            <div className="min-h-0 flex-1 space-y-2 overflow-y-auto px-2 pb-3">
+            {/* obj 901131: the list scrolls down only. overflow-y:auto alone makes
+                overflow-x auto too, so one over-wide card used to scroll the
+                whole lane sideways and the tiles drifted left. */}
+            <div data-testid={`column-list-${status}`} className="min-h-0 min-w-0 flex-1 space-y-2 overflow-y-auto overflow-x-hidden px-2 pb-3">
               {grouped[status].length === 0 && (status !== 'done' || (doneLoaded && !doneLoading && !doneHasMore)) && (
                 <EmptyState
                   compact

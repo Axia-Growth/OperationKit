@@ -12,7 +12,10 @@
  *   GET  /api/decisions/queue/count          {count} for the top-nav badge
  *   GET  /api/decisions/:id                  one decision with its thread
  *   POST /api/decisions/:id/questions        {body} ask the raising bot a question; ?wait=1 waits for the answer
- *   POST /api/decisions/:id/decide           {choice: <option key>|'deny', note?, reopen?}
+ *   GET  /api/decisions/queue/history        the person's own recently decided items, newest first (obj 901139)
+ *   POST /api/decisions/:id/decide           {choice: <option key>|'deny'|'own', note?, answer?, reopen?}
+ *                                            'own' = the person's own words instead of an option (obj 901139);
+ *                                            needs `answer` (or `note`) and is delivered, logged and cleared like any choice.
  *
  * Questions and decisions come ONLY from a person signed in to the web UI (the
  * httpOnly cookie) who owns the card or is an admin — never an agent key, a
@@ -38,10 +41,13 @@ import {
   resolveChoice,
   writeDecisionLogToKb,
 } from '../services/decisions.js'
-import { decisionQueueCount, listDecisionQueue, staleReasonForCard, sweepStaleDecisions, withReopenFlag } from '../services/decision-queue.js'
+import { OWN_ANSWER_CHOICE } from '@operationkit/shared'
+import { decisionQueueCount, listDecidedHistory, listDecisionQueue, staleReasonForCard, sweepStaleDecisions, withReopenFlag, deliveryConsumed } from '../services/decision-queue.js'
 import { listAgents as listChatAgents } from '../services/agent-chat/engine.js'
 import { askAndAnswer } from '../services/decision-answerer.js'
 import { applyDecision, type ApplyDeps } from '../services/decision-apply.js'
+import { consumeDelivery, deliverDecisionToBot } from '../services/decision-delivery.js'
+import { notifyBotMessage } from '../services/agent-chat/sidebar-live.js'
 import { getSessionState } from '../services/session-control.js'
 import { resolveFollowUpSessionId } from '../services/objective-sessions.js'
 import { recordFollowUpInJsonl, sendFollowUp } from '../services/session-manager.js'
@@ -253,6 +259,21 @@ router.get('/queue/count', requireAuth, (req: DecisionRequest, res) => {
   res.json({ count: decisionQueueCount(getDb(), viewer, { workspace }) })
 })
 
+// GET /api/decisions/queue/history — the person's own decided items (obj 901139).
+// Each carries its card, so a decided item always leads back to the card thread.
+router.get('/queue/history', requireAuth, (req: DecisionRequest, res) => {
+  const viewer = queueViewer(req, res)
+  if (!viewer) return
+  const workspace = typeof req.query.workspace === 'string' && req.query.workspace ? req.query.workspace : null
+  const limit = req.query.limit ? Number(req.query.limit) : 30
+  const names = botNames()
+  const items = listDecidedHistory(getDb(), viewer, { workspace, limit: Number.isFinite(limit) ? limit : 30 }).map(i => ({
+    ...i,
+    card: { ...i.card, bot_name: i.card.bot ? (names.get(i.card.bot) ?? null) : null },
+  }))
+  res.json({ items, count: items.length })
+})
+
 function loadForPerson(req: DecisionRequest, res: Response): { decision: NonNullable<ReturnType<typeof getDecision>>; objective: Objective | undefined } | null {
   const id = Number(req.params.id)
   const decision = Number.isInteger(id) ? getDecision(getDb(), id) : null
@@ -314,8 +335,11 @@ router.post('/:id/questions', requireAuth, async (req: DecisionRequest, res) => 
 })
 
 /** The real delivery path, wired to the session layer. */
-function liveDeps(): ApplyDeps {
+function liveDeps(userId: number | null = null): ApplyDeps {
   return {
+    // obj 901151: a choice on a finished bot card goes to the bot, not a dead end.
+    deliverToBot: (db, d, o) => deliverDecisionToBot(db, d, o, { userId }, { notify: notifyBotMessage }),
+    consumeDelivery: (db, id, objectiveId) => consumeDelivery(db, id, objectiveId),
     getSessionState,
     resolveSessionId: (db, o) => resolveFollowUpSessionId(db, o),
     recordInJsonl: (sid, text, sender, queued) => recordFollowUpInJsonl(sid, text, undefined, sender, queued ? { queued: true } : undefined),
@@ -372,7 +396,17 @@ router.post('/:id/decide', requireAuth, (req: DecisionRequest, res) => {
         return
       }
     }
-    if (decision.state === 'decided' && decision.outcome === 'card_done' && reopen) {
+    if (decision.state === 'decided' && (decision.outcome === 'card_done' || decision.outcome === 'delivered') && reopen) {
+      // obj 901151: the bot already acted on it (checked first: the next run that
+      // picked it up is also what makes the ask "replaced by a newer run").
+      if (decision.outcome === 'delivered' && deliveryConsumed(db, decision.id)) {
+        res.status(409).json({
+          error: 'The bot already picked this answer up in a later session, so the card was not reopened.',
+          code: 'decision_delivered',
+          decision: withReopenFlag(db, decision),
+        })
+        return
+      }
       // obj 901084: never reopen a card for an ask that has since gone stale.
       const stale = staleReasonForCard(db, decision.objective_id)
       if (stale) {
@@ -388,13 +422,20 @@ router.post('/:id/decide', requireAuth, (req: DecisionRequest, res) => {
     } else {
       const choice = resolveChoice(decision, req.body?.choice)
       if (!choice) {
-        const valid = decision.incomplete ? ['approve', 'deny'] : [...decision.briefing.options.map(o => o.key), 'deny']
+        const valid = decision.incomplete ? ['approve', 'deny', OWN_ANSWER_CHOICE] : [...decision.briefing.options.map(o => o.key), 'deny', OWN_ANSWER_CHOICE]
         res.status(400).json({ error: `Pick one of: ${valid.join(', ')}`, valid_choices: valid })
         return
       }
-      decision = recordChoice(db, decision.id, { choice, by: req.user!.username, note: typeof req.body?.note === 'string' ? req.body.note : null })
+      const note = typeof req.body?.answer === 'string' && req.body.answer.trim()
+        ? req.body.answer
+        : typeof req.body?.note === 'string' ? req.body.note : null
+      if (choice === OWN_ANSWER_CHOICE && !note?.trim()) {
+        res.status(400).json({ error: 'Write your answer: an own answer needs text (answer).', code: 'answer_required' })
+        return
+      }
+      decision = recordChoice(db, decision.id, { choice, by: req.user!.username, note })
     }
-    const applied = applyDecision(db, decision, { sender: senderFromRequest(req), actor: req.user!.username, reopen }, depsOverride ?? liveDeps())
+    const applied = applyDecision(db, decision, { sender: senderFromRequest(req), actor: req.user!.username, reopen }, depsOverride ?? liveDeps(req.user!.id))
     logActivity({
       project: got.objective?.project || 'operationkit',
       workspace: got.objective?.workspace ?? decision.workspace,
@@ -408,7 +449,7 @@ router.post('/:id/decide', requireAuth, (req: DecisionRequest, res) => {
       decision: withReopenFlag(db, applied.decision),
       outcome: applied.outcome,
       outcome_text: applied.outcome_text,
-      can_reopen: applied.outcome === 'card_done',
+      can_reopen: applied.outcome === 'card_done' || applied.outcome === 'delivered',
       objective: applied.objective ? mapObjective(applied.objective) : null,
     })
   } catch (err) {

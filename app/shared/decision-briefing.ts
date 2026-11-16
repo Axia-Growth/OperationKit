@@ -34,6 +34,7 @@ export const DECISION_OUTCOMES = [
   'queued', //          the card is mid-run; the choice reaches it when this turn ends
   'reopened', //        the card was done; it was reopened and the choice sent
   'card_done', //       the card is done; the choice is recorded but NOT sent (offer Reopen and apply)
+  'delivered', //       the card is done and a bot owns it: the choice went to the bot (its chat + next session), no reopen (obj 901151)
   'recorded', //        nothing to restart (no worker session) — the choice is recorded for the bot
   'failed', //          recorded, but the restart failed
 ] as const
@@ -41,6 +42,13 @@ export type DecisionOutcome = (typeof DECISION_OUTCOMES)[number]
 
 /** The pseudo-choice for "no, none of these". */
 export const DENY_CHOICE = 'deny'
+
+/**
+ * The pseudo-choice for "my own answer" (obj 901139): the person answers in
+ * their own words instead of picking an option ("you merge the PRs, not me").
+ * The words are stored as the decision note and ARE the decision.
+ */
+export const OWN_ANSWER_CHOICE = 'own'
 
 export const DECISION_LIMITS = {
   minOptions: 2,
@@ -55,6 +63,8 @@ export const DECISION_LIMITS = {
   /** The target is "under about 200 words"; past this the briefing is flagged as long (not refused). */
   softWordLimit: 220,
   questionBodyMax: 1000,
+  /** A free-text answer (OWN_ANSWER_CHOICE). */
+  ownAnswerMax: 2000,
 } as const
 
 export interface DecisionOption {
@@ -119,6 +129,8 @@ export interface DecisionView {
    * was closed by a person, cancelled, or a newer run replaced it). Absent = not computed.
    */
   can_reopen?: boolean
+  /** obj 901151: the bot (chat slug) a choice on a finished card was delivered to, if any. */
+  delivered_to?: string | null
   thread: DecisionThreadMessage[]
   created_at: string
   updated_at: string
@@ -245,34 +257,55 @@ export function decisionOutcomeText(p: {
   chosen: string
   outcome: DecisionOutcome
   error?: string | null
+  /** The person's own words, for OWN_ANSWER_CHOICE. */
+  note?: string | null
+  /** For `delivered`: the bot's display name. */
+  bot?: string | null
 }): string {
   const card = `card #${p.objectiveId}`
   const opt = optionFor(p.briefing, p.chosen)
+  const own = p.chosen === OWN_ANSWER_CHOICE
   const what = p.chosen === DENY_CHOICE
     ? 'You said no to all the options'
-    : opt
-      ? `You chose ${opt.key}: ${opt.label}`
-      : `You chose ${p.chosen}`
+    : own
+      ? `You answered in your own words: “${ownQuote(p.note)}”`
+      : opt
+        ? `You chose ${opt.key}: ${opt.label}`
+        : `You chose ${p.chosen}`
   const next = p.chosen === DENY_CHOICE
     ? 'The worker is told not to go ahead with any of them.'
-    : opt?.next
-      ? `Next: ${opt.next}`
-      : ''
+    : own
+      ? 'The worker follows your answer instead of the options.'
+      : opt?.next
+        ? `Next: ${opt.next}`
+        : ''
+  // An own answer ends in its own closing quote (“… not me.”), so no second full stop.
+  const lead = own ? what : `${what}.`
   switch (p.outcome) {
     case 'sent':
-      return `${what}. ${cap(card)} restarted with your choice. ${next}`.trim()
+      return `${lead} ${cap(card)} restarted with your choice. ${next}`.trim()
     case 'queued':
-      return `${what}. ${cap(card)} is mid-run, so your choice is queued and reaches it when this turn ends. ${next}`.trim()
+      return `${lead} ${cap(card)} is mid-run, so your choice is queued and reaches it when this turn ends. ${next}`.trim()
     case 'reopened':
-      return `${what}. ${cap(card)} was done, so it was reopened and your choice sent. ${next}`.trim()
+      return `${lead} ${cap(card)} was done, so it was reopened and your choice sent. ${next}`.trim()
+    case 'delivered': {
+      const bot = p.bot?.trim() || 'the bot'
+      return `${lead} ${cap(card)} is already finished, so your answer went straight to ${bot}: it is in ${bot}'s chat, and ${bot} acts on it in its next session (no reopen needed). ${next}`.trim()
+    }
     case 'card_done':
-      return `${what}. ${cap(card)} is already done, so nothing was sent yet. Press Reopen and apply to act on it.`
+      return `${lead} ${cap(card)} is already done, so nothing was sent yet. Press Reopen and apply to act on it.`
     case 'recorded':
-      if (p.chosen === DENY_CHOICE) return `${what}. Recorded on ${card}; it is already finished, so nothing else changes.`
-      return `${what}. Recorded on ${card}; there is no worker to restart, so the bot picks it up from here. ${next}`.trim()
+      if (p.chosen === DENY_CHOICE) return `${lead} Recorded on ${card}; it is already finished, so nothing else changes.`
+      return `${lead} Recorded on ${card}; there is no worker to restart, so the bot picks it up from here. ${next}`.trim()
     case 'failed':
-      return `${what}. Your choice is recorded, but ${card} could not be restarted${p.error ? `: ${p.error}` : ''}.`
+      return `${lead} Your choice is recorded, but ${card} could not be restarted${p.error ? `: ${p.error}` : ''}.`
   }
+}
+
+/** The own answer as quoted in the outcome line: clipped, ending in sentence punctuation. */
+function ownQuote(note: string | null | undefined): string {
+  const w = clip(str(note), 160)
+  return /[.!?…]$/.test(w) ? w : `${w}.`
 }
 
 function cap(s: string): string {
@@ -293,6 +326,11 @@ export function decisionFollowUpText(p: {
   const lines = [`Decision #${p.decisionId}: ${p.briefing.question}`]
   if (p.chosen === DENY_CHOICE) {
     lines.push('Answer: NO to all the options. Do not go ahead with any of them. Stop this line of work, say so in one line, and wait for new instructions.')
+  } else if (p.chosen === OWN_ANSWER_CHOICE) {
+    // obj 901139: the owner's own words ARE the decision, not a note on an option.
+    lines.push('Answer: none of the listed options as written. The owner answered in their own words, and that answer is the decision. Follow it:')
+    lines.push(p.note?.trim() || '(no text given)')
+    return lines.join('\n')
   } else if (opt) {
     lines.push(`Answer: option ${opt.key} — ${opt.label}.`)
     lines.push(`Do this next: ${opt.next}`)
@@ -303,10 +341,128 @@ export function decisionFollowUpText(p: {
   return lines.join('\n')
 }
 
-/** Short label for a decided record ("Chose B: Ship the draft" / "Denied"). */
-export function chosenLabel(b: DecisionBriefing, chosen: string | null): string | null {
+/** Short label for a decided record ("Chose B: Ship the draft" / "Denied" / "Own answer: …"). */
+export function chosenLabel(b: DecisionBriefing, chosen: string | null, note?: string | null): string | null {
   if (!chosen) return null
   if (chosen === DENY_CHOICE) return 'Denied'
+  if (chosen === OWN_ANSWER_CHOICE) return note?.trim() ? `Own answer: “${clip(str(note), 120)}”` : 'Own answer'
   const opt = optionFor(b, chosen)
   return opt ? `Chose ${opt.key}: ${opt.label}` : `Chose ${chosen}`
+}
+
+// ── links (obj 901139) ─────────────────────────────────────────────────────
+
+/**
+ * A piece of decision text, split so links render as links: plain text, an
+ * http(s) URL, or a card reference ("card #901075" → that card's thread).
+ * Only http(s) is ever a link — never javascript:, data: or a bare host.
+ */
+export type TextSegment =
+  | { kind: 'text'; text: string }
+  | { kind: 'url'; text: string; href: string }
+  | { kind: 'card'; text: string; id: number }
+
+// URL: http(s):// then non-space, non-quote characters. Card: "card #123" / "card 123".
+const LINK_RE = /(https?:\/\/[^\s<>"'`]+)|(\bcard\s+#?(\d{1,9})\b)/gi
+// Sentence punctuation that may trail a URL. Stripped with a backwards scan, not
+// an end-anchored `[…]+$` regex: that regex is retried from every start index
+// and goes quadratic on a run like "!!!!…a" (CodeQL js/polynomial-redos, obj 901148).
+const TRAILING_PUNCT = new Set([...`.,;:!?)]}'"’”`])
+
+/** Length of the trailing run of TRAILING_PUNCT characters in `s`. Linear. */
+function trailingPunctLength(s: string): number {
+  let i = s.length
+  while (i > 0 && TRAILING_PUNCT.has(s[i - 1])) i--
+  return s.length - i
+}
+
+/** Split text into plain and link segments. Pure; linear in the input. */
+export function linkSegments(text: string | null | undefined): TextSegment[] {
+  const s = text ?? ''
+  const out: TextSegment[] = []
+  const push = (t: string) => {
+    if (!t) return
+    const prev = out[out.length - 1]
+    if (prev?.kind === 'text') prev.text += t
+    else out.push({ kind: 'text', text: t })
+  }
+  let last = 0
+  const re = new RegExp(LINK_RE.source, LINK_RE.flags)
+  for (let m = re.exec(s); m; m = re.exec(s)) {
+    push(s.slice(last, m.index))
+    if (m[1]) {
+      let url = m[1]
+      let tail = ''
+      const n = trailingPunctLength(url)
+      if (n > 0) {
+        let cut = url.slice(-n)
+        // Keep a closing paren that belongs to the URL (wiki style); drop sentence punctuation.
+        if (cut.startsWith(')') && url.slice(0, -cut.length).includes('(')) cut = cut.slice(1)
+        if (cut) {
+          tail = cut
+          url = url.slice(0, -cut.length)
+        }
+      }
+      if (/^https?:\/\/[^/\s]+/i.test(url)) out.push({ kind: 'url', text: url, href: url })
+      else push(url)
+      push(tail)
+      last = m.index + m[1].length
+    } else {
+      out.push({ kind: 'card', text: m[2], id: Number(m[3]) })
+      last = m.index + m[2].length
+    }
+  }
+  push(s.slice(last))
+  return out
+}
+
+export interface DecisionLink {
+  href: string
+  /** Short label: "owner/repo#12" for a GitHub PR, else the URL / "card #N". */
+  label: string
+  kind: 'pr' | 'url' | 'card'
+}
+
+const GH_PR_RE = /^https?:\/\/github\.com\/([^/\s]+)\/([^/\s]+)\/pull\/(\d+)/i
+
+/**
+ * Every distinct link a decision mentions — briefing, notes, the person's own
+ * answer, the outcome and the Q&A thread — GitHub PRs first. A decided item
+ * shows these so "merge these PRs" still leads to the PRs afterwards.
+ */
+export function decisionLinks(
+  d: Pick<DecisionView, 'briefing' | 'raw_note' | 'decision_note' | 'outcome_text' | 'objective_id'> & { thread?: Pick<DecisionThreadMessage, 'body'>[] },
+): DecisionLink[] {
+  const b = d.briefing
+  const texts = [
+    b.context,
+    b.question,
+    b.recommended_why,
+    ...b.options.flatMap(o => [o.label, o.next, ...o.pros, ...o.cons]),
+    d.raw_note,
+    d.decision_note,
+    d.outcome_text,
+    ...(d.thread ?? []).map(m => m.body),
+  ]
+  const seen = new Set<string>()
+  const links: DecisionLink[] = []
+  for (const t of texts) {
+    for (const seg of linkSegments(t)) {
+      if (seg.kind === 'url') {
+        if (seen.has(seg.href)) continue
+        seen.add(seg.href)
+        const pr = seg.href.match(GH_PR_RE)
+        links.push(pr ? { href: seg.href, label: `${pr[1]}/${pr[2]}#${pr[3]}`, kind: 'pr' } : { href: seg.href, label: seg.href, kind: 'url' })
+      } else if (seg.kind === 'card') {
+        // The decision's own card is linked from its header already.
+        if (seg.id === d.objective_id) continue
+        const href = `/o/${seg.id}`
+        if (seen.has(href)) continue
+        seen.add(href)
+        links.push({ href, label: `card #${seg.id}`, kind: 'card' })
+      }
+    }
+  }
+  const rank = { pr: 0, url: 1, card: 2 } as const
+  return links.sort((a, z) => rank[a.kind] - rank[z.kind])
 }

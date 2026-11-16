@@ -50,6 +50,7 @@ import { initSupervisorSchema } from '../db/schema/supervisor.js'
 import { classifyAccountability } from '../lib/accountability.js'
 import { normalizeTitle } from '../lib/title-normalize.js'
 import { stalledWindowMinutes } from './accountability.js'
+import { cardOwnerResolver, type ChatBotRef } from './bots/card-owner.js'
 import { evaluateCeiling } from './job-accounting.js'
 import { createReviewItem, withdrawReviewItem, type DecisionChoice } from './review-items.js'
 
@@ -128,6 +129,8 @@ export interface SupervisorRunResult extends SupervisorReview {
 export interface SupervisorOptions {
   /** Slugs of the bot files currently installed. Omit to trust the High Agency rows. */
   knownBots?: string[]
+  /** Installed chat bots (slug + name) for the card-owner rule. Default: this install's agent files. */
+  chatBots?: ChatBotRef[]
   now?: Date
 }
 
@@ -139,6 +142,7 @@ interface CardRow {
   status: string
   workspace: string | null
   agent_context: string | null
+  owner_bot: string | null
   parent_id: number | null
   routine_id: number | null
   source_job_id: number | null
@@ -268,7 +272,7 @@ export function reviewHighAgencyWork(db: Database.Database, opts: SupervisorOpti
   }
 
   const open = db.prepare(
-    `SELECT id, title, status, workspace, agent_context, ${opt('parent_id')}, ${opt('routine_id')}, ${opt('source_job_id')},
+    `SELECT id, title, status, workspace, agent_context, ${opt('owner_bot')}, ${opt('parent_id')}, ${opt('routine_id')}, ${opt('source_job_id')},
             ${opt('session_id')}, ${opt('has_blockers')}, ${opt('blocked_reason')}, ${opt('ai_review_verdict')}, ${opt('needs_secret')},
             ${opt('waiting_on')}, ${opt('next_check_at')}, ${opt('last_meaningful_progress_at')}, ${opt('updated_at')}
        FROM objectives
@@ -276,7 +280,23 @@ export function reviewHighAgencyWork(db: Database.Database, opts: SupervisorOpti
       ORDER BY id`,
   ).all() as CardRow[]
 
-  const owner = (c: CardRow): string | null => (c.agent_context ?? '').trim() || null
+  // Who owns a card: the one shared rule (services/bots/card-owner.ts) —
+  // owner_bot when set, else the bot behind agent_context. So a card a bot filed
+  // from chat (owner_bot = the bot, worked by another agent) is that bot's card.
+  // The value is the owning bot's chat slug (the High Agency one when it has
+  // several). A card no bot owns keeps its worker agent as the label; that is
+  // never a High Agency bot, so such a card is in scope only through its wake.
+  const ownerOf = cardOwnerResolver(db, { chatBots: opts.chatBots })
+  const owners = new Map<number, string | null>()
+  const owner = (c: CardRow): string | null => {
+    if (owners.has(c.id)) return owners.get(c.id)!
+    const bot = ownerOf(c)
+    const label = bot
+      ? bot.slugs.find((s) => bySlug.has(s)) ?? bot.slugs[0] ?? bot.name
+      : (c.agent_context ?? '').trim() || null
+    owners.set(c.id, label)
+    return label
+  }
   /** The wake (and so the bot) a card came from, if any. */
   const lineage = (c: CardRow): string | null => {
     if (c.routine_id != null && routineSlug.has(c.routine_id)) return routineSlug.get(c.routine_id)!

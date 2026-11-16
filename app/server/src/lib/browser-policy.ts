@@ -74,6 +74,14 @@ export interface BrowserPolicy {
    * which is the reviewer policy and is unchanged.
    */
   loopbackPorts?: number[]
+  /**
+   * A port RANGE on loopback that is also allowed (obj 901145): a jailed
+   * worker's own sandbox ports, so a dev server the worker starts can be
+   * audited with no operator config. Only set when loopback IS the card's own
+   * network namespace (a jail). Forbidden ports stay on the block list, which
+   * is evaluated first.
+   */
+  loopbackPortRange?: { min: number; max: number }
   /** Human-readable notes about every control this config widened. */
   warnings: string[]
 }
@@ -322,6 +330,23 @@ export function isPrivateAddress(ip: string): boolean {
   return false
 }
 
+/** Cloudflare Access team login domains (`<team>.cloudflareaccess.com`). */
+export function isCloudflareAccessLoginHost(host: string): boolean {
+  const h = host.toLowerCase().replace(/\.$/, '')
+  const suffix = '.cloudflareaccess.com'
+  return h.endsWith(suffix) && h.length > suffix.length
+}
+
+export function cloudflareAccessLoginReason(host: string): string {
+  return (
+    `${host} is the Cloudflare Access login page: the site you opened is behind Cloudflare Access ` +
+    'and redirected the card browser to a sign-in meant for people, which stays refused. ' +
+    'Use the launcher with --sign-in (a short-lived Access + app session for this card); that needs ' +
+    "the install's Access service token (CARD_BROWSER_CF_ACCESS_CLIENT_ID / _SECRET) — see " +
+    'docs/wiki/Card-Browser-Lockdown.md, "Sites behind Cloudflare Access".'
+  )
+}
+
 export type EgressDecision =
   | { allow: true }
   | { allow: false; reason: string }
@@ -360,6 +385,13 @@ export function decideEgress(
   }
 
   if (!originMatches(policy.allowedOrigins, target)) {
+    if (isCloudflareAccessLoginHost(host)) {
+      // obj 901106: the allowed site is behind Cloudflare Access, which answered
+      // with a 302 to its login page. That login is for PEOPLE (email code /
+      // IdP) and stays refused; a card gets through Access with the install's
+      // service token instead. Say so, rather than "not in allowed origins".
+      return { allow: false, reason: cloudflareAccessLoginReason(host) }
+    }
     return {
       allow: false,
       reason:
@@ -376,8 +408,18 @@ export function decideEgress(
       if (!policy.allowLoopback) {
         return { allow: false, reason: `loopback destination ${ip} is blocked (BROWSER_ALLOW_LOOPBACK=off)` }
       }
-      if (policy.loopbackPorts && !policy.loopbackPorts.includes(target.port)) {
-        return { allow: false, reason: `loopback port ${target.port} is not an allowed preview port (CARD_BROWSER_WORKER_LOOPBACK_PORTS)` }
+      if (policy.loopbackPorts || policy.loopbackPortRange) {
+        const listed = policy.loopbackPorts?.includes(target.port) ?? false
+        const r = policy.loopbackPortRange
+        const inRange = !!r && target.port >= r.min && target.port <= r.max
+        if (!listed && !inRange) {
+          return {
+            allow: false,
+            reason: r
+              ? `loopback port ${target.port} is outside this sandbox's preview range ${r.min}-${r.max}`
+              : `loopback port ${target.port} is not an allowed preview port (CARD_BROWSER_WORKER_LOOPBACK_PORTS)`,
+          }
+        }
       }
       // Only a request that ASKED for loopback may reach it. A public name that
       // resolves to 127.0.0.1 is a rebinding attempt, not a preview server.

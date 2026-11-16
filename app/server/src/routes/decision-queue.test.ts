@@ -44,6 +44,7 @@ const {
   staleReasonFor,
 } = await import('../services/decision-queue.js')
 const { STALE_REASONS, BOT_NEEDS_YOU_KIND } = await import('@operationkit/shared')
+const { briefDueDecisions, setBriefingModel } = await import('../services/decision-autobrief.js')
 
 let server: http.Server
 let base: string
@@ -279,13 +280,27 @@ describe('the Needs you queue and its badge count', () => {
     expect([401, 403]).toContain(r.status)
   })
 
-  it('a legacy ask (job needs_review, no decision row) is adopted, flagged as having no briefing', async () => {
+  it('a legacy ask (job needs_review, no decision row) is adopted, hidden until briefed, then shown with a written briefing (obj 901151)', async () => {
     const id = card('review', { job_disposition: 'needs_review', job_review_note: 'Want me to send the batch?', owner_bot: 'scout' })
     const q = await call('GET', '/api/decisions/queue', { cookie: adminCookie })
-    const item = q.json.items.find((i: any) => i.card.id === id)
+    // Adopted as a flagged decision, but "no briefing given" never reaches the stack.
+    expect(q.json.items.find((i: any) => i.card.id === id)).toBeUndefined()
+    const row = getDb().prepare('SELECT id, incomplete, raw_note, agent_slug FROM decisions WHERE objective_id = ?').get(id) as { id: number; incomplete: number; raw_note: string; agent_slug: string }
+    expect(row).toMatchObject({ incomplete: 1, raw_note: 'Want me to send the batch?', agent_slug: 'scout' })
+    // The card is not running, so it is due a briefing; with no model the fallback writes one.
+    setBriefingModel(null)
+    try {
+      await briefDueDecisions(getDb(), { logFyi: () => {} }, { objectiveId: id })
+    } finally {
+      setBriefingModel(undefined)
+    }
+    const item = (await call('GET', '/api/decisions/queue', { cookie: adminCookie })).json.items.find((i: any) => i.card.id === id)
     expect(item).toBeTruthy()
-    expect(item.decision).toMatchObject({ incomplete: true, raw_note: 'Want me to send the batch?', agent_slug: 'scout' })
-    expect(item.decision.briefing.options).toEqual([])
+    expect(item.decision.incomplete).toBe(false)
+    expect(item.decision.flags).toContain('auto_briefing')
+    expect(item.decision.briefing.question).toMatch(/Should scout go ahead/)
+    expect(item.decision.briefing.context).toContain('Want me to send the batch?')
+    expect(item.decision.briefing.options).toHaveLength(2)
     expect(item.card.bot).toBe('scout')
     // Once only: a second read does not adopt it again.
     await call('GET', '/api/decisions/queue', { cookie: adminCookie })

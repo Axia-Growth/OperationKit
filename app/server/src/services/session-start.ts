@@ -7,6 +7,7 @@ import { seatCredentialEnv } from './seat-credentials.js'
 import path from 'path'
 import type { Objective } from '@operationkit/shared'
 import { getDb } from '../db/index.js'
+import { confirmPendingAnswers, releasePendingAnswers } from './decision-delivery.js'
 import { pickAccount, recordSessionStart, enqueueSession, seatCount } from './account-router.js'
 import { assignSeatForStart, recordSessionSeat } from './seat-assign.js'
 import { TRANSCRIPT_DIR } from '../config.js'
@@ -121,6 +122,17 @@ export function emitSessionLeaseConflictWarning(objective: Objective, sessionId:
 }
 
 export async function startSession(objective: Objective): Promise<string> {
+  try {
+    return await startSessionInner(objective)
+  } catch (err) {
+    // obj 901151: answers this prompt claimed go back at once, so a failed
+    // spawn never loses the owner's answer to the bot.
+    releasePendingAnswers(getDb(), objective.id)
+    throw err
+  }
+}
+
+async function startSessionInner(objective: Objective): Promise<string> {
   // obj 900909 — refuse a spawn over the card's cost ceiling (explicit, or the
   // per-effort default) BEFORE any side effect. Throws SpendCeilingRefusedError
   // with the reason; callers leave the card's status untouched.
@@ -331,6 +343,8 @@ export async function startSession(objective: Objective): Promise<string> {
     requestedModel: spawnModel,
   }
   registerActiveSession(sessionId, session)
+  // obj 901151: the session really started, so the answers its prompt carries are consumed.
+  confirmPendingAnswers(getDb(), objective.id)
   logSessionStart(getDb(), { objectiveId: objective.id, sessionId, kind: 'spawn' })
   recordSessionSeat(sessionId, accountId)
 
@@ -439,6 +453,8 @@ async function startArenaSession(objective: Objective): Promise<string> {
     enqueueSession(objective.id)
     throw new Error(`Arena #${objective.id}: all Claude accounts exhausted; queued for retry.`)
   }
+
+  confirmPendingAnswers(getDb(), objective.id) // obj 901151: at least one variant started
 
   // Register the cohort so the state-poller can render-and-rank → promote the winner
   // once every variant session finishes (arena-lifecycle.ts). In-memory + a durable

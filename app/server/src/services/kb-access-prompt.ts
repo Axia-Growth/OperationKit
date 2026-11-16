@@ -132,3 +132,56 @@ export function buildVaultCaptureBlock(
     ...tail,
   ]
 }
+
+// ── Objective memory + live progress for a sandboxed session (obj 900955) ───
+
+/** The live-progress helper as a jailed session sees it: inside its own worktree. */
+export const SANDBOX_LIVE_SCRIPT = '/workspace/scripts/cc-live.mjs'
+
+export function memoryFileRoute(objectiveId: number): string {
+  return `${CC_API}/api/internal/objectives/${objectiveId}/memory/file`
+}
+
+/**
+ * The "Objective Memory" block for a jailed session. The host memory folder is
+ * not mounted in the jail, so this names the route that IS reachable and never
+ * a host path. (The non-jailed block stays in `buildPrompt`, unchanged.)
+ */
+export function buildSandboxedObjectiveMemoryBlock(objectiveId: number): string[] {
+  return [
+    '',
+    '## Objective Memory',
+    '',
+    'This objective has two persistent memory files, kept by the server for this card. This session is sandboxed, so there is NO memory folder on disk — do not look for one. Read and write the files through the control plane with your own session token (it works for this card only):',
+    '',
+    '```bash',
+    'H="X-CC-Session-Token: $CC_SESSION_TOKEN"',
+    `M="${memoryFileRoute(objectiveId)}"`,
+    'mkdir -p ~/cc-memory/live',
+    '',
+    '# Read your notes from an earlier session (prints nothing if there are none yet):',
+    `curl -sG "$M" -H "$H" --data-urlencode 'path=NOTES.md' | node -pe 'JSON.parse(require("fs").readFileSync(0,"utf8")).content ?? ""' > ~/cc-memory/NOTES.md`,
+    '',
+    '# Save a file: edit the local copy, then PUT the whole file (it replaces the server copy; 1 MB max):',
+    `put() { node -e 'const fs=require("fs");process.stdout.write(JSON.stringify({path:process.argv[1],content:fs.readFileSync(process.argv[2],"utf8")}))' "$1" "$2" | curl -s -X PUT "$M" -H "$H" -H 'Content-Type: application/json' --data-binary @-; }`,
+    'put NOTES.md ~/cc-memory/NOTES.md',
+    'put ARTIFACT.md ~/cc-memory/ARTIFACT.md',
+    '```',
+    '',
+    'The only paths the route accepts are `NOTES.md`, `ARTIFACT.md` and `live/<name>`. A `{"ok":true,...}` response is your evidence the file landed; anything else means it did NOT. The local copy in `~/cc-memory/` is a working copy only — the server copy is the one that persists and the one that gets read.',
+    '',
+    'Read NOTES.md before starting. As you work, write durable state, decisions, and progress to NOTES.md and PUT it — follow-up and future sessions on this objective will read it.',
+    '',
+    'The two files have different audiences — keep them separate:',
+    '- `NOTES.md` — YOUR private scratch. Hypotheses, dead ends, restart state, self-narration. Write freely; nobody grades it. The AI reviewer is deliberately masked off this file, so nothing you need judged may live only here.',
+    '- `ARTIFACT.md` — YOUR final artifact, and the thing consumers actually read. PUT it before you finish: what you delivered, where it lives (branch / PR / file paths), and the evidence for each acceptance criterion. This is what the reviewer reads in place of your scratch, so an unstated deliverable is an ungraded deliverable. If your brief names a different artifact file in another card\'s folder, you cannot write it from this sandbox: put that deliverable in your own ARTIFACT.md and say so in your summary.',
+  ]
+}
+
+/** Where a jailed session puts partial outputs, and what to do when the helper is not in its repo. */
+export function sandboxedLiveOutputLines(objectiveId: number): string[] {
+  return [
+    '- Partial outputs: PUT them as `live/<name>` through the memory route above (`put live/partial.csv ~/cc-memory/live/partial.csv`) — listed and readable through the API while you run (secret-redacted). Your scratch file is never served.',
+    `- \`${SANDBOX_LIVE_SCRIPT}\` exists when this card's repo is the app's own. In any other repo, post the same snapshot with curl: \`curl -s -X POST ${CC_API}/api/internal/objectives/${objectiveId}/progress -H 'Content-Type: application/json' -d '{"step":2,"total_steps":5,"label":"…","note":"…"}'\``,
+  ]
+}

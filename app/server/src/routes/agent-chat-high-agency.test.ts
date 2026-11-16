@@ -324,6 +324,10 @@ describe('the wake brief = the vault activation prompt + the operating loop', ()
     expect(brief).toContain('/api/internal/supervisor/flags?bot=cto')
     expect(brief.indexOf('/api/internal/supervisor/flags?bot=cto')).toBeLessThan(brief.indexOf('**2. Close the loop.**'))
     expect(brief).toContain('at most 1 new card on this wake')
+    // obj 900957: the project card names the bot as owner_bot (`cto` is the registry bot "Grok: CTO") and leaves the worker to the workspace's normal agent.
+    expect(brief).toContain('You own it: owner_bot `Grok: CTO`')
+    expect(brief).toContain('"completion_goal":"<the metric that shows it worked>","owner_bot":"Grok: CTO","workspace":"ops"')
+    expect(brief).not.toContain('"agent_context":"cto"')
     expect(brief).toContain('"status":"working"') // start it
     expect(brief).toContain('"acceptance_criteria":[{"id":"c1","criterion":') // the shape POST /api/internal/objectives takes
     expect(brief).toContain('/api/flows') // a recurring project may be a workflow DRAFT

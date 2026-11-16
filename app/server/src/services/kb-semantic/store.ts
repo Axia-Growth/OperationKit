@@ -167,20 +167,49 @@ export interface ChunkHit {
 /**
  * K nearest chunks to `query`. `workspaces` pre-filters inside the KNN (the
  * caller still applies the realpath workspace wall afterwards).
+ *
+ * `accept` (obj 900962) is the caller's visibility predicate on the chunk's
+ * doc path. With it, the result is the K nearest chunks AMONG ACCEPTED DOCS:
+ * the KNN is deepened (4x per round, up to sqlite-vec's 4096 cap) until K
+ * accepted chunks are found, and if the cap is still full of out-of-scope
+ * chunks, the accepted docs' vectors are ranked directly. Without `accept`
+ * this is the single query it always was.
  */
-export function knnChunks(db: Database.Database, query: Float32Array, k: number, modelId: string, workspaces?: string[]): ChunkHit[] {
+export function knnChunks(db: Database.Database, query: Float32Array, k: number, modelId: string, workspaces?: string[], accept?: (path: string) => boolean): ChunkHit[] {
   if (!vecReady(db)) return []
-  const kk = Math.max(1, Math.min(k, 4096))
+  const want = Math.max(1, Math.min(k, KNN_MAX))
+  const ws = workspaces && workspaces.length ? [...new Set(workspaces)].slice(0, 16) : []
+  if (!accept) return nearest(db, query, want, modelId, ws).hits
+  const verdicts = new Map<string, boolean>()
+  const ok = (p: string) => {
+    let v = verdicts.get(p)
+    if (v === undefined) { v = accept(p); verdicts.set(p, v) }
+    return v
+  }
+  for (let depth = want; ; depth = Math.min(depth * 4, KNN_MAX)) {
+    const page = nearest(db, query, depth, modelId, ws)
+    const hits = page.hits.filter(c => ok(c.path))
+    // Enough in scope, or the index has nothing further to give.
+    if (hits.length >= want || page.rows < depth) return hits.slice(0, want)
+    if (depth >= KNN_MAX) return exactNearest(db, query, want, modelId, ws, ok) ?? hits
+  }
+}
+
+/** sqlite-vec refuses a KNN with k above this. */
+const KNN_MAX = 4096
+/** Above this many in-scope chunks the direct ranking is skipped (the deepest KNN page stands). */
+const EXACT_MAX_CHUNKS = 20000
+
+function nearest(db: Database.Database, query: Float32Array, k: number, modelId: string, ws: string[]): { hits: ChunkHit[]; rows: number } {
   let rows: { rowid: number; distance: number }[]
-  if (workspaces && workspaces.length) {
-    const ws = [...new Set(workspaces)].slice(0, 16)
+  if (ws.length) {
     rows = db.prepare(`SELECT rowid, distance FROM kb_vec WHERE embedding MATCH ? AND k = ? AND workspace IN (${ws.map(() => '?').join(',')}) ORDER BY distance`)
-      .all(vecBuf(query), kk, ...ws) as { rowid: number; distance: number }[]
+      .all(vecBuf(query), k, ...ws) as { rowid: number; distance: number }[]
   } else {
     rows = db.prepare('SELECT rowid, distance FROM kb_vec WHERE embedding MATCH ? AND k = ? ORDER BY distance')
-      .all(vecBuf(query), kk) as { rowid: number; distance: number }[]
+      .all(vecBuf(query), k) as { rowid: number; distance: number }[]
   }
-  if (rows.length === 0) return []
+  if (rows.length === 0) return { hits: [], rows: 0 }
   // A chunk embedded by another model lives in a different vector space: skip it
   // (they are re-embedded by the backfill after a model change).
   const get = db.prepare('SELECT id, path, heading, line, text FROM kb_embed_chunks WHERE id = ? AND model_id = ?')
@@ -189,7 +218,32 @@ export function knnChunks(db: Database.Database, query: Float32Array, k: number,
     const c = get.get(r.rowid, modelId) as { id: number; path: string; heading: string; line: number; text: string } | undefined
     if (c) out.push({ chunkId: c.id, path: c.path, heading: c.heading, line: c.line, text: c.text, distance: r.distance })
   }
-  return out
+  return { hits: out, rows: rows.length }
+}
+
+/**
+ * The K nearest chunks among the docs `ok` accepts, by ranking those docs'
+ * stored vectors directly (no KNN index, so no global top-K to be crowded out
+ * of). Null when the in-scope set is too large to rank this way.
+ */
+function exactNearest(db: Database.Database, query: Float32Array, k: number, modelId: string, ws: string[], ok: (path: string) => boolean): ChunkHit[] | null {
+  const docs = (ws.length
+    ? db.prepare(`SELECT path, chunk_count FROM kb_embed_docs WHERE model_id = ? AND workspace IN (${ws.map(() => '?').join(',')})`).all(modelId, ...ws)
+    : db.prepare('SELECT path, chunk_count FROM kb_embed_docs WHERE model_id = ?').all(modelId)) as { path: string; chunk_count: number }[]
+  const inScope = docs.filter(d => ok(d.path))
+  if (inScope.reduce((n, d) => n + d.chunk_count, 0) > EXACT_MAX_CHUNKS) return null
+  const chunksOf = db.prepare('SELECT id, path, heading, line, text FROM kb_embed_chunks WHERE path = ? AND model_id = ?')
+  const dist = db.prepare('SELECT vec_distance_cosine(embedding, ?) AS distance FROM kb_vec WHERE rowid = ?')
+  const qb = vecBuf(query)
+  const out: ChunkHit[] = []
+  for (const d of inScope) {
+    for (const c of chunksOf.all(d.path, modelId) as { id: number; path: string; heading: string; line: number; text: string }[]) {
+      const r = dist.get(qb, BigInt(c.id)) as { distance: number } | undefined
+      if (r) out.push({ chunkId: c.id, path: c.path, heading: c.heading, line: c.line, text: c.text, distance: r.distance })
+    }
+  }
+  out.sort((x, y) => x.distance - y.distance || x.chunkId - y.chunkId)
+  return out.slice(0, k)
 }
 
 /** The stored vectors of one doc (for "related by similarity"). */

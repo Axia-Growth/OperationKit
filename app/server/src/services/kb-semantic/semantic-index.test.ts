@@ -11,7 +11,7 @@ import path from 'node:path'
 import Database from 'better-sqlite3'
 import { normalize, type EmbeddingProvider } from './providers.js'
 import { indexFile, isEmbeddable, markInterruptedJobs, needsBackfill, runBackfill, walkKnowledgeBase, WriteQueue, workspaceLabel } from './indexer.js'
-import { ensureSchema, indexStats, loadVecExtension } from './store.js'
+import { ensureSchema, ensureVecTable, indexStats, knnChunks, loadVecExtension, replaceDocChunks } from './store.js'
 import { searchKnowledgeBase, relatedDocs, parseSearchMode } from './search.js'
 import { resetVaultIndexCache } from '../vault-index.js'
 
@@ -235,6 +235,82 @@ describe('hybrid search', () => {
     const allow = (p: string) => !p.endsWith('fleet.md')
     const r = await searchKnowledgeBase('automobile rental', { mode: 'hybrid', db, provider, root, workspace: 'acme', allow, limit: 2 })
     expect(r.results.some(h => h.path.endsWith('fleet.md'))).toBe(false)
+  })
+
+  // obj 900962: the caller's scope is applied INSIDE each ranker. Before, the top 50
+  // keyword rows and 150 nearest chunks were taken across the whole knowledge base and
+  // only then filtered, so 200 better-ranked notes outside the scope hid the one inside.
+  describe('caller scope with 200 better-ranked decoys outside it', () => {
+    const DECOYS = 200
+    async function seedDecoys(decoyDir: string) {
+      const provider = conceptProvider()
+      for (let i = 0; i < DECOYS; i++) {
+        // Stronger than the in-scope note on both rankers: the terms in the title and
+        // repeated (bm25), and nothing but the query's concepts (cosine).
+        write(`${decoyDir}/decoy-${String(i).padStart(3, '0')}.md`, `---\ntitle: "invoice outage"\n---\n# Invoice outage\ninvoice outage invoice outage invoice outage ${i}`)
+      }
+      const mine = write('workspaces/acme/mine/the-one.md', '# Weekly notes\nThe garden needs soil. One invoice was late after the outage. We ship on Tuesday.')
+      await runBackfill({ db, provider, root })
+      const allow = (p: string) => p.startsWith(path.join(root, 'workspaces/acme/mine') + path.sep)
+      return { provider, mine, allow }
+    }
+
+    for (const [name, decoyDir, workspace] of [
+      ['in another workspace, caller predicate only', 'workspaces/other/notes', undefined],
+      ['in the same workspace, outside the caller\'s folder', 'workspaces/acme/elsewhere', 'acme'],
+    ] as const) {
+      it(`returns the one in-scope note in keyword, semantic and hybrid modes (decoys ${name})`, async () => {
+        const { provider, mine, allow } = await seedDecoys(decoyDir)
+        // The decoys really do fill the unscoped top results in every mode.
+        for (const mode of ['keyword', 'semantic', 'hybrid'] as const) {
+          const open = await searchKnowledgeBase('invoice outage', { mode, db, provider, root, limit: 50 })
+          expect(open.results.length, mode).toBe(50)
+          expect(open.results.some(h => h.path === mine), mode).toBe(false)
+        }
+        for (const mode of ['keyword', 'semantic', 'hybrid'] as const) {
+          const r = await searchKnowledgeBase('invoice outage', { mode, db, provider, root, workspace, allow })
+          expect(r.mode_used, mode).toBe(mode)
+          expect(r.results.map(h => h.path), mode).toEqual([mine])
+        }
+      })
+    }
+
+    it('pins an exact ID match that sits behind decoys naming the same ID', async () => {
+      const provider = conceptProvider()
+      for (let i = 0; i < DECOYS; i++) write(`workspaces/other/notes/obj777123-decoy-${i}.md`, '# obj777123\nobj777123 obj777123 obj777123 invoice')
+      const mine = write('workspaces/acme/mine/log.md', '# Log\nA long log about the garden, soil and plants. Somewhere it mentions obj777123 once.')
+      write('workspaces/acme/mine/invoice.md', '# Invoice\ninvoice invoice invoice')
+      await runBackfill({ db, provider, root })
+      const allow = (p: string) => p.startsWith(path.join(root, 'workspaces/acme/mine') + path.sep)
+      const r = await searchKnowledgeBase('obj777123 invoice', { mode: 'hybrid', db, provider, root, allow })
+      expect(r.results[0].path).toBe(mine)
+      expect(r.results[0].match).toBe('exact')
+      expect(r.results.every(h => allow(h.path))).toBe(true)
+    })
+
+    it('finds in-scope chunks behind more out-of-scope chunks than one vector query can return', () => {
+      const dim = 4
+      expect(ensureVecTable(db, dim)).toBe(true)
+      const vec = (a: number[]) => new Float32Array(normalize(a))
+      const doc = (p: string, v: Float32Array) => replaceDocChunks(db,
+        { path: p, workspace: 'acme', mtimeMs: 1, size: 1, contentHash: p, modelId: 'm' },
+        [{ index: 0, heading: 'h', line: 1, text: p, vector: v }])
+      db.transaction(() => {
+        for (let i = 0; i < 4200; i++) doc(`/kb/out/${i}.md`, vec([1, 0, 0, 0]))
+        doc('/kb/in/near.md', vec([0.9, 0.4, 0, 0]))
+        doc('/kb/in/far.md', vec([0, 0, 1, 0]))
+      })()
+      const q = vec([1, 0, 0, 0])
+      const accept = (p: string) => p.startsWith('/kb/in/')
+      // sqlite-vec caps k at 4096, so the deepest query alone still holds only decoys.
+      expect(knnChunks(db, q, 4096, 'm').some(c => accept(c.path))).toBe(false)
+      const hits = knnChunks(db, q, 150, 'm', undefined, accept)
+      expect(hits.map(c => c.path)).toEqual(['/kb/in/near.md', '/kb/in/far.md'])
+      expect(hits[0].distance).toBeLessThan(hits[1].distance)
+      expect(knnChunks(db, q, 150, 'm', ['acme'], accept).map(c => c.path)).toEqual(['/kb/in/near.md', '/kb/in/far.md'])
+      // Unscoped is the plain nearest-K it always was.
+      expect(knnChunks(db, q, 150, 'm')).toHaveLength(150)
+    })
   })
 
   it('degrades to keyword when semantic is unavailable, and says so', async () => {

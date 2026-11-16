@@ -43,6 +43,7 @@ import { getOpenTasksBlock } from '../services/mentor-context.js'
 import { runCompletionGate, applyGateHandback } from '../services/ci-green-gate.js'
 import { insertAlert } from '../services/notifier.js'
 import { requireInternalSecret } from '../middleware/internal-secret.js'
+import { cardIdsOwnedByBot, type OwnedCard } from '../services/bots/card-owner.js'
 import {
   parseFieldsMode,
   parseListFilters,
@@ -138,7 +139,18 @@ router.get('/objectives', (req, res) => {
     return
   }
   if (scoped) filters.workspace = scoped.workspace
-  const { where, params } = buildWhere(filters)
+  const built = buildWhere(filters)
+  let where = built.where
+  const params = built.params
+  // ?owned_by_bot=<chat slug>: "your cards" for a bot, by the ONE ownership rule
+  // (owner_bot when set, else the bot behind agent_context) — the same answer
+  // the High Agency supervisor and bot approval give. The rule is not SQL (it
+  // reads the bot registry), so it runs over the already-filtered rows.
+  if (filters.ownedByBot) {
+    const candidates = db.prepare(`SELECT id, owner_bot, agent_context FROM objectives${where}`).all(...params) as OwnedCard[]
+    const ids = cardIdsOwnedByBot(db, filters.ownedByBot, candidates)
+    where += `${where ? ' AND' : ' WHERE'} id IN (${ids.length ? ids.join(', ') : 'NULL'})`
+  }
   const { limit, offset } = resolvePageBounds(req.query.limit, req.query.offset, mode)
 
   const total = (db.prepare(`SELECT COUNT(*) AS n FROM objectives${where}`).get(...params) as { n: number }).n

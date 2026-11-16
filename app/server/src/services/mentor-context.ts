@@ -1,5 +1,6 @@
 import fs from 'fs'
 import path from 'path'
+import { knowledgeBaseRoot } from '../lib/knowledge-base-root.js'
 
 // Live state + recent vault delta, assembled into a single block that gets
 // prepended to the first user turn whenever a mentor subprocess is spawned.
@@ -35,12 +36,14 @@ export async function callHaikuSummarizer(prompt: string): Promise<string | null
   }
 }
 
-const VAULT_ROOT = '/home/operator/second-brain'
 const DEFAULT_DELTA_DAYS = 14
 const DEFAULT_DELTA_MAX_FILES = 30
 const DEFAULT_DELTA_BYTES_PER_FILE = 500
 const ACTIVE_FILE_MAX_BYTES = 8000
 const MAX_OPEN_TASKS = 50
+
+/** The install's ONE knowledge base root, resolved per call. */
+export function mentorVaultRoot(): string { return knowledgeBaseRoot() }
 
 export interface SessionContextOptions {
   vaultRoot?: string
@@ -94,7 +97,7 @@ function workspaceAllowed(slug: string, allowed: string[] | null | undefined): b
 export function getActiveStateBlock(
   opts: { vaultRoot?: string; allowedWorkspaces?: string[] | null } = {},
 ): string {
-  const root = opts.vaultRoot ?? VAULT_ROOT
+  const root = opts.vaultRoot ?? mentorVaultRoot()
   const sources: { label: string; file: string }[] = []
   if (workspaceAllowed('personal', opts.allowedWorkspaces)) {
     sources.push({ label: 'Personal', file: path.join(root, 'personal/active.md') })
@@ -120,7 +123,7 @@ export function getActiveStateBlock(
 }
 
 export function getVaultDeltaBlock(opts: SessionContextOptions = {}): string {
-  const root = opts.vaultRoot ?? VAULT_ROOT
+  const root = opts.vaultRoot ?? mentorVaultRoot()
   const days = opts.vaultDeltaDays ?? DEFAULT_DELTA_DAYS
   const maxFiles = opts.vaultDeltaMaxFiles ?? DEFAULT_DELTA_MAX_FILES
   const bytesPerFile = opts.vaultDeltaBytesPerFile ?? DEFAULT_DELTA_BYTES_PER_FILE
@@ -183,7 +186,7 @@ interface TaskEntry {
 export function getOpenTasksBlock(
   opts: { vaultRoot?: string; allowedWorkspaces?: string[] | null } = {},
 ): string {
-  const root = opts.vaultRoot ?? VAULT_ROOT
+  const root = opts.vaultRoot ?? mentorVaultRoot()
   const entries: TaskEntry[] = []
 
   const readTaskDir = (dir: string, workspace: string) => {

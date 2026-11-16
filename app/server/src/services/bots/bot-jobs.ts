@@ -64,6 +64,12 @@ export interface CreateBotJobInput {
   agentContext?: string
   /** Model the card runs on (obj 900948). Omitted → the registry default, never the column default. */
   model?: string | null
+  /**
+   * File the card as a child of this card. The CALLER has already checked it
+   * (visible to the person and the bot, same workspace, top-level, under the
+   * child cap); here it is only written and depth derived from it.
+   */
+  parentId?: number | null
   /** Skip the title duplicate guard (never skips idempotency). */
   force?: boolean
   now?: Date
@@ -136,7 +142,7 @@ export function createBotJob(db: Database, input: CreateBotJobInput): CreateBotJ
 
   // (3) Same-title guard, reusing the board's own rules.
   if (!input.force && isDuplicateGuardEnabled(db)) {
-    const twin = findOpenDuplicate(db, { title, workspace: principal.workspace, now: input.now })
+    const twin = findOpenDuplicate(db, { title, workspace: principal.workspace, excludeParentId: input.parentId ?? null, now: input.now })
     if (twin) {
       recordDedupe({ event: 'duplicate_refused', existingId: twin.id, title, workspace: principal.workspace, source: 'bot_job create' })
       return {
@@ -159,15 +165,16 @@ export function createBotJob(db: Database, input: CreateBotJobInput): CreateBotJ
     const status = getInitialStatus('task')
     const info = db
       .prepare(
-        `INSERT INTO objectives (title, description, agent_context, workspace, category, depth, assigned_user_id, created_by, type, status, origin, owner_bot, model)
-         VALUES (?, ?, ?, ?, 'general', ?, ?, ?, 'task', ?, 'agent_chat', ?, ?)`,
+        `INSERT INTO objectives (title, description, agent_context, workspace, category, parent_id, depth, assigned_user_id, created_by, type, status, origin, owner_bot, model)
+         VALUES (?, ?, ?, ?, 'general', ?, ?, ?, ?, 'task', ?, 'agent_chat', ?, ?)`,
       )
       .run(
         title,
         body,
         trimmed(input.agentContext, 60) || principal.agentSlug,
         principal.workspace,
-        depthForParent(db, null),
+        input.parentId ?? null,
+        depthForParent(db, input.parentId ?? null),
         principal.userId,
         principal.userId,
         status,

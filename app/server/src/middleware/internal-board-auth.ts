@@ -83,7 +83,12 @@
 import type { Request, Response } from 'express'
 import type Database from 'better-sqlite3'
 import { getDb } from '../db/index.js'
-import { isLocalhost, isTrustedPeerAddress, socketRemoteAddress, trustedPeerCidrs } from '../lib/is-localhost.js'
+import { isLocalhost, isSandboxPeer } from '../lib/is-localhost.js'
+
+// Re-exported for backward compatibility: this function used to be defined
+// here, and lives in lib/is-localhost.ts now (obj 901027) so
+// middleware/internal-api-gate.ts can reuse it without a circular import.
+export { isSandboxPeer }
 import { hasInternalApiCredential } from './internal-api-gate.js'
 import { sessionTokenFromHeaders, verifySessionToken } from '../lib/session-trust.js'
 import { userHasWorkspace } from './workspace.js'
@@ -125,24 +130,6 @@ export function boardPrincipalRequired(db?: Database.Database, env: NodeJS.Proce
   } catch {
     return false
   }
-}
-
-/**
- * Is this peer a SANDBOX peer — reachable-but-not-authoritative?
- *
- * Loopback and the docker bridge gateway are first-party on-box callers. The
- * extra CIDRs in `INTERNAL_TRUSTED_PEER_CIDRS` are the per-session sandbox
- * network and nothing else (see `lib/is-localhost.ts`), so a peer that is
- * trusted ONLY because of that list is a session and must authenticate as one.
- */
-export function isSandboxPeer(req: Request, env: NodeJS.ProcessEnv = process.env): boolean {
-  const addr = socketRemoteAddress(req)
-  if (!addr) return false
-  if (addr === '::1') return false
-  if (/^127\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(addr)) return false
-  if (/^172\.\d{1,3}\.0\.1$/.test(addr)) return false
-  // Trusted at all? Then it is trusted only via the sandbox CIDR list.
-  return isTrustedPeerAddress(addr, env) && trustedPeerCidrs(env).length > 0
 }
 
 /**

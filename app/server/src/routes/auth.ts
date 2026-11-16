@@ -360,6 +360,21 @@ router.delete('/agent-keys/:id', requireAuth, (req: AuthRequest, res) => {
 })
 
 router.get('/me', requireAuth, async (req: AuthRequest, res) => {
+  // obj 901106: a card browser session reports what it really is — the card's
+  // bot, a read-only member of the card's ONE workspace. Its id is synthetic
+  // (no users row), and the acting user's row is never read or returned.
+  if (req.cardBrowser) {
+    const cb = req.cardBrowser
+    res.json({
+      id: cb.user.id,
+      username: cb.user.username,
+      role: 'member',
+      created_at: '',
+      workspaces: [{ workspace: cb.workspace, role: 'member' }],
+      card_browser: { objective_id: cb.objectiveId, bot: cb.bot, read_only: true, expires_at: new Date(cb.expiresAt).toISOString() },
+    })
+    return
+  }
   const db = getDb()
   const user = db
     .prepare('SELECT id, username, role, created_at, must_change_password FROM users WHERE id = ?')

@@ -203,3 +203,33 @@ describe('decideEgress — the rule the proxy enforces', () => {
     expect(d.allow).toBe(false)
   })
 })
+
+describe('Cloudflare Access login hop (obj 901106)', () => {
+  it('stays refused, with a reason that names Access and the sanctioned way in', async () => {
+    const { resolveBrowserPolicy, decideEgress, isCloudflareAccessLoginHost } = await import('./browser-policy.js')
+    const policy = resolveBrowserPolicy({ OK_DOMAIN: 'ai.example-install.test' } as NodeJS.ProcessEnv)
+    expect(decideEgress(policy, { scheme: 'https', host: 'ai.example-install.test', port: 443 }, ['104.21.30.71'])).toEqual({ allow: true })
+    const d = decideEgress(policy, { scheme: 'https', host: 'mute-term-3e19.cloudflareaccess.com', port: 443 }, [])
+    expect(d.allow).toBe(false)
+    expect((d as { reason: string }).reason).toMatch(/Cloudflare Access login page/)
+    expect((d as { reason: string }).reason).toMatch(/--sign-in/)
+    expect(isCloudflareAccessLoginHost('cloudflareaccess.com')).toBe(false)
+    expect(isCloudflareAccessLoginHost('evil-cloudflareaccess.com')).toBe(false)
+  })
+
+  it('an operator who allowlists the Access domain still gets an allow (explicit opt-in is respected)', async () => {
+    const { resolveBrowserPolicy, decideEgress } = await import('./browser-policy.js')
+    const policy = resolveBrowserPolicy({ CARD_BROWSER_ALLOWED_ORIGINS: 'https://*.cloudflareaccess.com' } as NodeJS.ProcessEnv)
+    expect(decideEgress(policy, { scheme: 'https', host: 'team.cloudflareaccess.com', port: 443 }, ['104.16.0.1'])).toEqual({ allow: true })
+  })
+
+  it('the worker policy still refuses 3002, loopback, metadata and private ranges', async () => {
+    const { decideEgress } = await import('./browser-policy.js')
+    const { resolveWorkerBrowserPolicy } = await import('./card-browser.js')
+    const p = resolveWorkerBrowserPolicy({ OK_DOMAIN: 'ai.example-install.test' } as NodeJS.ProcessEnv)
+    expect(decideEgress(p, { scheme: 'http', host: '127.0.0.1', port: 3002 }, ['127.0.0.1']).allow).toBe(false)
+    expect(decideEgress(p, { scheme: 'http', host: '169.254.169.254', port: 80 }, ['169.254.169.254']).allow).toBe(false)
+    expect(decideEgress(p, { scheme: 'https', host: 'ai.example-install.test', port: 443 }, ['10.0.0.5']).allow).toBe(false)
+    expect(decideEgress(p, { scheme: 'https', host: 'ai.example-install.test', port: 443 }, ['127.0.0.1']).allow).toBe(false)
+  })
+})

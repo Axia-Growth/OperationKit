@@ -266,3 +266,42 @@ describe('bot chat "needs you" post', () => {
     expect(text(container.querySelector('[role="status"]')!)).toBe('Card #900 reopened and your message sent.')
   })
 })
+
+describe('obj 901151: a stop with no briefing, and Approve on a finished bot card', () => {
+  for (const theme of ['light', 'dark'] as const) {
+    it(`a briefing the server wrote says so, keeps the bot's own note, and has real options (${theme} mode)`, async () => {
+      paintTheme(theme)
+      const d = decision({
+        source: 'job_disposition',
+        agent_slug: 'operation-kit-dev',
+        flags: ['auto_briefing'],
+        raw_note: 'Decision #6 done: all seven quality-pass PRs are merged. Two things to check before the next deploy.',
+      })
+      const { container } = await render(<DecisionBriefing decision={d} botName="Operation Kit Dev" />)
+      const section = container.querySelector('[data-testid="decision-briefing"]')!
+      expect(container.querySelector('[data-testid="decision-flag"]')).toBeNull()
+      expect(text(section)).not.toMatch(/No briefing given|was not stated/)
+      expect(text(container.querySelector('[data-testid="decision-auto-briefing"]')!)).toBe('Briefing written automatically from Operation Kit Dev\'s note and session summary: it stopped without one.')
+      expect(text(section)).toContain('Its note: Decision #6 done')
+      expect(button(section, 'Choose A')).toBeTruthy()
+      const classes = [section, ...section.querySelectorAll('*')].flatMap(el => [...el.classList])
+      expect(classes.filter(c => RAW_COLOUR.test(c))).toEqual([])
+    })
+  }
+
+  it('Approve on a finished bot card shows it went to the bot (no dead end), with an optional reopen', async () => {
+    const deliveredText = 'You chose A: Send today. Card #900 is already finished, so your answer went straight to Operation Kit Dev: it is in Operation Kit Dev\'s chat, and Operation Kit Dev acts on it in its next session (no reopen needed). Next: I send it and report bounces in an hour.'
+    handler = r => r.url.endsWith('/decide')
+      ? { body: { decision: decision({ state: 'decided', chosen: 'A', outcome: 'delivered', outcome_text: deliveredText, delivered_to: 'operation-kit-dev', can_reopen: true }), outcome: 'delivered', outcome_text: deliveredText, can_reopen: true } }
+      : { body: {} }
+    const { container } = await render(<DecisionBriefing decision={decision()} />)
+    await click(button(container, 'Choose A'))
+    const outcome = container.querySelector('[data-testid="decision-outcome"]')!
+    expect(outcome.getAttribute('data-outcome')).toBe('delivered')
+    expect(text(outcome)).toContain(deliveredText)
+    expect(text(outcome)).not.toContain('Press Reopen and apply')
+    expect(outcome.className).toContain('border-success/40')
+    expect(button(container, 'Also reopen this card')).toBeTruthy()
+    expect(button(container, 'Reopen and apply')).toBeNull()
+  })
+})

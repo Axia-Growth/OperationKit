@@ -13,6 +13,9 @@
  * filterToWorkspaceScope) applied to both rankers before fusion, and the
  * caller's `allow` predicate (read roots, agent-key workspaces) is applied
  * before the limit, so a hidden doc can never take a slot or leak a snippet.
+ * Both are applied INSIDE each ranker, before its top-N is taken (obj 900962):
+ * the keyword rows and nearest chunks are the best N the caller may see, not
+ * the best N of the whole knowledge base filtered afterwards.
  */
 import fs from 'node:fs'
 import path from 'node:path'
@@ -80,27 +83,36 @@ function chunkSnippet(c: ChunkHit): string {
   return t.length > SNIPPET_CHARS ? `${t.slice(0, SNIPPET_CHARS)}…` : t
 }
 
-function keywordList(query: string, workspace: string | null | undefined, allow: (p: string) => boolean): string[] {
+/** `scoped` = the caller passed a predicate; without one the ranker queries are the unscoped ones. */
+interface Scope { allow: (p: string) => boolean; scoped: boolean }
+
+function keywordList(query: string, workspace: string | null | undefined, { allow, scoped }: Scope): string[] {
   let rows: string[] = []
   try {
-    rows = keywordRanked(query, workspace, KEYWORD_DEPTH).map(r => r.path)
+    rows = keywordRanked(query, workspace, KEYWORD_DEPTH, scoped ? allow : undefined).map(r => r.path)
   } catch { rows = [] }
   if (rows.length === 0) rows = searchKnowledgeGrep(query, workspace).map(h => h.path)
   return rows.filter(allow)
 }
 
 async function semanticList(
-  query: string, workspace: string | null | undefined, allow: (p: string) => boolean,
+  query: string, workspace: string | null | undefined, { allow, scoped }: Scope,
   db: Database.Database, provider: EmbeddingProvider, root: string,
 ): Promise<{ paths: string[]; best: Map<string, ChunkHit> }> {
   const [qv] = await provider.embed([query.slice(0, 2000)], 'query')
-  let chunks = knnChunks(db, qv, KNN_CHUNKS, provider.modelId, workspace ? [workspace] : undefined)
+  let chunks = knnChunks(db, qv, KNN_CHUNKS, provider.modelId, workspace ? [workspace] : undefined, inScope(workspace, scoped ? allow : undefined, root))
   if (workspace) chunks = filterToWorkspaceScope(chunks, workspace, root)
   const best = new Map<string, ChunkHit>()
   for (const c of chunks) {
     if (!best.has(c.path) && allow(c.path)) best.set(c.path, c)
   }
   return { paths: [...best.keys()], best }
+}
+
+/** Workspace wall + caller predicate as one path test for the vector query; undefined when there is no scope at all. */
+function inScope(workspace: string | null | undefined, allow: ((p: string) => boolean) | undefined, root: string): ((p: string) => boolean) | undefined {
+  if (!workspace && !allow) return undefined
+  return (p) => (!workspace || filterToWorkspaceScope([{ path: p }], workspace, root).length > 0) && (!allow || allow(p))
 }
 
 function readHead(p: string): string {
@@ -112,6 +124,7 @@ export async function searchKnowledgeBase(query: string, opts: SearchOptions = {
   const limit = Math.max(1, Math.min(opts.limit ?? 8, 50))
   const workspace = opts.workspace || null
   const allow = opts.allow ?? (() => true)
+  const scope: Scope = { allow, scoped: !!opts.allow }
   const root = opts.root ?? knowledgeBaseRoot()
   const q = query.trim()
   if (workspace && !isValidWorkspaceSlug(workspace)) return { results: [], mode, mode_used: mode, semantic: { available: false, reason: 'invalid workspace' } }
@@ -124,11 +137,11 @@ export async function searchKnowledgeBase(query: string, opts: SearchOptions = {
   if (semantic.available && db && !vecReady(db)) semantic = { available: false, reason: 'The knowledge base has not been embedded yet (Jobs → Knowledge index).' }
 
   const wantsSemantic = mode !== 'keyword' && semantic.available && !!provider && !!db
-  const kw = mode === 'semantic' ? [] : keywordList(q, workspace, allow)
+  const kw = mode === 'semantic' ? [] : keywordList(q, workspace, scope)
   let sem: { paths: string[]; best: Map<string, ChunkHit> } = { paths: [], best: new Map() }
   if (wantsSemantic) {
     try {
-      sem = await semanticList(q, workspace, allow, db!, provider!, root)
+      sem = await semanticList(q, workspace, scope, db!, provider!, root)
     } catch (err) {
       semantic = { available: false, reason: `Semantic search failed: ${(err as Error).message.slice(0, 200)}` }
     }
@@ -151,7 +164,7 @@ export async function searchKnowledgeBase(query: string, opts: SearchOptions = {
   if (mode === 'hybrid') {
     const tokens = exactTokens(q)
     if (tokens.length) {
-      const phrase = exactPhraseMatches(tokens, workspace)
+      const phrase = exactPhraseMatches(tokens, workspace, 30, opts.allow)
       const candidates = new Set([...kw.slice(0, 30), ...sem.paths.slice(0, 30), ...phrase.keys()])
       for (const p of candidates) {
         if (!allow(p)) continue
@@ -215,7 +228,7 @@ export async function relatedDocs(docPath: string, opts: { workspace?: string | 
   for (let i = 0; i < mean.length; i++) mean[i] /= n
   const allow = opts.allow ?? (() => true)
   const root = opts.root ?? knowledgeBaseRoot()
-  let chunks = knnChunks(db, mean, 120, provider.modelId, opts.workspace ? [opts.workspace] : undefined)
+  let chunks = knnChunks(db, mean, 120, provider.modelId, opts.workspace ? [opts.workspace] : undefined, inScope(opts.workspace, opts.allow, root))
   if (opts.workspace) chunks = filterToWorkspaceScope(chunks, opts.workspace, root)
   const out: Array<{ path: string; heading: string; similarity: number; snippet: string }> = []
   const seen = new Set<string>([docPath])

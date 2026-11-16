@@ -11,12 +11,14 @@
 import { Router } from 'express'
 import fs from 'fs'
 import path from 'path'
+import { knowledgeBaseRoot } from '../lib/knowledge-base-root.js'
 import { getDb } from '../db/index.js'
 import { rebuildContactsIndex, parseFrontmatter } from '../services/contacts.js'
 import { isLocalhost } from '../lib/is-localhost.js'
 import { noteKbFileWritten } from '../services/kb-wiki/graph-sync.js'
 
-const VAULT_BASE = process.env.VAULT_PATH || '/home/operator/second-brain'
+/** The install's ONE knowledge base root, resolved per request (VAULT_PATH is an accepted alias there). */
+export function internalVaultBase(): string { return knowledgeBaseRoot() }
 
 // Allowed top-level dirs for contact files. Mirrors CONTACT_DIRS in services/contacts.ts
 // but enumerated here so we can validate writes without depending on a scan.
@@ -64,10 +66,10 @@ export function resolveVaultPath(rel: string, opts: { mustExist?: boolean } = {}
   if (normalized.split('/').some(seg => seg === '..' || seg === '.')) {
     return { ok: false, error: 'path traversal not allowed' }
   }
-  const absolute = path.join(VAULT_BASE, normalized)
+  const absolute = path.join(internalVaultBase(), normalized)
   // Verify the resolved absolute path is still inside the vault. path.join handles
   // the . / .. tokens we already rejected, but defense-in-depth.
-  const realBase = fs.realpathSync(VAULT_BASE)
+  const realBase = fs.realpathSync(internalVaultBase())
   let realAbs: string
   if (opts.mustExist) {
     try {
@@ -311,7 +313,7 @@ router.post('/vault/append-touchpoint', (req, res) => {
     // Refresh just this row in contacts_index by rebuilding the whole table.
     // The vault is small enough that this is sub-second; doing a targeted update
     // would require duplicating the parser path math.
-    try { rebuildContactsIndex(getDb(), VAULT_BASE) } catch { /* best-effort */ }
+    try { rebuildContactsIndex(getDb(), internalVaultBase()) } catch { /* best-effort */ }
 
     res.json({ ok: true, path: resolved.relative, last_interaction: updatedLast })
   } catch (err) {
@@ -352,7 +354,7 @@ router.post('/vault/update-field', (req, res) => {
     }
     fs.writeFileSync(resolved.absolute!, reassembleMarkdown(finalFm, body), 'utf-8')
     setImmediate(() => { noteKbFileWritten(resolved.absolute!) }) // obj 900815: keep the KB graph current
-    try { rebuildContactsIndex(getDb(), VAULT_BASE) } catch { /* best-effort */ }
+    try { rebuildContactsIndex(getDb(), internalVaultBase()) } catch { /* best-effort */ }
     res.json({ ok: true, path: resolved.relative, field, value })
   } catch (err) {
     res.status(500).json({ error: err instanceof Error ? err.message : 'update failed' })
@@ -414,7 +416,7 @@ router.post('/vault/create-contact', (req, res) => {
   try {
     fs.writeFileSync(resolved.absolute!, content, 'utf-8')
     setImmediate(() => { noteKbFileWritten(resolved.absolute!) }) // obj 900815: keep the KB graph current
-    try { rebuildContactsIndex(getDb(), VAULT_BASE) } catch { /* best-effort */ }
+    try { rebuildContactsIndex(getDb(), internalVaultBase()) } catch { /* best-effort */ }
     res.json({ ok: true, path: resolved.relative })
   } catch (err) {
     res.status(500).json({ error: err instanceof Error ? err.message : 'create failed' })
@@ -467,7 +469,7 @@ router.post('/vault/recent-interactions', (req, res) => {
   const lowerName = contact.name.toLowerCase().trim()
   for (const m of recentMeetings) {
     if (meetings.length >= cap) break
-    const full = path.join(VAULT_BASE, m.vault_path)
+    const full = path.join(internalVaultBase(), m.vault_path)
     let content: string
     try { content = fs.readFileSync(full, 'utf-8') } catch { continue }
     const fm = parseFrontmatter(content) || {}

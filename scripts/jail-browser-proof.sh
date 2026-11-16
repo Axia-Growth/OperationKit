@@ -15,11 +15,12 @@
 #   2  browser image + production flags + seccomp profile: `cc-browser check`
 #      launches the pinned Chromium with its OS sandbox ON (renderers in their
 #      own namespaces) behind the guard
-#   3  loopback is REFUSED by default (obj 901051): a preview server on
-#      127.0.0.1:8123 does not load
-#   4  with CARD_BROWSER_WORKER_LOOPBACK_PORTS=8123 that preview page loads
+#   3  the worker's OWN preview server on 127.0.0.1:8123 loads by default
+#      (obj 901145: a jail's loopback is the card's own sandbox)
+#  3b  with CARD_BROWSER_WORKER_OWN_LOOPBACK=off it is refused (obj 901051)
+#   4  ... and with that off plus CARD_BROWSER_WORKER_LOOPBACK_PORTS=8123 it loads
 #   5  the Command Center API port (127.0.0.1:3002, the jail's control-plane
-#      forwarder) is refused even when an operator lists it
+#      forwarder) is refused by default AND even when an operator lists it
 #   6  a site outside the allowlist is refused by the guard
 #   7  the cloud metadata endpoint is refused by the guard
 #   8  the launcher refuses --no-sandbox
@@ -85,20 +86,28 @@ else
   bad 'browser did not launch sandboxed behind the guard'
 fi
 
-row 3 'loopback refused by default (worker policy)'
-out=$(jail "$BROWSER" "$PREVIEW $L screenshot http://127.0.0.1:8123/ /tmp/p.png; echo rc=\$?"); echo "$out"
+row 3 'the worker OWN preview server loads by default, no config (obj 901145)'
+out=$(jail "$BROWSER" "$PREVIEW $L screenshot http://127.0.0.1:8123/ /tmp/p.png && test -s /tmp/p.png && echo PNG_OK"); rc=$?
+echo "$out"
+[ "$rc" -eq 0 ] && printf '%s' "$out" | grep -q '"status":200' && printf '%s' "$out" | grep -q PNG_OK \
+  && ok 'own preview reachable by default' || bad 'own preview not reachable through the guard by default'
+
+row 3b 'CARD_BROWSER_WORKER_OWN_LOOPBACK=off: loopback refused (obj 901051 policy)'
+out=$(jail "$BROWSER" "$PREVIEW $L screenshot http://127.0.0.1:8123/ /tmp/p.png; echo rc=\$?" --own-loopback off); echo "$out"
 if printf '%s' "$out" | grep -q '"status":403'; then ok 'loopback refused by the guard (403)'; else bad 'loopback was not refused by the guard'; fi
 
-row 4 'listed preview port (CARD_BROWSER_WORKER_LOOPBACK_PORTS=8123) loads through the guard'
-out=$(jail "$BROWSER" "$PREVIEW $L screenshot http://127.0.0.1:8123/ /tmp/p.png && test -s /tmp/p.png && echo PNG_OK" --loopback-ports 8123); rc=$?
+row 4 'own-loopback off + listed preview port (CARD_BROWSER_WORKER_LOOPBACK_PORTS=8123) loads through the guard'
+out=$(jail "$BROWSER" "$PREVIEW $L screenshot http://127.0.0.1:8123/ /tmp/p.png && test -s /tmp/p.png && echo PNG_OK" --own-loopback off --loopback-ports 8123); rc=$?
 echo "$out"
 [ "$rc" -eq 0 ] && printf '%s' "$out" | grep -q '"status":200' && printf '%s' "$out" | grep -q PNG_OK \
   && ok 'listed preview reachable' || bad 'listed preview not reachable through the guard'
 
-row 5 'Command Center API port 3002 refused, even when listed'
+row 5 'Command Center API port 3002 refused by default, and even when listed'
 API='node -e "require(\"http\").createServer((q,s)=>s.end(\"cc api\")).listen(3002,\"127.0.0.1\")" & sleep 1; '
+out=$(jail "$BROWSER" "$API $L screenshot http://127.0.0.1:3002/api/internal/objectives /tmp/a.png; echo rc=\$?"); echo "$out"
+if printf '%s' "$out" | grep -q '"status":403'; then ok 'CC API port refused by default (403)'; else bad 'CC API port was not refused by default'; fi
 out=$(jail "$BROWSER" "$API $L screenshot http://127.0.0.1:3002/api/internal/objectives /tmp/a.png; echo rc=\$?" --loopback-ports '8123;3002'); echo "$out"
-if printf '%s' "$out" | grep -q '"status":403'; then ok 'CC API port refused by the guard (403)'; else bad 'CC API port was not refused by the guard'; fi
+if printf '%s' "$out" | grep -q '"status":403'; then ok 'CC API port refused even when listed (403)'; else bad 'CC API port was not refused when listed'; fi
 
 row 6 'off-allowlist site refused'
 out=$(jail "$BROWSER" "$L screenshot https://example.com/ /tmp/x.png; echo rc=\$?"); echo "$out"

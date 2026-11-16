@@ -11,9 +11,12 @@
  *              working and restarted with the choice as a follow-up
  *   queued     the worker is alive mid-turn: the choice is queued and handed to
  *              the same session when the turn ends (services/followup-queue.ts)
- *   card_done  the card is done/cancelled and the person did not ask to reopen:
- *              nothing is sent, the record says so, and the UI offers
- *              "Reopen and apply"
+ *   delivered  the card is done and a BOT owns it (obj 901151): the choice goes to
+ *              that bot (its chat now, its next session's prompt) without
+ *              reopening anything (services/decision-delivery.ts)
+ *   card_done  the card is done/cancelled, no bot owns it, and the person did not
+ *              ask to reopen: nothing is sent, the record says so, and the UI
+ *              offers "Reopen and apply"
  *   reopened   "Reopen and apply": an EXPLICIT human reopen (terminal_by_human
  *              cleared, audited), then the same restart as `sent`
  *   recorded   a deny on a finished card, or a card that no longer exists
@@ -49,6 +52,13 @@ export interface ApplyDeps {
   noteStart: (objectiveId: number, actor: string) => void
   /** Deferred-work scheduler. Tests pass a synchronous one. */
   defer: (fn: () => void) => void
+  /**
+   * obj 901151: hand a choice on a finished card to the bot that owns it.
+   * Returns the bot's display name, or null when no bot owns the card.
+   */
+  deliverToBot?: (db: Database.Database, decision: DecisionView, objective: Objective) => { name: string } | null
+  /** obj 901151: a reopen applies a delivered answer itself, so the bot's copy is consumed. */
+  consumeDelivery?: (db: Database.Database, decisionId: number, objectiveId: number) => void
 }
 
 export interface ApplyResult {
@@ -74,8 +84,8 @@ export function applyDecision(
 ): ApplyResult {
   const chosen = decision.chosen as string
   const objective = loadObjective(db, decision.objective_id)
-  const finish = (outcome: DecisionOutcome, error?: string | null): ApplyResult => {
-    const text = decisionOutcomeText({ objectiveId: decision.objective_id, briefing: decision.briefing, chosen, outcome, error })
+  const finish = (outcome: DecisionOutcome, error?: string | null, bot?: string | null): ApplyResult => {
+    const text = decisionOutcomeText({ objectiveId: decision.objective_id, briefing: decision.briefing, chosen, outcome, error, note: decision.decision_note, bot })
     const updated = setOutcome(db, decision.id, outcome, text)
     return { outcome, outcome_text: text, decision: updated, objective: objective ? loadObjective(db, objective.id) : null }
   }
@@ -86,8 +96,21 @@ export function applyDecision(
   if (isLockedStatus(objective.status)) {
     // A "no" on a finished card changes nothing — never reopen a card to tell it not to act.
     if (chosen === DENY_CHOICE) return finish('recorded')
-    if (!p.reopen) return finish('card_done')
+    if (!p.reopen) {
+      // obj 901151: a finished card a bot owns is not a dead end: the bot gets it.
+      if (objective.status === 'done' && deps.deliverToBot) {
+        let to: { name: string } | null = null
+        try {
+          to = deps.deliverToBot(db, decision, objective)
+        } catch (err) {
+          console.warn(`[decisions] could not deliver decision ${decision.id} to its bot:`, err instanceof Error ? err.message : String(err))
+        }
+        if (to) return finish('delivered', null, to.name)
+      }
+      return finish('card_done')
+    }
     // Explicit human reopen: the person pressed "Reopen and apply".
+    try { deps.consumeDelivery?.(db, decision.id, objective.id) } catch { /* best effort */ }
     db.prepare("UPDATE objectives SET status = 'review', terminal_by_human = 0, updated_at = datetime('now') WHERE id = ? AND status IN ('done', 'cancelled')")
       .run(objective.id)
     deps.audit(db, objective, p.actor)
@@ -130,7 +153,7 @@ export function applyDecision(
         const reverted = loadObjective(db, fresh.id)
         if (reverted) deps.broadcast(reverted)
       } catch { /* best effort */ }
-      const failText = decisionOutcomeText({ objectiveId: decision.objective_id, briefing: decision.briefing, chosen, outcome: 'failed', error: msg })
+      const failText = decisionOutcomeText({ objectiveId: decision.objective_id, briefing: decision.briefing, chosen, outcome: 'failed', error: msg, note: decision.decision_note })
       try { setOutcome(db, decision.id, 'failed', failText) } catch { /* best effort */ }
     }
   })

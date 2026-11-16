@@ -21,7 +21,8 @@
  *              plain reason the person sees ("no longer needed (card finished)"),
  *              writes that line into its thread, and adopts recent legacy asks
  *              (a job `needs_review` with no decision row) as flagged decisions so
- *              they reach the queue with "no briefing given". The poller runs it
+ *              they get a briefing written for them (decision-autobrief.ts, obj
+ *              901151) before they reach the queue. The poller runs it
  *              every 15 s, the status route runs it for one card the moment the
  *              card ends, and every queue read runs it first, so the queue never
  *              shows a stale ask.
@@ -43,6 +44,7 @@ import {
   STALE_REASONS,
   compareQueueItems,
   urgencyForCard,
+  type DecidedHistoryItem,
   type DecisionQueueItem,
   type StaleReason,
 } from '@operationkit/shared'
@@ -191,6 +193,17 @@ export function clearStaleDecisionsForCard(db: Database.Database, objectiveId: n
   }
 }
 
+/**
+ * obj 901151 — the moment a card reaches done/cancelled (ANY path: the status
+ * route, the poller's session-end routing, hygiene, the Agent API; all of them
+ * broadcast `objective_updated`, which is where this is hooked, see
+ * services/decision-card-end.ts): withdraw its stale asks at once instead of
+ * on the next sweep, so the stack never shows a finished card's ask.
+ */
+export function onCardEnded(db: Database.Database, objectiveId: number): SweepResult {
+  return clearStaleDecisionsForCard(db, objectiveId)
+}
+
 export const SWEEP_INTERVAL_MS = 15_000
 let lastSweep = 0
 /** Throttled entry point for the poller. */
@@ -205,10 +218,23 @@ export function maybeSweepStaleDecisions(db: Database.Database, nowMs = Date.now
  * "Reopen and apply" only while the ask is still relevant.
  */
 export function withReopenFlag<T extends { state: string; outcome: string | null; objective_id: number; can_reopen?: boolean }>(db: Database.Database, d: T): T {
-  if (d.state !== 'decided' || d.outcome !== 'card_done') return d
+  if (d.state !== 'decided' || (d.outcome !== 'card_done' && d.outcome !== 'delivered')) return d
   let stale: StaleReason | null = null
   try { stale = staleReasonForCard(db, d.objective_id) } catch { /* keep offering */ }
+  // obj 901151: an answer the bot already picked up in a later session is applied; no second copy.
+  if (!stale && d.outcome === 'delivered' && deliveryConsumed(db, (d as { id?: number }).id)) return { ...d, can_reopen: false }
   return { ...d, can_reopen: !stale }
+}
+
+/** True once a delivered answer was picked up by a bot session (or a reopen). */
+export function deliveryConsumed(db: Database.Database, decisionId: number | undefined): boolean {
+  if (decisionId == null) return false
+  try {
+    const r = db.prepare('SELECT delivered_consumed_at FROM decisions WHERE id = ?').get(decisionId) as { delivered_consumed_at: string | null } | undefined
+    return !!r?.delivered_consumed_at
+  } catch {
+    return false
+  }
 }
 
 // ── the queue ──────────────────────────────────────────────────────────────
@@ -226,6 +252,21 @@ function visibility(viewer: QueueViewer): { sql: string; args: unknown[] } {
     args: [viewer.id, viewer.id, viewer.id],
   }
 }
+
+/**
+ * obj 901151 — what may stand in the stack at all, in SQL:
+ *   - never a decision with no briefing (`incomplete`): it is either briefed by
+ *     services/decision-autobrief.ts within seconds of its card stopping, or
+ *     withdrawn there as an FYI. "No briefing given" never reaches a person.
+ *   - never a decision on a cancelled card, or on a done card, with ONE
+ *     exception: a job that ended BY asking (done + job_disposition =
+ *     needs_review, not closed by a person). That is how every routine and High
+ *     Agency wake asks (the poller must auto-close a job card so the routine's
+ *     max_queue_depth slot frees), so it is the bot's live ask, and Approve on it
+ *     is delivered to the bot (decision-apply.ts `delivered`), never a dead end.
+ *     A newer run of the same job retires it (checked in JS, `newerRunOf`).
+ */
+export const STACK_SQL = ` AND d.incomplete = 0 AND (o.status NOT IN ('done', 'cancelled') OR (o.status = 'done' AND o.job_disposition = 'needs_review' AND COALESCE(o.terminal_by_human, 0) = 0))`
 
 function botFor(card: DecisionCardRow, agentSlug: string | null): string | null {
   return card.owner_bot || (card.agent_context && card.agent_context !== 'general' ? card.agent_context : null) || agentSlug || null
@@ -248,7 +289,7 @@ export function listDecisionQueue(db: Database.Database, viewer: QueueViewer, q:
     .prepare(
       `SELECT d.id AS decision_id, ${CARD_COLS.split(', ').map(c => `o.${c}`).join(', ')}
          FROM decisions d JOIN objectives o ON o.id = d.objective_id
-        WHERE d.state = 'open'${vis.sql}${ws}
+        WHERE d.state = 'open'${STACK_SQL}${vis.sql}${ws}
         ORDER BY d.id`,
     )
     .all(...vis.args, ...(q.workspace ? [q.workspace] : [])) as (DecisionCardRow & { decision_id: number })[]
@@ -270,6 +311,38 @@ export function listDecisionQueue(db: Database.Database, viewer: QueueViewer, q:
   return items.slice(0, Math.max(1, Math.min(500, q.limit ?? 200)))
 }
 
+/**
+ * The viewer's decided items, most recently decided first (obj 901139): the
+ * "Your recent decisions" list under the stack. Same visibility rule as the
+ * queue. Each item carries its card so it links back to the card thread, and
+ * the full decision (briefing, choice, own answer, outcome, thread).
+ */
+export function listDecidedHistory(db: Database.Database, viewer: QueueViewer, q: QueueQuery = {}): DecidedHistoryItem[] {
+  getDecision(db, -1)
+  const vis = visibility(viewer)
+  const ws = q.workspace ? ' AND o.workspace = ?' : ''
+  const limit = Math.max(1, Math.min(100, Math.floor(q.limit ?? 30)))
+  const rows = db
+    .prepare(
+      `SELECT d.id AS decision_id, ${CARD_COLS.split(', ').map(c => `o.${c}`).join(', ')}
+         FROM decisions d JOIN objectives o ON o.id = d.objective_id
+        WHERE d.state = 'decided'${vis.sql}${ws}
+        ORDER BY COALESCE(d.decided_at, d.updated_at) DESC, d.id DESC
+        LIMIT ?`,
+    )
+    .all(...vis.args, ...(q.workspace ? [q.workspace] : []), limit) as (DecisionCardRow & { decision_id: number })[]
+  const items: DecidedHistoryItem[] = []
+  for (const r of rows) {
+    const decision = getDecision(db, r.decision_id)
+    if (!decision) continue
+    items.push({
+      decision: withReopenFlag(db, decision),
+      card: { id: r.id, title: r.title, status: r.status, workspace: r.workspace, project: r.project, bot: botFor(r, decision.agent_slug) },
+    })
+  }
+  return items
+}
+
 /** The badge number: open, still-relevant decisions this viewer may answer. */
 export function decisionQueueCount(db: Database.Database, viewer: QueueViewer, q: Pick<QueueQuery, 'workspace'> = {}): number {
   getDecision(db, -1)
@@ -279,7 +352,7 @@ export function decisionQueueCount(db: Database.Database, viewer: QueueViewer, q
     .prepare(
       `SELECT o.id, o.status, o.terminal_by_human, o.job_disposition, o.routine_id
          FROM decisions d JOIN objectives o ON o.id = d.objective_id
-        WHERE d.state = 'open'${vis.sql}${ws}`,
+        WHERE d.state = 'open'${STACK_SQL}${vis.sql}${ws}`,
     )
     .all(...vis.args, ...(q.workspace ? [q.workspace] : [])) as DecisionCardRow[]
   let n = 0

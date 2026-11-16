@@ -165,6 +165,100 @@ export function readArtifact(
   }
 }
 
+// ── Own-card memory writes (obj 900955) ─────────────────────────────────────
+// A sandboxed session has no mount of the objective-memory folder, so it writes
+// its deliverable, its scratch and its partial outputs through
+// `PUT /api/internal/objectives/:id/memory/file`. The path is an ALLOWLIST
+// (never a blacklist): exactly `ARTIFACT.md`, `NOTES.md` or `live/<name>`.
+
+export const MAX_WRITE_BYTES = MAX_READ_BYTES
+const LIVE_DIR = 'live'
+const LIVE_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/
+const TOP_LEVEL_WRITABLE = new Set(['ARTIFACT.md', SCRATCH_FILE])
+
+/** Validate a caller path against the allowlist. Returns its segments. Throws ArtifactError(400). */
+export function parseMemoryFilePath(relPath: unknown): string[] {
+  if (typeof relPath !== 'string' || !relPath) throw new ArtifactError('path is required', 400)
+  const bad = () => new ArtifactError(`invalid path (allowed: ARTIFACT.md, ${SCRATCH_FILE}, ${LIVE_DIR}/<name>)`, 400)
+  if (relPath.includes('\0') || relPath.includes('\\') || path.isAbsolute(relPath)) throw bad()
+  const segments = relPath.split('/')
+  if (segments.length === 1 && TOP_LEVEL_WRITABLE.has(segments[0])) return segments
+  if (segments.length === 2 && segments[0] === LIVE_DIR && LIVE_NAME.test(segments[1])) return segments
+  throw bad()
+}
+
+function requireRealDir(dir: string): void {
+  let st: fs.Stats
+  try { st = fs.lstatSync(dir) } catch { throw new ArtifactError('not found', 404) }
+  // A symlinked card dir or live/ dir is never followed.
+  if (st.isSymbolicLink() || !st.isDirectory()) throw new ArtifactError('invalid path', 400)
+}
+
+/** The real directory an allowlisted path lives in, proven to sit inside the card's folder. */
+function memoryFileDir(objectiveId: number, segments: string[], create: boolean): string {
+  const base = objectiveMemoryDir(objectiveId)
+  if (create) fs.mkdirSync(base, { recursive: true })
+  requireRealDir(base)
+  let dir = base
+  if (segments.length === 2) {
+    dir = path.join(base, LIVE_DIR)
+    if (create) {
+      try { fs.mkdirSync(dir) } catch (err) { if ((err as NodeJS.ErrnoException).code !== 'EEXIST') throw err }
+    }
+    requireRealDir(dir)
+  }
+  const expected = path.join(fs.realpathSync(memoryRoot()), String(objectiveId), ...(segments.length === 2 ? [LIVE_DIR] : []))
+  if (fs.realpathSync(dir) !== expected) throw new ArtifactError('invalid path', 400)
+  return expected
+}
+
+export interface MemoryFileWrite {
+  path: string
+  size: number
+  modified_at: string
+}
+
+/** Write (create or replace) one allowlisted text file in the card's memory folder. */
+export function writeMemoryFile(objectiveId: number, relPath: unknown, content: unknown): MemoryFileWrite {
+  const segments = parseMemoryFilePath(relPath)
+  if (typeof content !== 'string') throw new ArtifactError('content must be a string', 400)
+  if (content.includes('\0')) throw new ArtifactError('content must be text', 400)
+  const size = Buffer.byteLength(content, 'utf8')
+  if (size > MAX_WRITE_BYTES) throw new ArtifactError(`content is over the ${MAX_WRITE_BYTES} byte limit`, 413)
+  const dir = memoryFileDir(objectiveId, segments, true)
+  const name = segments[segments.length - 1]
+  const target = path.join(dir, name)
+  let existing: fs.Stats | null = null
+  try { existing = fs.lstatSync(target) } catch { /* new file */ }
+  if (existing && (existing.isSymbolicLink() || !existing.isFile())) throw new ArtifactError('invalid path', 400)
+  // Temp file + rename: a reader never sees a half-written artifact, and rename
+  // replaces the directory entry rather than writing through it.
+  const tmp = path.join(dir, `.${name}.${process.pid}.${Date.now()}.tmp`)
+  try {
+    fs.writeFileSync(tmp, content, { encoding: 'utf8', flag: 'wx', mode: 0o644 })
+    fs.renameSync(tmp, target)
+  } catch (err) {
+    try { fs.unlinkSync(tmp) } catch { /* nothing to clean */ }
+    throw err
+  }
+  return { path: segments.join('/'), size, modified_at: fs.statSync(target).mtime.toISOString() }
+}
+
+/**
+ * Read one allowlisted file back, unredacted. This is the OWNING session reading
+ * its own files (how a sandboxed worker gets its scratch back after a restart);
+ * every other reader goes through `readArtifact`, which masks the scratch.
+ */
+export function readMemoryFile(objectiveId: number, relPath: unknown): MemoryFileWrite & { content: string } {
+  const segments = parseMemoryFilePath(relPath)
+  const target = path.join(memoryFileDir(objectiveId, segments, false), segments[segments.length - 1])
+  let st: fs.Stats
+  try { st = fs.lstatSync(target) } catch { throw new ArtifactError('not found', 404) }
+  if (st.isSymbolicLink() || !st.isFile()) throw new ArtifactError('not found', 404)
+  if (st.size > MAX_READ_BYTES) throw new ArtifactError('file is too large to read here', 413)
+  return { path: segments.join('/'), size: st.size, modified_at: st.mtime.toISOString(), content: fs.readFileSync(target, 'utf8') }
+}
+
 export interface ArtifactImage {
   path: string
   media_type: string

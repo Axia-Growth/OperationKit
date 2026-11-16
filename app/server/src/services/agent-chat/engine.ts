@@ -10,7 +10,7 @@ import { decisionBriefingSummary, decisionFeedbackForPrompt } from '../decision-
 import fs from 'fs'
 import path from 'path'
 import { getDb } from '../../db/index.js'
-import { SECOND_BRAIN_DIR } from '../../config.js'
+import { knowledgeBaseRoot } from '../../lib/knowledge-base-root.js'
 import { getUserWorkspaces } from '../../middleware/workspace.js'
 import { DEMO_AGENT_SLUG, DEMO_DIR, demoEnabled, loadChatAgents, type ChatAgent, type ChatProviderId, builtinsEnabled } from './agent-defs.js'
 import { resolveConnectors } from './connectors.js'
@@ -106,8 +106,9 @@ export function isDemoOn(env: NodeJS.ProcessEnv = process.env): boolean {
   return demoEnabled(env, setting('agent_chat_demo'))
 }
 
+/** The chat bots' knowledge base: the install's ONE root (KNOWLEDGE_BASE_DIR is an accepted alias there). */
 export function knowledgeRoot(env: NodeJS.ProcessEnv = process.env): string {
-  return (env.KNOWLEDGE_BASE_DIR || '').trim() || SECOND_BRAIN_DIR
+  return knowledgeBaseRoot(env)
 }
 
 /** Copy the demo's sample notes into the knowledge base (never overwrites). */

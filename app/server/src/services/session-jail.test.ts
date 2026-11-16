@@ -11,6 +11,8 @@ import {
   resolveIsolationMode,
   buildJailRunArgv,
   buildJailExecArgv,
+  buildJailSandboxExecArgv,
+  SANDBOX_EXEC_USER,
   buildJailDestroyArgv,
   buildJailAttachCommand,
   renderEnvFile,
@@ -126,6 +128,54 @@ describe('session-jail argv contract', () => {
     expect(buildJailDestroyArgv(709080)).toEqual(['rm', '-f', 'ok-jail-709080'])
     expect(buildJailAttachCommand(709080, base.sessionId))
       .toBe(`docker exec -it ok-jail-709080 tmux attach-session -t ${base.sessionId}`)
+  })
+})
+
+describe('buildJailSandboxExecArgv (obj 901027 security review: card-sandbox-tools sandbox_run)', () => {
+  it('wraps the command in an in-jail timeout and an empty-env allowlist, never the inherited container env', () => {
+    const argv = buildJailSandboxExecArgv(709080, 'ls /workspace', 20_000)
+    expect(argv[0]).toBe('exec')
+    expect(argv).toContain('ok-jail-709080')
+    expect(argv).toContain('timeout')
+    expect(argv).toContain('env')
+    expect(argv).toContain('-i')
+    // No --env-file, no inherited var name anywhere in the argv: the only env
+    // entries are the ones this function sets itself.
+    expect(argv.some(a => a.startsWith('CC_SESSION_TOKEN'))).toBe(false)
+    expect(argv.some(a => a.startsWith('PATH='))).toBe(true)
+    expect(argv.some(a => a.startsWith('HOME='))).toBe(true)
+    // The command is its own argv element — never shell-concatenated with the
+    // wrapper, so no quoting of the (untrusted) command string is needed.
+    expect(argv.at(-1)).toBe('ls /workspace')
+    expect(argv.at(-2)).toBe('-c')
+    expect(argv.at(-3)).toBe('sh')
+    // `-l` (login shell) would source /etc/profile / ~/.profile: never for an
+    // untrusted, chat-supplied command.
+    expect(argv).not.toContain('-lc')
+  })
+
+  it('runs as a dedicated uid, never the jail PID 1 / worker uid (obj 901027 round 2: /proc/1/environ)', () => {
+    const argv = buildJailSandboxExecArgv(709080, 'cat /proc/1/environ', 20_000)
+    expect(argv[0]).toBe('exec')
+    expect(argv[1]).toBe('--user')
+    expect(argv[2]).toBe(SANDBOX_EXEC_USER)
+    expect(argv[3]).toBe('ok-jail-709080')
+    // Distinct from both root and the jail's own default non-root user.
+    expect(SANDBOX_EXEC_USER).not.toBe('0:0')
+    expect(SANDBOX_EXEC_USER).not.toBe('1000:1000')
+    expect(SANDBOX_EXEC_USER).not.toBe('1001:1001')
+    // --user must precede the container name, per `docker exec` syntax.
+    expect(argv.indexOf('--user')).toBeLessThan(argv.indexOf('ok-jail-709080'))
+  })
+
+  it('converts the millisecond timeout to a whole-second in-jail deadline, rounding up', () => {
+    const argv = buildJailSandboxExecArgv(709080, 'ls', 20_500)
+    expect(argv).toContain('21s')
+  })
+
+  it('a sub-second timeout still gets at least 1s', () => {
+    const argv = buildJailSandboxExecArgv(709080, 'ls', 10)
+    expect(argv).toContain('1s')
   })
 })
 

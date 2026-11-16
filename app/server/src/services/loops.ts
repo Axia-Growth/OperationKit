@@ -26,12 +26,13 @@
 // (open->queued, closed->done); migrateLoopFiles() rewrites them on disk one-shot.
 import fs from 'fs'
 import path from 'path'
+import { knowledgeBaseRoot } from '../lib/knowledge-base-root.js'
 
-// host path == container path (bind-mounted, verified writable)
-const VAULT_BASE = process.env.VAULT_PATH || '/home/operator/second-brain'
 export const LOOPS_WORKSPACE = process.env.GRANOLA_WORKSPACE || 'operator'
-const WS_ROOT = path.join(VAULT_BASE, 'workspaces', LOOPS_WORKSPACE)
-const LOOPS_DIR = path.join(WS_ROOT, 'loops')
+// Resolved per call from the install's ONE knowledge base root (VAULT_PATH is an accepted alias there).
+export function loopsVaultBase(): string { return knowledgeBaseRoot() }
+function wsRoot(): string { return path.join(loopsVaultBase(), 'workspaces', LOOPS_WORKSPACE) }
+function loopsDir(): string { return path.join(wsRoot(), 'loops') }
 
 // `pending` is the pre-queue REVIEW lane: auto-detected (meeting) loops land here
 // and must be APPROVED (moved to `queued`) or DENIED (archived) before they reach
@@ -224,7 +225,7 @@ export function loopSlug(party: string, title: string): string {
 
 function safeReaddir(): string[] {
   try {
-    return fs.readdirSync(LOOPS_DIR).filter(f => f.endsWith('.md')).sort()
+    return fs.readdirSync(loopsDir()).filter(f => f.endsWith('.md')).sort()
   } catch {
     return []
   }
@@ -236,8 +237,8 @@ function safeReaddir(): string[] {
 function resolveLoopPath(slug: string): string | null {
   const base = slug.endsWith('.md') ? slug : `${slug}.md`
   if (!/^[A-Za-z0-9._-]+\.md$/.test(base)) return null
-  const abs = path.join(LOOPS_DIR, base)
-  const rel = path.relative(LOOPS_DIR, abs)
+  const abs = path.join(loopsDir(), base)
+  const rel = path.relative(loopsDir(), abs)
   if (rel.startsWith('..') || path.isAbsolute(rel)) return null
   return abs
 }
@@ -263,7 +264,7 @@ export function migrateLoopFiles(): { scanned: number; rewritten: number } {
   let rewritten = 0
   for (const file of safeReaddir()) {
     scanned++
-    const abs = path.join(LOOPS_DIR, file)
+    const abs = path.join(loopsDir(), file)
     let raw: string
     try {
       raw = fs.readFileSync(abs, 'utf8')
@@ -293,7 +294,7 @@ export function listLoops(): Loop[] {
   for (const file of safeReaddir()) {
     let raw: string
     try {
-      raw = fs.readFileSync(path.join(LOOPS_DIR, file), 'utf8')
+      raw = fs.readFileSync(path.join(loopsDir(), file), 'utf8')
     } catch {
       continue
     }
@@ -335,7 +336,7 @@ export function createLoop(input: {
   const title = (input.title || '').trim()
   if (!title) return { ok: false, error: 'title required' }
 
-  fs.mkdirSync(LOOPS_DIR, { recursive: true })
+  fs.mkdirSync(loopsDir(), { recursive: true })
   let slug = loopSlug(party, title)
   let abs = resolveLoopPath(slug)
   if (!abs) return { ok: false, error: 'could not derive a valid slug' }
@@ -432,18 +433,18 @@ export function patchLoopMeta(
 // Archive dir — sibling of LOOPS_DIR. "Removing" a loop MOVES it here (never a hard
 // delete), so it drops off the board (listLoops only reads LOOPS_DIR, non-recursively)
 // while staying fully recoverable.
-const LOOPS_ARCHIVE_DIR = path.join(WS_ROOT, 'loops-archive')
+function loopsArchiveDir(): string { return path.join(wsRoot(), 'loops-archive') }
 
 // Move a loop out of the active set. Reversible: the file lands in loops-archive/.
 export function archiveLoop(slug: string): LoopResult {
   const abs = resolveLoopPath(slug)
   if (!abs || !fs.existsSync(abs)) return { ok: false, error: 'loop not found' }
   const loop = readLoop(slug)
-  fs.mkdirSync(LOOPS_ARCHIVE_DIR, { recursive: true })
-  let dest = path.join(LOOPS_ARCHIVE_DIR, path.basename(abs))
+  fs.mkdirSync(loopsArchiveDir(), { recursive: true })
+  let dest = path.join(loopsArchiveDir(), path.basename(abs))
   if (fs.existsSync(dest)) {
     // Don't clobber a previously-archived loop with the same slug.
-    dest = path.join(LOOPS_ARCHIVE_DIR, path.basename(abs).replace(/\.md$/, `-${Date.now()}.md`))
+    dest = path.join(loopsArchiveDir(), path.basename(abs).replace(/\.md$/, `-${Date.now()}.md`))
   }
   fs.renameSync(abs, dest)
   return { ok: true, loop: loop ?? undefined }

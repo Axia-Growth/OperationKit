@@ -12,6 +12,8 @@
 
 .cc-ws-col {
   min-width: min(280px, 100%);
+  /* obj 901131: a lane is exactly its own width — content never sizes it. */
+  max-width: 100%;
   display: flex;
   flex-direction: column;
   /* A quiet lane, one step off the ground — not a lighter slab (dark mode
@@ -23,7 +25,18 @@
   border-radius: 12px;
 }
 
+/* obj 901131: a card is exactly the lane's width and NOTHING inside can widen
+   it. A long unbroken title, decision text or URL used to overflow the tile,
+   which made the lane scroll sideways (overflow-y:auto implies overflow-x:auto)
+   and every card in Needs You drifted left. So: the tile can shrink below its
+   content (min-width:0), never grows past the lane (max-width:100%), clips
+   whatever still sticks out (overflow:hidden), and long tokens wrap at any
+   character (overflow-wrap:anywhere) instead of running on. */
 .cc-ws-card {
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  overflow-wrap: anywhere;
   background: var(--surface-1);
   border: 1px solid var(--line);
   border-radius: 8px;

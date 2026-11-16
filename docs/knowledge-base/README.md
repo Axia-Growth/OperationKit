@@ -13,6 +13,8 @@ You find it on the **Knowledge base** page (Docs in the menu): click **Import fi
 
 **Starting from a pile of existing files?** Use **Knowledge base → Set up**: drop in whole folders of documents, spreadsheets, slide decks, exports and notes, and the Knowledge Base Setup agent files them into people, companies & clients, projects, decisions, processes, products and a glossary — and asks you about anything it should not guess. See [How to set up your knowledge base](setup-agent.md).
 
+**Reorganising folders?** Whoever runs the server can move files without breaking links with [the move tool](vault-migrate.md).
+
 ---
 
 ## The five parts

@@ -22,7 +22,7 @@ import path from 'path'
 import { getDb } from '../../db/index.js'
 import { getDefaultModelId } from '../model-registry.js'
 import { cardModelForBot } from './bot-card-model.js'
-import { depthForParent } from '../../lib/objective-depth.js'
+import { CHILD_CAP_PER_PARENT, depthForParent, openChildCount } from '../../lib/objective-depth.js'
 import { checkAgentInWorkspacePool, defaultAgentForWorkspace } from '../../routes/objectives-helpers.js'
 import { broadcast } from '../../ws/index.js'
 import { getInitialStatus, validateOwnerBot, type Objective } from '@operationkit/shared'
@@ -42,13 +42,15 @@ import { userHasWorkspace } from '../../middleware/workspace.js'
 import { webFetch, webSearch, WebToolError, MAX_SEARCH_RESULTS, DEFAULT_SEARCH_RESULTS, type WebToolDeps } from './web-tools.js'
 import { botMayUseWorkspace, botWorkspaceAllowlist, personaOwnershipBlocked } from './bot-workspaces.js'
 import { withResolvedKnowledgeFolders } from './knowledge-folders.js'
-import { containedIn, realpathOrNull, workspaceScopeRoots } from '../../lib/kb-workspace-scope.js'
+import { containedIn, realpathOrNull, resolveVaultPath, workspaceScopeRoots } from '../../lib/kb-workspace-scope.js'
 import { searchKnowledgeBase } from '../kb-semantic/search.js'
 import { noteKbWrite } from '../kb-semantic/service.js'
 import type { ChatLane } from './threads.js'
 import { fullAccessActive, fullAccessAnywhere, protectedCardRefusal, refuseExclusion } from './bot-full-access.js'
 import { exclusionGate, type OutboundCall } from './full-access-exclusions.js'
 import { FULL_ACCESS_FNS, fullAccessToolSpecs, runFullAccessTool, withFullAccess, type FullAccessHost } from './full-access-tools.js'
+import { CARD_SANDBOX_FNS, cardSandboxToolSpecs, runCardSandboxTool } from './card-sandbox-tools.js'
+import { CARD_BROWSER_FNS, cardBrowserToolSpecs, runCardBrowserTool } from './card-browser-tools.js'
 import {
   BotMessageRefused,
   botMessageWorkspaces,
@@ -160,6 +162,7 @@ const SPECS: Record<string, ToolSpec[]> = {
       title: { type: 'string', description: 'Short, specific title' },
       description: { type: 'string', description: 'What to do, the context, and what "done" looks like' },
       workspace: { type: 'string', description: 'Workspace slug to file the card in. Omit for this chat\'s workspace. Only workspaces this bot is granted and the person belongs to are accepted.' },
+      parent_id: { type: 'integer', description: 'File this card UNDER another card: that card\'s number. Use it whenever the work belongs to an existing card, instead of writing "Parent: #N" in the text. The parent must be a top-level card you can see; the new card lands in the parent\'s workspace.' },
     }, ['title', 'description']))],
   raise_decision: [fn('raise_decision', 'Ask the person to DECIDE something on a board card, with a short briefing. It shows at the top of the card and in this chat with a Q&A thread and Approve/Deny; their choice is sent to the card. Use this instead of asking for a decision in prose. Under about 200 words in total. Refused if the question or options are missing.',
     obj({
@@ -301,9 +304,7 @@ export function toolSpecsFor(agent: ChatAgent): ToolSpec[] {
 export function toolSpecsForContext(ctx: ToolContext): ToolSpec[] {
   const elevated = withFullAccess(ctx)
   const out = toolSpecsFor(elevated.agent)
-  const extra = fullAccessToolSpecs(ctx)
-  if (extra.length === 0) return out
-  out.push(...extra)
+  out.push(...fullAccessToolSpecs(ctx), ...cardSandboxToolSpecs(ctx), ...cardBrowserToolSpecs(ctx))
   return out
 }
 
@@ -399,16 +400,24 @@ export function kbWorkspaceGuard(ctx: Pick<ToolContext, 'kbRoot' | 'agent'> & { 
   // the whole knowledge base (or above it) is not a workspace folder — a
   // vault_path pointed at the KB root would otherwise wall off everything — so
   // it is left out; the more specific folders still decide.
+  //
+  // A vault_path the scope rule refuses (it overlaps another workspace's
+  // folder: inside it, equal to it or containing it — obj 901152) is never a
+  // GRANT: it stays in the list as a deny-only wall, so a bot granted that
+  // workspace cannot reach another workspace's notes through it, and a path
+  // under it is still refused to bots that do not hold its workspace.
   const kb = realpathOrNull(ctx.kbRoot) ?? path.resolve(ctx.kbRoot)
   const roots: { slug: string; root: string; allowed: boolean }[] = []
   for (const r of rows) {
-    const candidates = [
-      ...workspaceScopeRoots(r.slug, ctx.kbRoot),
-      ...(r.vault_path ? [realpathOrNull(r.vault_path) ?? path.resolve(r.vault_path)] : []),
-    ]
-    for (const root of new Set(candidates)) {
+    const scope = workspaceScopeRoots(r.slug, ctx.kbRoot)
+    const granted = allow.includes(r.slug)
+    for (const root of new Set(scope)) {
       if (containedIn(kb, root)) continue
-      roots.push({ slug: r.slug, root, allowed: allow.includes(r.slug) })
+      roots.push({ slug: r.slug, root, allowed: granted })
+    }
+    if (r.vault_path && !r.vault_path.includes('\0')) {
+      const raw = resolveVaultPath(r.vault_path)
+      if (!scope.includes(raw) && !containedIn(kb, raw)) roots.push({ slug: r.slug, root: raw, allowed: false })
     }
   }
   return {
@@ -674,9 +683,48 @@ export function chatOwnerBotName(agent: Pick<ChatAgent, 'slug' | 'name'>, db: Re
   return null
 }
 
-function createCard(ctx: ToolContext, title: string, description: string, workspaceRaw?: unknown): { id: number; status: string; note?: string; workspace: string } {
+/**
+ * The parent a chat card is filed under (obj 900958), and the workspace that
+ * follows from it. Same rules as the internal create route, plus the chat's own
+ * scope: the parent must be a card this person AND this bot can see (a card in
+ * a workspace the bot is not granted reads exactly like a missing one), must be
+ * top-level (one level of nesting only), and must be under the child cap. The
+ * child lands in the parent's workspace, which still has to be one the bot may
+ * file in for this person.
+ */
+function cardParent(ctx: ToolContext, parentRaw: unknown, workspaceRaw: unknown): { parentId: number | null; workspace: string } {
+  if (parentRaw === undefined || parentRaw === null || parentRaw === '') return { parentId: null, workspace: cardWorkspace(ctx, workspaceRaw) }
+  const parentId = typeof parentRaw === 'string' && /^#?\d+$/.test(parentRaw.trim()) ? Number(parentRaw.trim().replace('#', '')) : parentRaw
+  if (typeof parentId !== 'number' || !Number.isInteger(parentId) || parentId <= 0) throw new ToolUseError('parent_id must be a card number. The card was NOT filed.')
+  const notFound = () => new ToolUseError(`Parent card #${parentId} was not found on a board you can see. The card was NOT filed.`)
+  try {
+    getBoardCard(ctx, parentId)
+  } catch (e) {
+    if (e instanceof ToolUseError) throw notFound()
+    throw e
+  }
   const db = getDb()
-  const workspace = cardWorkspace(ctx, workspaceRaw)
+  const parent = db.prepare('SELECT workspace, parent_id FROM objectives WHERE id = ? AND deleted_at IS NULL').get(parentId) as { workspace: string | null; parent_id: number | null } | undefined
+  if (!parent?.workspace) throw notFound()
+  const named = typeof workspaceRaw === 'string' && workspaceRaw.trim() && workspaceRaw.trim() !== 'all' ? workspaceRaw.trim() : ''
+  if (named && named !== parent.workspace) {
+    throw new ToolUseError(`A card filed under #${parentId} lands in that card's workspace (${parent.workspace}), not "${named}". Leave workspace out, or drop parent_id. The card was NOT filed.`)
+  }
+  const workspace = cardWorkspace(ctx, parent.workspace)
+  if (parent.parent_id != null) {
+    throw new ToolUseError(`Card #${parentId} is itself filed under #${parent.parent_id}; cards nest one level only. File under #${parent.parent_id} instead, or leave parent_id out. The card was NOT filed.`)
+  }
+  const open = openChildCount(db, parentId)
+  if (open >= CHILD_CAP_PER_PARENT) {
+    throw new ToolUseError(`Card #${parentId} already has ${open} open cards under it (the limit is ${CHILD_CAP_PER_PARENT}). Finish or cancel some first. The card was NOT filed.`)
+  }
+  return { parentId, workspace }
+}
+
+function createCard(ctx: ToolContext, title: string, description: string, workspaceRaw?: unknown, parentRaw?: unknown): { id: number; status: string; note?: string; workspace: string; parent_id?: number } {
+  const db = getDb()
+  const { parentId, workspace } = cardParent(ctx, parentRaw, workspaceRaw)
+  const under = parentId != null ? { parent_id: parentId } : {}
   const worker = chatCardAgent(ctx.agent, workspace)
   const bot = botForAgentSlug(ctx.agent.slug, db)
   if (bot) {
@@ -687,7 +735,9 @@ function createCard(ctx: ToolContext, title: string, description: string, worksp
       workspace,
       title,
       description,
-      idempotencyKey: botJobIdempotencyKey(title, description),
+      // The same request under a different parent is a different job, not a replay.
+      idempotencyKey: botJobIdempotencyKey(title, description) + (parentId != null ? `:p${parentId}` : ''),
+      parentId,
       agentContext: worker.agentContext,
       model: chatCardModel(ctx.agent),
     })
@@ -702,6 +752,7 @@ function createCard(ctx: ToolContext, title: string, description: string, worksp
       id: r.objectiveId,
       status: r.status,
       workspace,
+      ...under,
       note: r.reused
         ? 'This is the card you already filed for that request — not a new one.'
         : r.start.allowed
@@ -722,10 +773,10 @@ function createCard(ctx: ToolContext, title: string, description: string, worksp
   ].join('\n')
   const info = db
     .prepare(
-      `INSERT INTO objectives (title, description, agent_context, workspace, category, depth, assigned_user_id, created_by, type, status, origin, owner_bot, model)
-       VALUES (?, ?, ?, ?, 'general', ?, ?, ?, 'task', ?, 'agent_chat', ?, ?)`,
+      `INSERT INTO objectives (title, description, agent_context, workspace, category, parent_id, depth, assigned_user_id, created_by, type, status, origin, owner_bot, model)
+       VALUES (?, ?, ?, ?, 'general', ?, ?, ?, ?, 'task', ?, 'agent_chat', ?, ?)`,
     )
-    .run(title.trim().slice(0, 200), body, worker.agentContext, workspace, depthForParent(db, null), ctx.userId, ctx.userId, getInitialStatus('task'), ownerBot, chatCardModel(ctx.agent))
+    .run(title.trim().slice(0, 200), body, worker.agentContext, workspace, parentId, depthForParent(db, parentId), ctx.userId, ctx.userId, getInitialStatus('task'), ownerBot, chatCardModel(ctx.agent))
   const id = Number(info.lastInsertRowid)
   db.prepare('INSERT INTO agent_chat_cards (objective_id, user_id, agent_slug) VALUES (?, ?, ?)').run(id, ctx.userId, ctx.agent.slug)
   const row = db.prepare('SELECT * FROM objectives WHERE id = ?').get(id) as Objective
@@ -734,7 +785,7 @@ function createCard(ctx: ToolContext, title: string, description: string, worksp
   } catch {
     /* no WS server in tests */
   }
-  return { id, status: row.status, workspace }
+  return { id, status: row.status, workspace, ...under }
 }
 
 export interface ChatCardStatus { id: number; title: string; status: string; summary: string | null; pr_url: string | null; updated_at: string; url: string }
@@ -1025,6 +1076,8 @@ export async function runChatTool(ctxIn: ToolContext, fnName: string, args: Reco
   const ctx = withKbFolders(ctxIn)
   // obj 900972: the Full access tool family. Checked again inside, on every call.
   if (FULL_ACCESS_FNS.has(fnName)) return runFullAccessTool(ctx, fnName, args)
+  if (CARD_SANDBOX_FNS.has(fnName)) return runCardSandboxTool(ctx, fnName, args)
+  if (CARD_BROWSER_FNS.has(fnName)) return runCardBrowserTool(ctx, fnName, args)
   if (BOT_MESSAGE_FNS.has(fnName)) return runBotMessageTool(ctx, fnName, args)
   if (fnName === 'secrets_list' || fnName === 'secret_http') return runSecretTool(ctx, fnName, args)
   if (fnName === 'search' && args.mode !== 'keyword' && agentHasTool(ctx.agent, 'search')) {
@@ -1394,8 +1447,8 @@ export function runTool(ctxIn: ToolContext, fnName: string, args: Record<string,
     }
     case 'create_objective': {
       const title = s(args, 'title', true)
-      const card = createCard(ctx, title, s(args, 'description'), args.workspace)
-      return { result: { id: card.id, status: card.status, workspace: card.workspace, note: card.note ?? 'Card is on the board. Tell the person its number.' }, summary: `Created card #${card.id}: ${title}`, objective_id: card.id }
+      const card = createCard(ctx, title, s(args, 'description'), args.workspace, args.parent_id)
+      return { result: { id: card.id, status: card.status, workspace: card.workspace, ...(card.parent_id ? { parent_id: card.parent_id } : {}), note: card.note ?? 'Card is on the board. Tell the person its number.' }, summary: `Created card #${card.id}: ${title}`, objective_id: card.id }
     }
     case 'raise_decision': {
       const id = Number(args.card_id)

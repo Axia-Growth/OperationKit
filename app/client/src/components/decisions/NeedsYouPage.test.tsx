@@ -152,6 +152,15 @@ describe('the stack shows one decision at a time, with the full briefing', () =>
     expect(text(container)).not.toContain('Where things stand')
   })
 
+  it('a High Agency stop the server wrote a briefing for shows a real decision and says who wrote it (obj 901151)', async () => {
+    queue = [item(8, { source: 'job_disposition', flags: ['auto_briefing'], raw_note: 'Decision #6 done: two things to check before the next deploy.' })]
+    const { container } = await mount()
+    expect(container.querySelector('[data-testid="stack-no-briefing"]')).toBeNull()
+    expect(text(container.querySelector('[data-testid="stack-auto-briefing"]'))).toBe('Outreach Bot stopped without a briefing, so this one was written automatically from its note and session summary.')
+    expect(text(container.querySelector('[data-testid="stack-question"]'))).not.toBe('What is being decided was not stated.')
+    expect([...container.querySelectorAll('[data-testid="decision-option"]')].length).toBeGreaterThanOrEqual(2)
+  })
+
   it('says plainly when nothing needs you', async () => {
     queue = []
     const { container } = await mount()
@@ -179,7 +188,7 @@ describe('stack navigation', () => {
   })
 
   it('pressing 2 chooses option B, shows the one-line result, then the next decision slides in', async () => {
-    const { container } = await mount({ autoAdvanceMs: 30 })
+    const { container } = await mount({ autoAdvanceMs: 300 })
     await key('2')
     expect(decides()).toHaveLength(1)
     expect(decides()[0].url).toMatch(/\/decisions\/1\/decide$/)
@@ -187,7 +196,7 @@ describe('stack navigation', () => {
     const res = container.querySelector('[data-testid="stack-result"]')
     expect(text(res)).toContain('You chose B. Card #901 restarted with your choice.')
     expect(res?.getAttribute('data-outcome')).toBe('sent')
-    await wait(80)
+    await wait(450)
     expect(container.querySelector('[data-testid="stack-result"]')).toBeNull()
     expect(shownId(container)).toBe(2)
     expect(text(container.querySelector('[data-testid="stack-position"]'))).toBe('1 of 2')
@@ -232,7 +241,7 @@ describe('stack navigation', () => {
       }
       return { body: { decision: { ...d, state: 'decided', chosen: 'A', outcome: 'card_done' }, outcome: 'card_done', outcome_text: `Card #${d.objective_id} is already done, so nothing was sent yet. Press Reopen and apply to act on it.`, can_reopen: true } }
     }
-    const { container } = await mount({ autoAdvanceMs: 20 })
+    const { container } = await mount({ autoAdvanceMs: 300 })
     await key('1')
     await wait(60)
     expect(container.querySelector('[data-testid="stack-result"]')?.getAttribute('data-outcome')).toBe('card_done')
@@ -240,7 +249,7 @@ describe('stack navigation', () => {
     await click(button(container, 'Reopen and apply'))
     expect(decides()[1].body).toEqual({ choice: 'A', reopen: true })
     expect(text(container.querySelector('[data-testid="stack-result"]'))).toContain('was done, so it was reopened')
-    await wait(60)
+    await wait(450)
     expect(shownId(container)).toBe(2)
   })
 
@@ -250,12 +259,12 @@ describe('stack navigation', () => {
       queue = queue.filter(i => i.decision.id !== id)
       return { status: 409, body: { error: 'This decision is no longer needed (card finished), so nothing was sent and nothing changed.', code: 'decision_stale', decision: { ...d, state: 'withdrawn', withdrawn_reason: 'no longer needed (card finished)' } } }
     }
-    const { container } = await mount({ autoAdvanceMs: 20 })
+    const { container } = await mount({ autoAdvanceMs: 300 })
     await click(button(container, /Approve A/))
     const res = container.querySelector('[data-testid="stack-result"]')
     expect(res?.getAttribute('data-outcome')).toBe('stale')
     expect(text(res)).toContain('no longer needed (card finished), so nothing was sent')
-    await wait(60)
+    await wait(450)
     expect(shownId(container)).toBe(2)
   })
 
