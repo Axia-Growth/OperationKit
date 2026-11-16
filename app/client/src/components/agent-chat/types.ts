@@ -1,5 +1,5 @@
 // Wire types for /api/agent-chat (obj 719987). Mirrors routes/agent-chat.ts.
-import type { ModelRow, ObjectiveStatus } from '@operationkit/shared'
+import type { BotFullAccessSummary, ModelRow, ObjectiveStatus } from '@operationkit/shared'
 
 export type AgentColour = 'blue' | 'pink' | 'green' | 'amber' | 'grey'
 export type ProviderId = 'claude' | 'anthropic' | 'openai' | 'xai' | 'openai-compatible' | 'demo'
@@ -42,6 +42,11 @@ export interface ChatAgentInfo {
    * ones the viewer belongs to; `count` is the full number. Older servers omit it.
    */
   workspace_access?: { mode: BotAccessMode; workspaces: string[]; count: number }
+  /**
+   * obj 900972 — the workspaces where this bot has Full access right now (only
+   * the ones the viewer belongs to), for the sidebar and bot-page badge. Older servers omit it.
+   */
+  full_access?: BotFullAccessSummary
 }
 
 /**
@@ -68,6 +73,8 @@ export interface BotWorkspaceAccessResponse {
   workspace_options?: { slug: string; name: string }[]
   /** After a revoke: High Agency was woken in that workspace and is now off. */
   high_agency_switched_off?: boolean
+  /** After a revoke (obj 900972): the workspaces where Full access ended with it. */
+  full_access_switched_off?: string[]
 }
 
 /**

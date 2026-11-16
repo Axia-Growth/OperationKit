@@ -588,3 +588,62 @@ describe('New bot button (obj 900866)', () => {
     expect(writes().some(c => c.url.endsWith('/messages'))).toBe(false)
   })
 })
+
+/* obj 900972 — a bot with Full access is marked in the sidebar (row and pinned
+   tile) and on its page header, where the workspace and the expiry are named.
+   A bot without it carries no badge. */
+describe('Full access badge', () => {
+  const withFullAccess = (slug: string, workspaces: { workspace: string; expires_at: string | null }[]) => {
+    Object.assign(agents.find(a => a.slug === slug)!, { full_access: { workspaces } })
+  }
+
+  it('marks a bot with Full access in its sidebar row, and only that bot', async () => {
+    withFullAccess('dev-bot', [{ workspace: 'operationkit', expires_at: null }])
+    await mount()
+    await settle()
+    const badge = row('dev-bot')!.querySelector('[data-full-access-badge]')
+    expect(badge).not.toBeNull()
+    expect(badge!.textContent).toContain('Full access')
+    // Read out in full for screen readers and on hover.
+    expect(badge!.getAttribute('title')).toBe('Full access in operationkit')
+    expect(badge!.querySelector('.sr-only')!.textContent).toBe('Full access in operationkit')
+    expect(row('marketing-bot')!.querySelector('[data-full-access-badge]')).toBeNull()
+    expect(row('helper')!.querySelector('[data-full-access-badge]')).toBeNull()
+  })
+
+  it('marks a pinned bot on its tile', async () => {
+    withFullAccess('ops-bot', [{ workspace: 'ops', expires_at: null }])
+    await mount()
+    await settle()
+    const tile = host.querySelector('li[data-bot-tile="ops-bot"]')!
+    expect(tile.querySelector('[data-full-access-badge]')!.getAttribute('title')).toBe('Full access in ops')
+    expect(tile.querySelector('button')!.getAttribute('aria-label')).toContain('Full access in ops')
+  })
+
+  it('shows the workspace and the expiry on the bot page header', async () => {
+    withFullAccess('dev-bot', [{ workspace: 'operationkit', expires_at: '2030-03-09 12:00:00' }])
+    await mount('/chat/dev-bot')
+    await settle()
+    const header = host.querySelector('section[aria-label="Conversation with Dev Bot"] header')!
+    const badge = header.querySelector('[data-full-access-badge]')!
+    expect(badge.textContent).toMatch(/Full access · operationkit · until .*2030/)
+    expect(badge.getAttribute('title')).toMatch(/^Full access in operationkit \(until .*2030\)$/)
+    // The row badge stays compact: no workspace, no date.
+    expect(row('dev-bot')!.querySelector('[data-full-access-badge] [aria-hidden="true"]:not(svg)')!.textContent).toBe('Full access')
+  })
+
+  it('names how many workspaces when there is more than one, and no expiry when none is set', async () => {
+    withFullAccess('dev-bot', [{ workspace: 'ops', expires_at: null }, { workspace: 'sales', expires_at: null }])
+    await mount('/chat/dev-bot')
+    await settle()
+    const header = host.querySelector('section[aria-label="Conversation with Dev Bot"] header')!
+    expect(header.querySelector('[data-full-access-badge]')!.textContent).toContain('Full access · 2 workspaces')
+    expect(header.querySelector('[data-full-access-badge]')!.textContent).not.toContain('until')
+  })
+
+  it('shows no badge on the header of a bot without Full access', async () => {
+    await mount('/chat/dev-bot')
+    await settle()
+    expect(host.querySelector('section[aria-label="Conversation with Dev Bot"] header [data-full-access-badge]')).toBeNull()
+  })
+})

@@ -10,6 +10,7 @@ import type { ChatAgent } from './agent-defs.js'
 import type { ToolSpec, ToolOutcome } from './tools.js'
 import { agentHasTool, ToolUseError } from './tools.js'
 import { callServerTool, enabledToolsOf, listServerRows } from '../workspace-mcp-servers.js'
+import { exclusionGate } from './full-access-exclusions.js'
 
 export interface McpToolTarget {
   serverId: number
@@ -60,9 +61,27 @@ export async function runMcpTool(
   set: McpToolSet,
   fnName: string,
   args: Record<string, unknown>,
+  /** obj 900972: the bot making the call, for the Full access exclusion gate. */
+  bot?: { slug: string; botName?: string; userId?: number },
 ): Promise<ToolOutcome> {
   const target = set.targets.get(fnName)
   if (!target) throw new ToolUseError(`Tool "${fnName}" is not allowed for this agent.`)
+  if (bot) {
+    // A connector that reaches DNS / Cloudflare Access, billing, keys or a secret
+    // store is a hard exclusion for a bot with Full access here: refused and
+    // logged before the call goes out. Only billing has a switch an admin can turn on.
+    const row = listServerRows(workspace).find(r => r.id === target.serverId)
+    let host: string | null = null
+    try { host = row ? new URL(row.url).hostname : null } catch { host = null }
+    const refusal = exclusionGate({
+      slug: bot.slug,
+      botName: bot.botName,
+      workspace,
+      userId: bot.userId,
+      call: { what: `${target.tool} on the ${target.serverName} connector`, connector: { slug: row?.slug, name: row?.name ?? target.serverName, catalogId: row?.catalog_id, host }, tool: target.tool },
+    })
+    if (refusal) throw new ToolUseError(refusal)
+  }
   let result: unknown
   try {
     result = await callServerTool(workspace, target.serverId, target.tool, args)

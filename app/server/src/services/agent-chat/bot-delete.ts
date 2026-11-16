@@ -19,6 +19,7 @@ import { getDb } from '../../db/index.js'
 import { agentsDir, type ChatAgent } from './agent-defs.js'
 import { forgetBotEverywhere } from './sidebar.js'
 import { forgetBotWorkspaceAccess } from './bot-workspaces.js'
+import { forgetFullAccess } from './bot-full-access.js'
 
 export class BotDeleteRefused extends Error {
   constructor(readonly status: number, message: string) {
@@ -87,5 +88,7 @@ export function deleteBotFolder(agent: ChatAgent, opts: { env?: NodeJS.ProcessEn
   forgetBotEverywhere(agent.slug)
   // Its workspace access goes too (obj 900797): restored or re-created, it starts with none.
   forgetBotWorkspaceAccess(agent.slug)
+  // …and its Full access (obj 900972). The audit log is kept.
+  forgetFullAccess(agent.slug)
   return { slug: agent.slug, moved_to: path.relative(root, target), high_agency_disabled: haDisabled }
 }

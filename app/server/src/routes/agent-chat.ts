@@ -59,6 +59,8 @@ import {
   type BotWorkspaceAccess,
 } from '../services/agent-chat/bot-workspaces.js'
 import { listWorkspaces } from '../services/workspaces.js'
+import fullAccessRouter, { fullAccessSummaries } from './agent-chat-full-access.js'
+import { dropFullAccessForRevokedWorkspaces } from '../services/agent-chat/bot-full-access.js'
 import { getUserWorkspaces } from '../middleware/workspace.js'
 import { logActivity } from './feed.js'
 import { getAttachment, ImageRejected, parseIncomingImages, type IncomingImage } from '../services/agent-chat/attachments.js'
@@ -150,6 +152,8 @@ router.use('/sidebar', sidebarRouter)
 router.use(delegationsRouter)
 // obj 900859: bot-to-bot threads, read-only for people — see the file.
 router.use(botMessagesRouter)
+// obj 900972: per-workspace Full access — admin-browser-only writes, see the file.
+router.use(fullAccessRouter)
 // obj 900947: per-bot Work tab, High Agency Activity feed, sidebar live line — read-only.
 router.use(botWorkRouter)
 
@@ -325,11 +329,13 @@ router.get('/agents', (req: AuthRequest, res) => {
   // obj 900797: each bot's workspace access (no row = a bot added later: restricted, none).
   let access: ReturnType<typeof allBotWorkspaceAccess> = new Map()
   try { access = allBotWorkspaceAccess() } catch { /* no table yet → every bot reads as restricted, none */ }
+  // obj 900972: where each bot has Full access right now, for the sidebar and bot-page badge.
+  const fullAccess = fullAccessSummaries(req)
   res.json({
     agents: agents.map(a => {
       const h = ha.get(a.slug)
       const acc = access.get(a.slug) ?? { mode: 'restricted' as const, workspaces: [] }
-      return { ...publicAgent(a, false, about.get(a.slug), workspaceAccessSummary(req, acc)), answered_by: providerFor(a), high_agency: { enabled: !!h?.enabled, level: h?.level ?? 1 } }
+      return { ...publicAgent(a, false, about.get(a.slug), workspaceAccessSummary(req, acc)), answered_by: providerFor(a), high_agency: { enabled: !!h?.enabled, level: h?.level ?? 1 }, full_access: fullAccess.get(a.slug) ?? { workspaces: [] } }
     }),
     demo: isDemoOn(),
     providers: availableProviders(),
@@ -522,8 +528,10 @@ router.put('/agents/:slug/workspaces', (req: AuthRequest, res) => {
   try {
     const r = setBotWorkspaces(a.slug, (req.body ?? {}).workspaces, req.user!.username)
     const haOff = reconcileHighAgencyAccess(a.slug, req.user!.username)
+    // obj 900972: Full access ends with the workspace it was granted in.
+    const faOff = dropFullAccessForRevokedWorkspaces(a.slug, req.user!.username)
     logAccessChange(req, a, 'set', r.access.workspaces, haOff ? 'High Agency switched off: its wake workspace is no longer granted' : undefined)
-    res.json({ ...workspaceAccessPayload(req, a.slug), high_agency_switched_off: haOff })
+    res.json({ ...workspaceAccessPayload(req, a.slug), high_agency_switched_off: haOff, full_access_switched_off: faOff })
   } catch (err) {
     if (workspaceAccessError(res, err)) return
     throw err
@@ -554,8 +562,9 @@ router.delete('/agents/:slug/workspaces/:workspace', (req: AuthRequest, res) => 
     const ws = String(req.params.workspace)
     const r = revokeBotWorkspace(a.slug, ws, req.user!.username)
     const haOff = reconcileHighAgencyAccess(a.slug, req.user!.username)
+    const faOff = dropFullAccessForRevokedWorkspaces(a.slug, req.user!.username)
     if (r.changed) logAccessChange(req, a, 'revoked', [ws], haOff ? 'High Agency switched off: it woke in this workspace' : undefined)
-    res.json({ ...workspaceAccessPayload(req, a.slug), high_agency_switched_off: haOff })
+    res.json({ ...workspaceAccessPayload(req, a.slug), high_agency_switched_off: haOff, full_access_switched_off: faOff })
   } catch (err) {
     if (workspaceAccessError(res, err)) return
     throw err

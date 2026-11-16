@@ -9,6 +9,7 @@ import { Alert, Button, EmptyState, IconButton, Skeleton, SkeletonText, cn, useC
 import { ThinkingIndicator } from '../design/primitives'
 import { Tabs } from '../ui/Tabs'
 import { AgentAvatar, AssistantBubble, BotThreadLink, CardChip, DraftCard, ErrorLine, ToolLine, UserBubble } from './ChatItems'
+import { FullAccessBadge } from './FullAccessBadge'
 import { BotMessagesPanel } from './BotMessagesPanel'
 import { AgentInfoPanel } from './AgentInfoPanel'
 import { collectImages, humanSize, toWireImages, type PendingImage } from './attachments'
@@ -598,7 +599,11 @@ function Conversation({
         </IconButton>
         <AgentAvatar agent={agent} />
         <div className="min-w-[9rem] flex-1">
-          <h2 className="truncate font-display text-lg font-semibold tracking-tight text-fg-0">{agent.name}</h2>
+          <div className="flex min-w-0 items-center gap-2">
+            <h2 className="min-w-0 truncate font-display text-lg font-semibold tracking-tight text-fg-0">{agent.name}</h2>
+            {/* obj 900972: Full access, with the workspace and the expiry when one is set. */}
+            <FullAccessBadge access={agent.full_access} variant="full" />
+          </div>
           <p className="truncate text-xs text-fg-2">
             Answers with <span className="text-fg-1" title={agent.answered_by.model ?? undefined}>{answeredBy}</span>
             {agent.version && <span> · v{agent.version}</span>}

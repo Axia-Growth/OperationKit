@@ -6,6 +6,7 @@ import { registerInternalCreateRoutes } from './internal-create.js'
 import { registerInternalPreviewRoutes } from './internal-preview.js'
 import { registerInternalGmailRoutes } from './internal-gmail.js'
 import { registerInternalReposRoutes } from './internal-repos.js'
+import { registerInternalFullAccessRoutes } from './internal-full-access.js'
 import { requireInternalSecret } from '../middleware/internal-secret.js'
 import { runDevFeedbackBridge, DEV_FEEDBACK_INSTANCES } from '../services/dev-feedback-bridge.js'
 
@@ -18,6 +19,8 @@ registerInternalProgressRoutes(router)
 registerInternalGmailRoutes(router)
 registerInternalHermesRoutes(router)
 registerInternalReposRoutes(router)
+// obj 900972: what a card session of a Full access bot may do (session token only).
+registerInternalFullAccessRoutes(router)
 
 // Manual trigger for the dev_feedback ↔ CC-objective bridge (obj 711117 W4;
 // multi-workspace obj 712905).
