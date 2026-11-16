@@ -29,6 +29,16 @@ export function initAuditSchema(db: Database.Database): void {
     CREATE INDEX IF NOT EXISTS idx_objective_audit_event ON objective_audit(event_type);
   `)
 
+  // reason (obj 900952): the stated reason for a move that needed one — today an
+  // agent key closing a PR card whose AI review did not pass (`override_reason`
+  // on PATCH /:id/status). NULL on every other row.
+  {
+    const cols = db.prepare('PRAGMA table_info(objective_audit)').all() as { name: string }[]
+    if (!cols.some(c => c.name === 'reason')) {
+      db.exec('ALTER TABLE objective_audit ADD COLUMN reason TEXT')
+    }
+  }
+
   // external_check_remediations — auto-remediation loop for third-party PR check
   // failures (obj 1960). One row per UNIQUE (repo, pr_number, check_name, head_sha)
   // failure event we have acted on. The UNIQUE key is the idempotency/dedup guard:

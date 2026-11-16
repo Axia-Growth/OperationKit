@@ -52,7 +52,7 @@ The key above is the **legacy full-access key**: it acts as you everywhere and k
   | `board:write` | create, edit, `/message`, `/stop`, status moves other than the two below; **New workflow**, draft a workflow version, validate (`POST /api/flows`, `/api/flows/:id/versions`, `/api/flows/validate`) |
   | `board:start` | `PATCH …/status {"status":"working"}`, start/approve planning, **create with `"start": true`** (needs `board:write` too); self-test or run a workflow (`POST /api/flows/:id/test`, `/api/flows/:id/runs`) |
   | `board:cancel` | `PATCH …/status {"status":"cancelled"}` — retire a duplicate (obj 718417: split out of `board:done`) |
-  | `board:done` | `PATCH …/status {"status":"done"}` — the human signature |
+  | `board:done` | `PATCH …/status {"status":"done"}` — the human signature. A key that holds it still needs a passing AI review or an `override_reason` to close a card with a pull request (see [Closing a card with an agent key](#closing-a-card-with-an-agent-key)) |
   | `board:delete` | `DELETE /api/objectives/:id` |
   | `vault:read` / `vault:write` | `GET /api/docs/*` + `GET /api/files/search\|stat\|download` / `PUT /api/docs/file`, `POST /api/kb-wiki/answers` |
   | `secrets:use` | `GET /api/secrets-broker/list` + `POST /api/secrets-broker/http` — use a named secret without seeing it (obj 900749). **Never in the default set.** See [Secrets: use without reveal](#secrets-use-without-reveal-obj-715532) |
@@ -115,6 +115,27 @@ every turn. The loop is:
    `403 missing_scope: board:done`.
 
 Do **not** create a card to answer “what's the status?”. Read attention + changes.
+
+### Closing a card with an agent key
+
+A close made with an agent key is recorded as the bot (`bot:<key label>` on the card's audit trail), never as
+a person, and it does not mark the card as ended by a human. A person closing a card in the app is unchanged.
+
+When the card has a pull request and its AI review verdict is not `pass`, an agent key's
+`PATCH …/status {"status":"done"}` is refused:
+
+```
+409 { "error": "…", "code": "no_passing_review", "ai_review_verdict": "fail" | "blocked" | null }
+```
+
+To close it anyway, state why. The reason is stored with the key label on the audit trail:
+
+```json
+{ "status": "done", "override_reason": "PR merged by the owner; the review was blocked on a preview outage." }
+```
+
+`override_reason` must be non-empty text (kept up to 1,000 characters). It is ignored on any other move, and it
+does not replace the `board:done` scope or any other completion gate. Never put a secret in it.
 
 Over MCP the loop is the same with typed tools: `whoami` → `get_attention` → `get_changes` → `get_objective` /
 `get_progress` → `create_objective` / `send_message` / `start_objective`. See the [parity table](#parity-every-rest-action-a-bot-takes--its-mcp-tool).

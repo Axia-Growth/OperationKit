@@ -86,17 +86,11 @@ describe('per-route ErrorBoundary inside Layout', () => {
     expect(container.querySelector('[data-testid="ok-page"]')).not.toBeNull()
   })
 
-  it('"Try again" re-mounts the page', () => {
-    let shouldThrow = true
-    function Flaky() {
-      if (shouldThrow) throw new Error('first render fails')
-      return <div data-testid="recovered">ok</div>
-    }
-    mount(<Flaky />, '/jobs')
-    const retry = Array.from(container.querySelectorAll('button')).find(b => b.textContent === 'Try again')!
-    shouldThrow = false
-    flushSync(() => retry.click())
-    expect(container.querySelector('[data-testid="recovered"]')).not.toBeNull()
+  it('shows only a Reload button, no Try again', () => {
+    mount(<Boom />, '/jobs')
+    const buttons = Array.from(container.querySelectorAll('button')).map(b => b.textContent)
+    expect(buttons).toContain('Reload')
+    expect(buttons).not.toContain('Try again')
   })
 
   it('App.tsx wraps the routes in a route-scoped boundary INSIDE Layout', () => {

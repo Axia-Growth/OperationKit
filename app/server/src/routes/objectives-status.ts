@@ -104,12 +104,28 @@ export async function runStatusChange(
   return out
 }
 
+const OVERRIDE_REASON_MAX = 1000
+
+/** `override_reason` from the body: trimmed non-empty text, capped; anything else is no reason. */
+function parseOverrideReason(raw: unknown): string | null {
+  if (typeof raw !== 'string') return null
+  const text = raw.trim()
+  return text ? text.slice(0, OVERRIDE_REASON_MAX) : null
+}
+
 export function registerObjectiveStatusRoutes(router: Router): void {
   router.patch('/:id/status', (req: AuthRequest, res) => handleStatusPatch(req, res))
 }
 
 async function handleStatusPatch(req: StatusRequest, res: Response): Promise<void> {
-  const ctx: StatusChangeContext = req.statusChangeContext ?? { actor: 'user', pathway: 'public-patch-status', humanTerminal: true }
+  // Who is moving the card (obj 900952). A caller that supplies its own context
+  // (bulk triage, bot approval) is taken at its word. Otherwise the actor comes
+  // from how the request authenticated: an agent API key is the bot, never a
+  // human, so its close must not be stamped as a human terminal.
+  const viaAgentKey = !req.statusChangeContext && !!req.agentKey
+  const ctx: StatusChangeContext = req.statusChangeContext ?? (req.agentKey
+    ? { actor: `bot:${req.agentKey.label}`, pathway: 'public-patch-status', humanTerminal: false }
+    : { actor: 'user', pathway: 'public-patch-status', humanTerminal: true })
   const { status } = req.body as StatusChangeRequest
   const db = getDb()
 
@@ -139,6 +155,22 @@ async function handleStatusPatch(req: StatusRequest, res: Response): Promise<voi
       error: `Cannot transition '${existing.type}' objective from '${existing.status}' to '${status}'`,
     })
     return
+  }
+
+  // obj 900952: an agent key may close a PR card only on a passing AI review, or
+  // with a stated reason that goes on the audit trail. The same pass rule the
+  // bot-approve route applies (services/bot-approval.ts); people are not gated.
+  let closeOverrideReason: string | null = null
+  if (viaAgentKey && status === 'done' && (existing.pr_url || existing.pr_number) && existing.ai_review_verdict !== 'pass') {
+    closeOverrideReason = parseOverrideReason((req.body as { override_reason?: unknown }).override_reason)
+    if (!closeOverrideReason) {
+      res.status(409).json({
+        error: `Card #${existing.id} has a pull request and no passing AI review (verdict: ${existing.ai_review_verdict ?? 'none'}). Send "override_reason" to close it anyway, or leave the close to a person.`,
+        code: 'no_passing_review',
+        ai_review_verdict: existing.ai_review_verdict ?? null,
+      })
+      return
+    }
   }
 
   // Enforce concurrent session cap (lib/session-cap.ts — shared with create+start).
@@ -511,10 +543,10 @@ async function handleStatusPatch(req: StatusRequest, res: Response): Promise<voi
     return
   }
 
-  // Human-terminal marker (obj 700415, FIX B). This is the authenticated HUMAN
-  // surface, so a transition here is an explicit human action: mark the objective
-  // human-terminated when a human ends it (→ done/review), and clear the marker
-  // when a human explicitly reopens it (→ working). Machine reactivation pathways
+  // Human-terminal marker (obj 700415, FIX B). Mark the objective
+  // human-terminated when a HUMAN ends it (→ done/review) — never when an agent
+  // key or a bot approval does (ctx.humanTerminal, obj 900952) — and clear the
+  // marker on an explicit reopen (→ working). Machine reactivation pathways
   // consult this marker under CC_HUMAN_TERMINAL_GUARD (default OFF → dry-run).
   if ((status === 'done' || status === 'review') && ctx.humanTerminal) {
     db.prepare('UPDATE objectives SET terminal_by_human = 1 WHERE id = ?').run(req.params.id)
@@ -533,6 +565,7 @@ async function handleStatusPatch(req: StatusRequest, res: Response): Promise<voi
     sessionId: existing.session_id,
     titleSnapshot: existing.title,
     workspace: existing.workspace,
+    reason: closeOverrideReason,
   })
 
   const updated = mapObjective(

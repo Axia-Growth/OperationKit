@@ -3,6 +3,9 @@
 // tool names; `email` and `calendar` are connectors that only ever draft.
 export const KNOWLEDGE_TOOLS = ['search', 'list_folders', 'read_file', 'write_doc', 'file_answer'] as const
 export const BOARD_TOOLS = ['create_objective', 'get_objective', 'list_objectives', 'board_briefing'] as const
+// obj 901028: attach a screenshot (a card artifact, a knowledge-base path, or
+// generated image data) to the bot's reply so it renders inline in chat.
+export const IMAGE_TOOLS = ['attach_image'] as const
 export const CONNECTOR_TOOLS = ['email', 'calendar'] as const
 // obj 900620: `mcp` = the remote MCP servers connected for the chat's
 // workspace in Settings → Integrations. Opt-in per agent file, so no existing
@@ -32,6 +35,7 @@ export const EXPLICIT_ONLY_TOOLS: ReadonlySet<string> = new Set<string>([...SECR
 export const KNOWN_TOOL_NAMES: ReadonlySet<string> = new Set<string>([
   ...KNOWLEDGE_TOOLS,
   ...BOARD_TOOLS,
+  ...IMAGE_TOOLS,
   ...CONNECTOR_TOOLS,
   ...MCP_TOOLS,
   ...WEB_TOOLS,
@@ -56,7 +60,7 @@ export function listsAllTools(tools: readonly string[]): boolean {
   return tools.some(t => ALL_TOOLS_TOKENS.has(t.trim().toLowerCase()))
 }
 
-export type ToolGroup = 'web' | 'knowledge' | 'board' | 'bots' | 'connectors' | 'integrations' | 'secrets'
+export type ToolGroup = 'web' | 'knowledge' | 'board' | 'bots' | 'connectors' | 'integrations' | 'secrets' | 'images'
 
 export interface ToolCatalogEntry {
   name: string
@@ -80,6 +84,7 @@ export const TOOL_CATALOG: readonly ToolCatalogEntry[] = [
   { name: 'get_objective', label: 'Read a card', description: 'Read one board card the person can see.', group: 'board' },
   { name: 'list_objectives', label: 'List cards', description: 'List board cards the person can see.', group: 'board' },
   { name: 'board_briefing', label: 'Board briefing', description: 'What is waiting on the person across their boards.', group: 'board' },
+  { name: 'attach_image', label: 'Attach images', description: 'Attach a screenshot (a card artifact, a knowledge-base path, or a generated image) so it renders inline in the reply.', group: 'images' },
   { name: 'bot_messages', label: 'Message other bots', description: 'Send another bot a message in the same workspace and get its reply on a shared thread.', group: 'bots' },
   { name: 'email', label: 'Email (drafts only)', description: 'Read the inbox and draft replies. Nothing is sent without a click.', group: 'connectors' },
   { name: 'calendar', label: 'Calendar (drafts only)', description: 'Read the calendar and draft events. Nothing is added without a click.', group: 'connectors' },

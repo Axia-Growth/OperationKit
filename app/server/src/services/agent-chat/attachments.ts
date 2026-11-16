@@ -28,6 +28,8 @@ export interface IncomingImage {
   /** Bare base64, no data: prefix. */
   data: string
   bytes: Buffer
+  /** obj 901028: accessibility text set by whoever attached the image (a bot tool call). */
+  alt_text?: string | null
 }
 
 /** What the browser gets back, and what the UI renders. */
@@ -37,6 +39,7 @@ export interface StoredImage {
   media_type: string
   size: number
   url: string
+  alt_text?: string | null
 }
 
 /** A rejected attachment — the route turns this into a 400 the person can act on. */
@@ -53,11 +56,24 @@ export function sniffImageType(b: Buffer): AllowedImageType | null {
   return null
 }
 
-function cleanName(raw: unknown, fallback: string): string {
+export function cleanName(raw: unknown, fallback: string): string {
   const s = typeof raw === 'string' ? raw.trim() : ''
   if (!s) return fallback
   // A name is only ever shown as a label; strip anything path-like.
   return s.replace(/[\\/]/g, '_').slice(0, 120)
+}
+
+/**
+ * The same bytes-decide-the-type check `parseOne` applies to a pasted image,
+ * for bytes read off disk instead (obj 901028's attach_image tool: a card
+ * artifact or knowledge-base path). Throws ImageRejected.
+ */
+export function validateImageBytes(bytes: Buffer, nameHint: string): IncomingImage {
+  if (bytes.length === 0) throw new ImageRejected(`${nameHint} is empty.`)
+  if (bytes.length > MAX_IMAGE_BYTES) throw new ImageRejected(`${nameHint} is too big (5 MB max).`)
+  const sniffed = sniffImageType(bytes)
+  if (!sniffed) throw new ImageRejected(`${nameHint} is not a PNG, JPEG, GIF or WebP image.`)
+  return { name: cleanName(nameHint, `image.${sniffed.split('/')[1].replace('jpeg', 'jpg')}`), media_type: sniffed, data: bytes.toString('base64'), bytes }
 }
 
 function parseOne(raw: unknown, index: number): IncomingImage {
@@ -116,7 +132,14 @@ export function attachmentUrl(id: number): string {
 
 function toStored(r: Record<string, unknown>): StoredImage {
   const id = Number(r.id)
-  return { id, name: String(r.name ?? 'image'), media_type: String(r.media_type), size: Number(r.size ?? 0), url: attachmentUrl(id) }
+  return {
+    id,
+    name: String(r.name ?? 'image'),
+    media_type: String(r.media_type),
+    size: Number(r.size ?? 0),
+    url: attachmentUrl(id),
+    alt_text: r.alt_text == null ? null : String(r.alt_text),
+  }
 }
 
 export function saveImages(
@@ -130,12 +153,13 @@ export function saveImages(
   if (images.length === 0) return []
   const db = getDb()
   const insert = db.prepare(
-    'INSERT INTO agent_chat_attachments (message_id, user_id, agent_slug, name, media_type, size, bytes, thread_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+    'INSERT INTO agent_chat_attachments (message_id, user_id, agent_slug, name, media_type, size, bytes, thread_id, alt_text) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
   )
   const out: StoredImage[] = []
   for (const img of images) {
-    const info = insert.run(messageId, userId, slug, img.name, img.media_type, img.bytes.length, img.bytes, laneThreadId(lane))
-    out.push({ id: Number(info.lastInsertRowid), name: img.name, media_type: img.media_type, size: img.bytes.length, url: attachmentUrl(Number(info.lastInsertRowid)) })
+    const altText = img.alt_text?.trim() || null
+    const info = insert.run(messageId, userId, slug, img.name, img.media_type, img.bytes.length, img.bytes, laneThreadId(lane), altText)
+    out.push({ id: Number(info.lastInsertRowid), name: img.name, media_type: img.media_type, size: img.bytes.length, url: attachmentUrl(Number(info.lastInsertRowid)), alt_text: altText })
   }
   return out
 }
@@ -146,7 +170,7 @@ export function imagesForMessages(messageIds: number[]): Map<number, StoredImage
   if (messageIds.length === 0) return out
   const ph = messageIds.map(() => '?').join(',')
   const rows = getDb()
-    .prepare(`SELECT id, message_id, name, media_type, size FROM agent_chat_attachments WHERE message_id IN (${ph}) ORDER BY id`)
+    .prepare(`SELECT id, message_id, name, media_type, size, alt_text FROM agent_chat_attachments WHERE message_id IN (${ph}) ORDER BY id`)
     .all(...messageIds) as Record<string, unknown>[]
   for (const r of rows) {
     const mid = Number(r.message_id)

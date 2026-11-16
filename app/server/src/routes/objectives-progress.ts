@@ -8,7 +8,9 @@
  *   POST /:id/progress            write a snapshot (owner/admin — a bot driving a card)
  *   GET  /:id/artifacts           list objective-memory files (NOTES.md masked)
  *   GET  /:id/artifacts/file      read one (redacted, byte-capped)
+ *   GET  /:id/artifacts/image     read one as real bytes (png/jpg/gif/webp only, obj 901028)
  */
+import path from 'path'
 import { Router, type Response } from 'express'
 import type { Database } from 'better-sqlite3'
 import type { Objective } from '@operationkit/shared'
@@ -29,7 +31,7 @@ import {
 } from '../services/objective-progress.js'
 import { listSessionStarts, type SessionStartRow } from '../services/session-start-reasons.js'
 import { getFanoutGroup, type FanoutGroup } from '../services/fanout.js'
-import { ArtifactError, listArtifacts, readArtifact } from '../services/live-artifacts.js'
+import { ArtifactError, listArtifacts, readArtifact, readArtifactImage } from '../services/live-artifacts.js'
 import { getPersistedSpawnStart } from '../services/session-spawn-clock.js'
 import { toSecretRequestViews } from '../services/secret-requests.js'
 import { queueAutostartCardView, type QueueAutostartCardView } from '../lib/queue-autostart.js'
@@ -205,6 +207,33 @@ export function registerObjectiveProgressRoutes(router: Router): void {
       res.setHeader('X-Redacted', '1')
       res.setHeader('X-Redaction-Count', String(out.redaction_count))
       res.json(out)
+    } catch (err) {
+      sendArtifactError(res, err)
+    }
+  })
+
+  /**
+   * One screenshot (or other PNG/JPEG/GIF/WebP) out of the card's objective-memory
+   * dir, as real bytes — the one path /artifacts/file refuses (obj 901028). Same
+   * auth + workspace scoping as every route above (`loadReadable` → `canReadObjective`),
+   * same traversal guard (`readArtifactImage` → `resolveArtifactPath`), served
+   * inline with a locked-down CSP so a stored image can't execute in the app's
+   * origin — the same header set the agent-chat attachment route uses.
+   */
+  router.get('/:id/artifacts/image', (req: AuthRequest, res) => {
+    const objective = loadReadable(req, res)
+    if (!objective) return
+    try {
+      const out = readArtifactImage(objective.id, req.query.path)
+      res.set({
+        'Content-Type': out.media_type,
+        'Content-Length': String(out.bytes.length),
+        'Content-Disposition': `inline; filename="${path.basename(out.path).replace(/"/g, '')}"`,
+        'X-Content-Type-Options': 'nosniff',
+        'Content-Security-Policy': "default-src 'none'; sandbox",
+        'Cache-Control': 'private, max-age=3600',
+      })
+      res.end(out.bytes)
     } catch (err) {
       sendArtifactError(res, err)
     }

@@ -347,7 +347,8 @@ export async function runModelLoop(p: {
   ctx: ToolContext
   mcpTools: McpToolSet
   signal?: AbortSignal
-  record: (m: LoopRecord) => void
+  /** obj 901028: a tool's attach_image call hands its image(s) through with the row they belong to. */
+  record: (m: LoopRecord, images?: IncomingImage[]) => void
 }): Promise<LoopResult> {
   const { provider, convo, ctx, mcpTools, record } = p
   for (let step = 0; step < MAX_STEPS; step++) {
@@ -402,7 +403,7 @@ export async function runModelLoop(p: {
             ...(r.objective_id ? { objective_id: r.objective_id } : {}),
             ...(r.bot_conversation_id ? { bot_conversation_id: r.bot_conversation_id } : {}),
           },
-        })
+        }, r.images)
       } catch (err) {
         const msg = err instanceof ToolUseError ? err.message : `Tool failed: ${err instanceof Error ? err.message : String(err)}`
         resultForModel = { error: msg }
@@ -520,6 +521,18 @@ export function laneTurnState(userId: number, slug: string, lane: ChatLane = MAI
     )
     .get(userId, slug, ...params) as { n: number }
   return { running: inFlight.has(turnKey(userId, slug, lane)), queued: Number(r.n) }
+}
+
+/**
+ * Is a turn running in ANY lane of this bot for this person right now (obj
+ * 901025)? Unlike {@link laneTurnState} (one lane, for the composer), this is
+ * what the sidebar row and chat header use for "Working" vs "Idle": a side
+ * thread's turn counts too, since it is still this bot answering this person.
+ */
+export function isAgentChatRunning(userId: number, slug: string): boolean {
+  const prefix = `${userId}:${slug}:`
+  for (const key of inFlight.keys()) if (key.startsWith(prefix)) return true
+  return false
 }
 
 /**
@@ -671,6 +684,10 @@ export async function runTurn(input: TurnInput): Promise<{ messages: ChatMessage
   }
   const signal = controller.signal
   inFlight.set(key, { controller })
+  // obj 901025: push the sidebar/header to "Working" the instant the turn
+  // starts — don't wait for the first assistant row (which can be seconds away
+  // behind a tool call) or the next 30s poll.
+  notifyBotMessage(userId, agent.slug)
   const created: ChatMessageRow[] = []
   // A lane-local addMessage, so no call below can forget which lane it is in.
   const add = (
@@ -760,7 +777,7 @@ export async function runTurn(input: TurnInput): Promise<{ messages: ChatMessage
       ctx,
       mcpTools,
       signal,
-      record: m => { created.push(add(m)) },
+      record: (m, images) => { created.push(add(m, images)) },
     })
     if (loop.kind === 'stopped') {
       // Say so in the lane; an error row is never replayed to the model as history.
@@ -784,6 +801,9 @@ export async function runTurn(input: TurnInput): Promise<{ messages: ChatMessage
     return { messages: created }
   } finally {
     inFlight.delete(key)
+    // obj 901025: push "Idle" back out the instant the turn ends — stopped,
+    // errored, or finished with no final assistant row (e.g. drainOnly).
+    notifyBotMessage(userId, agent.slug)
     // Messages sent while this turn ran are delivered next, in order (obj 900949).
     // The drain gets its own controller: it must outlive the HTTP request that
     // carried THIS turn, and Stop reaches it through inFlight.

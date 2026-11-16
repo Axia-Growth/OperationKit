@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent } from 'react'
 import {
+  AlertTriangle,
   ArrowDown,
   ArrowLeft,
   ArrowRight,
@@ -866,6 +867,35 @@ export function BotSidebar({
 
         {view.empty && <p className="px-3 py-6 text-center text-sm text-fg-2">{emptyText}</p>}
       </nav>
+
+      {isAdmin && (data.problems?.length ?? 0) > 0 && (
+        <section aria-label="Bots that need fixing" className="max-h-[40%] shrink-0 overflow-y-auto border-t border-line-soft px-3 py-3">
+          <h3 className="px-1 text-xs font-medium text-fg-2">Needs fixing</h3>
+          <ul className="mt-1.5 space-y-1.5">
+            {data.problems!.map(p => (
+              <li key={p.file} data-bot-problem={p.slug} className="rounded-md border border-warning/30 bg-warning/10 px-3 py-2 text-sm text-fg-1">
+                <div className="flex items-center gap-2">
+                  <AlertTriangle className="h-4 w-4 shrink-0 text-warning" aria-hidden="true" />
+                  <span className="min-w-0 truncate font-medium text-fg-0">{p.slug}</span>
+                </div>
+                <p className="mt-1 text-xs text-fg-1">
+                  {p.withheld
+                    ? 'This bot is off until its file is fixed. The built-in version was not loaded in its place.'
+                    : 'This bot is off until its file is fixed.'}
+                </p>
+                {p.errors.length > 0 && (
+                  <ul className="mt-1 list-disc space-y-0.5 pl-4 text-xs text-fg-2">
+                    {p.errors.map((e, i) => (
+                      <li key={i} className="break-words">{e}</li>
+                    ))}
+                  </ul>
+                )}
+                <p className="mt-1 break-all font-mono text-xs text-fg-2">{p.file}</p>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
 
       {isAdmin && (
         <div className="border-t border-line-soft px-4 py-3">

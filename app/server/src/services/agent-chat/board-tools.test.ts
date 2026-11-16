@@ -3,7 +3,7 @@
 // The bug: list_objectives / get_objective only read agent_chat_cards (cards the
 // chat itself filed), so a General asked "what is waiting on me?" got zero
 // rows and reported an empty board while the workspace had cards in review.
-import { describe, it, expect, beforeAll, afterAll } from 'vitest'
+import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest'
 import fs from 'fs'
 import os from 'os'
 import path from 'path'
@@ -13,8 +13,21 @@ const TMP_DB = path.join(os.tmpdir(), `cc-chat-board-tools-${process.pid}-${Date
 process.env.DB_PATH = TMP_DB
 const TMP_KB = fs.mkdtempSync(path.join(os.tmpdir(), 'cc-chat-board-kb-'))
 
+// obj 900951: lets one test make the search index throw. Every other call goes to the real search.
+const searchIndex = vi.hoisted(() => ({ fail: null as Error | null }))
+vi.mock('../kb-semantic/search.js', async importOriginal => {
+  const real = await importOriginal<typeof import('../kb-semantic/search.js')>()
+  return {
+    ...real,
+    searchKnowledgeBase: (...a: Parameters<typeof real.searchKnowledgeBase>) => {
+      if (searchIndex.fail) return Promise.reject(searchIndex.fail)
+      return real.searchKnowledgeBase(...a)
+    },
+  }
+})
+
 const { initDb, getDb } = await import('../../db/index.js')
-const { runTool, toolSpecsFor, ToolUseError } = await import('./tools.js')
+const { runTool, runChatTool, toolSpecsFor, ToolUseError } = await import('./tools.js')
 const { seedExistingBotsOnce } = await import('./bot-workspaces.js')
 type Agent = import('./agent-defs.js').ChatAgent
 
@@ -274,7 +287,9 @@ describe('missing knowledge file → fallback to folders and board (obj 900745)'
 
     // …and the fallback it points at actually works in the same state.
     const folders = runTool(ctx(ALICE, okDev), 'list_folders', {}).result as Loose
-    expect(folders.folders).toEqual(['business', 'projects'])
+    // obj 900951: `business` is declared but not on disk, so it is named under `missing`, not listed.
+    expect(folders.folders).toEqual(['projects'])
+    expect(folders.missing).toEqual(['business'])
     const projects = runTool(ctx(ALICE, okDev), 'list_folders', { path: 'projects' }).result as Loose
     expect(projects.items).toEqual([{ name: 'launch.md', type: 'file' }])
     const brief = runTool(ctx(ALICE, okDev), 'board_briefing', {}).result as Loose
@@ -289,5 +304,68 @@ describe('missing knowledge file → fallback to folders and board (obj 900745)'
     try { runTool(ctx(ALICE, notesOnly), 'read_file', { path: 'business/profile.md' }) } catch (e) { msg = (e as Error).message }
     expect(msg).toMatch(/list_folders/)
     expect(msg).not.toMatch(/board_briefing|list_objectives|search the knowledge/)
+  })
+})
+
+// obj 900951: the built-in bot listed five folders and each then answered "does
+// not exist"; a broken search index answered exactly like "nothing found".
+describe('knowledge tools tell a broken setup from an empty knowledge base (obj 900951)', () => {
+  const okDev: Agent = {
+    ...agent,
+    slug: 'operation-kit-dev',
+    name: 'Operation Kit Dev',
+    knowledge_folders: ['business', 'organizations', 'projects'],
+    tools: ['search', 'list_folders', 'read_file', 'write_doc'],
+  }
+
+  it('list_folders (no path) lists only declared folders on disk and names the rest under missing', () => {
+    fs.mkdirSync(path.join(TMP_KB, 'projects'), { recursive: true })
+    fs.writeFileSync(path.join(TMP_KB, 'organizations'), 'a file, not a folder')
+    try {
+      const r = runTool(ctx(ALICE, okDev), 'list_folders', {}).result as Loose
+      expect(r.folders).toEqual(['projects'])
+      expect(r.missing).toEqual(['business', 'organizations'])
+      expect(r.note).toMatch(/do not exist in the knowledge base yet/)
+      expect(r.note).toMatch(/write_doc creates a folder/)
+      // Every folder it lists really opens.
+      for (const f of r.folders) expect(() => runTool(ctx(ALICE, okDev), 'list_folders', { path: f })).not.toThrow()
+
+      const readOnly: Agent = { ...okDev, slug: 'notes-only', tools: ['read_file', 'list_folders'] }
+      expect((runTool(ctx(ALICE, readOnly), 'list_folders', {}).result as Loose).note).not.toMatch(/write_doc/)
+    } finally {
+      fs.rmSync(path.join(TMP_KB, 'organizations'), { force: true })
+    }
+  })
+
+  it('nothing missing → an empty missing list and no note', () => {
+    fs.mkdirSync(path.join(TMP_KB, 'projects'), { recursive: true })
+    const r = runTool(ctx(ALICE, { ...okDev, knowledge_folders: ['projects'] }), 'list_folders', {}).result as Loose
+    expect(r).toEqual({ folders: ['projects'], missing: [] })
+  })
+
+  it('a thrown index error reaches the model as "search index unavailable: <reason>", not {results: []}', async () => {
+    fs.mkdirSync(path.join(TMP_KB, 'projects'), { recursive: true })
+    fs.writeFileSync(path.join(TMP_KB, 'projects', 'launch.md'), '# Spring launch\n')
+    searchIndex.fail = new Error('no such table: kb_vec')
+    try {
+      // Nothing matches: the model must still learn the index is down.
+      const none = await runChatTool(ctx(ALICE, okDev), 'search', { q: 'zebra-quartz-nomatch' })
+      const r = none.result as Loose
+      expect(r).not.toEqual({ results: [] })
+      expect(r.results).toEqual([])
+      expect(r.warning).toMatch(/^search index unavailable: no such table: kb_vec\./)
+      expect(r.warning).toMatch(/does NOT mean the knowledge base is empty/)
+      expect(none.summary).toMatch(/search index unavailable/)
+
+      // Something matches by plain words: the hits come back, with the same warning.
+      const some = (await runChatTool(ctx(ALICE, okDev), 'search', { q: 'spring launch' })).result as Loose
+      expect(some.results.map((h: Loose) => h.path)).toEqual(['projects/launch.md'])
+      expect(some.warning).toMatch(/^search index unavailable: no such table: kb_vec\./)
+    } finally {
+      searchIndex.fail = null
+    }
+    // A working index that finds nothing carries no warning.
+    const ok = (await runChatTool(ctx(ALICE, okDev), 'search', { q: 'zebra-quartz-nomatch' })).result as Loose
+    expect(ok.warning).toBeUndefined()
   })
 })

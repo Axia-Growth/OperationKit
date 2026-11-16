@@ -1,6 +1,7 @@
 import { Component, type ErrorInfo, type ReactNode } from 'react'
 import { TriangleAlert } from 'lucide-react'
 import { Button } from './ui/Button'
+import { isChunkLoadError, reloadOnceForChunkError } from '../lib/chunk-reload'
 
 interface ErrorBoundaryProps {
   children: ReactNode
@@ -8,8 +9,7 @@ interface ErrorBoundaryProps {
    * `app` (default) — the last-resort boundary around the whole tree: fills the
    *   screen, offers Reload.
    * `route` — the per-route boundary inside Layout (polish F8): fills only the
-   *   page area so the top bar and nav keep working, offers Try again (re-mount
-   *   the page) as well as Reload.
+   *   page area so the top bar and nav keep working, offers Reload.
    */
   scope?: 'app' | 'route'
   /** When this value changes the boundary clears its error — App passes the
@@ -21,6 +21,8 @@ interface ErrorBoundaryState {
   error: Error | null
   componentStack: string | null
   resetKey: unknown
+  /** Set when a stale-chunk error triggers the one-shot auto-reload — render nothing while the reload lands. */
+  reloading: boolean
 }
 
 /**
@@ -31,7 +33,7 @@ interface ErrorBoundaryState {
 export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundaryState> {
   constructor(props: ErrorBoundaryProps) {
     super(props)
-    this.state = { error: null, componentStack: null, resetKey: props.resetKey }
+    this.state = { error: null, componentStack: null, resetKey: props.resetKey, reloading: false }
   }
 
   static getDerivedStateFromError(error: Error): Partial<ErrorBoundaryState> {
@@ -48,12 +50,20 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
   componentDidCatch(error: Error, info: ErrorInfo) {
     console.error(`[ErrorBoundary:${this.props.scope ?? 'app'}] Uncaught render error:`, error, info.componentStack)
     this.setState({ componentStack: info.componentStack ?? null })
+
+    // After a deploy, a stale tab still references the previous build's hashed
+    // chunk URLs, which 404 once the new build has replaced them. One automatic
+    // reload picks up the fresh index HTML (new hashes); the sessionStorage flag
+    // in reloadOnceForChunkError makes sure this can't loop if the chunk is
+    // genuinely broken rather than merely stale.
+    if (isChunkLoadError(error) && reloadOnceForChunkError()) {
+      this.setState({ reloading: true })
+    }
   }
 
-  private reset = () => this.setState({ error: null, componentStack: null })
-
   render() {
-    const { error, componentStack } = this.state
+    const { error, componentStack, reloading } = this.state
+    if (reloading) return null
     if (!error) return this.props.children
 
     const isRoute = this.props.scope === 'route'
@@ -79,13 +89,12 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
             </p>
             <p className="mx-auto max-w-[44ch] text-sm leading-relaxed text-fg-2">
               {isRoute
-                ? 'Something on this page broke. The rest of the app still works: try again, or pick another page.'
+                ? 'Something on this page broke. The rest of the app still works: reload, or pick another page.'
                 : 'The app hit an unexpected problem. Reloading usually fixes it.'}
             </p>
           </div>
           <div className="mt-1 flex flex-wrap items-center justify-center gap-2">
-            {isRoute && <Button variant="primary" onClick={this.reset}>Try again</Button>}
-            <Button variant={isRoute ? 'secondary' : 'primary'} onClick={() => window.location.reload()}>
+            <Button variant="primary" onClick={() => window.location.reload()}>
               Reload
             </Button>
           </div>

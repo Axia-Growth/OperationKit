@@ -28,6 +28,7 @@ fs.mkdirSync(path.join(TMP_AGENTS, 'dev'), { recursive: true })
 fs.writeFileSync(path.join(TMP_AGENTS, 'dev', 'agent.yaml'), 'name: Operation Kit Dev\ndescription: Builds things\ntools: [web_search]\nknowledge_folders: [shared]\nsystem_prompt: You help.\n')
 
 const { initDb, getDb } = await import('../../db/index.js')
+const { createAgent } = await import('../agent-registry.js')
 const { runChatTool, toolSpecsFor, toolSpecsForContext, ToolUseError } = await import('./tools.js')
 const { grantBotWorkspace, revokeBotWorkspace, seedExistingBotsOnce, SEED_MARKER } = await import('./bot-workspaces.js')
 const {
@@ -47,7 +48,7 @@ const {
 } = await import('./bot-full-access.js')
 const { classifyOutbound, exclusionGate } = await import('./full-access-exclusions.js')
 const { runMcpTool } = await import('./mcp-tools.js')
-const { fullAccessWorkspaces, fullAccessPromptLine, FULL_ACCESS_FNS } = await import('./full-access-tools.js')
+const { fullAccessWorkspaces, fullAccessPromptLine, FULL_ACCESS_FNS, botOwnershipRefusal } = await import('./full-access-tools.js')
 const { createGrant, decideDelegatedApproval } = await import('../delegated-approvals.js')
 const { createWorkspace } = await import('../workspaces.js')
 const { saveFlowVersion } = await import('../flow-engine.js')
@@ -522,19 +523,47 @@ describe('abilities — only when the bot is working for an admin', () => {
   })
 })
 
-describe('a bot that shares its slug with a worker agent', () => {
-  it('never owns a card under that name, in chat or as a card session', async () => {
-    // 'cto' is a worker agent on every install; a chat bot may be called the same.
+describe('a bot that shares its slug with a worker agent (obj 901026: a bot and an agent are the same thing)', () => {
+  it('owns a card under that name once the workspace is explicitly granted — a genuine (non-default-roster) clash', async () => {
+    // The real reported shape: an agents-table row that accidentally shares a
+    // chat bot's slug (an admin working around the old refusal, or a stale
+    // migration) — never one of the five protected default-roster personas.
+    createAgent({ slug: 'ops-clash', label: 'Ops Clash (accidental persona row)' })
+    fullAccessOn('ops-clash')
+    const c = ctx(ADMIN, bot('ops-clash'))
+    const took = await runChatTool(c, 'card_take_over', { id: ids['alice-card'] })
+    expect((took.result as Loose).worker_agent).toBe('ops-clash')
+    expect(getDb().prepare('SELECT agent_context, owner_bot FROM objectives WHERE id = ?').get(ids['alice-card'])).toEqual({ agent_context: 'ops-clash', owner_bot: 'Operation Kit Dev' })
+    // A card session for this card now carries the bot's Full access (card is in growth, assigned to the admin).
+    getDb().prepare('UPDATE objectives SET assigned_user_id = ? WHERE id = ?').run(ADMIN, ids['alice-card'])
+    getDb().prepare("INSERT INTO agent_chat_cards (objective_id, user_id, agent_slug) VALUES (?, ?, 'ops-clash')").run(ids['alice-card'], ADMIN)
+    expect(cardSessionFullAccess(ids['alice-card'], GROWTH, NOW)).toBe('ops-clash')
+  })
+
+  it('still refuses in a workspace the bot was never granted', async () => {
+    // The pool gate itself still refuses an UNGRANTED workspace — the persona
+    // clash check is gone for a non-default persona, but the underlying grant
+    // requirement is not.
+    expect(botOwnershipRefusal('ops-clash', OTHER)).toMatch(/not in workspace 'other-co' pool/)
+    // Full access is off there too, so the chat tools refuse one layer up.
+    const c = ctx(ADMIN, bot('ops-clash'), OTHER)
+    await refused(() => runChatTool(c, 'card_take_over', { id: ids['other-card'] }), /not in a workspace where .* has Full access/)
+    await refused(() => runChatTool(c, 'repo_session_start', { project: 'other-repo', title: 't', description: 'd' }), /has no Full access in/)
+  })
+
+  it('REGRESSION: a grant never hands Full access to an EXISTING admin-assigned card of a default-roster persona (review fix)', async () => {
+    // GROWTH's pool already includes 'cto' — it is a genuine, always-assignable
+    // persona on this card BEFORE this test, same as any install's CTO cards.
+    // A bot that also happens to be called "cto" must not inherit this card
+    // just because an admin grants it the workspace.
     fullAccessOn('cto')
-    const c = ctx(ADMIN, bot('cto'))
-    await refused(() => runChatTool(c, 'card_take_over', { id: ids['alice-card'] }), /shares its slug with a worker agent/)
-    await refused(() => runChatTool(c, 'repo_session_start', { project: 'growth-site', title: 't', description: 'd' }), /shares its slug with a worker agent/)
-    expect(getDb().prepare('SELECT agent_context, owner_bot FROM objectives WHERE id = ?').get(ids['alice-card'])).toEqual({ agent_context: 'general', owner_bot: null })
-    // A card the cto AGENT works is the agent's card: it does not carry the bot's Full access.
-    getDb().prepare("UPDATE objectives SET agent_context = 'cto', assigned_user_id = ? WHERE id = ?").run(ADMIN, ids['alice-card'])
+    getDb().prepare("UPDATE objectives SET agent_context = 'cto', owner_bot = NULL, assigned_user_id = ? WHERE id = ?").run(ADMIN, ids['alice-card'])
+    getDb().prepare("INSERT INTO agent_chat_cards (objective_id, user_id, agent_slug) VALUES (?, ?, 'cto')").run(ids['alice-card'], ADMIN)
+    // The card's OWN session never carries the bot's Full access — the persona
+    // keeps its identity regardless of the grant. (A direct chat with the bot
+    // can still reach the card through its own Full access abilities, like any
+    // other card in the workspace — that is unrelated to this question.)
     expect(cardSessionFullAccess(ids['alice-card'], GROWTH, NOW)).toBeNull()
-    // Reading is not ownership: the bot's other abilities still work.
-    expect((await runChatTool(c, 'card_read', { id: ids['repo-card'] })).result).toMatchObject({ id: ids['repo-card'] })
   })
 })
 

@@ -348,7 +348,10 @@ router.get('/agents', (req: AuthRequest, res) => {
     model_suggestions: modelSuggestions(),
     default_models: DEFAULT_MODELS,
     web: webSearchStatus(),
-    ...(req.user?.role === 'admin' ? { problems } : {}),
+    // obj 900954: a bot whose file failed to load is not in `agents`; admins get it here
+    // as "needs fixing". `withheld` says a shipped bot of the same slug was held back
+    // rather than loaded in the broken file's place.
+    ...(req.user?.role === 'admin' ? { problems: problems.map(p => ({ ...p, status: 'needs_fixing' as const })) } : {}),
   })
 })
 

@@ -60,7 +60,17 @@ export interface ChatAgent {
 
 export type AgentSource = 'file' | 'demo' | 'builtin'
 
-export interface AgentLoadProblem { slug: string; file: string; errors: string[] }
+export interface AgentLoadProblem {
+  slug: string
+  file: string
+  errors: string[]
+  /**
+   * Set when this is a broken INSTALL file whose slug also ships with the app
+   * (obj 900954). The shipped bot is held back rather than quietly taking the
+   * broken file's place, so the bot is missing until the file is fixed.
+   */
+  withheld?: 'builtin' | 'demo'
+}
 
 const SLUG_RE = /^[a-z0-9][a-z0-9-]{0,62}$/
 const HERE = path.dirname(fileURLToPath(import.meta.url))
@@ -249,6 +259,7 @@ export function loadChatAgents(opts: { env?: NodeJS.ProcessEnv; includeDemo?: bo
 } {
   const agents: ChatAgent[] = []
   const problems: AgentLoadProblem[] = []
+  const broken = new Map<string, AgentLoadProblem>()
   const dir = agentsDir(opts.env)
   let entries: fs.Dirent[] = []
   try {
@@ -261,19 +272,32 @@ export function loadChatAgents(opts: { env?: NodeJS.ProcessEnv; includeDemo?: bo
     const r = readAgentDir(path.join(dir, e.name), e.name, 'file')
     if (!r) continue
     if (r.agent) agents.push(r.agent)
-    else problems.push({ slug: e.name, file: path.join(dir, e.name), errors: r.errors })
+    else {
+      const problem: AgentLoadProblem = { slug: e.name, file: path.join(dir, e.name), errors: r.errors }
+      problems.push(problem)
+      broken.set(e.name, problem)
+    }
+  }
+  // obj 900954: an install file that failed to load still OWNS its slug. Loading
+  // the shipped bot in its place would bring back the default folders and tools
+  // with no warning, so the shipped one is held back and the problem says so.
+  const taken = (slug: string, shipped: 'builtin' | 'demo'): boolean => {
+    if (agents.some(a => a.slug === slug)) return true
+    const p = broken.get(slug)
+    if (p) p.withheld = shipped
+    return !!p
   }
   if (opts.includeBuiltins) {
     let builtins: fs.Dirent[] = []
     try { builtins = fs.readdirSync(BUILTIN_DIR, { withFileTypes: true }) } catch { /* none shipped */ }
     for (const e of builtins.sort((a, b) => a.name.localeCompare(b.name))) {
-      if (!e.isDirectory() || !SLUG_RE.test(e.name) || agents.some(a => a.slug === e.name)) continue
+      if (!e.isDirectory() || !SLUG_RE.test(e.name) || taken(e.name, 'builtin')) continue
       const r = readAgentDir(path.join(BUILTIN_DIR, e.name), e.name, 'builtin')
       if (r?.agent) agents.push(r.agent)
       else if (r) problems.push({ slug: e.name, file: path.join(BUILTIN_DIR, e.name), errors: r.errors })
     }
   }
-  if (opts.includeDemo && !agents.some(a => a.slug === DEMO_AGENT_SLUG)) {
+  if (opts.includeDemo && !taken(DEMO_AGENT_SLUG, 'demo')) {
     const r = readAgentDir(path.join(DEMO_DIR, 'agents', DEMO_AGENT_SLUG), DEMO_AGENT_SLUG, 'demo')
     if (r?.agent) agents.push(r.agent)
     else if (r) problems.push({ slug: DEMO_AGENT_SLUG, file: DEMO_DIR, errors: r.errors })

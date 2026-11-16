@@ -14,6 +14,7 @@
 import fs from 'fs'
 import path from 'path'
 import { redactLive } from './live-redaction.js'
+import { MAX_IMAGE_BYTES, sniffImageType } from './agent-chat/attachments.js'
 
 export const DEFAULT_MEMORY_ROOT = '/home/operator/ai-workspace/objective-memory'
 export const SCRATCH_FILE = 'NOTES.md'
@@ -161,5 +162,36 @@ export function readArtifact(
     truncated: offset + length < st.size,
     redaction_count: count,
     content: text,
+  }
+}
+
+export interface ArtifactImage {
+  path: string
+  media_type: string
+  size: number
+  bytes: Buffer
+}
+
+/**
+ * The one exception to "binaries are listed but not served" (obj 901028): a
+ * screenshot a worker dropped into its objective-memory dir (`live/`,
+ * `work/`, …) is served as real image bytes, so the card view and a bot's
+ * `attach_image` tool can show it inline. Same path-traversal guard as every
+ * other artifact read; never redacted (there is no text to scan), and capped
+ * at the same size a pasted chat image is (`MAX_IMAGE_BYTES`) so a huge file
+ * cannot be read fully into memory just to decide it isn't servable.
+ */
+export function readArtifactImage(objectiveId: number, relPath: unknown): ArtifactImage {
+  const abs = resolveArtifactPath(objectiveId, relPath)
+  const st = fs.statSync(abs)
+  if (st.size > MAX_IMAGE_BYTES) throw new ArtifactError('image too large to serve (5 MB max)', 413)
+  const bytes = fs.readFileSync(abs)
+  const mediaType = sniffImageType(bytes)
+  if (!mediaType) throw new ArtifactError('not a PNG, JPEG, GIF or WebP image', 415)
+  return {
+    path: (relPath as string).split('/').filter(s => s && s !== '.').join('/'),
+    media_type: mediaType,
+    size: st.size,
+    bytes,
   }
 }

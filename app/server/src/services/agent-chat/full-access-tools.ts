@@ -50,7 +50,7 @@ import { workspaceKbRoot } from '../doc-ingest/kb-paths.js'
 import { userHasWorkspace } from '../../middleware/workspace.js'
 import type { ChatAgent } from './agent-defs.js'
 import { fullAccessActive, getFullAccess, listFullAccess, protectedCardRefusal, protectedPrInText, writeFullAccessAudit } from './bot-full-access.js'
-import { botMayUseWorkspace, highAgencyRoutineSlug } from './bot-workspaces.js'
+import { botGrantedWorkspace, botMayUseWorkspace, highAgencyRoutineSlug, personaOwnershipBlocked } from './bot-workspaces.js'
 import { chatCardModel, chatOwnerBotName, ToolUseError, type ToolContext, type ToolOutcome, type ToolSpec } from './tools.js'
 import { agentExists } from '../agent-registry.js'
 import { botForAgentSlug } from '../bots/bot-registry.js'
@@ -353,14 +353,14 @@ export function ownerBotName(agent: Pick<ChatAgent, 'slug' | 'name'>): string | 
 
 /**
  * Why this bot cannot be named as a card's worker in `workspace`, or null when
- * it can. A bot whose slug is also a worker persona never owns a card under
- * that slug (agent_context would mean the persona, review of PR 797); otherwise
- * the one pool gate decides, which a granted bot passes (obj 900948).
+ * it can. The one pool gate decides (obj 900948's `checkAgentInWorkspacePool`,
+ * which a granted bot passes) — there is no second bypass here, and (obj
+ * 901026) no second refusal either: a bot whose slug also names a worker
+ * persona is no longer refused on that account alone. "A bot and an agent are
+ * the same thing" — an explicit workspace grant IS the decision that the slug
+ * belongs to the bot here, superseding the review-of-PR-797 carve-out.
  */
 export function botOwnershipRefusal(slug: string, workspace: string, project?: string | null): string | null {
-  let persona = true
-  try { persona = agentExists(slug) } catch { persona = true }
-  if (persona) return `The bot "${slug}" shares its slug with a worker agent, so a card under that name would belong to the agent, not the bot. It cannot own cards.`
   return checkAgentInWorkspacePool(workspace, slug, project ?? null)
 }
 
@@ -551,9 +551,15 @@ export async function runFullAccessTool(ctx: FaCtx & { username: string }, fnNam
         if ((!bot && !persona) || (bot && !persona && !botMayUseWorkspace(bot.slug, c.workspace))) {
           throw new ToolUseError(`"${agentSlug}" is not an agent or bot that works in the ${c.workspace} workspace.`)
         }
+        // obj 901026 (review fix): an EXPLICIT workspace grant makes the bot
+        // the card's owner even when the slug also names a worker persona —
+        // the grant is the decision that the two are one identity here, not
+        // the clash. EXCEPT the five protected default-roster personas
+        // (cto/cmo/coo/cfo/general): those stay the persona's, never the bot's,
+        // regardless of a grant (`personaOwnershipBlocked`).
+        const botOwns = !!bot && !personaOwnershipBlocked(agentSlug, c.workspace) && (botGrantedWorkspace(agentSlug, c.workspace) || !persona)
         sets.push('agent_context = ?', 'owner_bot = ?')
-        // A slug that is a worker agent means the agent, whatever bot shares the name.
-        params.push(agentSlug, bot && !persona ? ownerBotName(bot) : null)
+        params.push(agentSlug, bot && botOwns ? ownerBotName(bot) : null)
         changed.push(`worker ${agentSlug}`)
       }
       if (assignTo) {

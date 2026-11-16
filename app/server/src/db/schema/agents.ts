@@ -66,6 +66,21 @@ export const DEFAULT_AGENT_SEED: AgentSeedRow[] = [
   { slug: 'general', label: 'General', kind: 'executive', workdir_kind: 'home', mono: 'GN', badge_hex: '#8C8A92', badge_tw: 'bg-agent-general', sort_order: 5 },
 ]
 
+const DEFAULT_AGENT_SEED_SLUGS = new Set(DEFAULT_AGENT_SEED.map(r => r.slug))
+
+/**
+ * True for the five protected default-roster slugs (cto/cmo/coo/cfo/general) —
+ * NOT the operator's real seed.agents.json roster, which can name anything.
+ * This is deliberately the same fixed set `persona-clash.ts` never archives:
+ * obj 901026's bot/persona identity unification stops short of these, since an
+ * install's built-in executives are assumed to share their slug with a bot by
+ * design (review of PR 797's own fixtures), and the workspace-default-agent
+ * fallback depends on them existing untouched.
+ */
+export function isDefaultRosterSlug(slug: string | null | undefined): boolean {
+  return !!slug && DEFAULT_AGENT_SEED_SLUGS.has(slug)
+}
+
 const VALID_KINDS = new Set(['executive', 'routing-only'])
 const VALID_WORKDIRS = new Set(['projects', 'workspace', 'home', 'custom'])
 

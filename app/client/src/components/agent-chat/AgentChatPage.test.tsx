@@ -199,13 +199,21 @@ describe('AgentChatPage', () => {
     expect(host.querySelector('ul[aria-label="Attached images"]')).toBeNull()
   })
 
-  it('renders the image on a sent message, linking to its own owner-checked route', async () => {
+  it('renders the image on a sent message as a thumbnail that opens full size at its own owner-checked route', async () => {
     await mount('/chat/demo-assistant')
     await settle()
     const img = host.querySelector('img[alt="inbox.png"]') as HTMLImageElement
     expect(img).toBeTruthy()
     expect(img.getAttribute('src')).toBe('/api/agent-chat/attachments/5')
-    expect(img.closest('a')?.getAttribute('href')).toBe('/api/agent-chat/attachments/5')
+    const trigger = img.closest('button') as HTMLButtonElement
+    expect(trigger).toBeTruthy()
+
+    trigger.click()
+    await settle()
+    const dialog = document.querySelector('[role="dialog"]') as HTMLElement
+    expect(dialog).toBeTruthy()
+    expect(dialog.querySelector('img')?.getAttribute('src')).toBe('/api/agent-chat/attachments/5')
+    expect(dialog.querySelector('a[download]')?.getAttribute('href')).toBe('/api/agent-chat/attachments/5')
   })
 })
 

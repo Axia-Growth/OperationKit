@@ -259,6 +259,11 @@ export function initAgentChatSchema(db: Database.Database): void {
   if (!attachmentCols.some(c => c.name === 'thread_id')) {
     db.exec('ALTER TABLE agent_chat_attachments ADD COLUMN thread_id INTEGER REFERENCES agent_chat_threads(id) ON DELETE CASCADE')
   }
+  // obj 901028: attach_image lets a bot name alt text for a screenshot it attaches
+  // (a card artifact or a knowledge-base path); a person-pasted image has none.
+  if (!attachmentCols.some(c => c.name === 'alt_text')) {
+    db.exec('ALTER TABLE agent_chat_attachments ADD COLUMN alt_text TEXT')
+  }
   // obj 900794: High Agency levels 1-10 replace the 1/2/3/4/6 cadence. A row
   // saved under the cadence picker keeps at least as many wakes a day: the
   // lowest level whose runs/day (1, 4, 6, …) covers its old times_per_day.
