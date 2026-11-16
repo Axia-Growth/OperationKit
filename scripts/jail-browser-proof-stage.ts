@@ -36,6 +36,9 @@ const r = planJailCardBrowser({
   scriptDirGuest: `${JAIL_HOME_PATH}/.cc`,
   jailHomeGuest: JAIL_HOME_PATH,
   env: loopbackPorts ? { CARD_BROWSER_WORKER_LOOPBACK_PORTS: loopbackPorts } : {},
+  // jail-browser-proof.sh already checked both images exist (and tags them :proof,
+  // not the :local name the planner probes for), so skip the presence probe here.
+  imagePresent: () => true,
 })
 if (!r.ok) { console.error(`planner refused: ${r.reason}`); process.exit(1) }
 const envFile = path.join(root, 'jail.env')

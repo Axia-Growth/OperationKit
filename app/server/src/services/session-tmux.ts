@@ -36,6 +36,7 @@ import { buildWorkdirGuard } from './session-startup-failure.js'
 import { stageUploadsIntoJail, rewriteUploadPaths } from './jail-uploads.js'
 import type { SeatMount } from './seat-credentials.js'
 import { planJailCardBrowser, planTmuxCardBrowser, refusedBrowserEnv, type CardBrowserPlan } from './card-browser-spawn.js'
+import { buildCardBrowserPromptBlock } from '../lib/card-browser.js'
 
 // ── `~`-home false-negative fix (obj 532 / 553) ──
 // Spawned sessions run as OS user `ccuser` with HOME pointed at a per-account
@@ -345,9 +346,11 @@ export function spawnInTmux(opts: {
   objectiveId?: number | string       // required when SESSION_ISOLATION=docker — names the jail `ok-jail-<id>`
   seatEnv?: Record<string, string>    // seat pool v2: the assigned seat's sign-in env (a pasted token)
   seatMount?: SeatMount | null        // seat pool v2: sandboxed Codex/Grok seat login dir to bind into the jail
-  cardBrowser?: boolean               // obj 901029: the card set needs_browser — give this WORKER the locked-down browser
+  cardBrowser?: boolean               // obj 901029/901075: a WORKER spawn — try to give it the locked-down browser (every card; no per-card switch)
+  /** obj 901075 (internal): the browser jail could not be started; this is the retry on the stock image. */
+  browserFallbackReason?: string
 }): string {
-  const { sessionId, homeDir, workdir, prompt, jsonlPath, logPath, env, effort, model, resumeSessionId, settingsPath, worktreeRoot, gitCommonDir, objectiveId, seatEnv, seatMount, cardBrowser } = opts
+  const { sessionId, homeDir, workdir, prompt, jsonlPath, logPath, env, effort, model, resumeSessionId, settingsPath, worktreeRoot, gitCommonDir, objectiveId, seatEnv, seatMount, cardBrowser, browserFallbackReason } = opts
   let { mcpConfigPath } = opts
   // SESSION_ISOLATION=docker → sibling-container jail. Unset/`tmux` (Operator's live
   // droplet default) keeps every line below byte-identical to the pre-flag path.
@@ -376,13 +379,19 @@ export function spawnInTmux(opts: {
     createJailHome(sessionId, JAIL_HOME_ROOT)
   }
 
-  // obj 901029: opt-in browser for a card that set needs_browser. Only such a
-  // card reaches this; every other spawn is unchanged. A plan that cannot keep
-  // the lockdown (guard down, profile missing) is a REFUSAL — the session gets
-  // no browser plus CC_CARD_BROWSER_REFUSED=<why>, never a degraded browser.
+  // obj 901029 / 901075: every WORKER spawn asks for the browser (planner,
+  // reviewer, arena and sub-sessions do not pass cardBrowser). A plan that
+  // cannot keep the lockdown (tmux mode by default, image missing, guard down,
+  // profile missing) is a REFUSAL — the session gets no browser plus
+  // CC_CARD_BROWSER_REFUSED=<why> and a prompt line saying so, never a degraded
+  // browser, and the card itself still starts.
   let browserPlan: CardBrowserPlan | null = null
   let browserEnv: Record<string, string> = {}
-  if (cardBrowser) {
+  let browserRefusal: string | null = null
+  if (browserFallbackReason) {
+    browserRefusal = browserFallbackReason
+    browserEnv = refusedBrowserEnv(browserFallbackReason)
+  } else if (cardBrowser) {
     const r = useJail
       ? planJailCardBrowser({
           sessionId,
@@ -402,8 +411,9 @@ export function spawnInTmux(opts: {
         `sandbox ${r.plan.env.CC_BROWSER_SANDBOX === '1' ? 'on' : 'OFF (operator opt-out)'}, guard ${r.plan.env.CC_BROWSER_PROXY ?? 'OFF (operator opt-out)'})`,
       )
     } else {
+      browserRefusal = r.reason
       browserEnv = refusedBrowserEnv(r.reason)
-      console.error(`[card-browser] session ${sessionId}: card asked for a browser, REFUSED: ${r.reason}`)
+      console.log(`[card-browser] session ${sessionId}: no browser (card carries on without one): ${r.reason}`)
     }
   }
 
@@ -448,9 +458,15 @@ export function spawnInTmux(opts: {
   // plane, which the jail cannot see. Copy them into the HOME bind and point
   // the prompt's paths at the copies, or "look at my screenshot" fails.
   let promptForSession = prompt
+  // obj 901075: tell a fresh worker what it ACTUALLY got — the launcher, or
+  // that there is no browser and why. A resumed turn already has it in context.
+  if ((cardBrowser || browserFallbackReason) && !resumeSessionId) {
+    const block = buildCardBrowserPromptBlock(browserPlan ? { granted: true } : { granted: false, reason: browserRefusal ?? 'not available' })
+    promptForSession = `${promptForSession}\n${block.join('\n')}\n`
+  }
   if (useJail) {
     stageUploadsIntoJail(objectiveId!, jailHomeHost)
-    promptForSession = rewriteUploadPaths(prompt, objectiveId!)
+    promptForSession = rewriteUploadPaths(promptForSession, objectiveId!)
   }
   // obj 715532: never hand a worker a credential in its prompt. Known values
   // become [REDACTED:<NAME>] — the worker already has <NAME> in its env.
@@ -660,15 +676,15 @@ exit $EXIT_CODE
     const jailNetwork = resolveJailNetwork()
     // obj 900402: optional CLAUDE_CODE_TMPDIR on the disk-backed jail HOME.
     const jailClaudeTmpdir = resolveJailClaudeTmpdir()
-    const handle = createSessionJailSync({
+    const jailOpts: Parameters<typeof createSessionJailSync>[0] = {
       objectiveId: objectiveId!,
       sessionId,
       worktreePath: jailWorkspace!.source,
       homePath: jailHomeHost,
       env: fullEnv,
       envFilePath: path.join(scriptDirHost, `${sessionId}.env`),
-      // obj 901029: a needs_browser card runs the browser image under the browser
-      // seccomp profile; every other card keeps the stock image (no Chromium).
+      // obj 901029/901075: a worker given the browser runs the browser image under
+      // the browser seccomp profile; a refused one keeps the stock image (no Chromium).
       image: browserPlan?.jail?.image ?? jailImage(),
       seccompProfile: browserPlan?.jail?.seccompProfile,
       seatMount: seatMount || undefined,
@@ -683,7 +699,24 @@ exit $EXIT_CODE
         `tmux new-session -d -s ${JSON.stringify(tmuxName)} ${JSON.stringify(`bash ${scriptFileGuest}`)}; ` +
         `while tmux has-session -t ${JSON.stringify(tmuxName)} 2>/dev/null; do sleep 5; done`,
       ],
-    })
+    }
+    let handle: ReturnType<typeof createSessionJailSync>
+    try {
+      handle = createSessionJailSync(jailOpts)
+    } catch (err) {
+      // obj 901075: fail SOFT on the browser, never on the card. If docker would
+      // not start the browser jail (image pulled out from under us, seccomp
+      // profile rejected by this daemon, …), re-plan this exact spawn on the
+      // stock image with no browser and tell the worker why. Any other jail
+      // failure — or a failure of that retry — still throws (fail closed).
+      if (!browserPlan) throw err
+      dropEnvFile(path.join(scriptDirHost, `${sessionId}.env`))
+      // Keep docker's own words, not createSessionJailSync's fail-closed preamble.
+      const why = String((err as Error)?.message ?? err).replace(/^session-jail: docker run failed[^]*?\(SESSION_ISOLATION=docker\)\.\s*/, '').split('\n')[0].slice(0, 160)
+      const reason = `the browser jail would not start (${why}); this card runs in the stock jail without a browser`
+      console.warn(`[card-browser] session ${sessionId}: ${reason}`)
+      return spawnInTmux({ ...opts, cardBrowser: false, browserFallbackReason: reason })
+    }
     // obj 900038: `--env-file` is consumed once, synchronously, by the daemon
     // at container-create time; the running container reads its env from its own
     // config. The file has no reason to outlive this call, and it was the single

@@ -46,6 +46,7 @@ import { initRoutineRunsSchema } from './schema/routine-runs.js'
 import { initKbEmbeddingsSchema } from './schema/kb-embeddings.js'
 import { initDelegationGrantsSchema } from './schema/delegation-grants.js'
 import { initBotAttentionSchema } from './schema/bot-attention.js'
+import { initDecisionSchema } from './schema/decisions.js'
 import { initBoardTriageSchema } from './schema/board-triage.js'
 import { installWriteScrubber } from './write-scrubber.js'
 import { redactForStorage } from '../services/secret-redaction.js'
@@ -294,8 +295,8 @@ export function initDb(): Database.Database {
   if (!colNames.has('test_cred_slug')) {
     db.exec("ALTER TABLE objectives ADD COLUMN test_cred_slug TEXT")
   }
-  // obj 901029: opt-in browser for the card's WORKER session (lib/card-browser.ts).
-  // Default 0 = no browser, which is every existing card.
+  // obj 901029: was the per-card browser opt-in. UNUSED since obj 901075 (every
+  // worker gets the browser); kept because dropping a column is the riskier move.
   if (!colNames.has('needs_browser')) {
     db.exec("ALTER TABLE objectives ADD COLUMN needs_browser INTEGER NOT NULL DEFAULT 0")
   }
@@ -1146,6 +1147,8 @@ export function initDb(): Database.Database {
   // Bot visibility (obj 900947): one row per (card, reason) a bot told a person
   // about in its main chat — the dedupe for "needs you" posts. Additive table only.
   initBotAttentionSchema(db)
+  // Decision briefings + Q&A threads + learning log (obj 901059). Additive tables only.
+  initDecisionSchema(db)
   // ── Secret scrubbing on persistence (obj 715532) ──────────────────────────
   // Installed LAST so migrations above run unwrapped. From here on, writes to
   // activity_log / objectives / session_events / … have known secret values and

@@ -38,6 +38,11 @@ export const SCRUBBED_TABLES = [
   'bot_conversations',
   // obj 900869: a bulk-triage batch carries a person-typed note.
   'board_triage_batches',
+  // obj 901059: decision briefings are bot/worker-written (context, options,
+  // recommended_why, raw_note) and the Q&A thread holds the person's questions
+  // and the model's answers, so a key echoed or pasted into either is redacted.
+  'decisions',
+  'decision_messages',
 ] as const
 
 const WRITE_SQL_RE = new RegExp(

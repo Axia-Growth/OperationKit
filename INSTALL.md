@@ -350,6 +350,11 @@ Every line must say **PASS**. It checks that:
   usual cause: the only seat was made by signing in to the Claude CLI on the
   server, which the sandbox cannot use. Connect Claude with step 7 (or
   **Settings → Seats → Add Claude seat**) and re-run verify.
+- **the browser sandbox image is current**: `ok-jail-browser:local`, the sandbox
+  every card runs in (it carries a locked-down Chromium), exists and the Playwright versions inside
+  it match the ones pinned in the code. The installer and `install/update.sh`
+  build it for you; if this fails, re-run `install/update.sh`. Without it cards
+  still run, in the plain sandbox and with no browser.
 
 The test card is a **throw-away**: its title carries a per-run marker (so the
 board's duplicate-title guard never refuses it on a second run) and verify

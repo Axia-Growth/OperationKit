@@ -45,6 +45,8 @@
 set -euo pipefail
 # shellcheck source=install/lib.sh
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/install/lib.sh"
+# shellcheck source=install/jail-browser-lib.sh
+source "$OK_LIB_DIR/jail-browser-lib.sh"
 
 CONFIG=
 SECRETS_HANDOVER=
@@ -204,6 +206,9 @@ step "4. Building the app image and the session sandbox image (the slow step: ~5
 if [ "$DRY_RUN" -eq 1 ]; then
   log "  [dry-run] docker compose build command-center"
   log "  [dry-run] docker build -t ok-jail:local app/jail"
+  if ok_jb_needed "$(conf SESSION_ISOLATION docker)"; then
+    log "  [dry-run] docker build -t $OK_JB_IMAGE_DEFAULT --build-arg WITH_BROWSER=1 app/jail  (card browser, pins: $(ok_jb_pins "$OK_REPO_DIR/app/jail/Dockerfile" || echo 'NOT PINNED'))"
+  fi
 else
   # Full build output goes to a log file; only its tail is shown (the whole
   # thing is too long to read in a terminal).
@@ -217,6 +222,28 @@ else
   fi
   tail -n 3 "$BUILD_LOG" | sed 's/^/    | /'
   log "  images built"
+  # The card-browser sandbox image (obj 901075): the jail a `needs_browser` card
+  # runs in. Built on EVERY run: docker's layer cache shares everything up to
+  # the browser layer with ok-jail:local just above, and the browser layer is
+  # only rebuilt when the pins in app/jail/Dockerfile change — so update.sh
+  # (which re-runs this script) moves it exactly when the pins move. The pins
+  # are stamped on the image as labels; install/verify.sh check 10 proves them.
+  if ok_jb_needed "$(conf SESSION_ISOLATION docker)"; then
+    jb_pins=$(ok_jb_pins "$OK_REPO_DIR/app/jail/Dockerfile") \
+      || die "app/jail/Dockerfile does not pin PLAYWRIGHT_VERSION / PLAYWRIGHT_MCP_VERSION to exact versions"
+    read -r jb_pw jb_mcp <<<"$jb_pins"
+    jb_had=$(docker image inspect -f "{{index .Config.Labels \"$OK_JB_LABEL_PLAYWRIGHT\"}} {{index .Config.Labels \"$OK_JB_LABEL_MCP\"}}" "$OK_JB_IMAGE_DEFAULT" 2>/dev/null || true)
+    read -r jb_had_pw jb_had_mcp <<<"$jb_had" || true
+    log "  card browser image $OK_JB_IMAGE_DEFAULT: Playwright $jb_pw / @playwright/mcp $jb_mcp (before: $(ok_jb_compare "$jb_pw" "$jb_mcp" "${jb_had_pw:-}" "${jb_had_mcp:-}"))"
+    mapfile -t jb_argv < <(ok_jb_build_argv "$OK_REPO_DIR" "$jb_pw" "$jb_mcp")
+    if ! BUILDKIT_PROGRESS=plain "${jb_argv[@]}" >>"$BUILD_LOG" 2>&1; then
+      tail -n 40 "$BUILD_LOG" | sed 's/^/    | /' >&2
+      die "the card browser image build failed — last 40 lines above, everything in $BUILD_LOG"
+    fi
+    log "  card browser image built"
+  else
+    log "  card browser image: not needed (SESSION_ISOLATION=$(conf SESSION_ISOLATION docker), no browser jail)"
+  fi
 fi
 mark "4 images built"
 

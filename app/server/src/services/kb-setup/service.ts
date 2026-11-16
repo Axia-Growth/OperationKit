@@ -4,6 +4,7 @@ import { getDb } from '../../db/index.js'
 import { createIngestLlm, type LlmCall } from '../doc-ingest/llm.js'
 import { workspaceKbRoot } from '../doc-ingest/kb-paths.js'
 import { SETUP_STATE_DIR, SETUP_PROMPT_FILE, getRun, listRuns, recoverRun, runWorker, type RunDeps } from './runs.js'
+import { resolvePublicBaseUrl } from '../../lib/public-url.js'
 
 /**
  * Glue between the Knowledge Base Setup routes and the pure run engine
@@ -29,7 +30,7 @@ export function setupDeps(): RunDeps {
     llm: llmOverride ?? createIngestLlm(),
     systemPrompt: setupSystemPrompt(),
     db: dbOrUndefined(),
-    setupUrl: `${(process.env.PUBLIC_URL || process.env.APP_URL || '').replace(/\/+$/, '')}/knowledge/setup`,
+    setupUrl: `${resolvePublicBaseUrl()}/knowledge/setup`,
   }
 }
 

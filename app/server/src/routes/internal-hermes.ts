@@ -29,6 +29,8 @@ import {
 import { workingStartAction, marksPriorSessionFailed } from '../lib/working-start.js'
 import { recordReopenFalsePass } from '../services/false-pass.js'
 import { logObjectiveAudit, checkHumanTerminalReactivation } from '../services/objective-audit.js'
+import { openDecisionForCard, raiseDecision, withdrawDecision } from '../services/decisions.js'
+import { validateDecisionBriefing } from '@operationkit/shared'
 import { releaseBranchLeasesForObjective } from '../services/branch-lease.js'
 import { listObjectivePRs } from '../services/objective-prs.js'
 import { enqueuePreviewTeardown, kickHostDrain } from '../services/preview-spool.js'
@@ -896,7 +898,7 @@ router.post('/objectives/:id/job-disposition', (req, res) => {
     res.status(403).json({ error: 'Internal API: localhost only' })
     return
   }
-  const { disposition, note } = req.body as { disposition?: string; note?: string }
+  const { disposition, note, decision } = req.body as { disposition?: string; note?: string; decision?: Record<string, unknown> }
   if (disposition !== 'complete' && disposition !== 'needs_review') {
     res.status(400).json({ error: "disposition must be 'complete' or 'needs_review'" })
     return
@@ -916,12 +918,55 @@ router.post('/objectives/:id/job-disposition', (req, res) => {
   }
 
   const reviewNote = typeof note === 'string' && note.trim() ? note.trim().slice(0, 1000) : null
+  // obj 901059 — a needs_review that asks for a decision carries a briefing
+  // (context, one question, 2-4 options with pros/cons/next, recommendation).
+  // A briefing with no question or too few options is REFUSED with the exact
+  // gaps, before anything is written, so the worker can fix it and resend. A
+  // needs_review with no briefing at all is still accepted (older prompts), but
+  // the decision is recorded FLAGGED so the card says no briefing was given.
+  let raised: ReturnType<typeof raiseDecision> | null = null
+  if (disposition === 'needs_review') {
+    const hasBriefing = !!decision && typeof decision === 'object'
+    if (hasBriefing) {
+      const v = validateDecisionBriefing(decision)
+      if (!v.ok) {
+        res.status(400).json({
+          error: 'The decision briefing is incomplete. Fix these and send the disposition again.',
+          errors: v.errors,
+        })
+        return
+      }
+    }
+    raised = raiseDecision(db, {
+      objective_id: objective.id,
+      workspace: objective.workspace ?? '',
+      source: 'job_disposition',
+      agent_slug: objective.owner_bot ?? (objective.agent_context && objective.agent_context !== 'general' ? objective.agent_context : null),
+      briefing: hasBriefing ? decision : null,
+      raw_note: reviewNote,
+      allowIncomplete: !hasBriefing,
+    })
+  } else {
+    // A clean finish settles a question nobody answered: it leaves the queue with a reason.
+    const open = openDecisionForCard(db, objective.id)
+    if (open) withdrawDecision(db, open.id, 'the job later finished as complete')
+  }
   db.prepare(
     "UPDATE objectives SET job_disposition = ?, job_review_note = ?, updated_at = datetime('now') WHERE id = ?"
   ).run(disposition, reviewNote, req.params.id)
 
   const updated = db.prepare('SELECT * FROM objectives WHERE id = ?').get(req.params.id) as Objective
   broadcast({ type: 'objective_updated', payload: updated })
+  if (raised?.ok) {
+    res.json({
+      ...updated,
+      decision_id: raised.decision.id,
+      ...(raised.decision.incomplete
+        ? { warning: 'needs_review was recorded WITHOUT a decision briefing, so the card shows it as flagged. If you are asking for a decision, send it again with a "decision" object: context, question, 2-4 options (label, pros, cons, next), recommended, recommended_why.' }
+        : {}),
+    })
+    return
+  }
   res.json(updated)
 })
 

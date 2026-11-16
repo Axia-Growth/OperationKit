@@ -1,6 +1,6 @@
 name: Jail Browser Proof
 
-# obj 901029: live proof that a needs_browser card's jail launches the pinned
+# obj 901029: live proof that a worker card's jail launches the pinned
 # Chromium with the OS sandbox on, behind the egress guard — and that the stock
 # jail has no browser. Builds both jail images, so it only runs when the
 # browser path changes.
@@ -49,3 +49,16 @@ jobs:
 
       - name: Run the jail browser proof
         run: bash scripts/jail-browser-proof.sh ok-jail:proof ok-jail-browser:proof
+
+      # obj 901075: every worker now runs the browser jail, so record what that
+      # costs against the stock jail: image size and a cold container start.
+      - name: Image size and start time (stock vs browser)
+        if: always()
+        run: |
+          docker image ls --format '{{.Repository}}:{{.Tag}} {{.Size}}' | grep -E '^ok-jail(-browser)?:proof '
+          for img in ok-jail:proof ok-jail-browser:proof; do
+            for i in 1 2 3; do
+              s=$(date +%s%N); docker run --rm --entrypoint true "$img" >/dev/null; e=$(date +%s%N)
+              echo "START $img run$i $(( (e - s) / 1000000 )) ms"
+            done
+          done

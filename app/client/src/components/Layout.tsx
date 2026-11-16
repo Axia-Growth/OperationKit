@@ -11,13 +11,14 @@ import { OrgSwitcher } from './OrgSwitcher'
 import type { Workspace } from '@operationkit/shared'
 import { CommandPalette } from './lazy-overlays'
 import { AlertBell } from './AlertBell'
+import { NeedsYouBadge } from './decisions/NeedsYouBadge'
 import { NavIcon, type NavIconName } from './nav-icons'
 import { IconButton } from './ui/Button'
 import { commandPaletteShortcut } from '../lib/platform'
 import { Menu, MenuContent, MenuGroup, MenuGroupLabel, MenuItem, MenuSeparator, MenuTrigger } from './ui/Menu'
 import { HAS_CHAT_PAGE } from '../lib/optional-pages'
 import { prefetchContext } from '../lib/kbContextData'
-import { SYSTEM_ROUTE, LEGACY_SYSTEM_ROUTES, AGENTS_ROUTE, JOBS_ROUTE, agentsTabRoute } from '../lib/routes'
+import { SYSTEM_ROUTE, LEGACY_SYSTEM_ROUTES, AGENTS_ROUTE, JOBS_ROUTE, NEEDS_YOU_ROUTE, agentsTabRoute } from '../lib/routes'
 
 interface LayoutProps {
   children: ReactNode
@@ -394,6 +395,7 @@ export function Layout({ children, selectedWorkspaces, onWorkspacesChange, pageS
           )}
           {user && (
             <>
+            <NeedsYouBadge active={currentPath === NEEDS_YOU_ROUTE} onClick={onNavClick(NEEDS_YOU_ROUTE)} />
             <AlertBell />
             <IconButton
               label={theme === 'light' ? 'Switch to dark mode' : 'Switch to light mode'}
@@ -436,6 +438,7 @@ export function Layout({ children, selectedWorkspaces, onWorkspacesChange, pageS
 
         {user && (
           <div className="flex items-center">
+            <NeedsYouBadge active={currentPath === NEEDS_YOU_ROUTE} onClick={onNavClick(NEEDS_YOU_ROUTE)} />
             <AlertBell />
             {/* 44px tap target on the phone bar (obj 900807); IconButton is 44px below sm. */}
             <IconButton
@@ -503,6 +506,7 @@ export function Layout({ children, selectedWorkspaces, onWorkspacesChange, pageS
         open={paletteOpen}
         onClose={() => setPaletteOpen(false)}
         items={paletteItems}
+        onOpenCard={id => navigate(`/o/${id}`)}
       />
     </div>
   )

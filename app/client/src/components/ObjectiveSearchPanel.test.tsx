@@ -94,3 +94,16 @@ describe('ObjectiveSearchPanel on UI SDK Command + Dialog', () => {
     await vi.waitFor(() => expect(onClose).toHaveBeenCalled())
   })
 })
+
+describe('ObjectiveSearchPanel: card numbers (obj 901080)', () => {
+  it('a typed card number goes to the server as-is, and each result shows its #number', async () => {
+    searchObjectives.mockResolvedValue({ results: [hit(901075, 'Card by number')] })
+    const onSelect = vi.fn()
+    await render(<ObjectiveSearchPanel open workspace={'acme' as never} onClose={vi.fn()} onSelect={onSelect} />)
+    await type('#901075')
+    expect(searchObjectives).toHaveBeenCalledWith('#901075', 'acme', 30)
+    await vi.waitFor(() => expect(document.querySelector('[data-testid="search-card-number"]')?.textContent).toBe('#901075'))
+    await press('Enter', input())
+    expect(onSelect).toHaveBeenCalledWith(901075)
+  })
+})

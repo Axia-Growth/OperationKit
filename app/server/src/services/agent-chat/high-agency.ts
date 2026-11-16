@@ -40,6 +40,7 @@
 //     workflow as a DRAFT (publishing stays the owner's click). Neither grants
 //     send, spend, merge or deploy; those go to the owner's decision queue.
 import { getDb } from '../../db/index.js'
+import { DECISION_BRIEFING_RULES, DECISION_EXAMPLE, decisionFeedbackForPrompt } from '../decision-prompt.js'
 import { getUserWorkspaces } from '../../middleware/workspace.js'
 import { listWorkspaces } from '../workspaces.js'
 import { logActivity } from '../../routes/feed.js'
@@ -329,6 +330,13 @@ export function buildHighAgencyBrief(agent: BriefAgent, s: BriefSettings, owner 
   lines.push(
     '',
     `**Decision queue.** Anything that needs a send, spend or deploy — or ${owner}'s judgement — is an ask, not an action: write the exact ask (what, why, cost) in your report and record this wake's disposition as \`needs_review\`.`,
+    '',
+    `**A decision needs a briefing.** When the ask is a CHOICE for ${owner}, put it in the disposition as a \`decision\` object so the card and ${owner}'s chat show what is being decided (a plain note shows as "no briefing given"):`,
+    ...DECISION_BRIEFING_RULES.map(l => `   ${l}`),
+    '   ```bash',
+    `   curl -s -X POST http://localhost:3002/api/internal/objectives/$CC_OBJECTIVE_ID/job-disposition -H 'Content-Type: application/json' -d '{"disposition":"needs_review","note":"<one line>","decision":${DECISION_EXAMPLE.replace(/'/g, '’')}}'`,
+    '   ```',
+    ...decisionFeedbackForPrompt(ws, owner).map(l => `   ${l}`),
     '',
     '**5. Report.** Finish with the short report note (closed / started or why nothing / risks and asks), then record the disposition — `needs_review` if you started a project or have an ask, otherwise `complete`:',
     '   ```bash',

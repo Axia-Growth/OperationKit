@@ -46,6 +46,7 @@ import { Router, type NextFunction, type Response } from 'express'
 import type { AgentScope } from '@operationkit/shared'
 import { requireAuth, type AuthRequest } from '../middleware/auth.js'
 import { resolveCorsOrigins } from '../lib/install-defaults.js'
+import { publicCardUrl, resolvePublicBaseUrl } from '../lib/public-url.js'
 
 export const MCP_PATH = '/api/mcp'
 /** Header stamped on forwarded REST calls so attribution can tell MCP traffic apart. */
@@ -158,10 +159,9 @@ function qs(params: Record<string, string | number | undefined>): string {
   return s ? `?${s}` : ''
 }
 
-/** Public board URL for a card. APP_BASE_URL follows the host if the app moves. */
+/** Public board URL for a card — the install's real host (lib/public-url.ts). */
 export function cardUrl(id: number): string {
-  const base = (process.env.APP_BASE_URL || 'https://cc.example.com').replace(/\/+$/, '')
-  return `${base}/o/${id}`
+  return publicCardUrl(id)
 }
 
 /** The short, quotable receipt every write tool returns. */
@@ -297,7 +297,7 @@ function objArg(args: Args, key: string, required = false): Record<string, unkno
 
 /** Base URL of the web app (Jobs → Workflows deep link). */
 function appUrl(p: string): string {
-  return `${(process.env.APP_BASE_URL || 'https://cc.example.com').replace(/\/+$/, '')}${p}`
+  return `${resolvePublicBaseUrl()}${p}`
 }
 
 const FLOW_ROW = ['id', 'slug', 'name', 'workspace', 'status', 'published_version', 'latest_version', 'objective_id', 'trigger', 'node_count', 'kinds', 'updated_at'] as const

@@ -19,7 +19,7 @@ import { PreviewBoard } from './preview/PreviewBoard'
 import { PreviewArchive } from './preview/PreviewArchive'
 import { PreviewWorkspace } from './preview/PreviewWorkspace'
 import { HAS_CHAT_PAGE } from './lib/optional-pages'
-import { SYSTEM_ROUTE, AGENTS_ROUTE, LEGACY_REDIRECTS, REMOVED_ROUTES, pageTransitionKey, usesPageScroll } from './lib/routes'
+import { SYSTEM_ROUTE, AGENTS_ROUTE, NEEDS_YOU_ROUTE, LEGACY_REDIRECTS, REMOVED_ROUTES, pageTransitionKey, usesPageScroll } from './lib/routes'
 import type { Workspace } from '@operationkit/shared'
 
 const Toaster = lazy(() => import('./components/ui/Toaster').then(m => ({ default: m.Toaster })))
@@ -43,6 +43,7 @@ const SettingsBranding = lazy(() => import('./components/settings/SettingsBrandi
 const SettingsEmail = lazy(() => import('./components/settings/SettingsEmail').then(m => ({ default: m.SettingsEmail })))
 const SettingsKnowledgeSearch = lazy(() => import('./components/settings/SettingsKnowledgeSearch').then(m => ({ default: m.SettingsKnowledgeSearch })))
 const AccountSettings = lazy(() => import('./components/AccountSettings').then(m => ({ default: m.AccountSettings })))
+const NeedsYouPage = lazy(() => import('./components/decisions/NeedsYouPage').then(m => ({ default: m.NeedsYouPage })))
 const JobsBoard = lazy(() => import('./components/JobsBoard').then(m => ({ default: m.JobsBoard })))
 const AgentsHub = lazy(() => import('./components/agents/AgentsHub').then(m => ({ default: m.AgentsHub })))
 /**
@@ -225,6 +226,7 @@ function AppContent() {
           <Route path="/docs" element={<Navigate to="/knowledge" replace />} />
           <Route path="/granola" element={<Navigate to="/" replace />} />
           <Route path="/jobs" element={<JobsBoard workspace={workspace} />} />
+          <Route path={NEEDS_YOU_ROUTE} element={<NeedsYouPage />} />
           {/* One Agents page (obj 900495): registry, board layer and templates are tabs. */}
           <Route path={AGENTS_ROUTE} element={<AgentsHub workspace={workspace} />} />
           {/* Emailed links point at /login (obj 900497); once signed in it is just home. */}

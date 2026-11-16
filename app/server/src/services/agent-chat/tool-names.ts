@@ -24,6 +24,10 @@ export const SECRET_TOOLS = ['secrets'] as const
 // The other bot is woken with the message and its reply comes back on the same
 // thread. Only bots that may work in the same workspace can be reached.
 export const BOT_MESSAGE_TOOLS = ['bot_messages'] as const
+// obj 901059: ask the person for a decision on a card, with a structured briefing
+// (context, one question, 2-4 options with pros/cons/next, recommendation). It
+// only ASKS: the person answers on the card or in chat, never the bot.
+export const DECISION_TOOLS = ['raise_decision'] as const
 
 /**
  * Tools "All tools" does NOT grant (obj 900749). A bot gets one only when it is
@@ -41,6 +45,7 @@ export const KNOWN_TOOL_NAMES: ReadonlySet<string> = new Set<string>([
   ...WEB_TOOLS,
   ...SECRET_TOOLS,
   ...BOT_MESSAGE_TOOLS,
+  ...DECISION_TOOLS,
 ])
 
 /** What "All tools" grants: every known tool except the explicit-only ones. */
@@ -84,6 +89,7 @@ export const TOOL_CATALOG: readonly ToolCatalogEntry[] = [
   { name: 'get_objective', label: 'Read a card', description: 'Read one board card the person can see.', group: 'board' },
   { name: 'list_objectives', label: 'List cards', description: 'List board cards the person can see.', group: 'board' },
   { name: 'board_briefing', label: 'Board briefing', description: 'What is waiting on the person across their boards.', group: 'board' },
+  { name: 'raise_decision', label: 'Ask for decisions', description: 'Ask the person to decide on a card with a short briefing: the question, options with pros and cons, a recommendation and a Q&A thread.', group: 'board' },
   { name: 'attach_image', label: 'Attach images', description: 'Attach a screenshot (a card artifact, a knowledge-base path, or a generated image) so it renders inline in the reply.', group: 'images' },
   { name: 'bot_messages', label: 'Message other bots', description: 'Send another bot a message in the same workspace and get its reply on a shared thread.', group: 'bots' },
   { name: 'email', label: 'Email (drafts only)', description: 'Read the inbox and draft replies. Nothing is sent without a click.', group: 'connectors' },

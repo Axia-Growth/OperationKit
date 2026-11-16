@@ -34,6 +34,7 @@ import type { Database } from 'better-sqlite3'
 import { redactLive } from '../live-redaction.js'
 import { notifyBotMessage } from '../agent-chat/sidebar-live.js'
 import { isHighAgencyActivityCard } from '../agent-chat/high-agency-cards.js'
+import { publicCardUrl } from '../../lib/public-url.js'
 
 const CURSOR_SETTING = 'bot_thread_delivery_cursor'
 const BATCH = 200
@@ -109,7 +110,7 @@ export function buildThreadBody(kind: ThreadDeliveryKind, row: Pick<EventRow, 'o
   const lines = [head]
   if (summary) lines.push('', summary.slice(0, 4000))
   if (row.pr_url) lines.push('', `Pull request: ${row.pr_url}`)
-  lines.push('', `Open the card: /o/${row.objective_id}`)
+  lines.push('', `Open the card: ${publicCardUrl(row.objective_id)}`)
   // Redact LAST, over the assembled text, through the same function the live
   // artifact API already uses (services/live-redaction.ts) rather than a second
   // copy of the rules. A worker summary is untrusted text that may quote a key.

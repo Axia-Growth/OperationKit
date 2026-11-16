@@ -9,6 +9,7 @@ import { Badge, Button, CopyButton, IconButton } from '../ui'
 import { formatCost } from '../../lib/format'
 import { actionStatusOf, statusActionsFor } from '../../lib/statusActions'
 import { OwnerTag } from '../OwnerTag'
+import { CardNumber } from '../CardNumber'
 
 export function ViewerHeader({
   objective,
@@ -144,6 +145,7 @@ export function ViewerHeader({
               {objective.title}
             </h3>
             <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-xs text-fg-2">
+              <CardNumber id={objective.id} />
               <span className={statusMeta.tone}>{statusMeta.label}</span>
               {isActive && <LiveBadge />}
               {isActive && <ConnStatusPill state={connState} />}

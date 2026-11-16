@@ -1,13 +1,16 @@
 /**
- * card-browser-spawn.ts — what a worker spawn of a `needs_browser` card gets
- * (obj 901029). Pure planning + file writes; spawnInTmux applies the plan.
+ * card-browser-spawn.ts — the browser every WORKER spawn gets (obj 901029;
+ * default-on for every card since obj 901075). Pure planning + file writes;
+ * spawnInTmux applies the plan.
  *
  * The contract, both modes:
- *   * an UNMARKED card is never passed here — it gets nothing, exactly as before;
- *   * a marked card gets the pinned Chromium, the OS sandbox on, and Chromium
- *     pointed at the egress guard — or, when any of that cannot be guaranteed,
- *     a REFUSAL (no browser at all, and the reason in its env). Never a
- *     degraded browser.
+ *   * planner / reviewer / arena / sub-sessions are never passed here;
+ *   * a worker gets the pinned Chromium, the OS sandbox on, and Chromium
+ *     pointed at the egress guard — or, when any of that cannot be guaranteed
+ *     (tmux mode by default, browser image missing, guard down, profile
+ *     missing, docker refused the browser jail), a REFUSAL: no browser at all,
+ *     the reason in its env and its prompt, and the card carries on. Never a
+ *     degraded browser, and never a failed spawn because of the browser.
  *
  * See lib/card-browser.ts for the why, and docs/wiki/Card-Browser-Lockdown.md.
  */
@@ -31,6 +34,7 @@ import {
   workerBrowserInAppContainerAllowed,
   writePlaywrightMcpConfig,
 } from '../lib/card-browser.js'
+import { execFileSync } from 'node:child_process'
 import { sharedWorkerBrowserEgressProxy } from './browser-egress-proxy.js'
 
 export interface CardBrowserPlan {
@@ -67,7 +71,29 @@ export const GUARD_SOURCES: Array<{ from: string; to: string }> = [
   { from: path.join(here, '..', 'lib', 'browser-policy.ts'), to: 'lib/browser-policy.ts' },
 ]
 
-/** The env a refused marked card gets, so its worker can say why instead of guessing. */
+/**
+ * Is the browser jail image present on the docker host? Every card uses it
+ * now, and an install that never built it (or an operator who removed it) must
+ * fall back to the stock jail, not fail the spawn. Cached briefly so a burst of
+ * spawns costs one `docker image inspect`.
+ */
+const IMAGE_CHECK_TTL_MS = 60_000
+const imageCheckCache = new Map<string, { ok: boolean; at: number }>()
+export function jailBrowserImagePresent(image: string, now: number = Date.now()): boolean {
+  const hit = imageCheckCache.get(image)
+  if (hit && now - hit.at < IMAGE_CHECK_TTL_MS) return hit.ok
+  let ok = false
+  try {
+    execFileSync('docker', ['image', 'inspect', '--format', '{{.Id}}', image], { encoding: 'utf8', timeout: 15_000, stdio: ['ignore', 'pipe', 'ignore'] })
+    ok = true
+  } catch { ok = false }
+  imageCheckCache.set(image, { ok, at: now })
+  return ok
+}
+/** Test hook. */
+export function resetJailBrowserImageCache(): void { imageCheckCache.clear() }
+
+/** The env a refused worker gets, so its worker can say why instead of guessing. */
 export function refusedBrowserEnv(reason: string): Record<string, string> {
   return { CC_CARD_BROWSER: '0', CC_CARD_BROWSER_REFUSED: reason.slice(0, 300) }
 }
@@ -144,9 +170,16 @@ export function planJailCardBrowser(opts: {
   policy?: BrowserPolicy
   env?: NodeJS.ProcessEnv
   ops?: CardBrowserFsOps
+  /** Override the image-presence probe (tests). */
+  imagePresent?: (image: string) => boolean
 }): CardBrowserResult {
   const policy = opts.policy ?? resolveWorkerBrowserPolicy(opts.env)
   const own = opts.ops?.ownForJail ?? (() => {})
+  const image = jailBrowserImage(opts.env)
+  const imagePresent = opts.imagePresent ?? jailBrowserImagePresent
+  if (!imagePresent(image)) {
+    return { ok: false, reason: `the browser jail image ${image} is not on this host (run install/update.sh to build it); this card runs in the stock jail without a browser` }
+  }
   const seccompProfile = jailBrowserSeccompProfilePath()
   if (!fs.existsSync(seccompProfile)) {
     return { ok: false, reason: `browser jail seccomp profile missing at ${seccompProfile}; no browser was given (fail closed)` }
@@ -201,7 +234,7 @@ export function planJailCardBrowser(opts: {
           policy,
         }),
         jail: {
-          image: jailBrowserImage(opts.env),
+          image,
           seccompProfile,
           guardPrefix,
           mcpConfigHostPath,

@@ -46,10 +46,12 @@ jobs:
         run: bash install/test/verify-card-test.sh
       - name: Secrets KEK host file + audit retention cron (D2/D5, obj 900540)
         run: bash install/test/secrets-kek-test.sh
+      - name: Card-browser sandbox image (pins, build argv, verify match/missing/stale, obj 901075)
+        run: bash install/test/jail-browser-lib-test.sh
       - name: Install docs links and anchors resolve
         run: node install/test/docs-links-test.mjs
       - name: shellcheck (shared libs + backup + B2 setup scripts)
-        run: shellcheck --version && shellcheck -x --severity=warning install/lib.sh install/api-bypass-lib.sh install/bic-lib.sh install/verify-lib.sh install/backup.sh install/b2-setup.sh install/update.sh install/test/b2-setup-test.sh install/test/verify-card-test.sh install/test/api-bypass-paths-test.sh install/test/bic-lib-test.sh install/claude-oauth.sh install/claude-login.sh install/test/claude-oauth-mock-test.sh install/test/secrets-kek-test.sh
+        run: shellcheck --version && shellcheck -x --severity=warning install/lib.sh install/api-bypass-lib.sh install/bic-lib.sh install/verify-lib.sh install/jail-browser-lib.sh install/backup.sh install/b2-setup.sh install/update.sh install/test/b2-setup-test.sh install/test/verify-card-test.sh install/test/api-bypass-paths-test.sh install/test/bic-lib-test.sh install/claude-oauth.sh install/claude-login.sh install/test/claude-oauth-mock-test.sh install/test/secrets-kek-test.sh install/test/jail-browser-lib-test.sh
       - name: Without --skip-cloudflare an empty DOMAIN is refused, with the hint
         run: |
           if ./install.sh --config ci.conf --dry-run > out.txt 2>&1; then cat out.txt; exit 1; fi
@@ -68,6 +70,12 @@ jobs:
           grep -q 'ssh -N -L 3002:127.0.0.1:3002' install.log
           ! grep -q 'https://localhost' install.log
           grep -q 'INSTALL.md step 7' install.log
+      - name: The installer built the card-browser sandbox image with the pinned versions (obj 901075)
+        run: |
+          grep -q 'card browser image built' install.log
+          pw=$(sed -n -E 's/^ARG PLAYWRIGHT_VERSION=(.*)/\1/p' app/jail/Dockerfile)
+          got=$(sudo docker image inspect -f '{{index .Config.Labels "ok.browser.playwright"}}' ok-jail-browser:local)
+          echo "pin $pw, image label $got"; test "$got" = "$pw"
       - name: Knowledge-base starter pack is ON for the client workspace
         run: |
           sudo bash scripts/starter-pack.sh status | tee packs.txt
@@ -125,6 +133,8 @@ jobs:
           sudo bash install/update.sh --config ci.conf --ref "$(git rev-parse HEAD)" -- --skip-ssh-hardening --skip-verify | tee update.log
           sudo find /opt/operationkit/backups -maxdepth 1 -name 'pre-update-*' | grep -q .
           sudo docker image ls operationkit-app --format '{{.Tag}}' | grep -q '^pre-update-'
+          sudo docker image ls ok-jail-browser --format '{{.Tag}}' | grep -q '^pre-update-'
+          grep -q 'card browser image built' update.log
           grep -q 'To go back to the version' update.log
           grep -q 'nightly job:' update.log   # update.sh ends with backup.sh status
           sudo bash install/verify.sh --config ci.conf --local-only --skip-card

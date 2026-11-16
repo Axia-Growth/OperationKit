@@ -587,3 +587,21 @@ describe('H. no behaviour change for trusted, server-generated text', () => {
     expect(block).toContain('  > hello')
   })
 })
+
+describe('L. decision Q&A: card text reaches the answering bot only inside a frame (obj 901059)', () => {
+  it('a hostile card description is sealed in the answer prompt; the briefing and the question stay outside', async () => {
+    const { answerPrompt } = await import('./decision-answerer.js')
+    const { user } = answerPrompt({
+      decision: {
+        id: 1, objective_id: 7, raw_note: null, thread: [],
+        briefing: { context: 'ctx', question: 'Send today?', options: [{ key: 'A', label: 'Send', pros: ['p'], cons: ['c'], next: 'n' }, { key: 'B', label: 'Hold', pros: ['p'], cons: ['c'], next: 'n' }], recommended: 'A', recommended_why: 'w' },
+      } as never,
+      objective: { id: 7, title: 'Outreach', status: 'review', workspace: 'ws-a', description: HOSTILE, last_session_summary: null } as never,
+      question: 'Why today?',
+    }, 'Outreach Bot')
+    expectSingleSealedFrame(user)
+    const close = user.indexOf(UNTRUSTED_CLOSE)
+    expect(user.indexOf('Question: Send today?')).toBeLessThan(user.indexOf(UNTRUSTED_OPEN))
+    expect(user.lastIndexOf('Why today?')).toBeGreaterThan(close)
+  })
+})

@@ -722,8 +722,6 @@ export interface CreateObjectiveRequest {
   model?: ModelChoice
   type?: ObjectiveType
   skip_ai_review?: boolean
-  /** obj 901029: give this card's worker session the locked-down browser. */
-  needs_browser?: boolean
   /** Associate a manual objective with a Strategy (obj 2386). Accepts the id of
    *  an is_strategy=1 objective; invalid/dangling ids degrade to inherited/null.
    *  Lets a hand-created objective (even parent_id IS NULL) show its strategy. */
@@ -774,8 +772,6 @@ export interface UpdateObjectiveRequest {
   /** Pointer into `test_credentials.slug`; null detaches any current
    *  selection so the reviewer falls back to workspace+project lookup. */
   test_cred_slug?: string | null
-  /** obj 901029: turn the worker browser on/off. Applies from the next spawn. */
-  needs_browser?: boolean
   /** Associate/re-associate this objective with a Strategy (obj 2386), or null
    *  to detach. Validated against is_strategy=1; invalid ids degrade to detach. */
   strategy_id?: number | null

@@ -174,7 +174,8 @@ describe('agent chat', () => {
     expect(r.status).toBe(200)
     expect(r.json.cards).toHaveLength(1)
     const card = r.json.cards[0]
-    expect(card).toMatchObject({ status: 'queue', url: `/o/${card.id}` })
+    expect(card.status).toBe('queue')
+    expect(card.url).toMatch(new RegExp(`^https?://[^/]+/o/${card.id}$`))
     const row = getDb().prepare('SELECT workspace, origin, created_by, assigned_user_id, description FROM objectives WHERE id = ?').get(card.id) as Loose
     expect(row).toMatchObject({ workspace: WS, origin: 'agent_chat', created_by: OWNER, assigned_user_id: OWNER })
     expect(row.description).toMatch(/Requested in chat with "Personal assistant \(demo\)"/)

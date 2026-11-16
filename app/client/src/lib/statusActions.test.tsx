@@ -25,7 +25,8 @@ const buttonLabels = (html: string) =>
 
 function cardLabels(o: Objective): string[] {
   const html = renderToStaticMarkup(<PreviewCard objective={o} onOpen={noop} onChangeStatus={noop} />)
-  return buttonLabels(html).filter(l => l !== 'View' && l !== 'A card')
+  // obj 901080: the #number copy button is not a status move.
+  return buttonLabels(html).filter(l => l !== 'View' && l !== 'A card' && !/^#\d+$/.test(l))
 }
 
 function viewerLabels(o: Objective): string[] {

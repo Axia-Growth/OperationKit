@@ -236,7 +236,7 @@ describe('chat board_briefing: what is waiting on me', () => {
     const waiting = r.waiting_on_you as Loose[]
     expect(waiting.map(i => i.kind)).toEqual(['failed_review', 'blocked', 'review'])
     expect(waiting.map(i => i.id).sort()).toEqual([ids['growth-review-1'], ids['growth-review-2'], ids['growth-working-blocked']].sort())
-    expect(waiting[0].url).toBe(`/o/${ids['growth-review-2']}`)
+    expect(waiting[0].url).toMatch(new RegExp(`^https?://[^/]+/o/${ids['growth-review-2']}$`))
     expect(JSON.stringify(r)).not.toMatch(/SECRET/)
   })
 

@@ -51,6 +51,7 @@ import { cleanupOrphanedChildrenOnParentTerminal } from '../lib/cleanup-orphaned
 import { scheduleObjectiveWorktreeReap } from '../services/worktree-reaper.js'
 import { PROJECTS_DIR } from '../config.js'
 import { broadcast } from '../ws/index.js'
+import { clearStaleDecisionsForCard } from '../services/decision-queue.js'
 import { mapObjective, requireOwnership } from './objectives-helpers.js'
 import { noteStartReason } from '../services/session-start-reasons.js'
 import { sessionCapReached, SESSION_CAP_ERROR } from '../lib/session-cap.js'
@@ -580,6 +581,8 @@ async function handleStatusPatch(req: StatusRequest, res: Response): Promise<voi
   // session is isolated into /tmp/cc-worktree-<id>; the branch is the
   // deterministic worktree branch when none was persisted.
   if (status === 'done' || status === 'cancelled') {
+    // obj 901084: its pending decisions clear themselves the moment the card ends.
+    clearStaleDecisionsForCard(db, existing.id)
     scheduleObjectiveWorktreeReap(existing.id, {
       db,
       projectDir: existing.project ? `${PROJECTS_DIR}/${existing.project}` : undefined,

@@ -206,8 +206,11 @@ describe('nothing else moved (obj 900327 regressions)', () => {
     expect([...draft.querySelectorAll('button')].some(b => b.textContent === 'Send')).toBe(true)
     // the board card chip is still linked and live
     const link = host.querySelector('a[href="/o/41"]')!
-    expect(link.textContent).toContain('#41')
-    expect(link.textContent).toContain('In progress')
+    const chip = link.closest('[data-testid="chat-card-chip"]')!
+    expect(chip.textContent).toContain('#41')
+    expect(chip.textContent).toContain('In progress')
+    // obj 901080: the number is a copy button, not part of the link
+    expect(chip.querySelector('[data-testid="card-number"]')?.textContent).toBe('#41')
     // provenance line survives
     expect(host.querySelector('[data-testid="answered-by"]')?.textContent).toContain('Answered by Demo (no AI account)')
   })

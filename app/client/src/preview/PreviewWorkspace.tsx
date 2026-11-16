@@ -11,6 +11,7 @@ import { SessionViewer } from '../components/SessionViewer'
 import { ObjectiveModal } from '../components/ObjectiveModal'
 import { FileRail } from './FileRail'
 import { SubObjectiveRail } from './SubObjectiveRail'
+import { SubCardPopup } from './SubCardPopup'
 import { FileQuestion, TriangleAlert } from 'lucide-react'
 import { Button } from '../components/ui/Button'
 import { EmptyState } from '../components/ui/EmptyState'
@@ -35,6 +36,9 @@ export function PreviewWorkspace({ workspaces }: { workspaces: Workspace[] }) {
   const [error, setError] = useState<{ message: string; notFound: boolean } | null>(null)
   const [designMode, setDesignMode] = useState(false)
   const [editing, setEditing] = useState(false)
+  // obj 901083: the sub-card open in a pop-up over this card (null = none).
+  // Kept as an id so the pop-up follows live updates to the sub-card's row.
+  const [peekId, setPeekId] = useState<number | null>(null)
   // Defensive: a non-admin member of one org still gets a scoped workspace
   // while selectedWorkspaces is resolving from [] to [org] in App.tsx.
   const modalWorkspace: Workspace = (() => {
@@ -52,6 +56,7 @@ export function PreviewWorkspace({ workspaces }: { workspaces: Workspace[] }) {
     setError(null)
     setDetail(null)
     setDesignMode(false)
+    setPeekId(null)
     api.get<Objective>(`/objectives/${objectiveId}`)
       .then(row => { if (!cancelled) setDetail(row) })
       .catch(err => {
@@ -80,6 +85,8 @@ export function PreviewWorkspace({ workspaces }: { workspaces: Workspace[] }) {
     if (objective) return grouped.childrenByParent.get(objective.id) ?? []
     return objectives.filter(o => o.parent_id === objectiveId)
   }, [objectives, objective, objectiveId])
+
+  const peek = peekId == null ? null : (children.find(o => o.id === peekId) ?? objectives.find(o => o.id === peekId) ?? null)
 
   const files: TouchedFile[] = useMemo(
     () => mergeAttachments(filesFromIntel(intel), uploads),
@@ -129,8 +136,8 @@ export function PreviewWorkspace({ workspaces }: { workspaces: Workspace[] }) {
       {!designMode && (
         <SubObjectiveRail
           items={children}
-          activeId={objective.id}
-          onOpen={o => navigate(`/o/${o.id}`)}
+          activeId={peek?.id ?? objective.id}
+          onOpen={o => setPeekId(o.id)}
         />
       )}
       <div className="relative min-h-0 min-w-0 flex-1">
@@ -144,6 +151,13 @@ export function PreviewWorkspace({ workspaces }: { workspaces: Workspace[] }) {
         />
       </div>
       {!designMode && <FileRail files={files} />}
+      {peek && (
+        <SubCardPopup
+          objective={peek}
+          onClose={() => setPeekId(null)}
+          onOpenFull={o => { setPeekId(null); navigate(`/o/${o.id}`) }}
+        />
+      )}
       {editing && (
         <ObjectiveModal
           objective={objective}

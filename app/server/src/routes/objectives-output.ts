@@ -20,6 +20,12 @@ import { broadcast } from '../ws/index.js'
 import { mapObjective, requireOwnership } from './objectives-helpers.js'
 import { listObjectiveThreadSessionIds, resolveFollowUpSessionId } from '../services/objective-sessions.js'
 import { isLockedStatus, runMachineStatusUpdate } from '../lib/status-lock.js'
+
+/** The one-line refusal for a message to a finished card (obj 901059). */
+export function doneCardMessageError(id: number, status: string): string {
+  const word = status === 'cancelled' ? 'cancelled' : 'already finished'
+  return `Card #${id} is ${word}, so your message was not sent and nothing changed. Reopen the card first if you want it to act on this.`
+}
 import { diskAction, diskBlockReason, readHostDisk } from '../lib/host-disk.js'
 import { noteStartReason } from '../services/session-start-reasons.js'
 import { beginIdempotent } from '../lib/idempotency.js'
@@ -432,9 +438,15 @@ router.post('/:id/message', async (req: AuthRequest, res) => {
   // enforced it is skipped (the human must explicitly reopen first). A message is
   // NOT treated as an explicit reopen.
   if (isLockedStatus(objective.status)) {
+    // obj 901059: say plainly what did NOT happen and what to do. The old
+    // "This card is done. Reopen it before sending a message." read like the
+    // send had ended the card. `code` + `can_reopen` let a UI offer
+    // "Reopen and send" instead of a dead click.
     res.status(409).json({
-      error: 'This card is done. Reopen it before sending a message.',
+      error: doneCardMessageError(objective.id, objective.status),
       status: objective.status,
+      code: 'card_done',
+      can_reopen: true,
     })
     return
   }

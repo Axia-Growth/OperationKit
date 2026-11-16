@@ -3,6 +3,7 @@ import { getDb } from '../db/index.js'
 import { requireAuth, type AuthRequest } from '../middleware/auth.js'
 import type { User } from '@operationkit/shared'
 import { escapeLike } from '../lib/dev-api-envelope.js'
+import { parseCardNumberQuery } from '../../../shared/card-number.js'
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Server-side objective SEARCH (obj 702388). BACKEND-ONLY.
@@ -266,14 +267,41 @@ router.get('/', (req: AuthRequest, res) => {
 
   if (!q) return res.json({ results: [] })
 
-  const tokens = tokenize(q)
-  if (tokens.length === 0) return res.json({ results: [] })
-
   const scope = buildScope(user, workspace)
   if (!scope) return res.json({ results: [] })
 
   const textColumns = getTextColumns()
   const db = getDb()
+
+  // obj 901080: '901075', '#901075' or a pasted card link finds THAT card first,
+  // through the same visibility scope as the text search (a card the caller may
+  // not see is simply not returned — never a "it exists" signal).
+  const cardId = parseCardNumberQuery(q)
+  const exact = cardId === null
+    ? undefined
+    : db.prepare(
+        `SELECT id, title, status, workspace, agent_context, updated_at FROM objectives
+          WHERE id = ? AND ${scope.clause} AND deleted_at IS NULL`,
+      ).get(cardId, ...scope.params) as CandidateRow | undefined
+  const exactResult = exact
+    ? [{
+        id: exact.id,
+        title: exact.title,
+        status: exact.status,
+        workspace: exact.workspace,
+        agent_context: exact.agent_context,
+        updated_at: exact.updated_at,
+        score: 100,
+        snippet: `Card #${exact.id}`,
+        match: 'card_number' as const,
+      }]
+    : []
+  // A pasted link is only ever a lookup; its URL words are not search terms.
+  const isLink = cardId !== null && /[/]/.test(q)
+  if (isLink) return res.json({ results: exactResult })
+
+  const tokens = tokenize(q)
+  if (tokens.length === 0) return res.json({ results: exactResult })
 
   // LIKE prefilter — case-insensitive by default for ASCII in SQLite. OR every
   // (fragment × column) so recall is broad; JS re-ranking does the precision.
@@ -302,11 +330,11 @@ router.get('/', (req: AuthRequest, res) => {
 
   const scored = candidates
     .map(row => ({ row, score: scoreRow(tokens, row, textColumns) }))
-    .filter(s => s.score > 0)
+    .filter(s => s.score > 0 && s.row.id !== exact?.id)
     .sort((a, b) => b.score - a.score)
-    .slice(0, limit)
+    .slice(0, Math.max(0, limit - exactResult.length))
 
-  const results = scored.map(({ row, score }) => ({
+  const textResults = scored.map(({ row, score }) => ({
     id: row.id,
     title: row.title,
     status: row.status,
@@ -317,7 +345,7 @@ router.get('/', (req: AuthRequest, res) => {
     snippet: buildSnippet(tokens, row, textColumns),
   }))
 
-  res.json({ results })
+  res.json({ results: [...exactResult, ...textResults] })
 })
 
 // POST /api/objectives/search/ai  body { q, workspace? }
