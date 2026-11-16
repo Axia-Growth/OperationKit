@@ -11,7 +11,7 @@ export function loadViewerSize(): ViewerSize {
   return localStorage.getItem(SIZE_KEY) === 'full' ? 'full' : 'half'
 }
 
-export type ViewerChrome = 'drawer' | 'dialog' | 'page'
+export type ViewerChrome = 'drawer' | 'dialog' | 'page' | 'embed'
 
 export interface SessionViewerProps {
   objective: Objective
@@ -22,6 +22,8 @@ export interface SessionViewerProps {
    * drawer (default) = production right-rail / mobile sheet.
    * dialog = centered popup (workspace preview).
    * page = fill the parent (fullscreen new tab).
+   * embed = fill the parent with no header and no shortcuts; the host (the
+   *   sub-card pop-up, obj 901083) owns the header, Escape and close.
    */
   chrome?: ViewerChrome
   /** When set, the expand control opens a new tab instead of stretching the drawer. */

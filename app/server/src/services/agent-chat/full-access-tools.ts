@@ -54,6 +54,7 @@ import { botGrantedWorkspace, botMayUseWorkspace, highAgencyRoutineSlug, persona
 import { chatCardModel, chatOwnerBotName, ToolUseError, type ToolContext, type ToolOutcome, type ToolSpec } from './tools.js'
 import { agentExists } from '../agent-registry.js'
 import { botForAgentSlug } from '../bots/bot-registry.js'
+import { publicCardUrl } from '../../lib/public-url.js'
 
 /** Starts and messages a card. The host uses the same loopback routes the scheduler does; tests pass a stub. */
 export interface FullAccessHost {
@@ -99,7 +100,8 @@ export const hostFullAccessHost: FullAccessHost = {
       if (!resp.ok) return { ok: false, reason: `${resp.status} ${text.slice(0, 300)}` }
       let body: { status?: string; skipped?: boolean; reason?: string } = {}
       try { body = JSON.parse(text) as typeof body } catch { /* not JSON */ }
-      if (body.skipped) return { ok: false, status: body.status, reason: `not delivered: ${body.reason ?? 'the card refused it'}` }
+      // obj 901059: say what a locked status MEANS, so the bot can tell the person plainly (and offer to reopen) instead of a bare code.
+      if (body.skipped) return { ok: false, status: body.status, reason: body.reason === 'locked_status' ? `not delivered: card #${objectiveId} is already ${body.status === 'cancelled' ? 'cancelled' : 'finished'}, so nothing was sent and nothing changed. If the person wants it to act, it must be reopened first (they can press Reopen and apply on a decision, or Reopen on the card).` : `not delivered: ${body.reason ?? 'the card refused it'}` }
       return { ok: true, status: body.status }
     } catch (err) {
       return { ok: false, reason: `message request failed: ${err instanceof Error ? err.message : String(err)}` }
@@ -506,7 +508,7 @@ export async function runFullAccessTool(ctx: FaCtx & { username: string }, fnNam
           acceptance_criteria: clip(typeof r.acceptance_criteria === 'string' ? r.acceptance_criteria : JSON.stringify(r.acceptance_criteria ?? null), 3000),
           latest_result: clip(c.last_session_summary, 6000),
           updated_at: c.updated_at,
-          url: `/o/${c.id}`,
+          url: publicCardUrl(c.id),
         },
         summary: `Read card #${c.id} in full (${c.status})`,
         objective_id: c.id,

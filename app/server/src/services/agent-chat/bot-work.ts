@@ -29,6 +29,7 @@
 // transcripts. The ceiling is the card's effective one from PR 794
 // (resolveEffectiveCostCeiling): explicit, else `spend_ceiling_default_usd:<tier>`.
 import type { Database } from 'better-sqlite3'
+import { cardsWithOpenDecision } from '../decisions.js'
 import {
   botLiveLine,
   botLiveState,
@@ -285,6 +286,8 @@ export function cardSignals(db: Database, rows: CardRow[]): Map<number, CardSign
   const ids = rows.map(r => r.id)
   const spend = measuredSpend(db, ids)
   const denied = deniedApprovals(db, ids)
+  let openDecisions = new Set<number>()
+  try { openDecisions = cardsWithOpenDecision(db, ids) } catch { /* no table yet */ }
   const out = new Map<number, CardSignals>()
   for (const r of rows) {
     let ceiling: { costUsd: number; source: string; isDefault: boolean } | null = null
@@ -305,6 +308,7 @@ export function cardSignals(db: Database, rows: CardRow[]): Map<number, CardSign
         needs_secret_count: secretCount(r.needs_secret),
         stalled: !!r.stalled_at && r.status === 'working',
         job_disposition: r.job_disposition,
+        open_decision: openDecisions.has(r.id),
         spent_usd: spent,
         ceiling_usd: ceiling ? ceiling.costUsd : null,
         approval_denied: denied.has(r.id),

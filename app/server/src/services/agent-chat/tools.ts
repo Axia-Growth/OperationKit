@@ -26,6 +26,7 @@ import { depthForParent } from '../../lib/objective-depth.js'
 import { checkAgentInWorkspacePool, defaultAgentForWorkspace } from '../../routes/objectives-helpers.js'
 import { broadcast } from '../../ws/index.js'
 import { getInitialStatus, validateOwnerBot, type Objective } from '@operationkit/shared'
+import { raiseDecision } from '../decisions.js'
 import type { ChatAgent } from './agent-defs.js'
 import { createDraft, type Connectors, type EmailDraft, type EventDraft } from './connectors.js'
 import { workspaceKbRoot } from '../doc-ingest/kb-paths.js'
@@ -59,6 +60,7 @@ import {
 } from './bot-messaging.js'
 import { ArtifactError, readArtifactImage } from '../live-artifacts.js'
 import { ImageRejected, MAX_IMAGE_BYTES, parseIncomingImages, validateImageBytes, type IncomingImage } from './attachments.js'
+import { publicCardUrl } from '../../lib/public-url.js'
 
 export interface ToolSpec {
   type: 'function'
@@ -103,6 +105,8 @@ export interface ToolOutcome {
   objective_id?: number
   /** A bot-to-bot conversation this call started or used (obj 900859) — the chat shows an "Open thread" link. */
   bot_conversation_id?: number
+  /** obj 901059: a decision this call raised — the chat renders its briefing, Q&A thread and Approve/Deny. */
+  decision_id?: number
   /** obj 901028: an image this tool call attaches to the reply — rendered inline, same as a pasted screenshot. */
   images?: IncomingImage[]
 }
@@ -157,6 +161,29 @@ const SPECS: Record<string, ToolSpec[]> = {
       description: { type: 'string', description: 'What to do, the context, and what "done" looks like' },
       workspace: { type: 'string', description: 'Workspace slug to file the card in. Omit for this chat\'s workspace. Only workspaces this bot is granted and the person belongs to are accepted.' },
     }, ['title', 'description']))],
+  raise_decision: [fn('raise_decision', 'Ask the person to DECIDE something on a board card, with a short briefing. It shows at the top of the card and in this chat with a Q&A thread and Approve/Deny; their choice is sent to the card. Use this instead of asking for a decision in prose. Under about 200 words in total. Refused if the question or options are missing.',
+    obj({
+      card_id: { type: 'integer', description: 'The card the decision is about' },
+      context: { type: 'string', description: '2-3 sentences: where we are, what the decision is for, where it fits in the system' },
+      question: { type: 'string', description: 'The decision as ONE question' },
+      options: {
+        type: 'array', minItems: 2, maxItems: 4, description: '2-4 options',
+        items: {
+          type: 'object',
+          properties: {
+            key: { type: 'string', description: 'A, B, C or D' },
+            label: { type: 'string', description: 'Short name of the option' },
+            pros: { type: 'array', items: { type: 'string' }, description: '1-3 short pros' },
+            cons: { type: 'array', items: { type: 'string' }, description: '1-3 short cons' },
+            next: { type: 'string', description: 'What happens right after if this is chosen' },
+          },
+          required: ['label', 'pros', 'cons', 'next'],
+          additionalProperties: false,
+        },
+      },
+      recommended: { type: 'string', description: 'The key of the option you recommend' },
+      recommended_why: { type: 'string', description: 'One sentence: why' },
+    }, ['card_id', 'context', 'question', 'options', 'recommended', 'recommended_why']))],
   get_objective: [fn('get_objective', 'Read one board card by number: status, workspace, latest result, AI review verdict, PR link. Works for any card on a board the person can see, not only cards this chat filed.',
     obj({ id: { type: 'integer' } }, ['id']))],
   list_objectives: [fn('list_objectives', 'List the real board cards the person can see (every workspace they belong to, most recently updated first). Default: the open pipeline (planning, queue, working, ai_review, review — not done/cancelled). Pass workspace to narrow to one board, status for one column ("blocked" = a blocker is raised). counts covers ALL matching cards even when the list is cut short.',
@@ -232,6 +259,11 @@ const SPECS: Record<string, ToolSpec[]> = {
 const IMPLIED_TOOLS: Record<string, string[]> = {
   list_objectives: ['board_briefing'],
   get_objective: ['board_briefing'],
+  // obj 901059: a bot that can file cards can ask the person to decide on one.
+  // raise_decision only ASKS (a briefing on the card); it never acts, so it is
+  // the one "write" implied: without it the bot asks for decisions in prose,
+  // which is exactly what left Operator unable to see what he was approving.
+  create_objective: ['raise_decision'],
 }
 
 /**
@@ -524,7 +556,7 @@ function knowledgeSearch(ctx: ToolContext, q: string) {
 // ── board ──
 
 function cardUrl(id: number): string {
-  return `/o/${id}`
+  return publicCardUrl(id)
 }
 
 /**
@@ -1364,6 +1396,30 @@ export function runTool(ctxIn: ToolContext, fnName: string, args: Record<string,
       const title = s(args, 'title', true)
       const card = createCard(ctx, title, s(args, 'description'), args.workspace)
       return { result: { id: card.id, status: card.status, workspace: card.workspace, note: card.note ?? 'Card is on the board. Tell the person its number.' }, summary: `Created card #${card.id}: ${title}`, objective_id: card.id }
+    }
+    case 'raise_decision': {
+      const id = Number(args.card_id)
+      // Only a card this person (and this bot) can see — the same rule as get_objective.
+      const card = getBoardCard(ctx, id)
+      const out = raiseDecision(getDb(), {
+        objective_id: card.id,
+        workspace: card.workspace ?? '',
+        source: 'bot',
+        agent_slug: ctx.agent.slug,
+        briefing: { context: args.context, question: args.question, options: args.options, recommended: args.recommended, recommended_why: args.recommended_why },
+      })
+      if (!out.ok) throw new ToolUseError(`The decision was not raised. Fix these and call raise_decision again: ${out.errors.join('; ')}`)
+      return {
+        result: {
+          decision_id: out.decision.id,
+          card: card.id,
+          note: 'The person now sees the briefing on the card and in this chat, can ask you questions in its thread, and picks an option. Do not act on any option until they choose; tell them in one line that the decision is waiting.',
+          ...(out.decision.flags.includes('long') ? { warning: 'The briefing is long. Aim for under about 200 words next time.' } : {}),
+        },
+        summary: `Asked for a decision on card #${card.id}: ${out.decision.briefing.question}`,
+        objective_id: card.id,
+        decision_id: out.decision.id,
+      }
     }
     case 'get_objective': {
       const id = Number(args.id)

@@ -49,6 +49,7 @@ import {
   UPLOAD_TOKEN_TTL_MS,
 } from '../services/secret-requests.js'
 import { resolveWriteWorkspace } from '../services/workspaces.js'
+import { resolvePublicBaseUrl } from '../lib/public-url.js'
 
 export { SECRET_NAME_RE }
 
@@ -309,7 +310,7 @@ router.post('/:id/secret-requests/:requestId/upload-token', flagOn, requireAuth,
     res.status(minted.status).json({ error: minted.error })
     return
   }
-  const base = (process.env.APP_BASE_URL || 'https://cc.example.com').replace(/\/+$/, '')
+  const base = resolvePublicBaseUrl()
   const uploadUrl = `${base}/api/secret-upload?name=${encodeURIComponent(parsed.name)}`
   res.json({
     request_id: request.request_id,

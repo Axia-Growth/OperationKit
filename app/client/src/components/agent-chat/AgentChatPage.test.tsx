@@ -103,8 +103,11 @@ describe('AgentChatPage', () => {
     await mount('/chat/demo-assistant')
     await settle()
     const link = host.querySelector('a[href="/o/41"]')!
-    expect(link.textContent).toContain('#41')
-    expect(link.textContent).toContain('In progress')
+    const chip = link.closest('[data-testid="chat-card-chip"]')!
+    expect(chip.textContent).toContain('#41')
+    expect(chip.textContent).toContain('In progress')
+    // obj 901080: the number is a copy button, not part of the link
+    expect(chip.querySelector('[data-testid="card-number"]')?.textContent).toBe('#41')
   })
 
   it('on the bot list alone (mobile entry) the conversation pane waits for a pick', async () => {

@@ -78,6 +78,8 @@ export interface NeedsYouInput {
   needs_secret_count?: number
   stalled?: boolean
   job_disposition?: string | null
+  /** obj 901059: the card has an open decision briefing waiting on the person. */
+  open_decision?: boolean
   spent_usd: number
   ceiling_usd: number | null
   /** A delegated approval for this card was refused and nobody approved it since. */
@@ -100,12 +102,14 @@ const TERMINAL = new Set(['done', 'cancelled'])
  *  - blocker: the card has a blocker, is waiting on a secret, or stalled.
  */
 export function needsYouReasons(c: NeedsYouInput): NeedsYouReason[] {
-  if (TERMINAL.has(c.status)) return []
+  // obj 901059: an open decision still needs the person on a finished card (a
+  // job that ended asking) — that is the case Operator could not see. Nothing else does.
+  if (TERMINAL.has(c.status)) return c.open_decision ? ['decision'] : []
   const out: NeedsYouReason[] = []
   if (c.approval_denied) out.push('approval_beyond_grant')
   if (c.ceiling_usd != null && Number.isFinite(c.ceiling_usd) && c.spent_usd >= c.ceiling_usd) out.push('over_ceiling')
   const parked = c.status === 'review' && (c.session_id == null || c.session_id === '')
-  if (parked || c.job_disposition === 'needs_review') out.push('decision')
+  if (parked || c.job_disposition === 'needs_review' || c.open_decision) out.push('decision')
   if (c.has_blockers === true || Number(c.has_blockers) > 0 || (c.needs_secret_count ?? 0) > 0 || c.stalled) out.push('blocker')
   return out
 }
@@ -317,4 +321,7 @@ export interface BotNeedsYouMeta {
   ceiling_usd?: number
   /** Approval-beyond-grant only: the action the bot asked to approve. */
   action?: string | null
+  /** Decision only (obj 901059): the open decision and its one question, so the post says WHAT is being decided. */
+  decision_id?: number
+  question?: string
 }

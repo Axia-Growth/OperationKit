@@ -480,9 +480,6 @@ export interface Objective {
   /** Pointer into `test_credentials.slug`; null means the reviewer falls
    *  back to a workspace+project lookup at spawn time. */
   test_cred_slug: string | null
-  /** obj 901029: the card's WORKER gets the pinned, sandboxed, egress-guarded
-   *  browser (lib/card-browser.ts). False = no browser, as for every card before. */
-  needs_browser?: boolean
   created_at: string
   updated_at: string
   /** Denormalized last-activity timestamp (obj 700850): the most recent moment the

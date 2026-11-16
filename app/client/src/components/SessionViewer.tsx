@@ -21,6 +21,7 @@ import { ViewerHeader } from './session-viewer/ViewerHeader'
 import { CorrectionPanel } from './session-viewer/CorrectionPanel'
 import { useAuth } from '../context/AuthContext'
 import { BriefPanel } from './session-viewer/BriefPanel'
+import { CardDecisionPanel } from './decisions/DecisionBriefing'
 import { ThreadPane } from './session-viewer/ThreadPane'
 import { Composer } from './session-viewer/Composer'
 import { DesignCanvas } from '../preview/DesignCanvas'
@@ -207,9 +208,16 @@ export function SessionViewer({
   // drawer/dialog chromes Escape belongs to ui/Modal (it closes only the
   // topmost dialog, e.g. an open file editor first); page chrome keeps it here.
   const pageChrome = chrome === 'page'
+  // Embedded (the sub-card pop-up, obj 901083): the host owns every key.
+  const embedChrome = chrome === 'embed'
   const titleId = useId()
   useEffect(() => {
+    if (embedChrome) return
     function onKey(e: KeyboardEvent) {
+      // A key pressed inside a dialog open over the page (the sub-card pop-up,
+      // a file editor) belongs to that dialog: Escape closes the dialog and
+      // must not ALSO close the card page underneath (obj 901083).
+      if (pageChrome && (e.defaultPrevented || isInsideDialog(e.target))) return
       if (e.key === 'Escape') { if (pageChrome) onClose(); return }
       if (e.key === 'f' || e.key === 'F') {
         const t = e.target as HTMLElement | null
@@ -222,7 +230,7 @@ export function SessionViewer({
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [onClose, toggleSize, onOpenInNewTab, pageChrome])
+  }, [onClose, toggleSize, onOpenInNewTab, pageChrome, embedChrome])
 
   // ThreadTimeline polls ?view=timeline itself; it bubbles server-detected
   // status changes (poller-driven) up here so the header + input stay in sync.
@@ -449,7 +457,7 @@ export function SessionViewer({
   const nameEl = <span id={titleId} hidden>{objective.title}</span>
 
   // Page chrome fills its parent: a normal page region, no overlay.
-  if (isPage) {
+  if (isPage || embedChrome) {
     return (
       <div role="region" aria-labelledby={titleId} className="relative flex h-full min-h-0 w-full flex-col bg-surface-1">
         {nameEl}
@@ -494,7 +502,7 @@ export function SessionViewer({
       {/* Quiet meta-line header (§09). On mobile the action buttons reflow to
           a full-width row below the title (obj 700281) — only the window
           controls stay pinned top-right. Desktop keeps everything inline. */}
-      <ViewerHeader
+      {!embedChrome && <ViewerHeader
         objective={objective}
         isActive={isActive}
         connState={connState}
@@ -523,7 +531,7 @@ export function SessionViewer({
         onOpenInNewTab={onOpenInNewTab}
         hideSizeToggle={isPage}
         onEdit={onEdit}
-      />
+      />}
 
       {/* ST5 — Flag mistake: human correction surface */}
       {showCorrection && (
@@ -537,6 +545,10 @@ export function SessionViewer({
           submittingCorrection={submittingCorrection}
         />
       )}
+
+      {/* Decision briefing (obj 901059) — what the bot/worker is asking, with a Q&A
+          thread and Choose/Deny; the outcome stays visible after the click. */}
+      <CardDecisionPanel objectiveId={objective.id} botName={objective.owner_bot ?? undefined} />
 
       {/* Objective Brief — collapsible */}
       {showBrief && (
@@ -633,4 +645,9 @@ export function SessionViewer({
       </>
     )
   }
+}
+
+/** True when a key event came from inside an open dialog over the page. */
+function isInsideDialog(target: EventTarget | null): boolean {
+  return target instanceof Element && !!target.closest('[role="dialog"], dialog')
 }

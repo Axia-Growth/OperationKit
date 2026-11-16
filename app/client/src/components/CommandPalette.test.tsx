@@ -104,3 +104,37 @@ describe('CommandPalette on UI SDK Command + Dialog', () => {
     await vi.waitFor(() => expect(document.activeElement).toBe(btn))
   })
 })
+
+describe('CommandPalette: open a card by number (obj 901080)', () => {
+  function CardHarness({ openCard }: { openCard: (id: number) => void }) {
+    const [open, setOpen] = useState(false)
+    const items = [{ label: 'Board', onSelect: () => {} }]
+    return (
+      <>
+        <button type="button" onClick={() => setOpen(true)}>Open palette</button>
+        <CommandPalette open={open} onClose={() => setOpen(false)} items={items} onOpenCard={openCard} />
+      </>
+    )
+  }
+
+  for (const q of ['901075', '#901075', 'https://ops.acme.test/o/901075']) {
+    it(`'${q}' offers Open card #901075 and Enter opens it`, async () => {
+      const openCard = vi.fn()
+      await render(<CardHarness openCard={openCard} />)
+      await openPalette()
+      await type(q)
+      await vi.waitFor(() => expect(options().filter((o) => !o.hidden).map((o) => o.textContent)).toContain('Open card #901075'))
+      await press('ArrowDown', input())
+      await press('Enter', input())
+      expect(openCard).toHaveBeenCalledWith(901075)
+      await vi.waitFor(() => expect(dialog()).toBeNull())
+    })
+  }
+
+  it('ordinary words do not offer a card', async () => {
+    await render(<CardHarness openCard={vi.fn()} />)
+    await openPalette()
+    await type('boa')
+    await vi.waitFor(() => expect(options().filter((o) => !o.hidden).map((o) => o.textContent)).toEqual(['Board']))
+  })
+})

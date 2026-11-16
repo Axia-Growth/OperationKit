@@ -1,7 +1,8 @@
 /**
- * obj 901029 — `needs_browser` on cards, over the REAL routes and a real temp DB:
- * persisted on create/update and on the internal bulk create, defaulted off,
- * serialised as a boolean, and a non-boolean is a 400 (never a silent drop).
+ * obj 901075 — there is no per-card browser switch any more: every worker gets
+ * the locked-down browser (see services/card-browser-spawn.test.ts). Over the
+ * REAL routes and a real temp DB, `needs_browser` is now inert: never stored,
+ * never serialised, never a 400 or 403.
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest'
 import fs from 'fs'
@@ -60,56 +61,36 @@ afterAll(async () => {
   for (const s of ['', '-wal', '-shm']) { const f = `${TMP_DB}${s}`; if (fs.existsSync(f)) fs.unlinkSync(f) }
 })
 
-describe('POST/PUT /api/objectives', () => {
-  it('defaults to off (every existing card keeps no browser)', async () => {
-    const r = await call('POST', '/api/objectives', { title: 'nb default', workspace: 'example' })
-    expect(r.status).toBe(201)
-    expect(stored(r.json.id)).toBe(0)
-    expect(r.json.needs_browser === undefined || r.json.needs_browser === false).toBe(true)
+describe('POST/PUT /api/objectives: needs_browser is ignored', () => {
+  it('create with needs_browser true/false/garbage = 201 and nothing stored or echoed', async () => {
+    for (const v of [true, false, 'yes', 1]) {
+      const r = await call('POST', '/api/objectives', { title: `nb ignored ${String(v)}`, workspace: 'example', needs_browser: v })
+      expect(r.status).toBe(201)
+      expect(stored(r.json.id)).toBe(0)
+      expect(r.json).not.toHaveProperty('needs_browser')
+      const got = await call('GET', `/api/objectives/${r.json.id}`)
+      expect(got.json).not.toHaveProperty('needs_browser')
+    }
   })
 
-  it('persists needs_browser:true on create and serialises a boolean', async () => {
-    const r = await call('POST', '/api/objectives', { title: 'nb create on', workspace: 'example', needs_browser: true })
-    expect(r.status).toBe(201)
-    expect(stored(r.json.id)).toBe(1)
-    const got = await call('GET', `/api/objectives/${r.json.id}`)
-    expect(got.json.needs_browser).toBe(true)
-  })
-
-  it('turns it on and off on update; an update that omits it leaves it alone', async () => {
+  it('update with needs_browser is a 200 no-op', async () => {
     const r = await call('POST', '/api/objectives', { title: 'nb update', workspace: 'example' })
     const id = r.json.id
     expect((await call('PUT', `/api/objectives/${id}`, { needs_browser: true })).status).toBe(200)
-    expect(stored(id)).toBe(1)
-    expect((await call('PUT', `/api/objectives/${id}`, { title: 'nb update renamed' })).status).toBe(200)
-    expect(stored(id)).toBe(1)
-    expect((await call('PUT', `/api/objectives/${id}`, { needs_browser: false })).status).toBe(200)
     expect(stored(id)).toBe(0)
-  })
-
-  it('rejects a non-boolean with 400 on create and update', async () => {
-    expect((await call('POST', '/api/objectives', { title: 'nb bad', workspace: 'example', needs_browser: 'yes' })).status).toBe(400)
-    const r = await call('POST', '/api/objectives', { title: 'nb bad update', workspace: 'example' })
-    expect((await call('PUT', `/api/objectives/${r.json.id}`, { needs_browser: 'yes' })).status).toBe(400)
-    expect(stored(r.json.id)).toBe(0)
+    expect((await call('PUT', `/api/objectives/${id}`, { needs_browser: 'yes' })).status).toBe(200)
+    expect(stored(id)).toBe(0)
   })
 })
 
-describe('POST /api/internal/objectives (sessions / delegators)', () => {
-  it('accepts and persists needs_browser per item', async () => {
+describe('POST /api/internal/objectives: needs_browser accepted for old callers, then ignored', () => {
+  it('201, never a 400 for an "unsupported field", never stored', async () => {
     const r = await call('POST', '/api/internal/objectives', [
       { title: 'nb internal on', needs_browser: true },
-      { title: 'nb internal off' },
+      { title: 'nb internal garbage', needs_browser: 'true' },
+      { title: 'nb internal none' },
     ], true)
     expect(r.status).toBe(201)
-    const ids = (r.json.objectives as Array<{ id: number }>).map((o) => o.id)
-    expect(stored(ids[0])).toBe(1)
-    expect(stored(ids[1])).toBe(0)
-  })
-
-  it('400s a non-boolean instead of dropping it', async () => {
-    const r = await call('POST', '/api/internal/objectives', [{ title: 'nb internal bad', needs_browser: 'true' }], true)
-    expect(r.status).toBe(400)
-    expect(String(r.json.error)).toMatch(/needs_browser must be a boolean/)
+    for (const o of r.json.objectives as Array<{ id: number }>) expect(stored(o.id)).toBe(0)
   })
 })

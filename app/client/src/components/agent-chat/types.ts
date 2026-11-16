@@ -234,6 +234,11 @@ export interface ChatMessage {
     spent_usd?: number
     ceiling_usd?: number
     action?: string | null
+    /** obj 901059: the decision this row is about (a needs-you post or a raise_decision tool line). */
+    decision_id?: number
+    question?: string
+    /** obj 901084: set at read time when the ask is over (card ended / decision cleared) — the post collapses to one line. */
+    resolved?: { text: string; reason: string }
     /** obj 900947: an older High Agency update the UI folds away ("now in Activity"). */
     activity_feed?: boolean
     bot_job?: number

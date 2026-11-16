@@ -36,6 +36,9 @@
 #      Chromium uses — the cloud metadata endpoint and an off-allowlist site are
 #      both refused while an ALLOWED origin still loads. Playwright/Chromium
 #      must be pinned to a version, never `latest`.
+#  10. the card-browser sandbox image ok-jail-browser:local exists and the
+#      Playwright / @playwright/mcp installed in it equal the pins in
+#      app/jail/Dockerfile (docker isolation only).
 # --local-only skips 4-5 (installs made with --skip-cloudflare). --skip-card
 # skips 8 (it still asks the app for its Claude seat status, read-only, to say why). Secrets are read from files, sent in
 # header files, and never printed.
@@ -48,6 +51,8 @@ source "$(dirname "${BASH_SOURCE[0]}")/api-bypass-lib.sh"
 source "$(dirname "${BASH_SOURCE[0]}")/bic-lib.sh"
 # shellcheck source=install/verify-lib.sh
 source "$(dirname "${BASH_SOURCE[0]}")/verify-lib.sh"
+# shellcheck source=install/jail-browser-lib.sh
+source "$(dirname "${BASH_SOURCE[0]}")/jail-browser-lib.sh"
 
 CONFIG=
 LOCAL_ONLY=0
@@ -385,6 +390,31 @@ else
   [ "$(jq -r '.locked_down' <<<"$bstat")" = true ] \
     && pass "card browser is at the locked-down defaults" \
     || log "  NOTE  one or more card-browser controls were widened on purpose (see NOTEs above)"
+fi
+
+
+# 10. the card-browser sandbox image (obj 901075)
+#     A `needs_browser` card's worker runs in ok-jail-browser:local. The
+#     installer builds it; this proves it is THERE and that the Playwright and
+#     @playwright/mcp INSIDE it (read from its node_modules, network off — not
+#     from a label, which a hand build or a retag can get wrong) equal the pins
+#     in this checkout's app/jail/Dockerfile. A stale image means the browser
+#     cards run a different Chromium than the code says.
+log "10. card browser sandbox image"
+if ! ok_jb_needed "$(conf SESSION_ISOLATION docker)"; then
+  log "  SKIP  SESSION_ISOLATION=$(conf SESSION_ISOLATION docker): there is no browser jail"
+elif ! jb_pins=$(ok_jb_pins "$OK_REPO_DIR/app/jail/Dockerfile"); then
+  fail "app/jail/Dockerfile does not pin PLAYWRIGHT_VERSION / PLAYWRIGHT_MCP_VERSION to exact versions"
+else
+  read -r jb_pw jb_mcp <<<"$jb_pins"
+  jb_img=$(ok_jb_image "$(docker exec command-center printenv SESSION_JAIL_BROWSER_IMAGE 2>/dev/null | tr -d '\r' || true)")
+  read -r jb_have_pw jb_have_mcp <<<"$(ok_jb_image_versions "$jb_img")" || true
+  jb_state=$(ok_jb_compare "$jb_pw" "$jb_mcp" "${jb_have_pw:-}" "${jb_have_mcp:-}")
+  case "$jb_state" in
+    match)   pass "$jb_img is built and matches the pins (Playwright $jb_pw, @playwright/mcp $jb_mcp)" ;;
+    missing) fail "$jb_img is missing (or has no browser in it) — re-run install.sh / install/update.sh, which build it" ;;
+    *)       fail "$jb_img is out of date — $jb_state; re-run install.sh / install/update.sh" ;;
+  esac
 fi
 
 printf '\n%d pass, %d fail\n' "$PASS_COUNT" "$FAIL_COUNT"

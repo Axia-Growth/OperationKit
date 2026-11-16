@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { ChatDecision } from '../decisions/ChatDecision'
 import { ArrowRight, BookOpen, CalendarDays, Clock, Download, LayoutGrid, Mail, X, type LucideIcon } from 'lucide-react'
 import { Badge, Button, Modal, cn } from '../ui'
 import { StatusDot } from '../design/primitives'
@@ -13,6 +14,7 @@ import {
   type EmailDraftPayload,
   type EventDraftPayload,
 } from './types'
+import { CardNumber } from '../CardNumber'
 
 /* Pieces of ONE bot conversation (obj 719987): avatar, bubbles, the inline
    activity line for each tool call, draft cards with the person's Send button,
@@ -246,6 +248,8 @@ export function ToolLine({ m }: { m: ChatMessage }) {
         <span className="min-w-0 break-words">{m.content}</span>
       </div>
       {images.length > 0 && <ChatImageGallery images={images} />}
+      {/* obj 901059: a raise_decision call renders the briefing itself, with its Q&A thread and Choose/Deny. */}
+      {!failed && typeof m.meta?.decision_id === 'number' && <ChatDecision id={m.meta.decision_id} />}
     </div>
   )
 }
@@ -367,19 +371,28 @@ const CARD_STATE: Record<ChatCard['status'], string> = {
 }
 
 export function CardChip({ card }: { card: ChatCard }) {
+  // obj 901080: the whole chip opens the card (a stretched link), and the #number
+  // sits above that link so a click on it copies the number instead. The link is
+  // in-app (/o/<id>); card.url is the absolute public link bots paste elsewhere.
   return (
-    <a
-      href={card.url}
-      className="group ml-9 flex max-w-[560px] items-center gap-2.5 rounded-lg border border-line bg-surface-2 px-3.5 py-2.5 transition-all duration-fast hover:-translate-y-px hover:border-line-strong hover:bg-surface-3 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/50"
+    <div
+      data-testid="chat-card-chip"
+      className="group relative ml-9 flex max-w-[560px] items-center gap-2.5 rounded-lg border border-line bg-surface-2 px-3.5 py-2.5 transition-all duration-fast focus-within:ring-2 focus-within:ring-accent/50 hover:-translate-y-px hover:border-line-strong hover:bg-surface-3"
     >
       <StatusDot status={card.status} />
       <span className="min-w-0 flex-1">
-        <span className="block truncate text-base font-medium text-fg-0">
-          <span className="font-mono text-fg-2">#{card.id}</span> {card.title}
+        <span className="flex min-w-0 items-baseline gap-1.5 text-base font-medium text-fg-0">
+          <CardNumber id={card.id} className="relative z-10 text-fg-2" />
+          <a
+            href={`/o/${card.id}`}
+            className="min-w-0 truncate after:absolute after:inset-0 after:rounded-lg after:content-[''] focus-visible:outline-none"
+          >
+            {card.title}
+          </a>
         </span>
         <span className="block text-xs text-fg-2">On the board · {CARD_STATE[card.status] ?? card.status}</span>
       </span>
-      <span className="inline-flex items-center gap-1 text-xs font-medium text-fg-1 transition-colors duration-fast group-hover:text-accent-hover">Open<ArrowRight aria-hidden="true" className="h-3.5 w-3.5" /></span>
-    </a>
+      <span aria-hidden="true" className="inline-flex items-center gap-1 text-xs font-medium text-fg-1 transition-colors duration-fast group-hover:text-accent-hover">Open<ArrowRight className="h-3.5 w-3.5" /></span>
+    </div>
   )
 }

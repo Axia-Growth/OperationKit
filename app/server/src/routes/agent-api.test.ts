@@ -115,8 +115,21 @@ describe('GET /api/openapi.json', () => {
     expect(res.description).toMatch(/General/)
   })
 
-  it('matches the in-process spec object', async () => {
-    const res = await fetch(`${baseUrl}/api/openapi.json`)
-    expect(await res.json()).toEqual(AGENT_OPENAPI)
+  it('matches the in-process spec object, with servers[0] = this install (obj 901080)', async () => {
+    const saved = process.env.OK_DOMAIN
+    process.env.OK_DOMAIN = 'ops.acme.test'
+    try {
+      const res = await fetch(`${baseUrl}/api/openapi.json`)
+      const body = await res.json()
+      const { servers, ...rest } = body
+      const { servers: _staticServers, ...expected } = AGENT_OPENAPI as unknown as Record<string, unknown>
+      expect(rest).toEqual(JSON.parse(JSON.stringify(expected)))
+      expect(servers[0]).toEqual({ url: 'https://ops.acme.test', description: 'This install' })
+      expect(JSON.stringify(servers)).not.toMatch(/example\.com/)
+      const disc = await (await fetch(`${baseUrl}/api/agent`)).json()
+      expect(disc.base_url).toBe('https://ops.acme.test')
+    } finally {
+      if (saved === undefined) delete process.env.OK_DOMAIN; else process.env.OK_DOMAIN = saved
+    }
   })
 })

@@ -6,7 +6,6 @@
  * Imports startSession / ensureUser / etc. from the facade. Circular ESM is
  * runtime-safe: these functions run after module init (same pattern as session-death).
  */
-import { cardWantsBrowser } from '../lib/card-browser.js'
 import fs from 'fs'
 import { redactForStorage } from './secret-redaction.js'
 import path from 'path'
@@ -446,8 +445,8 @@ export function sendFollowUp(
     env: buildSpawnEnv({ objective, homeDir, sessionKind: 'followup' }),
     seatEnv: signIn.env,
     seatMount: signIn.mount,
-    // obj 901029: a needs_browser card keeps its browser across follow-ups (never the planner).
-    cardBrowser: !isPlannerSession && cardWantsBrowser(objective),
+    // obj 901075: every worker keeps the browser across follow-ups (never the planner).
+    cardBrowser: !isPlannerSession,
   })
 
   const newSession: ActiveSession = {

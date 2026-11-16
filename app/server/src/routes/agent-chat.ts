@@ -80,6 +80,7 @@ import delegationsRouter from './agent-chat-delegations.js'
 import botMessagesRouter from './agent-chat-bot-messages.js'
 import botWorkRouter from './agent-chat-bot-work.js'
 import { markFeedMessage } from '../services/agent-chat/bot-attention.js'
+import { resolveNeedsYouMessages } from '../services/decision-queue.js'
 import { isHighAgencyActivityCard } from '../services/agent-chat/high-agency-cards.js'
 
 /**
@@ -271,12 +272,21 @@ function markActivityMessages(messages: ChatMessageRow[]): ChatMessageRow[] {
     if (!memo.has(id)) memo.set(id, isHighAgencyActivityCard(db, id))
     return memo.get(id)!
   }
-  return messages.map(m => {
+  const marked = messages.map(m => {
     if (m.role !== 'assistant') return m
     const meta = (m.meta ?? null) as Record<string, unknown> | null
     if (!markFeedMessage(meta, m.content ?? '', isHa)) return m
     return { ...m, meta: { ...(meta ?? {}), activity_feed: true } } as ChatMessageRow
   })
+  // obj 901084: a needs-you post whose card ended (or whose decision was cleared)
+  // is marked resolved, so it renders as one line with no dead buttons; a decision
+  // post with no decision id is linked to the card's open one.
+  try {
+    return resolveNeedsYouMessages(db, marked as (ChatMessageRow & { meta?: Record<string, unknown> | null })[]) as ChatMessageRow[]
+  } catch (err) {
+    console.warn('[agent-chat] needs-you resolution failed:', err instanceof Error ? err.message : String(err))
+    return marked
+  }
 }
 
 /** Drafts + card statuses referenced by these messages, so the UI can render them. */

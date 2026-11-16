@@ -25,6 +25,8 @@ export const agentsTabRoute = (tab: AgentsTab) => `${AGENTS_ROUTE}?tab=${tab}`
 
 /** Jobs, and the anchor of its host-cron section (was Settings → Platform). */
 export const JOBS_ROUTE = '/jobs'
+/** The Needs you decision stack (obj 901084). */
+export const NEEDS_YOU_ROUTE = '/needs-you'
 export const HOST_CRON_ANCHOR = 'host-cron'
 export const HOST_CRON_ROUTE = `${JOBS_ROUTE}#${HOST_CRON_ANCHOR}`
 

@@ -1,6 +1,6 @@
 /**
  * obj 901029 — the pieces of the worker browser that do not need a spawn:
- * the opt-in flag, the generated launcher's refusals, the seccomp delta, and
+ * the prompt block (granted / unavailable), the generated launcher's refusals, the seccomp delta, and
  * the prompt block. Spawn-level halves live in services/card-browser-spawn.test.ts.
  */
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest'
@@ -16,10 +16,8 @@ import {
   buildCardBrowserEnv,
   buildCardBrowserPromptBlock,
   buildJailGuardPrefix,
-  cardWantsBrowser,
   jailBrowserImage,
   jailBrowserSeccompProfilePath,
-  parseNeedsBrowser,
   renderCardBrowserLauncher,
   renderJailGuardRunner,
 } from './card-browser.js'
@@ -27,27 +25,19 @@ import { decideEgress, resolveBrowserPolicy } from './browser-policy.js'
 import { buildPlaywrightMcpArgs as reviewerArgs } from '../services/session-reviewer-prompt.js'
 import { buildPlaywrightMcpArgs } from './card-browser.js'
 
-describe('the per-card opt-in', () => {
-  it('only an explicit true/1 turns the browser on', () => {
-    for (const v of [true, 1, '1']) expect(cardWantsBrowser({ needs_browser: v })).toBe(true)
-    for (const v of [false, 0, '0', undefined, null, 'yes', 2]) expect(cardWantsBrowser({ needs_browser: v })).toBe(false)
-    expect(cardWantsBrowser(null)).toBe(false)
-    expect(cardWantsBrowser({})).toBe(false)
-  })
-
-  it('request bodies are validated strictly (no silent drop of "yes")', () => {
-    expect(parseNeedsBrowser(undefined)).toEqual({ ok: true, value: undefined })
-    expect(parseNeedsBrowser(true)).toEqual({ ok: true, value: true })
-    expect(parseNeedsBrowser(0)).toEqual({ ok: true, value: false })
-    for (const v of ['yes', 'true', null, 2, {}]) expect(parseNeedsBrowser(v).ok).toBe(false)
-  })
-
-  it('the worker prompt mentions the browser only for a marked card', () => {
-    expect(buildCardBrowserPromptBlock({})).toEqual([])
-    expect(buildCardBrowserPromptBlock({ needs_browser: false })).toEqual([])
-    const block = buildCardBrowserPromptBlock({ needs_browser: true }).join('\n')
+describe('the worker prompt says what the spawn actually got (obj 901075)', () => {
+  it('granted: how to use the launcher, and to carry on if check fails', () => {
+    const block = buildCardBrowserPromptBlock({ granted: true }).join('\n')
     expect(block).toContain('$CC_BROWSER_LAUNCHER')
-    expect(block).toContain('CC_CARD_BROWSER_REFUSED')
+    expect(block).toMatch(/If `check` fails .*carry on with the card without the browser/)
+    expect(block).not.toMatch(/needs_browser/)
+  })
+
+  it('refused: says the browser is unavailable and why, and to carry on without it', () => {
+    const block = buildCardBrowserPromptBlock({ granted: false, reason: 'the browser jail image ok-jail-browser:local is not on this host' }).join('\n')
+    expect(block).toContain('No browser is available in this session: the browser jail image ok-jail-browser:local is not on this host')
+    expect(block).toContain('Carry on with the card without one')
+    expect(block).not.toContain('$CC_BROWSER_LAUNCHER')
   })
 })
 
@@ -77,7 +67,8 @@ describe('one launch contract for reviewer, arena and worker', () => {
     expect(src).toContain('https://ok.example.com')
     expect(src).toContain('169.254.169.254')
     expect(src).toContain('port: 3099')
-    expect(buildJailGuardPrefix('/home/jailuser/.cc/browser-guard')).toBe('tsx /home/jailuser/.cc/browser-guard/run.ts >/tmp/cc-browser-guard.log 2>&1 & ')
+    // env -i: the guard never inherits the jail env (the card's secrets).
+    expect(buildJailGuardPrefix('/home/jailuser/.cc/browser-guard')).toBe('env -i PATH="$PATH" HOME="$HOME" LANG="${LANG:-C.UTF-8}" tsx /home/jailuser/.cc/browser-guard/run.ts >/tmp/cc-browser-guard.log 2>&1 & ')
     expect(() => buildJailGuardPrefix('/x; rm -rf /')).toThrow()
   })
 })

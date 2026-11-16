@@ -8,12 +8,14 @@
 #   1. backs up the database (SQLite online backup, integrity-checked), the seat
 #      logins (cc-accounts), secrets/stack.env and client.conf into
 #      INSTALL_DIR/backups/pre-update-<UTC time>/   (install/backup.sh)
-#   2. tags the running images operationkit-app:pre-update-<time> and
-#      ok-jail:pre-update-<time>, so the old version can be started again
+#   2. tags the running images operationkit-app:pre-update-<time>,
+#      ok-jail:pre-update-<time> and ok-jail-browser:pre-update-<time> (the card
+#      browser sandbox), so the old version can be started again
 #   3. fetches --ref (default: main) and checks it out. When the code folder
 #      belongs to a normal user (e.g. cloned as `ubuntu`) git runs as that user,
 #      so the folder never ends up owned by root; safe.directory is set either way
-#   4. re-runs ./install.sh --config client.conf (it lives at the REPO ROOT) —
+#   4. re-runs ./install.sh --config client.conf (it lives at the REPO ROOT),
+#      which rebuilds ok-jail-browser:local whenever the browser pins moved —
 #      with --skip-cloudflare again if the install was made that way. This is
 #      also what RECONCILES Cloudflare: pulling new code changes nothing in your
 #      Cloudflare account on its own, so anything the newer version wants there
@@ -43,7 +45,7 @@ while [ $# -gt 0 ]; do
     --skip-backup) SKIP_BACKUP=1 ;;
     --dry-run) DRY_RUN=1 ;;
     --) shift; INSTALL_ARGS=("$@"); break ;;
-    -h|--help) sed -n '2,31p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    -h|--help) sed -n '2,33p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) die "unknown argument: $1 (see --help)" ;;
   esac
   shift
@@ -79,6 +81,7 @@ rollback_help() {
     1. old code:      ${GIT_AS}git -c safe.directory='*' -C $OK_REPO_DIR checkout --detach $OLD_SHA
     2. old images:    sudo docker tag operationkit-app:pre-update-$TS operationkit-app:local
                       sudo docker tag ok-jail:pre-update-$TS ok-jail:local
+                      sudo docker tag ok-jail-browser:pre-update-$TS ok-jail-browser:local   # if it existed
     3. old database (only if the new version changed data you want undone —
        this replaces everything written since the update):
                       $([ -n "$BACKUP_DIR" ] && echo "sudo bash $OK_LIB_DIR/backup.sh restore $BACKUP_DIR --config $CONFIG --yes" || echo "(no pre-update backup: --skip-backup was used)")
@@ -104,7 +107,7 @@ fi
 
 # ── 2. Images ─────────────────────────────────────────────────────────────────
 step "Keep the current images for rollback"
-for img in operationkit-app ok-jail; do
+for img in operationkit-app ok-jail ok-jail-browser; do
   if docker image inspect "$img:local" >/dev/null 2>&1; then
     run docker tag "$img:local" "$img:pre-update-$TS"; log "  $img:local → $img:pre-update-$TS"
     # Keep the 3 newest rollback tags of each image.

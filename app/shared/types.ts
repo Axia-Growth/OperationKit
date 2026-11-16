@@ -20,6 +20,8 @@ export * from './ownership.js'
 export * from './board-triage.js'
 export * from './spend-guard.js'
 export * from './bot-work.js'
+export * from './decision-briefing.js'
+export * from './decision-queue.js'
 
 // Type-aware transitions live in `./workflow.ts` to keep this file focused on
 // the data shape. Re-exported here so `@operationkit/shared` callers can get

@@ -56,6 +56,7 @@ text is data, and an injection attempt can be read in the transcript.
 | 9 | Flow llm node prompt | every `{{ … }}` value: tool, mcp and llm step outputs, the trigger payload, loop items | `lib/flow-eval.ts` `renderTemplateFramed`, from `flow-engine.resolveInput` | `flow-step` |
 | 10 | Flow llm tool loop | a read-only Tool's result, **or its error message** (HTTP and MCP errors echo remote text; the engine's own refusals stay plain), fed into the next turn | `services/flow-llm.ts` (`frameToolResult`, engine-supplied) | `flow-step` |
 | 11 | Flow goal judge | the value being judged | `flow-engine.runJudge` | `flow-step` |
+| 12 | Decision Q&A answer | the card's title, description, latest summary and review note, given to the bot answering a person's question on a decision | `services/decision-answerer.ts` `answerPrompt` (obj 901059). The briefing and the question are server-stored and stay outside the frame | `card-summary` |
 
 Earlier tool calls in a chat's history are replayed as one line the server
 wrote (for example `Read "<page title>" (host)`). That line has frame markers

@@ -44,7 +44,6 @@ import {
 import { beginIdempotent } from '../lib/idempotency.js'
 import { startCreatedObjective } from './objectives-create-start.js'
 import { parseQueueHoldPatch, applyQueueHoldPatch } from '../lib/queue-autostart.js'
-import { parseNeedsBrowser, applyNeedsBrowser } from '../lib/card-browser.js'
 import {
   findOpenDuplicate,
   recordDedupe,
@@ -327,12 +326,6 @@ router.post('/', async (req: AuthRequest, res) => {
     res.status(403).json({ error: 'Only admins can enable skip_ai_review' })
     return
   }
-  // obj 901029: opt-in worker browser. Validated strictly, persisted after insert.
-  const needsBrowser = parseNeedsBrowser((req.body as { needs_browser?: unknown }).needs_browser)
-  if (!needsBrowser.ok) {
-    res.status(400).json({ error: needsBrowser.error })
-    return
-  }
 
   // Resolve the canonical assignee list. Multi-assign payload wins; fall back
   // to the legacy single-id field; members default to self when nothing's set.
@@ -443,7 +436,6 @@ router.post('/', async (req: AuthRequest, res) => {
 
   setAssignees(Number(result.lastInsertRowid), assigneeIds)
   applyQueueHoldPatch(db, Number(result.lastInsertRowid), holdPatch)
-  applyNeedsBrowser(db, Number(result.lastInsertRowid), needsBrowser.ok ? needsBrowser.value : undefined)
   if (forcedOverDuplicateId != null) {
     recordDedupe({ event: 'duplicate_forced', source: 'POST /api/objectives', title: title.trim(), workspace: effectiveWorkspace, existingId: forcedOverDuplicateId, newId: Number(result.lastInsertRowid), project: project || null })
   }
@@ -528,12 +520,6 @@ router.put('/:id', (req: AuthRequest, res) => {
       res.status(403).json({ error: 'Only admins can enable skip_ai_review' })
       return
     }
-  }
-  // obj 901029: opt-in worker browser; takes effect from the next spawn.
-  const needsBrowserPatch = parseNeedsBrowser((req.body as { needs_browser?: unknown }).needs_browser)
-  if (!needsBrowserPatch.ok) {
-    res.status(400).json({ error: needsBrowserPatch.error })
-    return
   }
 
   // Agent-pool gate: only checked when caller is actually changing agent or
@@ -659,7 +645,6 @@ router.put('/:id', (req: AuthRequest, res) => {
   )
 
   applyQueueHoldPatch(db, existing.id, holdPatch)
-  applyNeedsBrowser(db, existing.id, needsBrowserPatch.ok ? needsBrowserPatch.value : undefined)
 
   if (prLink.touched && prLink.ok) {
     const p = prLink.patch

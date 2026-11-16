@@ -279,8 +279,8 @@ export interface CreateJailOpts {
   gitMount?: JailGitMount
   /**
    * obj 901029: absolute path (on the CONTROL PLANE — the docker CLI reads it
-   * client-side) of a seccomp profile. Set ONLY for a `needs_browser` card's
-   * jail, to lib/jail-browser-seccomp.json (Docker's default + chroot/clone/unshare/
+   * client-side) of a seccomp profile. Set ONLY for the jail of a worker
+   * that was given the browser, to lib/jail-browser-seccomp.json (Docker's default + chroot/clone/unshare/
    * setns so Chromium's user-namespace sandbox can start). Absent = Docker's
    * default profile, exactly as before. `unconfined` is refused.
    */

@@ -19,6 +19,7 @@ import { agentKeyGuard } from './middleware/agent-key-guard.js'
 import objectivesRouter from './routes/objectives.js'
 import boardTriageRouter from './routes/board-triage.js'
 import needsSecretRouter from './routes/objective-needs-secret.js'
+import decisionsRouter from './routes/decisions.js'
 import secretUploadRouter from './routes/secret-upload.js'
 import objectivesSearchRouter from './routes/objectives-search.js'
 import feedRouter from './routes/feed.js'
@@ -263,6 +264,7 @@ app.use('/api/objectives/search', objectivesSearchRouter)  // server-side object
 app.use('/api/secret-upload', secretUploadRouter)  // obj 719065: one-time write-only upload (token is the capability; no login)
 app.use('/api/objectives', needsSecretRouter)  // obj 718944: /:id/needs-secret — before objectivesRouter so a worker's CC_SESSION_TOKEN reaches it (objectivesRouter requires a login)
 app.use('/api/objectives', objectivesRouter)
+app.use('/api/decisions', decisionsRouter)  // obj 901059: decision briefings, Q&A threads, outcome, learning log (worker CC_SESSION_TOKEN or login)
 app.use('/api/board-triage', boardTriageRouter)  // Needs You bulk triage: people in the browser only, audited per batch + per card (obj 900869)
 app.use('/api/costs', costsRouter)  // /api/costs/summary, /daily, /by-objective, /by-account
 app.use('/api', feedRouter)  // /api/projects/:project/feed, /api/feed/all
@@ -723,7 +725,7 @@ server.listen(PORT, () => {
   // WORKER policy (loopback refused, CC API port blocked) and a loud warning.
   if (workerBrowserInAppContainerAllowed()) {
     console.warn(
-      '[card-browser] WARNING: CARD_BROWSER_WORKER_IN_APP_CONTAINER=on — needs_browser worker cards on the tmux path ' +
+      '[card-browser] WARNING: CARD_BROWSER_WORKER_IN_APP_CONTAINER=on — worker cards on the tmux path ' +
       'get Chromium INSIDE the app container (secrets store, DB, seat logins). Prefer SESSION_ISOLATION=docker.',
     )
     const workerPolicy = resolveWorkerBrowserPolicy()

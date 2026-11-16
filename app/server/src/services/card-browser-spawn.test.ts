@@ -1,13 +1,15 @@
 /**
- * obj 901029 — both halves of the worker-browser contract, through the REAL
- * spawn entry point (`spawnInTmux`). Only the process-spawning edges (tmux via
+ * obj 901029 / 901075 — the worker-browser contract, through the REAL spawn
+ * entry point (`spawnInTmux`). Only the process-spawning edges (tmux via
  * execSync, docker via execFileSync) are faked, as in session-jail-wiring.test.ts.
  *
- *   marked card   (cardBrowser: true)  → pinned Chromium, sandbox ON, egress guard,
- *                                         in BOTH spawn modes; refused (no browser)
- *                                         when the guard is down.
- *   unmarked card (cardBrowser absent) → no browser config, no browser env, the
- *                                         stock jail image, Docker's default seccomp.
+ *   worker spawn (cardBrowser: true — EVERY card since obj 901075)
+ *       → pinned Chromium, sandbox ON, egress guard; or, when that cannot be
+ *         kept (tmux by default, image missing, guard down, docker refuses the
+ *         browser jail), NO browser + the reason in env and prompt, and the
+ *         card still spawns.
+ *   planner / reviewer / arena (cardBrowser absent)
+ *       → no browser config, no browser env, the stock jail image.
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import fs from 'node:fs'
@@ -19,14 +21,27 @@ import { PLAYWRIGHT_MCP_VERSION, CHROMIUM_REVISION } from '../lib/browser-pins.j
 const execSyncCalls: string[] = []
 const execFileSyncCalls: Array<{ file: string; argv: string[] }> = []
 
+/** Fault injection for the docker edge (obj 901075 fail-soft tests). */
+const docker = { browserImageMissing: false, browserRunFails: false, allRunsFail: false }
+function fakeExecFileSync(file: string, argv: string[]) {
+  execFileSyncCalls.push({ file, argv })
+  if (file === 'docker' && argv[0] === 'image' && argv[1] === 'inspect' && docker.browserImageMissing) {
+    throw new Error(`Error: No such image: ${argv[argv.length - 1]}`)
+  }
+  if (file === 'docker' && argv[0] === 'run' && docker.allRunsFail) throw new Error('docker: daemon unreachable')
+  if (file === 'docker' && argv[0] === 'run' && docker.browserRunFails && argv.some((a) => a.startsWith('ok-jail-browser'))) {
+    throw new Error('docker: Error response from daemon: invalid seccomp profile\n(more)')
+  }
+  return 'abc123def456\n'
+}
 vi.mock('child_process', () => ({
   execSync: (cmd: string) => { execSyncCalls.push(String(cmd)); return Buffer.from('') },
-  execFileSync: (file: string, argv: string[]) => { execFileSyncCalls.push({ file, argv }); return 'abc123def456\n' },
+  execFileSync: (file: string, argv: string[]) => fakeExecFileSync(file, argv),
 }))
 vi.mock('node:child_process', () => ({
   execFile: () => undefined,
   execSync: (cmd: string) => { execSyncCalls.push(String(cmd)); return Buffer.from('') },
-  execFileSync: (file: string, argv: string[]) => { execFileSyncCalls.push({ file, argv }); return 'abc123def456\n' },
+  execFileSync: (file: string, argv: string[]) => fakeExecFileSync(file, argv),
 }))
 
 const SID = 'cc-901029-1763260000000'
@@ -83,14 +98,23 @@ function jailWrapper(): string {
   return fs.readFileSync(path.join(tmp, 'jail-homes', SID, '.cc', `${SID}.sh`), 'utf8')
 }
 function dockerRunArgv(): string[] {
-  const run = execFileSyncCalls.find((c) => c.file === 'docker' && c.argv[0] === 'run')
-  expect(run, 'docker run was called').toBeTruthy()
-  return run!.argv
+  const runs = execFileSyncCalls.filter((c) => c.file === 'docker' && c.argv[0] === 'run')
+  expect(runs.length, 'docker run was called').toBeGreaterThan(0)
+  return runs[runs.length - 1].argv
+}
+function tmuxPrompt(): string {
+  return fs.readFileSync(path.join(tmp, 'cc-scripts', `${SID}.prompt.txt`), 'utf8')
+}
+function jailPrompt(): string {
+  return fs.readFileSync(path.join(tmp, 'jail-homes', SID, '.cc', `${SID}.prompt.txt`), 'utf8')
 }
 
 beforeEach(async () => {
   execSyncCalls.length = 0
   execFileSyncCalls.length = 0
+  docker.browserImageMissing = false
+  docker.browserRunFails = false
+  docker.allRunsFail = false
   for (const k of ENV_KEYS) saved[k] = process.env[k]
   tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'card-browser-'))
   for (const d of ['home', 'worktree', 'transcripts']) fs.mkdirSync(path.join(tmp, d), { recursive: true })
@@ -116,8 +140,8 @@ afterEach(() => {
   fs.rmSync(tmp, { recursive: true, force: true })
 })
 
-describe('tmux mode (live droplet): worker browser is opt-in per card', () => {
-  it('a MARKED card is REFUSED by default (no browser in the app container) and gets the locked-down Playwright MCP config only with CARD_BROWSER_WORKER_IN_APP_CONTAINER=on', async () => {
+describe('tmux mode (live droplet): every worker asks; the app container refuses by default', () => {
+  it('a worker is REFUSED by default (no browser in the app container) and gets the locked-down Playwright MCP config only with CARD_BROWSER_WORKER_IN_APP_CONTAINER=on', async () => {
     // Default: refused — Chromium belongs in the card sandbox (a jail), not the app container.
     {
       const { spawnInTmux, stop } = await load({ guard: true })
@@ -131,6 +155,10 @@ describe('tmux mode (live droplet): worker browser is opt-in per card', () => {
       expect(wrapper).not.toContain('CC_BROWSER_EXECUTABLE')
       expect(fs.existsSync(path.join(tmp, 'cc-scripts', `${SID}.mcp.json`))).toBe(false)
       expect(fs.existsSync(path.join(tmp, 'cc-scripts', 'cc-browser.mjs'))).toBe(false)
+      // Fail soft: the session still spawned, and its prompt says why there is no browser.
+      expect(execSyncCalls.some((c) => c.includes('tmux new-session'))).toBe(true)
+      expect(tmuxPrompt()).toMatch(/No browser is available in this session: the worker browser is only available in jailed sessions/)
+      expect(tmuxPrompt()).toContain('Carry on with the card without one')
     }
 
     // Operator opt-in: the browser, behind the WORKER guard (not the reviewer's shared one).
@@ -155,9 +183,10 @@ describe('tmux mode (live droplet): worker browser is opt-in per card', () => {
     expect(args[args.indexOf('--proxy-bypass') + 1]).toBe('<-loopback>')
     expect(args[args.indexOf('--user-data-dir') + 1]).toBe(path.join(tmp, 'home', '.cache', 'playwright-mcp'))
     expect(fs.existsSync(path.join(tmp, 'cc-scripts', 'cc-browser.mjs'))).toBe(true)
+    expect(tmuxPrompt()).toContain('node "$CC_BROWSER_LAUNCHER" check')
   })
 
-  it('an UNMARKED card gets no browser at all (unchanged from before)', async () => {
+  it('a non-worker spawn (planner / reviewer / arena: cardBrowser absent) gets no browser at all', async () => {
     const { spawnInTmux, stop } = await load({ guard: true })
     try {
       spawnInTmux(spawnOpts(tmp))
@@ -168,15 +197,16 @@ describe('tmux mode (live droplet): worker browser is opt-in per card', () => {
     expect(wrapper).not.toContain('CC_BROWSER_')
     expect(fs.existsSync(path.join(tmp, 'cc-scripts', `${SID}.mcp.json`))).toBe(false)
     expect(fs.existsSync(path.join(tmp, 'cc-scripts', 'cc-browser.mjs'))).toBe(false)
+    expect(tmuxPrompt()).not.toContain('## Browser')
   })
 
-  it('cardBrowser: false is the same as unmarked', async () => {
+  it('cardBrowser: false is the same as absent', async () => {
     const { spawnInTmux } = await load({ guard: false })
     spawnInTmux(spawnOpts(tmp, false))
     expect(tmuxWrapper()).not.toContain('CC_CARD_BROWSER')
   })
 
-  it('a MARKED card whose guard is down is REFUSED: no MCP config, no browser env, reason exported', async () => {
+  it('a worker whose guard is down is REFUSED: no MCP config, no browser env, reason exported', async () => {
     process.env.CARD_BROWSER_WORKER_IN_APP_CONTAINER = 'on'
     const { spawnInTmux } = await load({ guard: false })
     spawnInTmux(spawnOpts(tmp, true))
@@ -188,8 +218,8 @@ describe('tmux mode (live droplet): worker browser is opt-in per card', () => {
   })
 })
 
-describe('jail mode (SESSION_ISOLATION=docker): browser image + seccomp + in-jail guard only when marked', () => {
-  it('a MARKED card runs the browser image under the browser seccomp profile with the guard started in-jail', async () => {
+describe('jail mode (SESSION_ISOLATION=docker): every worker gets the browser image + seccomp + in-jail guard', () => {
+  it('an ordinary worker runs the browser image under the browser seccomp profile with the guard started in-jail', async () => {
     process.env.SESSION_ISOLATION = 'docker'
     const { spawnInTmux } = await load({ guard: false }) // the control-plane guard is irrelevant in a jail
     spawnInTmux(spawnOpts(tmp, true))
@@ -205,6 +235,10 @@ describe('jail mode (SESSION_ISOLATION=docker): browser image + seccomp + in-jai
     expect(cmd).toContain('tsx /home/jailuser/.cc/browser-guard/run.ts')
     // The guard must be up before the session starts: its prefix precedes tmux.
     expect(cmd.indexOf('browser-guard/run.ts')).toBeLessThan(cmd.indexOf('tmux new-session'))
+    // The guard starts from an EMPTY env: the jail's secrets never reach its /proc/<pid>/environ.
+    expect(cmd).toMatch(/env -i PATH="\$PATH" HOME="\$HOME" LANG="\$\{LANG:-C\.UTF-8\}" tsx \/home\/jailuser\/\.cc\/browser-guard\/run\.ts/)
+    // Default-on widens nothing: no extra mounts, caps, devices or host namespaces.
+    expect(argv.join(' ')).not.toMatch(/--device|--pid[= ]host|--network[= ]host|--ipc[= ]host|--userns[= ]host/)
 
     const home = path.join(tmp, 'jail-homes', SID, '.cc')
     for (const f of ['browser-guard/run.ts', 'browser-guard/services/browser-egress-proxy.ts', 'browser-guard/lib/browser-policy.ts', 'cc-browser.mjs']) {
@@ -223,9 +257,18 @@ describe('jail mode (SESSION_ISOLATION=docker): browser image + seccomp + in-jai
     expect(args).toContain('--sandbox')
     expect(args[args.indexOf('--proxy-server') + 1]).toBe('http://127.0.0.1:3099')
     expect(args[args.indexOf('--user-data-dir') + 1]).toBe('/home/jailuser/.cache/playwright-mcp')
+    expect(jailPrompt()).toContain('node "$CC_BROWSER_LAUNCHER" check')
+
+    // Same mounts, cap set and run flags as a jail with no browser: the only
+    // differences are the image and the seccomp profile.
+    const strip = (a: string[]) => a.slice(0, -1).filter((x, i, arr) => !x.startsWith('seccomp=') && !(arr[i + 1] ?? '').startsWith('seccomp=') && !x.startsWith('ok-jail'))
+    const withBrowser = strip(argv)
+    execFileSyncCalls.length = 0
+    spawnInTmux(spawnOpts(tmp))
+    expect(withBrowser).toEqual(strip(dockerRunArgv()))
   })
 
-  it('an UNMARKED card keeps the stock image, Docker\'s default seccomp and no browser files', async () => {
+  it('a non-worker spawn (cardBrowser absent) keeps the stock image, Docker\'s default seccomp and no browser files', async () => {
     process.env.SESSION_ISOLATION = 'docker'
     const { spawnInTmux } = await load({ guard: false })
     spawnInTmux(spawnOpts(tmp))
@@ -247,6 +290,73 @@ describe('jail mode (SESSION_ISOLATION=docker): browser image + seccomp + in-jai
     const { spawnInTmux } = await load({ guard: false })
     spawnInTmux(spawnOpts(tmp, true))
     expect(dockerRunArgv()).toContain('ok-jail-browser@sha256:abc')
+  })
+})
+
+describe('fail soft: the browser never stops a card from starting (obj 901075)', () => {
+  it('browser image missing → stock jail, Docker default seccomp, no guard, refusal in env + prompt', async () => {
+    process.env.SESSION_ISOLATION = 'docker'
+    docker.browserImageMissing = true
+    const { spawnInTmux } = await load({ guard: false })
+    expect(() => spawnInTmux(spawnOpts(tmp, true))).not.toThrow()
+    const argv = dockerRunArgv()
+    expect(argv).toContain('ok-jail:local')
+    expect(argv).not.toContain('ok-jail-browser:local')
+    expect(argv.join(' ')).not.toContain('seccomp=')
+    expect(argv[argv.length - 1]).not.toContain('browser-guard')
+    const wrapper = jailWrapper()
+    expect(wrapper).toContain('export CC_CARD_BROWSER="0"')
+    expect(wrapper).toMatch(/export CC_CARD_BROWSER_REFUSED=".*ok-jail-browser:local is not on this host/)
+    expect(wrapper).not.toContain('--mcp-config')
+    expect(wrapper).not.toContain('CC_BROWSER_EXECUTABLE')
+    expect(jailPrompt()).toMatch(/No browser is available in this session: the browser jail image ok-jail-browser:local is not on this host/)
+  })
+
+  it('docker refuses the browser jail → the same spawn is retried on the stock image with no browser', async () => {
+    process.env.SESSION_ISOLATION = 'docker'
+    docker.browserRunFails = true
+    const { spawnInTmux } = await load({ guard: false })
+    expect(spawnInTmux(spawnOpts(tmp, true))).toBe(SID)
+    const runs = execFileSyncCalls.filter((c) => c.file === 'docker' && c.argv[0] === 'run')
+    expect(runs).toHaveLength(2)
+    expect(runs[0].argv).toContain('ok-jail-browser:local')
+    expect(runs[1].argv).toContain('ok-jail:local')
+    expect(runs[1].argv.join(' ')).not.toContain('seccomp=')
+    expect(runs[1].argv[runs[1].argv.length - 1]).not.toContain('browser-guard')
+    expect(jailWrapper()).toMatch(/export CC_CARD_BROWSER_REFUSED=".*browser jail would not start \(docker: Error response from daemon: invalid seccomp profile\)/)
+    expect(jailWrapper()).not.toContain('--mcp-config')
+    expect(jailPrompt()).toMatch(/No browser is available in this session: the browser jail would not start/)
+    // The env file of the failed attempt is gone (no plaintext credential left behind).
+    expect(fs.existsSync(path.join(tmp, 'jail-homes', SID, '.cc', `${SID}.env`))).toBe(false)
+  })
+
+  it('a jail failure that is not the browser still fails closed (no retry loop, no tmux fallback)', async () => {
+    process.env.SESSION_ISOLATION = 'docker'
+    docker.allRunsFail = true
+    const { spawnInTmux } = await load({ guard: false })
+    expect(() => spawnInTmux(spawnOpts(tmp, true))).toThrow(/daemon unreachable/)
+    // One browser attempt + one stock retry, then the error — never more, never tmux.
+    expect(execFileSyncCalls.filter((c) => c.file === 'docker' && c.argv[0] === 'run')).toHaveLength(2)
+    expect(execSyncCalls.some((c) => c.includes('tmux new-session'))).toBe(false)
+  })
+
+  it('a resumed turn does not repeat the browser block in its prompt', async () => {
+    process.env.SESSION_ISOLATION = 'docker'
+    const { spawnInTmux } = await load({ guard: false })
+    spawnInTmux({ ...spawnOpts(tmp, true), resumeSessionId: 'abc' })
+    expect(jailPrompt()).not.toContain('## Browser')
+    expect(jailWrapper()).toContain('export CC_CARD_BROWSER="1"')
+  })
+})
+
+describe('every card is a browser card: the spawn sites pass cardBrowser for workers (obj 901075)', () => {
+  it('fresh worker spawn: always; follow-up: always except the planner', () => {
+    const start = fs.readFileSync(path.join(__dirname, 'session-start.ts'), 'utf8')
+    const follow = fs.readFileSync(path.join(__dirname, 'session-followup.ts'), 'utf8')
+    expect(start).toMatch(/cardBrowser: true,/)
+    expect(follow).toMatch(/cardBrowser: !isPlannerSession,/)
+    // No per-card switch is read anywhere on the spawn path.
+    for (const src of [start, follow]) expect(src).not.toMatch(/needs_browser|cardWantsBrowser/)
   })
 })
 

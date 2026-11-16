@@ -19,6 +19,7 @@ import { SegmentedControl } from './ui/SegmentedControl'
 import { humanize } from '../lib/format'
 import { Button } from './ui/Button'
 import { WorkspaceChip } from './WorkspaceChip'
+import { formatCardNumber } from '../../../shared/card-number'
 
 /* ─────────────────────────────────────────────────────────
    Objective search (obj 702389)
@@ -188,7 +189,7 @@ export function ObjectiveSearchPanel({ open, workspace, onClose, onSelect }: Obj
           <CommandInput
             data-autofocus=""
             aria-label={mode === 'keyword' ? 'Search cards' : 'Describe the card you are looking for'}
-            placeholder={mode === 'keyword' ? 'Search cards (all stages)…' : 'Describe what you’re looking for, then Enter…'}
+            placeholder={mode === 'keyword' ? 'Search cards by words or #number (all stages)…' : 'Describe what you’re looking for, then Enter…'}
             onKeyDown={(e) => {
               // AI mode: Enter submits the query until results for it are shown.
               if (e.key === 'Enter' && mode === 'ai' && aiResults.length === 0) {
@@ -247,6 +248,8 @@ export function ObjectiveSearchPanel({ open, workspace, onClose, onSelect }: Obj
               >
                 <div className="flex items-center gap-2">
                   <StatusBadge status={r.status} />
+                  {/* obj 901080: the number people and bots use to name a card. */}
+                  <span className="shrink-0 font-mono text-xs tabular-nums text-fg-3" data-testid="search-card-number">{formatCardNumber(r.id)}</span>
                   <span className="min-w-0 flex-1 truncate text-base text-fg-0">{r.title || 'Untitled'}</span>
                   {r.workspace && <WorkspaceChip label={labelOf(r.workspace as Workspace)} className="max-w-[40%] shrink" />}
                 </div>

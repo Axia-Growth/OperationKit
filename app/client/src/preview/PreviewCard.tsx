@@ -6,6 +6,7 @@ import { PreviewWorkers } from './PreviewWorkers'
 import { formatDateTime } from '../lib/format'
 import { actionStatusOf, statusActionsFor } from '../lib/statusActions'
 import { OwnerTag } from '../components/OwnerTag'
+import { CardNumber } from '../components/CardNumber'
 
 export function PreviewCard({
   objective,
@@ -87,6 +88,8 @@ export function PreviewCard({
           </p>
         )}
         <div className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 pl-7 text-xs text-fg-2">
+          {/* obj 901080: the card number bots and messages use; click copies it. */}
+          <CardNumber id={objective.id} />
           <span className={meta.tone}>{meta.label}</span>
           {isLive && <LiveBadge />}
           {objective.project && <span>{objective.project}</span>}
@@ -101,7 +104,7 @@ export function PreviewCard({
               onClick={e => e.stopPropagation()}
             >
               <GitPullRequest className="h-3 w-3" />
-              #{objective.pr_number ?? ''}
+              PR #{objective.pr_number ?? ''}
             </a>
           )}
           <span className="ml-auto tabular-nums text-fg-3" title={formatDateTime(objective.updated_at).title}>{formatDateTime(objective.updated_at).label}</span>

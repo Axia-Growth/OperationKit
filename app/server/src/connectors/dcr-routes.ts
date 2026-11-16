@@ -4,10 +4,10 @@
  * endpoint, routes/user-dcr.ts's callback). Kept in one place so a connector
  * def and the route that calls back into it never disagree on the URL shape.
  */
-const DEFAULT_APP_BASE_URL = 'https://cc.example.com'
+import { resolvePublicBaseUrl } from '../lib/public-url.js'
 
 export function appBaseUrl(): string {
-  return process.env.APP_BASE_URL || DEFAULT_APP_BASE_URL
+  return process.env.APP_BASE_URL || resolvePublicBaseUrl()
 }
 
 /** Where the provider redirects back to after the consent screen. */

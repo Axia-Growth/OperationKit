@@ -224,3 +224,43 @@ describe('POST /api/objectives/search/ai', () => {
     expect(hydrated).toHaveProperty('workspace')
   })
 })
+
+describe('GET /api/objectives/search — by card number (obj 901080)', () => {
+  it("finds a card by its bare number, '#number' and a pasted card link", async () => {
+    const id = ids.exampleDone
+    for (const q of [String(id), `#${id}`, `card #${id}`, `https://ops.example.org/o/${id}`, `/o/${id}?tab=chat`]) {
+      const { status, json } = await getSearch(`?q=${encodeURIComponent(q)}&workspace=all`, cookieAdmin())
+      expect(status, q).toBe(200)
+      expect(json.results[0]?.id, q).toBe(id)
+      expect(json.results[0].match, q).toBe('card_number')
+    }
+  })
+
+  it('a pasted link returns only that card, never URL-word matches', async () => {
+    const { json } = await getSearch(`?q=${encodeURIComponent(`https://kubernetes.example.org/o/${ids.exampleDone}`)}&workspace=all`, cookieAdmin())
+    expect(json.results.map(r => r.id)).toEqual([ids.exampleDone])
+  })
+
+  it('a number also still matches cards that MENTION it, after the exact card', async () => {
+    const db = getDb()
+    const target = ids.exampleDone
+    const r = db.prepare(`INSERT INTO objectives (title, description, status, workspace, created_by) VALUES (?, ?, 'queue', 'example', ?)`)
+      .run('Follow-up card', `continues card ${target}`, EXAMPLE_MEM)
+    const mention = Number(r.lastInsertRowid)
+    const { json } = await getSearch(`?q=${target}&workspace=all`, cookieAdmin())
+    expect(json.results[0].id).toBe(target)
+    expect(json.results.map(x => x.id)).toContain(mention)
+    expect(json.results.filter(x => x.id === target)).toHaveLength(1)
+    db.prepare('DELETE FROM objectives WHERE id = ?').run(mention)
+  })
+
+  it('respects visibility: a hidden or deleted card number returns nothing', async () => {
+    const hidden = await getSearch(`?q=%23${ids.examplePrivate}&workspace=all`, cookieExampleMem())
+    expect(hidden.json.results.find(r => r.id === ids.examplePrivate)).toBeUndefined()
+    const deleted = await getSearch(`?q=%23${ids.deleted}&workspace=all`, cookieAdmin())
+    expect(deleted.json.results.find(r => r.id === ids.deleted)).toBeUndefined()
+    // …and an admin narrowed to another workspace does not see it either.
+    const otherWs = await getSearch(`?q=${ids.exampleDone}&workspace=example4`, cookieAdmin())
+    expect(otherWs.json.results.find(r => r.id === ids.exampleDone)).toBeUndefined()
+  })
+})

@@ -33,7 +33,7 @@ const LIST_COLUMNS_ARRAY = [
   'tasks_passed', 'create_pr', 'branch_name', 'pr_url', 'pr_number', 'completion_goal',
   'workflow_hint', 'effort', 'created_by', 'type', 'plan_approved_at', 'planning_session_id',
   'ai_review_verdict', 'ai_review_session_id', 'skip_ai_review', 'ai_review_iteration',
-  'test_cred_slug', 'needs_browser', 'model', 'routine_id', 'delegate_mode', 'job_disposition',
+  'test_cred_slug', 'model', 'routine_id', 'delegate_mode', 'job_disposition',
   'job_review_note', 'source_job_id', 'scope_flags', 'reconcile_sig', 'is_strategy',
   'rejected_tree_sha', 'not_mergeable', 'trust_stage', 'origin', 'strategy_id',
   'last_activity_at', 'ran_on_fallback', 'fallback_detected_at', 'ran_model',
@@ -308,8 +308,12 @@ export function mapObjective(row: Objective, userMap?: Map<number, string>): Obj
     assigned_usernames: assignedUsernames,
     created_by_username: createdBy,
   })
+  // obj 901075: the needs_browser column is dead (every worker gets the
+  // browser); keep it out of every response so nobody reads it as a switch.
+  const { needs_browser: _deadNeedsBrowser, ...rowOut } = row as typeof row & { needs_browser?: unknown }
+  void _deadNeedsBrowser
   return {
-    ...row,
+    ...rowOut,
     bot_owner: bot?.id ?? null,
     bot_owner_name: bot?.name ?? null,
     bot_owner_is_external: bot?.external ?? false,
@@ -323,7 +327,6 @@ export function mapObjective(row: Objective, userMap?: Map<number, string>): Obj
     is_strategy: !!r.is_strategy,
     terminal_by_human: !!r.terminal_by_human,
     skip_ai_review: !!r.skip_ai_review,
-    needs_browser: !!r.needs_browser,
     ran_on_fallback: !!r.ran_on_fallback,
     // obj 900372: one-read stall signal for bots. True only while the card is still
     // `working` — a flag left on a card that already moved on is not a stall.

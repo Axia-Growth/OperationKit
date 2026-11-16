@@ -3,7 +3,6 @@
  * live in prompt-builder-workdir.ts / prompt-builder-history.ts /
  * prompt-builder-blocks.ts. This file is buildPrompt + re-exports.
  */
-import { buildCardBrowserPromptBlock } from '../lib/card-browser.js'
 import { buildOwnerPrecedenceBlock, buildSessionTrustBlock } from './session-trust-prompt.js'
 import { buildAttachedFilesBlock } from './jail-uploads.js'
 import fs from 'fs'
@@ -37,6 +36,7 @@ import {
 import { resolveWriteWorkspace } from './workspaces.js'
 import { resolveBrandName } from './branding-config.js'
 import { resolveOwnerName } from '../lib/install-defaults.js'
+import { buildDecisionRequestBlock, DECISION_EXAMPLE } from './decision-prompt.js'
 
 export {
   COMPACTION_SESSION_SENTINEL,
@@ -306,8 +306,6 @@ export function buildPrompt(objective: Objective): string {
   // obj 900408: files attached in the New Card modal were uploaded but never
   // mentioned to the session. Empty (prompt unchanged) when there are none.
   parts.push(...buildAttachedFilesBlock(objective.id))
-  // obj 901029: only a needs_browser card gets this block (empty otherwise).
-  parts.push(...buildCardBrowserPromptBlock(objective))
   // obj 718944 — server-stamped sender rule (verified_sender_stamps, default ON
   // since obj 900452) + secret names. Deliberately AFTER the card description:
   // an agent-written card rule must not override verified-owner approval. The
@@ -630,6 +628,11 @@ export function buildPrompt(objective: Objective): string {
   parts.push(...buildKbAccessBlock({ id: objective.id, workspace }))
   parts.push(...buildVaultCaptureBlock({ id: objective.id, workspace }))
 
+  // obj 901059 — how to ask the person for a decision: a structured briefing
+  // (context / one question / 2-4 options with pros, cons, next / recommendation),
+  // plus the questions the person had to ask on recent decisions.
+  parts.push(...buildDecisionRequestBlock({ objectiveId: objective.id, workspace: objective.workspace ?? null, owner, isJob: objective.routine_id != null }))
+
   // Jobs disposition — routine-spawned objectives ("jobs") must record an
   // end-of-run disposition so they land in the right lane on the Jobs board.
   if (objective.routine_id != null) {
@@ -645,13 +648,18 @@ export function buildPrompt(objective: Objective): string {
       "  -H 'Content-Type: application/json' \\",
       `  -d '{"disposition":"complete"}'`,
       '',
-      '# You have a question, OR you saw a concrete way to improve our system:',
+      '# You saw a concrete way to improve our system, or have a question (no choice needed):',
       `curl -s -X POST http://localhost:3002/api/internal/objectives/${objective.id}/job-disposition \\`,
       "  -H 'Content-Type: application/json' \\",
       `  -d '{"disposition":"needs_review","note":"<one-line reason ${owner} should look>"}'`,
+      '',
+      `# You need ${owner} to DECIDE something: add the decision briefing (required fields, see "Asking ${owner} for a decision"):`,
+      `curl -s -X POST http://localhost:3002/api/internal/objectives/${objective.id}/job-disposition \\`,
+      "  -H 'Content-Type: application/json' \\",
+      `  -d '{"disposition":"needs_review","note":"<one line>","decision":${DECISION_EXAMPLE.replace(/'/g, '’')}}'`,
       '```',
       '',
-      `Use \`needs_review\` only when you genuinely want ${owner}'s attention (a question, a decision, or a system-improvement opportunity you noticed while running). Otherwise use \`complete\`.`,
+      `Use \`needs_review\` only when you genuinely want ${owner}'s attention (a question, a decision, or a system-improvement opportunity you noticed while running). Otherwise use \`complete\`. A decision without the briefing shows on the card as "no briefing given", and a briefing with no question or fewer than two options is refused (400) with what is missing.`,
       '',
       `If ${owner} later replies in this thread asking you to "create an objective for X", create it with \`POST http://localhost:3002/api/internal/objectives\` (a JSON array of objective objects). Include \`"source_job_id":${objective.id}\` on each so the new card links back to this job. Then reply telling ${owner} the new objective id(s). Example:`,
       '```bash',

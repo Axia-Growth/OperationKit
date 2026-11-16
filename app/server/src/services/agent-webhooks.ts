@@ -61,6 +61,7 @@ import {
 } from '@operationkit/shared'
 import { isBlockedAddress, pinnedHttpsPost, resolveWebhookDestination, type PinnedPostInit } from './webhook-egress.js'
 import { resolveBot } from './bots/bot-registry.js'
+import { publicCardUrl } from '../lib/public-url.js'
 
 export const CURSOR_SETTING = 'agent_webhook_cursor'
 export const MAX_ATTEMPTS = 5
@@ -101,8 +102,7 @@ function scopeFor(userId: number): SecretScope {
 }
 
 export function cardUrl(objectiveId: number): string {
-  const base = (process.env.CC_PUBLIC_URL || 'https://cc.example.com').replace(/\/+$/, '')
-  return `${base}/o/${objectiveId}`
+  return publicCardUrl(objectiveId)
 }
 
 /** HMAC-SHA256 of the exact body bytes, hex, `sha256=` prefixed (GitHub style). */

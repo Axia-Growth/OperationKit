@@ -45,6 +45,7 @@ import { maybeRunStallWatchdog } from './stall-watchdog.js'
 import { handleAbnormalEnd, ABNORMAL_END_START_REASON } from './abnormal-end-retry.js'
 import { runBotThreadDeliveryTick } from './bots/bot-thread-delivery.js'
 import { maybeRunBotAttentionTick } from './agent-chat/bot-attention.js'
+import { maybeSweepStaleDecisions } from './decision-queue.js'
 import { listAgents as listChatAgents } from './agent-chat/engine.js'
 import { logObjectiveAudit, isClearDeadSessionEnabled } from './objective-audit.js'
 import { deriveBranchName } from './branch-scope.js'
@@ -307,6 +308,14 @@ export async function pollActiveSessions(): Promise<void> {
     runBotThreadDeliveryTick(getDb())
   } catch (err) {
     console.error('[state-poller] runBotThreadDeliveryTick failed:', err)
+  }
+
+  // obj 901084 — an ask that outlived its card clears itself ("no longer needed
+  // (card finished)") BEFORE the needs-you pass, so that pass drops the post too.
+  try {
+    maybeSweepStaleDecisions(getDb())
+  } catch (err) {
+    console.error('[state-poller] sweepStaleDecisions failed:', err)
   }
 
   // obj 900947 — a High Agency bot posts to its main chat ONLY when it needs the

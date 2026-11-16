@@ -42,8 +42,20 @@ import {
 } from '@operationkit/shared'
 import { notifyBotMessage } from './sidebar-live.js'
 import { ownedCardsWithSignals, type BotRef } from './bot-work.js'
+import { openDecisionForCard } from '../decisions.js'
 
 export const ATTENTION_SEEDED_SETTING = 'bot_attention_seeded_at'
+
+/** The open decision on a card, for the chat post (obj 901059). */
+function decisionMeta(db: Database, objectiveId: number): { decision_id?: number; question?: string } {
+  try {
+    const d = openDecisionForCard(db, objectiveId)
+    if (!d) return {}
+    return { decision_id: d.id, ...(d.briefing.question ? { question: d.briefing.question } : {}) }
+  } catch {
+    return {}
+  }
+}
 
 function setting(db: Database, key: string): string | null {
   const r = db.prepare('SELECT value FROM settings WHERE key = ?').get(key) as { value: string } | undefined
@@ -65,7 +77,10 @@ export function attentionText(bot: string, meta: BotNeedsYouMeta): string {
     case 'over_ceiling':
       return `${bot} needs you: ${card} has spent ${usd(meta.spent_usd ?? 0)} against its ${usd(meta.ceiling_usd ?? 0)} ceiling and cannot start again until the ceiling is raised.`
     case 'decision':
-      return `${bot} needs a decision from you on ${card}.`
+      // obj 901059: say WHAT is being decided. The briefing renders under this line.
+      return meta.question
+        ? `${bot} needs a decision from you on ${card}: ${meta.question}`
+        : `${bot} needs a decision from you on ${card}. It did not give a briefing, so ask it what it needs before you choose.`
     case 'blocker':
       return `${bot} is blocked on ${card} and needs you to unblock it.`
   }
@@ -149,6 +164,7 @@ export function runBotAttentionTick(db: Database, bots: BotRef[]): AttentionTick
           title: c.title,
           ...(reason === 'over_ceiling' ? { spent_usd: sig.spent_usd, ceiling_usd: sig.ceiling_usd ?? 0 } : {}),
           ...(reason === 'approval_beyond_grant' ? { action: sig.denied_action } : {}),
+          ...(reason === 'decision' ? decisionMeta(db, c.id) : {}),
         }
         const info = insertMessage.run(who.id, s.slug, attentionText(bot.name, meta), JSON.stringify({ ...meta, label: NEEDS_YOU_LABELS[meta.reason] }))
         setMessage.run(Number(info.lastInsertRowid), c.id, reason)

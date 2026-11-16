@@ -35,7 +35,7 @@ export const AGENT_OPENAPI = {
     ].join(' '),
   },
   servers: [
-    { url: 'https://cc.example.com', description: 'Production' },
+    // servers[0] (this install's public URL) is prepended per request by routes/agent-api.ts (obj 901080).
     { url: 'http://localhost:3002', description: 'Local / in-container' },
   ],
   tags: [
@@ -394,12 +394,6 @@ export const AGENT_OPENAPI = {
           effort: { type: 'string', enum: ['normal', 'high', 'ultracode'] },
           model: { type: 'string' },
           skip_ai_review: { type: 'boolean', description: 'Admin only' },
-          needs_browser: {
-            type: 'boolean',
-            description:
-              'Give this card\'s WORKER session the pinned, sandboxed, egress-guarded browser (obj 901029). ' +
-              'Default false: workers get no browser. See docs/wiki/Card-Browser-Lockdown.md.',
-          },
           owner_bot: {
             type: ['string', 'null'],
             maxLength: 64,
