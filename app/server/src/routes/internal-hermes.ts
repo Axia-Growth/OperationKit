@@ -2,7 +2,9 @@
  * Hermes localhost read + control endpoints — extracted from internal.ts
  * (behavior frozen). Localhost gate unchanged.
  */
-import { withSandboxCardGuard } from '../lib/card-session-scope.js'
+import { withSandboxCardGuard, sandboxWakeOf, resolveCardSessionCaller } from '../lib/card-session-scope.js'
+import { wakeActingOnCard, highAgencyWakeForCard, wakeMayActOnCard, WAKE_CARD_STATUSES } from '../lib/high-agency-wake-scope.js'
+import { sessionTokenFromHeaders } from '../lib/session-trust.js'
 import { relaySender } from '../lib/message-provenance.js'
 import { resolveMessageCaller } from '../lib/message-caller.js'
 import { frameAndScan, noteUntrustedPayload } from '../services/injection-telemetry.js'
@@ -80,6 +82,12 @@ import { resolveFollowUpSessionId } from '../services/objective-sessions.js'
 import { noteStartReason } from '../services/session-start-reasons.js'
 import { findRunningTwinForStart, recordDedupe, duplicateStartConflictBody, duplicateGuardWindowHours } from '../lib/objective-dedupe.js'
 
+/** The live card behind this request's session token, or null (obj 901280). */
+function sessionCallerOf(req: { headers: unknown }): ReturnType<typeof resolveCardSessionCaller> {
+  const headers = req.headers as Record<string, string | string[] | undefined>
+  return sessionTokenFromHeaders(headers) ? resolveCardSessionCaller(headers, getDb()) : null
+}
+
 export function registerInternalHermesRoutes(router: Router): void {
 // ─── Hermes integration: localhost-only read + control endpoints ───────────
 
@@ -110,7 +118,7 @@ export function registerInternalHermesRoutes(router: Router): void {
 // Response headers describe what was withheld without changing the JSON shape
 // (a bare array — every existing caller depends on that):
 //   X-Total-Count / X-Returned-Count / X-Fields-Mode / X-Truncated
-router.get('/objectives', (req, res) => {
+router.get('/objectives', withSandboxCardGuard((req, res) => {
   // obj 900321 (C6): an authenticated principal, not an origin, decides what
   // this read may see. A sandboxed session must present its CC_SESSION_TOKEN and
   // is then confined to its own card's workspace.
@@ -167,7 +175,7 @@ router.get('/objectives', (req, res) => {
     'X-Truncated': String(rows.length < total),
   })
   res.json(rows)
-})
+}))
 
 // GET /api/internal/strategies — list all Strategies (the canonical top tier).
 // Proves the stored marker (obj 2383): one column predicate, no depth/delegate_mode
@@ -420,6 +428,33 @@ router.patch('/objectives/:id/status', withSandboxCardGuard(async (req, res) => 
     return
   }
 
+  // obj 901280: a High Agency wake moving one of its BOT's cards (not its own).
+  // The jail gate already checked ownership; a non-jailed wake that sends its
+  // session token is resolved here so the same close rule and audit apply.
+  const wake = wakeActingOnCard(sandboxWakeOf(res), sessionCallerOf(req), existing.id, db)
+  let wakeOverrideReason: string | null = null
+  if (wake) {
+    if (!WAKE_CARD_STATUSES.includes(status)) {
+      res.status(403).json({ error: `A High Agency wake may move its bot's cards only to ${WAKE_CARD_STATUSES.join(', ')}`, code: 'status_not_allowed' })
+      return
+    }
+    // Same rule an agent key meets on the public route (obj 900952): a PR card
+    // closes as done only on a passing AI review, or with a stated reason that
+    // goes on the audit trail.
+    if (status === 'done' && (existing.pr_url || existing.pr_number) && existing.ai_review_verdict !== 'pass') {
+      const raw = (req.body as { override_reason?: unknown })?.override_reason
+      wakeOverrideReason = typeof raw === 'string' && raw.trim() ? raw.trim().slice(0, 1000) : null
+      if (!wakeOverrideReason) {
+        res.status(409).json({
+          error: `Card #${existing.id} has a pull request and no passing AI review (verdict: ${existing.ai_review_verdict ?? 'none'}). Send "override_reason" to close it anyway, or leave the close to a person.`,
+          code: 'no_passing_review',
+          ai_review_verdict: existing.ai_review_verdict ?? null,
+        })
+        return
+      }
+    }
+  }
+
   if (status === 'working') {
     // Count only states that hold a RUNNING session ('working' + 'ai_review');
     // exclude 'review' (parked awaiting a human, no session) so a review backlog
@@ -607,11 +642,12 @@ router.patch('/objectives/:id/status', withSandboxCardGuard(async (req, res) => 
     eventType: 'status_change',
     fromStatus: existing.status,
     toStatus: updated.status,
-    actor: 'machine',
-    pathway: 'internal-patch-status',
+    actor: wake ? `bot:${wake.slug}` : 'machine',
+    pathway: wake ? `internal-patch-status:high-agency-wake#${wake.cardId}` : 'internal-patch-status',
     sessionId: updated.session_id,
     titleSnapshot: updated.title,
     workspace: updated.workspace,
+    reason: wakeOverrideReason,
   })
   broadcast({ type: 'objective_updated', payload: updated })
 
@@ -708,7 +744,13 @@ router.post('/objectives/:id/message', withSandboxCardGuard((req, res) => {
       res.status(404).json({ error: `from_objective_id ${fromId} is not an objective` })
       return
     }
-    const relation = relationBetween(db, fromId, objective.id)
+    let relation: string | null = relationBetween(db, fromId, objective.id)
+    // obj 901280: a High Agency wake (server-derived sender only) may steer any
+    // card its bot owns in its workspace.
+    if (relation === null && identity === 'session_token') {
+      const wake = highAgencyWakeForCard(db, fromId)
+      if (wake && wakeMayActOnCard(wake, objective.id, db).ok) relation = 'bot_owner'
+    }
     // obj 900972: a card worked by a bot with Full access in this workspace may
     // message any card in it. Only for a SERVER-DERIVED sender (its session
     // token) — a self-declared id never gets this — and every use is logged.
