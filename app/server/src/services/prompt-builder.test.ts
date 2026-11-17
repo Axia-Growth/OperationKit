@@ -80,6 +80,17 @@ const CRITERIA: AcceptanceCriterion[] = [
   { id: 'self-verify-line', criterion: 'The worker is told to run tests and paste output before done', type: 'functional', method: 'doc' },
 ]
 
+it('includes failed reviewer findings in the next worker prompt', () => {
+  const findings = 'Add a test for an empty CSV file.'
+  const prompt = buildPrompt(makeObjective({
+    ai_review_verdict: 'fail',
+    ai_review_findings: findings,
+  }))
+
+  expect(prompt).toContain('## Prior AI Review Findings')
+  expect(prompt).toContain(findings)
+})
+
 describe('buildPrompt — QW1 (inject acceptance_criteria)', () => {
   it('renders the criteria block with each criterion id, text, type, and method', () => {
     const prompt = buildPrompt(makeObjective({ acceptance_criteria: CRITERIA }))
