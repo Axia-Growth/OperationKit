@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 // Dependency-free: run before npm ci. This command never installs or changes anything.
 import { spawnSync } from 'node:child_process'
-import { readFileSync } from 'node:fs'
+import { readFileSync, statfsSync } from 'node:fs'
+import { availableParallelism, cpus, totalmem } from 'node:os'
 import { resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 
@@ -9,12 +10,42 @@ const USAGE = `Usage: node scripts/setup-check.mjs [--mode source|server] [--jso
 
 source (default): check the host for source development with AI workers.
 server: check the target host for the Ubuntu installer; host Node is not required
-        by that installer, and it installs Docker itself when needed.
+        by that installer, and it installs Docker itself when needed. Also estimates
+        how many AI sessions can run at once, using the sizing rule in the README.
 
 Run this on the machine where Operation Kit will execute. These preliminary
-checks do not validate credentials, capacity, or a completed installation.
+checks do not validate credentials or a completed installation, and the capacity
+figure is an estimate, not a load test.
 See INSTALL.md for the supported server installation and install/verify.sh.
 `
+
+// README "How big a server": 6 GB memory + 3 GB per session, 2 CPU threads + 1.5 per
+// session, 60 GB disk + about 3 GB per session (plus the client's own files).
+export const SIZING = Object.freeze({
+  baseMemGB: 6, memPerSessionGB: 3,
+  baseThreads: 2, threadsPerSession: 1.5,
+  baseDiskGB: 60, diskPerSessionGB: 3,
+})
+const GB = 1024 ** 3
+
+export function readResources(path = '/') {
+  const threads = typeof availableParallelism === 'function' ? availableParallelism() : cpus().length
+  let diskFreeBytes
+  try { const s = statfsSync(path); diskFreeBytes = Number(s.bavail) * Number(s.bsize) } catch { /* reported as unknown */ }
+  return { memBytes: totalmem(), threads, diskFreeBytes }
+}
+
+export function estimateSessions({ memBytes, threads, diskFreeBytes }, sizing = SIZING) {
+  const perResource = {
+    memory: Math.floor((memBytes / GB - sizing.baseMemGB) / sizing.memPerSessionGB),
+    cpu: Math.floor((threads - sizing.baseThreads) / sizing.threadsPerSession),
+    disk: Number.isFinite(diskFreeBytes)
+      ? Math.floor((diskFreeBytes / GB - sizing.baseDiskGB) / sizing.diskPerSessionGB) : Infinity,
+  }
+  const sessions = Math.max(0, Math.min(...Object.values(perResource)))
+  const limitedBy = Object.entries(perResource).reduce((a, b) => (b[1] < a[1] ? b : a))[0]
+  return { sessions, limitedBy, perResource }
+}
 
 export function collectChecks({ mode = 'source', platform = process.platform,
   nodeVersion = process.versions.node,
@@ -22,6 +53,7 @@ export function collectChecks({ mode = 'source', platform = process.platform,
   probe = () => spawnSync('docker', ['info', '--format', '{{.OSType}}'], {
     encoding: 'utf8', timeout: 10_000, windowsHide: true,
   }),
+  resources = readResources,
 } = {}) {
   if (!['source', 'server'].includes(mode)) throw new Error('Unknown setup mode')
   const checks = []
@@ -42,6 +74,7 @@ export function collectChecks({ mode = 'source', platform = process.platform,
       supported ? 'Ubuntu 24.04 detected.' : 'The server installer requires Ubuntu 24.04; this host could not be verified as supported.',
       supported ? '' : 'Run the installer on a fresh Ubuntu 24.04 host. For a trial without a domain, follow INSTALL.md: Test install without a domain.')
     add('node', 'info', 'Host Node version is not a server-installer prerequisite; the app image provides Node.')
+    addCapacity(add, resources)
   }
 
   let result
@@ -59,6 +92,25 @@ export function collectChecks({ mode = 'source', platform = process.platform,
     add('docker', 'pass', 'Linux Docker engine is reachable.')
   }
   return { mode, checks, blocked: checks.some(check => check.status === 'block') }
+}
+
+function addCapacity(add, resources) {
+  let res
+  try { res = resources() } catch { /* reported below */ }
+  if (!res || !Number.isFinite(res.memBytes) || !Number.isFinite(res.threads)) {
+    add('capacity', 'info', 'Could not read memory and CPU on this host; size it by hand from the README.')
+    return
+  }
+  const { sessions, limitedBy } = estimateSessions(res)
+  const disk = Number.isFinite(res.diskFreeBytes) ? `${Math.floor(res.diskFreeBytes / GB)} GB free disk` : 'free disk unknown'
+  const have = `${Math.round(res.memBytes / GB)} GB memory, ${res.threads} CPU threads, ${disk}`
+  const need = `about ${SIZING.baseMemGB + SIZING.memPerSessionGB} GB memory, ${Math.ceil(SIZING.baseThreads + SIZING.threadsPerSession)} threads and ${SIZING.baseDiskGB + SIZING.diskPerSessionGB} GB free disk`
+  if (sessions < 1) {
+    add('capacity', 'warn', `${have}: not enough for one AI session at once (limited by ${limitedBy}).`,
+      `One session needs ${need}. See README: How big a server, or docs/RECOMMENDED-STACK.md.`)
+  } else {
+    add('capacity', 'pass', `${have}: room for about ${sessions} AI session${sessions === 1 ? '' : 's'} at once (limited by ${limitedBy}), before the client's own files.`)
+  }
 }
 
 export function main(args = process.argv.slice(2)) {
