@@ -4,7 +4,11 @@
  * spawnInTmux applies the plan.
  *
  * The contract, both modes:
- *   * planner / reviewer / arena / sub-sessions are never passed here;
+ *   * planner / arena / sub-sessions are never passed here. A REVIEWER is
+ *     passed here only in jail mode and only when its review needs a browser
+ *     (a UI-change PR — planReviewerBrowser in session-subsessions.ts, obj
+ *     901229); a tmux-mode reviewer keeps its own reviewer MCP config, and a
+ *     backend-only review never asks;
  *   * a worker gets the pinned Chromium, the OS sandbox on, and Chromium
  *     pointed at the egress guard — or, when any of that cannot be guaranteed
  *     (tmux mode by default, browser image missing, guard down, profile

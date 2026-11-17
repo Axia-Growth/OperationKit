@@ -197,6 +197,8 @@ export interface HighAgencyPatch {
   workspace?: string | null
   allow_cards?: boolean
   allow_workflows?: boolean
+  /** true = resume a paused wake schedule. A plain save never resumes (obj 900961). */
+  resume?: boolean
 }
 
 /** An image attached to a chat message (obj 900157). */

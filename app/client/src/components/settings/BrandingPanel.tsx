@@ -398,7 +398,10 @@ export function BrandingPanel() {
                   // text is fixed too (fg-3 vanished on white in dark mode).
                   : <span className="text-xs" style={{ color: slot === 'wordmark-dark' ? '#8b949e' : '#6b7280' }}>not set</span>}
               </div>
-              <div className="min-w-0 flex-1">
+              {/* Below sm the label + description take their own full-width line above
+                  the preview and buttons; side by side they shrank to ~40px on a phone
+                  and read one word per line (card #901204). */}
+              <div className="order-first w-full min-w-0 sm:order-none sm:w-auto sm:flex-1">
                 <div className="text-sm text-fg-0">{label}</div>
                 <div className="text-xs text-fg-3">{help}</div>
               </div>

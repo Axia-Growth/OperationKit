@@ -2,12 +2,25 @@
  * Objective Brief panel — extracted from SessionViewer.tsx (behavior frozen).
  */
 import { GitPullRequest, GitMerge, GitPullRequestClosed } from 'lucide-react'
-import type { Objective, ObjectiveReview, ObjectivePR } from '@operationkit/shared'
+import type { ClosedOverReview, Objective, ObjectiveReview, ObjectivePR } from '@operationkit/shared'
 import { renderMarkdown } from '../../lib/markdown'
 import { AcceptanceCriteriaResults } from '../AcceptanceCriteriaResults'
 import { Card, Badge, cn } from '../ui'
 import { formatCost, formatDateTime, humanize } from '../../lib/format'
 import { SpendPanel } from './SpendPanel'
+
+/** Who closed it, in plain words, from the audit actor. */
+function closedBy(by: string | null): string {
+  if (!by) return 'unknown'
+  if (by === 'user') return 'a person'
+  if (by === 'state-poller' || by === 'machine') return 'the system'
+  return by.startsWith('bot:') ? by.slice(4) || 'a bot' : by
+}
+
+export function closedOverReviewLine(c: ClosedOverReview): string {
+  const reason = c.reason?.trim()
+  return `Closed without a passing review by ${closedBy(c.by)}${reason ? `: ${reason}` : '.'}`
+}
 
 export function BriefPanel({
   objective,
@@ -102,6 +115,24 @@ export function BriefPanel({
             </Card>
           )
         })()}
+
+        {/* obj 900959: the reviewer session failed, so there is no verdict. */}
+        {!objective.ai_review_verdict && objective.review_runner_failure && (
+          <Card inset className="px-3 py-2" data-testid="review-not-run">
+            <div className="mb-1 flex items-center gap-2 text-xs uppercase text-fg-2 font-semibold tracking-eyebrow">
+              <span>AI review</span>
+              <Badge tone="neutral" className="uppercase">Not reviewed</Badge>
+            </div>
+            <div className="text-xs leading-relaxed text-fg-1">{objective.review_runner_failure.reason}</div>
+          </Card>
+        )}
+
+        {/* obj 900959: one plain line when the card was closed over a non-pass review. */}
+        {objective.closed_over_review && (
+          <p className="text-xs text-fg-2" data-testid="closed-over-review">
+            {closedOverReviewLine(objective.closed_over_review)}
+          </p>
+        )}
 
         {/* AI Review — per-criterion results (latest iteration) */}
         {reviews.length > 0 && (

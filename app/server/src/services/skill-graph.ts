@@ -74,6 +74,29 @@ export interface SkillGraph {
   skills: Record<string, SkillGraphSkill>
   tools: Record<string, { skills: string[] }>
   orphans: { tools: string[]; skills: string[] }
+  /**
+   * `ready` = built by the generator. `not_set_up` = this install has no
+   * layer-graph generator (a fresh install ships without it), so the graph is
+   * empty on purpose and `reason` says why (obj 901202). A generator that is
+   * present but fails is still an error (503), never `not_set_up`.
+   */
+  status: 'ready' | 'not_set_up'
+  reason?: string
+}
+
+/** The empty graph a fresh install serves: a sensible empty state, not a 503. */
+export function emptySkillGraph(reason: string): SkillGraph {
+  return {
+    source: 'frontmatter-layer-graph',
+    generated_at: new Date().toISOString(),
+    counts: { agents: 0, skills: 0, skills_top_level: 0, subskills: 0, tools: 0, agent_skill_edges: 0, skill_tool_edges: 0 },
+    agents: {},
+    skills: {},
+    tools: {},
+    orphans: { tools: [], skills: [] },
+    status: 'not_set_up',
+    reason,
+  }
 }
 
 export function layerGraphScript(): string {
@@ -104,14 +127,19 @@ export function layerGraphShapeError(value: unknown): string | null {
   return null
 }
 
-/** Run the generator in --json mode. Rejects with a readable message; the route
- *  turns that into a 503 so the tab can say "graph unavailable" rather than
- *  silently rendering an empty graph. */
+/** Run the generator in --json mode. A MISSING generator is not an error: a fresh
+ *  install has none, so it resolves to an empty `not_set_up` graph (obj 901202).
+ *  A generator that is present but fails rejects with a readable message; the
+ *  route turns that into a 503 so the tab can say "graph unavailable" rather
+ *  than silently rendering an empty graph. */
 export function runLayerGraph(): Promise<SkillGraph> {
   return new Promise((resolve, reject) => {
     const script = layerGraphScript()
     if (!fs.existsSync(script)) {
-      reject(new Error(`layer-graph generator not found at ${script}`))
+      resolve(emptySkillGraph(
+        'The skill graph is not set up on this install yet: it needs the layer-graph '
+        + `generator (${path.basename(script)}) in the AI workspace scripts folder.`,
+      ))
       return
     }
     execFile(
@@ -139,7 +167,7 @@ export function runLayerGraph(): Promise<SkillGraph> {
           reject(new Error(`layer-graph generator returned an unusable graph: ${shapeError}`))
           return
         }
-        resolve(parsed as SkillGraph)
+        resolve({ ...(parsed as SkillGraph), status: 'ready' })
       },
     )
   })

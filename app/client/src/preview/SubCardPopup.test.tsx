@@ -103,6 +103,33 @@ describe('Sub-card pop-up — the card page', () => {
     apiGet.mockClear()
   })
 
+  // obj 901198: below md the side rail is hidden, so the card page also renders
+  // a collapsible "Sub-cards (n)" section above the chat that opens the same pop-up.
+  it('narrow screens: a collapsible "Sub-cards (n)" section lists and opens the sub-cards', async () => {
+    await openParentCard()
+    const section = document.querySelector<HTMLElement>('[data-testid="sub-cards-disclosure"]')!
+    expect(section).toBeTruthy()
+    expect(section.className).toContain('md:hidden')
+    // The desktop rail is the one that hides below md.
+    expect(row().closest('aside')!.className).toContain('hidden')
+    const toggle = section.querySelector<HTMLButtonElement>('button[aria-expanded]')!
+    expect(toggle.textContent).toContain('Sub-cards (1)')
+    expect(toggle.getAttribute('aria-expanded')).toBe('false')
+    expect(section.querySelector('[data-testid="sub-card-narrow-row-101"]')).toBeNull()
+
+    await click(toggle)
+    expect(toggle.getAttribute('aria-expanded')).toBe('true')
+    const list = document.getElementById(toggle.getAttribute('aria-controls')!)!
+    const narrowRow = list.querySelector<HTMLAnchorElement>('[data-testid="sub-card-narrow-row-101"]')!
+    expect(narrowRow.getAttribute('href')).toBe('/o/101')
+    expect(narrowRow.textContent).toContain('Migrate invoices table')
+
+    await click(narrowRow)
+    await settle()
+    expect(popup()).toBeTruthy()
+    expect(path).toBe('/o/100')
+  })
+
   it('a sub-card row is a real link to the full card', async () => {
     await openParentCard()
     expect(row().getAttribute('href')).toBe('/o/101')

@@ -145,3 +145,41 @@ describe('useObjectives changeStatus error recovery (obj 700082)', () => {
     expect(getMock).not.toHaveBeenCalledWith('/objectives')
   })
 })
+
+// obj 901197: a failed main load must be its own state (the board shows "could
+// not load" + Retry, never empty columns), a later done-page error must not
+// replace it, and reload() must fetch again and clear it on success.
+describe('useObjectives failed main load', () => {
+  it('sets loadError on failure and clears it after reload succeeds', async () => {
+    const working = { ...obj(9, 'example'), status: 'working' } as Objective
+    getMock.mockRejectedValueOnce(new Error('HTTP 500'))
+    const container = document.createElement('div')
+    const root = createRoot(container)
+    let latest: ReturnType<typeof useObjectives> | null = null
+    function LoadHarness() {
+      latest = useObjectives('example')
+      return null
+    }
+    flushSync(() => root.render(<LoadHarness />))
+    await flush()
+    expect(latest!.loading).toBe(false)
+    expect(latest!.loadError).toMatch(/^Could not load the board\./)
+    expect(latest!.error).toBe(latest!.loadError)
+    expect(latest!.objectives).toEqual([])
+
+    // A done-page failure while the main load is down does not hide it.
+    getMock.mockRejectedValueOnce(new Error('HTTP 500'))
+    await latest!.loadMoreDone()
+    await flush()
+    expect(latest!.error).toMatch(/^Could not load the board\./)
+
+    getMock.mockResolvedValueOnce([working])
+    flushSync(() => latest!.reload())
+    await flush()
+    expect(latest!.loadError).toBeNull()
+    expect(latest!.error).toBeNull()
+    expect(latest!.objectives.map(o => o.id)).toEqual([9])
+    expect(getMock).toHaveBeenLastCalledWith('/objectives?workspace=example')
+    root.unmount()
+  })
+})

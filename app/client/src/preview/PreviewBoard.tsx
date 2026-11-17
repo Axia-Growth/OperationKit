@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { commandPaletteShortcut } from '../lib/platform'
-import { Archive, Inbox, ListChecks, Plus, Search, Workflow } from 'lucide-react'
+import { AlertTriangle, Archive, Inbox, ListChecks, Plus, RotateCw, Search, Workflow } from 'lucide-react'
 import { EmptyState } from '../components/ui/EmptyState'
 import { Skeleton } from '../components/ui/Skeleton'
 import { BoardSkeleton } from './BoardSkeleton'
@@ -69,7 +69,7 @@ const COLUMN_EMPTY: Record<ObjectiveStatus, { title: string; description: string
 
 export function PreviewBoard({ workspaces }: PreviewBoardProps) {
   const {
-    objectives, loading, error, changeStatus, connectionState,
+    objectives, loading, error, loadError, reload, changeStatus, connectionState,
     createObjective, updateObjective, deleteObjective,
     doneObjectives, doneLoading, doneLoaded, doneHasMore, loadMoreDone,
   } = useObjectives(workspaces)
@@ -187,8 +187,10 @@ export function PreviewBoard({ workspaces }: PreviewBoardProps) {
   }, [wsKey])
 
   useEffect(() => {
-    if (!loading && !doneLoaded && !doneLoading) loadMoreDone()
-  }, [loading, doneLoaded, doneLoading, loadMoreDone])
+    // A failed main load (obj 901197) skips the done page: the board shows one
+    // "could not load" state, and Retry loads both again.
+    if (!loading && !loadError && !doneLoaded && !doneLoading) loadMoreDone()
+  }, [loading, loadError, doneLoaded, doneLoading, loadMoreDone])
 
   const { childrenByParent, topLevel } = useMemo(() => {
     const live = groupObjectives(scopeObjectives(objectives, workspaces))
@@ -407,7 +409,9 @@ export function PreviewBoard({ workspaces }: PreviewBoardProps) {
               }`}
             />
             {connectionState === 'connected' ? '' : connectionState === 'reconnecting' ? 'Reconnecting… · ' : 'Disconnected · '}
-            {filteredTopLevel.length === topLevel.length
+            {loadError
+              ? 'Cards not loaded'
+              : filteredTopLevel.length === topLevel.length
               ? `${topLevel.length} cards`
               : `${filteredTopLevel.length} of ${topLevel.length} cards`}
           </span>
@@ -456,9 +460,41 @@ export function PreviewBoard({ workspaces }: PreviewBoardProps) {
           </Button>
         </div>
       </div>
-      {error && (
+      {error && !loadError && (
         <div className="border-b border-line px-4 py-1.5 text-xs text-[color:var(--ok-alarm)]">{error}</div>
       )}
+      {loadError ? (
+        // obj 901197: the main card list failed. Never fall through to the
+        // columns: their "Queue is empty" / "Nothing running" copy would read
+        // as "all my cards are gone" during an outage.
+        <div className="flex min-h-0 flex-1 items-start justify-center overflow-y-auto p-3 sm:p-6">
+          <div
+            role="alert"
+            data-testid="board-load-error"
+            className="mt-6 w-full max-w-md rounded-lg border border-line bg-surface-2 px-5 py-6 text-center"
+          >
+            <EmptyState
+              compact
+              icon={<AlertTriangle className="h-5 w-5 text-[color:var(--ok-alarm)]" aria-hidden="true" />}
+              title="The board could not load"
+              description={`${loadError.replace(/^Could not load the board\.\s*/, "")} Your cards are not shown because they could not be fetched; nothing has been removed.`}
+              action={
+                <Button
+                  size="sm"
+                  variant="primary"
+                  onClick={reload}
+                  data-testid="board-load-retry"
+                  leftIcon={<RotateCw className="h-4 w-4" aria-hidden="true" />}
+                >
+                  Retry
+                </Button>
+              }
+              className="py-2"
+            />
+          </div>
+        </div>
+      ) : (<>
+
       {triageMode && (
         <NeedsYouTriageBar
           selected={triageSelected}
@@ -557,6 +593,7 @@ export function PreviewBoard({ workspaces }: PreviewBoardProps) {
           </section>
         ))}
       </ColumnScroller>
+      </>)}
 
       {/* Mounted only while open, like ObjectiveModal below: the board does not
           render the dialog's Modal until someone asks for a workflow. */}

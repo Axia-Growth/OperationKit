@@ -228,15 +228,23 @@ const SEARCH_CARDS_SCHEMA = {
 }
 
 /** PATCH status, with ONE retry on a 5xx (the transient spawn failure bots used to hand-retry). */
-export async function patchStatus(rest: RestCall, id: number, status: string): Promise<{ row: Record<string, unknown>; retried: boolean }> {
+export async function patchStatus(
+  rest: RestCall,
+  id: number,
+  status: string,
+  extra: { override_reason?: string } = {},
+): Promise<{ row: Record<string, unknown>; retried: boolean }> {
+  // obj 901230: override_reason rides on the same PATCH body the REST route reads
+  // (obj 900952). It is sent only when given, so every other move is unchanged.
+  const body = { status, ...(extra.override_reason !== undefined ? { override_reason: extra.override_reason } : {}) }
   try {
-    return { row: await rest('PATCH', `/api/objectives/${id}/status`, { status }), retried: false }
+    return { row: await rest('PATCH', `/api/objectives/${id}/status`, body), retried: false }
   } catch (err) {
     if (!(err instanceof ToolError) || err.status < 500) throw err
     // The first attempt may have landed before it errored — never double-start.
     const now = await rest('GET', `/api/objectives/${id}`)
     if (now?.status === status) return { row: now, retried: false }
-    return { row: await rest('PATCH', `/api/objectives/${id}/status`, { status }), retried: true }
+    return { row: await rest('PATCH', `/api/objectives/${id}/status`, body), retried: true }
   }
 }
 
@@ -1141,17 +1149,33 @@ export const MCP_TOOLS: McpTool[] = [
     name: 'update_status',
     access: 'write',
     scope: 'board:write',
-    description: 'Move a card. queue / planning park it; cancelled retires it (use for duplicates); working starts it (prefer start_objective); a done/cancelled card reopens by moving to queue. done is a HUMAN SIGNATURE (Operator\'s): only set done when Operator explicitly told you to sign off — never because the agent says it finished (a key without board:done gets missing_scope). Illegal transitions return an error; a 409 is the session cap, a branch lease, or the completion gate.',
+    description: 'Move a card. queue / planning park it; cancelled retires it (use for duplicates); working starts it (prefer start_objective); a done/cancelled card reopens by moving to queue. done is a HUMAN SIGNATURE (Operator\'s): only set done when Operator explicitly told you to sign off — never because the agent says it finished (a key without board:done gets missing_scope). Illegal transitions return an error; a 409 is the session cap, a branch lease, or the completion gate. ' +
+      'A card with a pull request and no passing AI review is not set done without override_reason (409, code no_passing_review); with a reason it closes and the reason goes on the card audit trail (closed_over_review.reason).',
     inputSchema: {
       type: 'object',
       required: ['id', 'status'],
-      properties: { id: ID_SCHEMA, status: { type: 'string', enum: STATUSES } },
+      properties: {
+        id: ID_SCHEMA,
+        status: { type: 'string', enum: STATUSES },
+        // obj 901230: the same field PATCH /api/objectives/:id/status reads (obj 900952).
+        override_reason: {
+          type: 'string',
+          maxLength: 1000,
+          description: 'Only for status done on a card that has a pull request and no passing AI review: why it is being closed anyway. Non-empty text (up to 1,000 characters), kept with your key label on the card audit trail. Ignored on every other move. Never put a secret in it.',
+        },
+      },
     },
     run: async (a, rest) => {
       const id = idArg(a)
       const status = strArg(a, 'status', true)!
-      const { row, retried } = await patchStatus(rest, id, status)
-      return receipt(`Moved #${id} to ${row.status}.`, row, retried ? { retried: true } : {})
+      const overrideReason = strArg(a, 'override_reason')
+      const { row, retried } = await patchStatus(rest, id, status, overrideReason !== undefined ? { override_reason: overrideReason } : {})
+      const closed = row.closed_over_review as { reason?: string | null } | null | undefined
+      return receipt(
+        `Moved #${id} to ${row.status}.${closed?.reason ? ' Closed without a passing review; the reason is on the audit trail.' : ''}`,
+        row,
+        { ...(retried ? { retried: true } : {}), ...(closed?.reason ? { closed_over_review: closed } : {}) },
+      )
     },
   },
   {
@@ -1423,8 +1447,10 @@ async function handleMessage(msg: JsonRpcMessage, req: AuthRequest, rest: RestCa
         const text = missingScope !== undefined
           ? `Error ${status}: ${message} (missing_scope: ${missingScope ?? 'null — not on the agent surface'})`
           : `Error ${status}: ${message}`
-        const structured = missingScope !== undefined || workspace !== undefined
-          ? { structuredContent: { error: message, status, ...(missingScope !== undefined ? { missing_scope: missingScope } : {}), ...(workspace ? { workspace } : {}) } }
+        // obj 901230: a machine-readable refusal code (e.g. no_passing_review) rides along too.
+        const code = err instanceof ToolError && typeof err.body?.code === 'string' ? err.body.code : undefined
+        const structured = missingScope !== undefined || workspace !== undefined || code !== undefined
+          ? { structuredContent: { error: message, status, ...(missingScope !== undefined ? { missing_scope: missingScope } : {}), ...(workspace ? { workspace } : {}), ...(code ? { code } : {}) } }
           : {}
         return rpcResult(id, { content: [{ type: 'text', text }], ...structured, isError: true })
       }

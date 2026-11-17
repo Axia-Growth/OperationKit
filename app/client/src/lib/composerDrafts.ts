@@ -34,8 +34,9 @@ interface StoredDraft {
 /**
  * Build the storage key for one conversation. `scope` separates the surfaces
  * (a session objective #7 and a mentor thread #7 are different conversations).
+ * `new-card` holds the unsaved New card dialog fields (obj 901200).
  */
-export function draftKey(scope: 'session' | 'mentor', id: string | number): string {
+export function draftKey(scope: 'session' | 'mentor' | 'new-card', id: string | number): string {
   return `${DRAFT_PREFIX}${scope}.${id}`
 }
 

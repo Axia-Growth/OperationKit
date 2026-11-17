@@ -54,6 +54,24 @@ export type JobDisposition = 'complete' | 'needs_review'
  *               escalates to human review.
  */
 export type AIReviewVerdict = 'pass' | 'fail' | 'blocked'
+
+/** Why a card has no review verdict: the reviewer session itself failed. */
+export interface ReviewRunnerFailure {
+  cause: 'no_output' | 'no_verdict'
+  reason: string
+  at: string
+}
+
+/** A card closed while its review verdict was not `pass` (from `objective_audit`). */
+export interface ClosedOverReview {
+  /** The non-pass verdict it was closed over; null = no review had run. */
+  verdict: 'fail' | 'blocked' | null
+  /** Audit actor: `user`, `bot:<key label>`, `state-poller`, … */
+  by: string | null
+  /** The stated `override_reason`, when one was given. */
+  reason: string | null
+  at: string
+}
 /**
  * Mode the reviewer self-selects based on the deliverable's testable surface.
  * - `browser` — UI deliverable; reviewer drives Playwright MCP and screenshots.
@@ -468,6 +486,13 @@ export interface Objective {
    *  diff. NULL for every other blocked verdict and for pass/fail. The signal the
    *  preview-infra-resurrect sweep keys on. */
   blocked_reason: string | null
+  /** Set when the reviewer session gave no verdict (failed to start, died, or
+   *  ended without one). The verdict stays null: the card was NOT reviewed
+   *  (obj 900959). Null once a later review runs. */
+  review_runner_failure?: ReviewRunnerFailure | null
+  /** Set on a `done` card that was closed while its review verdict was not
+   *  `pass`, from the audit trail (obj 900959). */
+  closed_over_review?: ClosedOverReview | null
   /** Per-objective opt-out from the AI Review stage. SQLite stores 0/1; the
    *  server casts to boolean before serializing. */
   skip_ai_review: boolean

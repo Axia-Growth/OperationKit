@@ -571,16 +571,17 @@ function cardUrl(id: number): string {
 /**
  * File a card from a chat turn.
  *
- * Two paths, and which one runs is decided by the REGISTRY, not by a flag:
+ * One path for every bot (obj 900960): the guarded bot-job path (obj 900323).
+ * Idempotency enforced, duplicate guard applied, start decided against an
+ * explicit finite ceiling, and the origin recorded so the result can come back
+ * to THIS conversation. The registry decides only WHO owns the card:
  *
- *  - The agent is a REGISTERED BOT (obj 900323) → the guarded bot-job path.
- *    Owner validated, idempotency enforced, duplicate guard applied, job mode
- *    pinned to read-only, start decided against an explicit finite ceiling, and
- *    the origin recorded so the result can come back to THIS conversation.
- *  - The agent is not in the registry → the original path, unchanged. Legacy
- *    automation compatibility is deliberate: an install whose agents predate the
- *    registry keeps filing cards exactly as before rather than breaking on a
- *    feature it never opted into.
+ *  - The agent is a REGISTERED BOT → owner validated against the registry, job
+ *    mode pinned to read-only in the card footer.
+ *  - The agent is not in the registry → no registry owner (owner_bot is the
+ *    bot's own name when it works the card, else empty) and the footer its
+ *    cards always had. Before 900960 this was a second, unguarded INSERT, so a
+ *    retried tool call filed a duplicate card.
  *
  * The idempotency key is derived, not supplied, because the model cannot be
  * trusted to invent a stable one: it is a content fingerprint of (title, body),
@@ -727,65 +728,43 @@ function createCard(ctx: ToolContext, title: string, description: string, worksp
   const under = parentId != null ? { parent_id: parentId } : {}
   const worker = chatCardAgent(ctx.agent, workspace)
   const bot = botForAgentSlug(ctx.agent.slug, db)
-  if (bot) {
-    const r = createBotJob(db, {
-      userId: ctx.userId,
-      agentSlug: ctx.agent.slug,
-      ownerBot: bot.id,
-      workspace,
-      title,
-      description,
-      // The same request under a different parent is a different job, not a replay.
-      idempotencyKey: botJobIdempotencyKey(title, description) + (parentId != null ? `:p${parentId}` : ''),
-      parentId,
-      agentContext: worker.agentContext,
-      model: chatCardModel(ctx.agent),
-    })
-    if (!r.ok) throw new ToolUseError(r.error)
-    const row = db.prepare('SELECT * FROM objectives WHERE id = ?').get(r.objectiveId) as Objective
-    try {
-      broadcast({ type: 'objective_updated', payload: row })
-    } catch {
-      /* no WS server in tests */
-    }
-    return {
-      id: r.objectiveId,
-      status: r.status,
-      workspace,
-      ...under,
-      note: r.reused
-        ? 'This is the card you already filed for that request — not a new one.'
-        : r.start.allowed
-          ? 'Filed and cleared to start.'
-          : `Filed. It will NOT start by itself: ${r.start.reason}`,
-    }
-  }
-
-  // obj 900948: a bot that owns the card is named as its owner_bot (its name);
-  // a card handed to the workspace default agent stays unowned, as before.
-  // The name goes through the same shape check every owner_bot write uses; a
-  // name it refuses falls back to the slug (always a safe shape), never to unowned.
-  const ownerBot = worker.ownedByBot ? chatOwnerBotName(ctx.agent, db) : null
-  const body = [
-    description.trim(),
-    '',
-    `— Requested in chat with "${ctx.agent.name}" by ${ctx.username}. They follow this card's status from that chat.`,
-  ].join('\n')
-  const info = db
-    .prepare(
-      `INSERT INTO objectives (title, description, agent_context, workspace, category, parent_id, depth, assigned_user_id, created_by, type, status, origin, owner_bot, model)
-       VALUES (?, ?, ?, ?, 'general', ?, ?, ?, ?, 'task', ?, 'agent_chat', ?, ?)`,
-    )
-    .run(title.trim().slice(0, 200), body, worker.agentContext, workspace, parentId, depthForParent(db, parentId), ctx.userId, ctx.userId, getInitialStatus('task'), ownerBot, chatCardModel(ctx.agent))
-  const id = Number(info.lastInsertRowid)
-  db.prepare('INSERT INTO agent_chat_cards (objective_id, user_id, agent_slug) VALUES (?, ?, ?)').run(id, ctx.userId, ctx.agent.slug)
-  const row = db.prepare('SELECT * FROM objectives WHERE id = ?').get(id) as Objective
+  // One guarded path for every bot (obj 900960). A bot in the registry owns the
+  // card as itself. A bot outside it passes no owner bot: the card's owner_bot
+  // is its name when it works the card itself (obj 900948: chatOwnerBotName
+  // runs the shape check every owner_bot write uses and falls back to the
+  // slug), and a card handed to the workspace default agent stays unowned.
+  const r = createBotJob(db, {
+    userId: ctx.userId,
+    agentSlug: ctx.agent.slug,
+    ownerBot: bot ? bot.id : null,
+    ...(bot ? {} : { chatBot: { name: ctx.agent.name, ownerBot: worker.ownedByBot ? chatOwnerBotName(ctx.agent, db) : null } }),
+    workspace,
+    title,
+    description,
+    // The same request under a different parent is a different job, not a replay.
+    idempotencyKey: botJobIdempotencyKey(title, description) + (parentId != null ? `:p${parentId}` : ''),
+    parentId,
+    agentContext: worker.agentContext,
+    model: chatCardModel(ctx.agent),
+  })
+  if (!r.ok) throw new ToolUseError(r.error)
+  const row = db.prepare('SELECT * FROM objectives WHERE id = ?').get(r.objectiveId) as Objective
   try {
     broadcast({ type: 'objective_updated', payload: row })
   } catch {
     /* no WS server in tests */
   }
-  return { id, status: row.status, workspace, ...under }
+  return {
+    id: r.objectiveId,
+    status: r.status,
+    workspace,
+    ...under,
+    note: r.reused
+      ? 'This is the card you already filed for that request — not a new one.'
+      : r.start.allowed
+        ? 'Filed and cleared to start.'
+        : `Filed. It will NOT start by itself: ${r.start.reason}`,
+  }
 }
 
 export interface ChatCardStatus { id: number; title: string; status: string; summary: string | null; pr_url: string | null; updated_at: string; url: string }

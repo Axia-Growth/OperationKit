@@ -159,6 +159,10 @@ jobs:
       - name: Sandbox smoke (jail image runs non-root, no docker socket)
         run: |
           sudo docker run --rm ok-jail:local bash -lc 'id -u; test ! -S /var/run/docker.sock; command -v claude'
+      - name: Reviewer/worker tooling - python3 on PATH in both jail images (obj 901229)
+        run: |
+          sudo docker run --rm ok-jail:local bash -lc 'command -v python3 && python3 --version'
+          sudo docker run --rm ok-jail-browser:local bash -lc 'command -v python3 && python3 --version'
       - name: Uninstall (keep images) and re-install (timed demo reset)
         run: |
           sudo bash install/uninstall.sh --config ci.conf --yes --keep-images

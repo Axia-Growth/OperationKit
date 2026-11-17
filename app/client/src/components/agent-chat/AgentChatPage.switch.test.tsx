@@ -138,10 +138,14 @@ describe('switching bots (obj 900865)', () => {
     const aside = host.querySelector('aside')
 
     rowButton('beta').click()
-    await settle()
+    // A navigation commits as a transition over a variable number of macrotasks
+    // (more on a loaded CI runner), so wait for it, bounded, like the tests below.
+    await until(() => !!conversation('Beta')?.textContent?.includes('Hello from beta'))
     expect(conversation('Beta')?.textContent).toContain('Hello from beta')
     rowButton('gamma').click()
-    await settle()
+    // A navigation commits as a transition over a variable number of macrotasks
+    // (more on a loaded CI runner), so wait for it, bounded, like the tests below.
+    await until(() => !!conversation('Gamma')?.textContent?.includes('Hello from gamma'))
     expect(conversation('Gamma')?.textContent).toContain('Hello from gamma')
 
     expect(host.querySelector('aside')).toBe(aside)

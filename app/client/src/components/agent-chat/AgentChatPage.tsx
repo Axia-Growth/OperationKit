@@ -2,6 +2,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, typ
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { ChevronLeft, Info, Paperclip, Pin, Square, X } from 'lucide-react'
 import { api } from '../../lib/api'
+import { actionErrorMessage } from '../../lib/format'
 import { useAuth } from '../../context/AuthContext'
 import { useFileDrop, filesFromClipboard } from '../../hooks/useFileDrop'
 import { useMediaQuery } from '../../hooks/useMediaQuery'
@@ -233,6 +234,11 @@ function Conversation({
   const [text, setText] = useState('')
   // The long placeholder wrapped and was clipped in the one-line box at phone width (QA obj 900621).
   const narrow = useMediaQuery('(max-width: 639px)')
+  // obj 901203: on a phone, open Bot settings take the whole conversation pane.
+  // Sharing 844px with the view tabs, thread tabs and composer left ~450px of
+  // settings, so High Agency sat behind a small inner scroll. The chat stays
+  // mounted (draft, scroll position) and comes back when settings close.
+  const settingsFull = narrow && settingsOpen && !!meta?.tool_catalog
   const [images, setImages] = useState<PendingImage[]>([])
   // The message whose turn this tab is waiting on (its POST runs the turn).
   // `id` is the message's client_msg_id (obj 900977): once the server's own row
@@ -448,6 +454,13 @@ function Conversation({
     el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' })
   }, [msgKey, hasThread, thread?.messages.length, pendingBubble, outboxBubbles.length])
 
+  // A list that was display:none while settings filled a phone screen lost its
+  // scroll offset; it comes back at the newest message, as it was (obj 901203).
+  useLayoutEffect(() => {
+    const el = scroller.current
+    if (!settingsFull && el) el.scrollTop = el.scrollHeight
+  }, [settingsFull])
+
   // obj 900798: what is on screen has been read. Fires when the newest message
   // in view changes (a lane loaded, a reply landed), not on every 15s refresh,
   // so a bot the person just marked unread stays unread until something new.
@@ -497,7 +510,7 @@ function Conversation({
       // Nothing typed is lost: put it back unless the person is already typing the next one.
       setText(cur => (cur.trim() ? cur : msg))
       setImages(cur => (cur.length ? cur : attached))
-      setSendError(e instanceof Error ? e.message : 'Message not sent')
+      setSendError(actionErrorMessage(e, 'Message not sent'))
       // Sending the restored draft again is a deliberate retry, not a double submit.
       sentDraft.current = null
     } finally {
@@ -527,7 +540,7 @@ function Conversation({
       }))
       if (!pending) void load()
     } catch (e) {
-      setSendError(e instanceof Error ? e.message : 'Could not stop the reply')
+      setSendError(actionErrorMessage(e, 'Could not stop the reply'))
     } finally {
       setStopping(false)
     }
@@ -561,7 +574,7 @@ function Conversation({
       const d = r.draft
       updateThread(key, t => ({ ...t, drafts: t.drafts.map(x => (x.id === d.id ? d : x)) }))
     } catch (e) {
-      setSendError(e instanceof Error ? e.message : 'That did not work')
+      setSendError(actionErrorMessage(e, 'That did not work'))
     }
   }
 
@@ -705,6 +718,7 @@ function Conversation({
           isAdmin={isAdmin}
           onSaved={a => onAgentChanged?.(a)}
           onClose={() => setSettingsOpen(false)}
+          fill={settingsFull}
         />
       )}
 
@@ -734,6 +748,9 @@ function Conversation({
         />
       )}
 
+      {/* `contents` keeps this wrapper out of the flex layout; `hidden` steps the
+          whole chat aside while settings fill a phone screen (obj 901203). */}
+      <div className={settingsFull ? 'hidden' : 'contents'}>
       <div className="flex items-center gap-2 border-b border-line bg-surface-1 px-2 py-1.5 sm:px-4" data-testid="bot-view-tabs">
         <Tabs
           label={`${agent.name} views`}
@@ -953,6 +970,7 @@ function Conversation({
         </div>
       </form>
       </>)}
+      </div>
       {confirmDialog}
     </section>
   )

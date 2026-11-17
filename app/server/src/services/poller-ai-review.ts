@@ -26,6 +26,8 @@ import { broadcast } from '../ws/index.js'
 import { signUpload } from './supabase-storage.js'
 import { mustRouteToHumanReview } from '../lib/human-tracked.js'
 import { skipMachineStatusWrite, runMachineStatusUpdate } from '../lib/status-lock.js'
+import { logObjectiveAudit } from './objective-audit.js'
+import { parkUnreviewed } from './review-hygiene.js'
 import { evaluateAutoMerge } from './auto-merge.js'
 import { TRANSCRIPT_DIR } from '../config.js'
 import { deriveWorktreeBranchName } from './branch-scope.js'
@@ -123,13 +125,18 @@ export function extractReviewerOutput(sessionId: string): {
   // and the absolute screenshot paths from the reviewer's <screenshots> block.
   featureBrief: string
   screenshotPathsList: string[]
+  /** The session ran to an end (its transcript has a `result` event). False for a
+   *  reviewer that never started or died partway (obj 900959). */
+  completed: boolean
 } {
   // Concatenate all assistant text from the reviewer's JSONL — verdict can land
   // in any of the last few messages, especially in long sessions with tool use.
   let transcript = ''
+  let completed = false
   try {
     const messages = getSessionOutput(sessionId)
     transcript = messages.filter(m => m.type === 'assistant' && m.text).map(m => m.text!).join('\n\n')
+    completed = messages.some(m => m.type === 'result')
   } catch {}
   const verdictRaw = extractTag(transcript, 'verdict')
   const verdict = verdictRaw?.toLowerCase() === 'pass' ? 'pass'
@@ -153,7 +160,7 @@ export function extractReviewerOutput(sessionId: string): {
   return {
     verdict, findings, mode, transcript,
     criteriaResults, screenshotPaths, artifactPaths,
-    featureBrief, screenshotPathsList,
+    featureBrief, screenshotPathsList, completed,
   }
 }
 
@@ -684,7 +691,12 @@ export async function pollAIReviewSessions(): Promise<void> {
       artifactPaths,
       featureBrief,
       screenshotPathsList,
+      completed: reviewerCompleted,
     } = extractReviewerOutput(obj.ai_review_session_id)
+    // obj 900959 — a reviewer that never started, died partway, or wrote nothing
+    // gave no verdict because the RUNNER failed. That is not a review.
+    const reviewerProducedNothing = !transcript || transcript.trim().length === 0
+    const reviewerRunnerFailed = !verdict && (!reviewerCompleted || reviewerProducedNothing)
     handleSessionDeath(obj.ai_review_session_id)
 
     // QW4: parse the reviewer transcript into structured per-criterion evidence
@@ -748,8 +760,10 @@ export async function pollAIReviewSessions(): Promise<void> {
     // `ai_review_iteration` when it was spawned, so that's the iteration this
     // verdict belongs to. Use INSERT OR REPLACE so crash-recovery is idempotent
     // (the unique index on (objective_id, iteration) backs this).
+    // obj 900959: a reviewer runner failure writes NO review row (it used to
+    // write `blocked`): nothing was reviewed in that round.
     const persistedVerdict: 'pass' | 'fail' | 'blocked' = verdict ?? 'blocked'
-    try {
+    if (!reviewerRunnerFailed) try {
       db.prepare(
         `INSERT OR REPLACE INTO objective_reviews
           (objective_id, iteration, reviewer_session_id, mode, verdict,
@@ -791,41 +805,51 @@ export async function pollAIReviewSessions(): Promise<void> {
       return true
     }
 
+    if (reviewerRunnerFailed) {
+      // obj 900959 — the reviewer session failed to start or died: a RUNNER
+      // FAILURE, not a review. The verdict and findings stay empty ("not
+      // reviewed"), the failure is recorded in activity_log, and the card is
+      // parked in `review` for a person. Never `done`: a card nobody reviewed
+      // must not close itself (this keeps the obj 900322 C3/G11 rule).
+      const cause = reviewerProducedNothing ? 'no_output' : 'no_verdict'
+      console.warn(`[state-poller] Reviewer ${obj.ai_review_session_id} failed (${cause}) — runner failure, objective ${obj.id} parked in review, not reviewed`)
+      const reason = parkUnreviewed(
+        { db, update: (sql, ...params) => runMachineStatusUpdate(db, sql, ...params) },
+        obj,
+        { cause, partial: findings || transcript },
+      )
+      if (reason) {
+        try {
+          insertAlert({
+            severity: 'high',
+            title: `Card #${obj.id} was not reviewed: the reviewer session failed`,
+            message: reason,
+            source: 'state-poller',
+            dedup_key: `reviewer-runner-failure:${obj.id}:${obj.ai_review_session_id}`,
+          })
+        } catch { /* alert delivery is best-effort */ }
+      }
+      postHarnessStatus(obj, 'failure', 'Test-agent session failed (not reviewed).')
+      const updated = db.prepare('SELECT * FROM objectives WHERE id = ?').get(obj.id) as Objective
+      broadcast({ type: 'objective_updated', payload: updated })
+      continue
+    }
+
     if (!verdict) {
-      // Couldn't parse a verdict — escalate to human review (or done for tasks).
-      // Delegator workers escalate to their delegator (`review`), never silent done.
+      // The reviewer RAN to an end and wrote prose but no parseable <verdict>.
+      // That one did run, and its handling is unchanged: escalate to human
+      // review (or done for tasks). Delegator workers escalate to their
+      // delegator (`review`), never silent done. (A reviewer that never ran, or
+      // died, is the runner-failure branch above.)
       console.warn(`[state-poller] Reviewer ${obj.ai_review_session_id} ended without a <verdict> block — escalating to review`)
       let nextStatus: ObjectiveStatus = (obj.type === 'task' && delegatorParent == null) ? 'done' : 'review'
-
-      // ── The reviewer no-output gap (obj 900322 corrections round, C3/G11) ──
-      // A standalone task whose REVIEWER produced nothing at all — the reviewer
-      // wrapper died before its agent ran, or the session exited with an empty
-      // transcript — took the `done` arm above. Nothing verified the work and
-      // nothing said so: an infrastructure failure on the review side silently
-      // COMPLETED the objective. That is the same lie this objective fixes on
-      // the worker side, on the one lifecycle the worker-side fix cannot reach
-      // (`handleDeadSessionOutcome` is scoped to status='working').
-      //
-      // The fix is deliberately narrow: it changes only the terminal STATUS for
-      // the silent-reviewer case, from `done` to `review`, and names the cause.
-      // It does not re-route a reviewer that produced prose but no parseable
-      // verdict — that one did run, and its existing handling is unchanged.
-      const reviewerProducedNothing = !transcript || transcript.trim().length === 0
-      if (reviewerProducedNothing && nextStatus === 'done') nextStatus = 'review'
-
       if (mustRouteToHumanReview(obj) && nextStatus === 'done') nextStatus = 'review'
       if (await ciGateBlocks(nextStatus)) continue
       runMachineStatusUpdate(
         db,
         "UPDATE objectives SET status = ?, ai_review_verdict = 'blocked', ai_review_findings = ?, updated_at = datetime('now') WHERE id = ?",
         nextStatus,
-        reviewerProducedNothing
-          ? 'The REVIEWER session produced no output at all (empty transcript — the reviewer ' +
-            'process died before emitting anything, or never started). Nothing was verified, so ' +
-            'this card is NOT done: it is blocked for a human. This is a review-side ' +
-            'infrastructure failure, not a judgement about the work.' +
-            (findings ? `\n--- reviewer findings (partial) ---\n${findings}` : '')
-          : findings || 'Reviewer ended without emitting a verdict block.',
+        findings || 'Reviewer ended without emitting a verdict block.',
         obj.id,
       )
       postHarnessStatus(obj, 'failure', 'Test-agent ended without a verdict (blocked).')
@@ -859,7 +883,7 @@ export async function pollAIReviewSessions(): Promise<void> {
       // preview-infra-resurrect sweep can find it later without re-parsing findings prose.
       // Any other blocked reason (findings don't start with the marker) stays NULL.
       const blockedReason = isPreviewInfraBlockedFindings(findings) ? 'preview-infra' : null
-      runMachineStatusUpdate(
+      const blockedWrite = runMachineStatusUpdate(
         db,
         "UPDATE objectives SET status = ?, ai_review_verdict = 'blocked', ai_review_findings = ?, blocked_reason = ?, updated_at = datetime('now') WHERE id = ?",
         nextStatus,
@@ -867,6 +891,21 @@ export async function pollAIReviewSessions(): Promise<void> {
         blockedReason,
         obj.id,
       )
+      // obj 900959: a machine close over a `blocked` verdict goes on the audit
+      // trail, so the card can say it was closed without a passing review.
+      if (blockedWrite.changes > 0 && nextStatus === 'done') {
+        logObjectiveAudit(db, {
+          objectiveId: obj.id,
+          eventType: 'status_change',
+          fromStatus: obj.status,
+          toStatus: 'done',
+          actor: 'state-poller',
+          pathway: 'reviewer-verdict-blocked',
+          sessionId: obj.ai_review_session_id,
+          titleSnapshot: obj.title,
+          workspace: obj.workspace,
+        })
+      }
       console.log(`[state-poller] Reviewer BLOCKED on objective ${obj.id} → ${nextStatus}${blockedReason ? ` (blocked_reason=${blockedReason})` : ''}`)
       postHarnessStatus(obj, 'failure', 'Test-agent could not verify the PR preview (blocked).')
     } else {

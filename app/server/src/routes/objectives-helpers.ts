@@ -4,6 +4,7 @@
  */
 import { botSlugPassesAgentPool } from '../services/agent-chat/bot-workspaces.js'
 import { getDb } from '../db/index.js'
+import { readClosedOverReview, readReviewRunnerFailure } from '../services/review-hygiene.js'
 import { type AuthRequest } from '../middleware/auth.js'
 import { getUserWorkspaces } from '../middleware/workspace.js'
 import { getWorkspace } from '../services/workspaces.js'
@@ -322,6 +323,10 @@ export function mapObjective(row: Objective, userMap?: Map<number, string>): Obj
     stalled: !!r.stalled_at && row.status === 'working',
     stalled_at: (r.stalled_at as string | null | undefined) ?? null,
     stall_reason: (r.stall_reason as string | null | undefined) ?? null,
+    // obj 900959: a reviewer that gave no verdict is a runner failure, not a
+    // review; and a card closed over a non-pass review says who and why.
+    review_runner_failure: readReviewRunnerFailure(getDb(), row),
+    closed_over_review: readClosedOverReview(getDb(), row),
     last_activity_at: (r.last_activity_at as string | null | undefined) ?? null,
     acceptance_criteria: acceptance as Objective['acceptance_criteria'],
     assigned_user_ids: assignedIds,

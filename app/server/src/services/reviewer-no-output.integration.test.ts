@@ -15,6 +15,7 @@ import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest'
 import fs from 'fs'
 import os from 'os'
 import path from 'path'
+import type { Objective } from '@operationkit/shared'
 
 const TMP = fs.mkdtempSync(path.join(os.tmpdir(), 'cc-reviewer-nooutput-'))
 process.env.DB_PATH = path.join(TMP, 'db.sqlite')
@@ -33,6 +34,7 @@ vi.mock('./session-control.js', async (orig) => {
 
 const { getDb, initDb } = await import('../db/index.js')
 const { pollAIReviewSessions } = await import('./poller-ai-review.js')
+const { mapObjective } = await import('../routes/objectives-helpers.js')
 
 beforeAll(() => { initDb() })
 afterAll(() => {
@@ -67,17 +69,80 @@ function cardOf(id: number) {
   }
 }
 
+function runnerFailureOf(id: number) {
+  return getDb().prepare("SELECT * FROM activity_log WHERE objective_id = ? AND title = 'reviewer_runner_failure'").all(id) as {
+    session_id: string; event_type: string; detail: string; metadata: string
+  }[]
+}
+function reviewRowsOf(id: number): number {
+  return (getDb().prepare('SELECT COUNT(*) AS n FROM objective_reviews WHERE objective_id = ?').get(id) as { n: number }).n
+}
+function fullCardOf(id: number) {
+  return getDb().prepare('SELECT * FROM objectives WHERE id = ?').get(id) as Objective
+}
+
 describe('a REVIEWER that produced nothing must not mark the card done', () => {
-  it('empty reviewer transcript → review + blocked, naming it a review-side failure', async () => {
-    const { id } = seedUnderReview({ transcript: '' })
+  // obj 900959 changed WHAT is written for this case, not where the card lands:
+  // it is still parked in `review` (never done), but a reviewer that never ran is
+  // a runner failure, so the verdict stays empty instead of reading "blocked".
+  it('empty reviewer transcript → review, verdict left NULL, recorded as a runner failure', async () => {
+    const { id, sid } = seedUnderReview({ transcript: '' })
     await pollAIReviewSessions()
 
     const card = cardOf(id)
-    expect(card.status).toBe('review')           // <- was 'done' before the fix
-    expect(card.ai_review_verdict).toBe('blocked')
-    expect(card.ai_review_findings).toContain('produced no output at all')
+    expect(card.status).toBe('review')           // <- was 'done' before obj 900322
+    expect(card.ai_review_verdict).toBeNull()    // <- was 'blocked' before obj 900959
+    expect(card.ai_review_findings).toBeNull()
+    const failure = runnerFailureOf(id)
+    expect(failure).toHaveLength(1)
+    expect(failure[0].session_id).toBe(sid)
+    expect(failure[0].event_type).toBe('error')
+    expect(failure[0].detail).toContain('produced no output')
     // It must not blame the worker for a reviewer infra failure.
-    expect(card.ai_review_findings).toContain('not a judgement about the work')
+    expect(failure[0].detail).toContain('not a judgement about the work')
+    expect(JSON.parse(failure[0].metadata)).toMatchObject({ kind: 'reviewer_runner_failure', cause: 'no_output' })
+    // No review happened, so there is no review row for the round.
+    expect(reviewRowsOf(id)).toBe(0)
+    // The card API says why there is no verdict.
+    expect(mapObjective(fullCardOf(id)).review_runner_failure).toMatchObject({ cause: 'no_output' })
+  })
+
+  it('a reviewer that DIED partway (text, no result, no verdict) → review, verdict NULL, runner failure', async () => {
+    const { id } = seedUnderReview({
+      transcript: JSON.stringify({ type: 'assistant', message: { content: [{ type: 'text', text: 'Checking the diff now.' }] } }) + '\n',
+    })
+    await pollAIReviewSessions()
+
+    const card = cardOf(id)
+    expect(card.status).toBe('review')
+    expect(card.ai_review_verdict).toBeNull()
+    expect(card.ai_review_findings).toBeNull()
+    const failure = runnerFailureOf(id)
+    expect(failure).toHaveLength(1)
+    expect(failure[0].detail).toContain('Checking the diff now.')
+    expect(JSON.parse(failure[0].metadata)).toMatchObject({ cause: 'no_verdict' })
+    expect(reviewRowsOf(id)).toBe(0)
+  })
+
+  it('a reviewer that ran and said BLOCKED is still a real blocked verdict', async () => {
+    const { id } = seedUnderReview({
+      transcript: [
+        JSON.stringify({ type: 'assistant', message: { content: [{ type: 'text', text: '<verdict>blocked</verdict>\n<findings>The preview would not load.</findings>' }] } }),
+        JSON.stringify({ type: 'result', subtype: 'success' }),
+      ].join('\n') + '\n',
+    })
+    await pollAIReviewSessions()
+
+    const card = cardOf(id)
+    expect(card.ai_review_verdict).toBe('blocked')
+    expect(card.ai_review_findings).toContain('The preview would not load.')
+    expect(runnerFailureOf(id)).toHaveLength(0)
+    expect(reviewRowsOf(id)).toBe(1)
+    expect(mapObjective(fullCardOf(id)).review_runner_failure).toBeNull()
+    // This routine task closes on a blocked verdict; the close is now on the
+    // audit trail, so the card says it was closed without a passing review.
+    expect(card.status).toBe('done')
+    expect(mapObjective(fullCardOf(id)).closed_over_review).toMatchObject({ verdict: 'blocked', by: 'state-poller', reason: null })
   })
 
   it('a reviewer that DID run but emitted no <verdict> keeps its existing handling', async () => {

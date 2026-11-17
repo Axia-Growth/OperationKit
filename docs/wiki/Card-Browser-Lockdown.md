@@ -93,8 +93,21 @@ spawn, on every card, on fresh spawns and follow-ups alike. There is **no
 per-card or per-workspace switch**: obj 901075 removed the `needs_browser`
 field from the board API (`POST/PUT /api/objectives` ignore it; the internal
 bulk route still accepts and ignores it so older callers are not `400`d; the
-DB column stays, unused). Planner, reviewer, design-arena and sub-sessions do
-not take this path (reviewer and arena keep their own browser, above).
+DB column stays, unused). Planner, design-arena and sub-sessions do
+not take this path (arena keeps its own browser, above).
+
+**Reviewers (obj 901229).** A reviewer whose review needs a browser (a
+UI-change PR: not backend-only, and a PR or a non-off vision gate — the
+unchanged `attachPlaywright` rule, now `planReviewerBrowser` in
+`services/session-subsessions.ts`) takes this path **in jail mode only**: the
+`ok-jail-browser:local` image (`SESSION_JAIL_BROWSER_IMAGE`), the browser
+seccomp profile, the in-jail egress guard under the worker policy (3002
+refused) and the Playwright MCP config in the jail HOME. In tmux mode the
+reviewer keeps its own reviewer config behind the control-plane guard (null ⇒
+no browser, fail closed), unchanged. A backend-only review stays on the stock
+`ok-jail:local` with no Playwright. Both jail images carry `python3`
+(base layer of `app/jail/Dockerfile`, asserted at build time and by the
+install smoke).
 
 **Fail soft (obj 901075).** The browser never stops a card from starting. When
 the lockdown cannot be kept the worker gets **no** browser,

@@ -380,7 +380,8 @@ export function spawnInTmux(opts: {
   }
 
   // obj 901029 / 901075: every WORKER spawn asks for the browser (planner,
-  // reviewer, arena and sub-sessions do not pass cardBrowser). A plan that
+  // arena and sub-sessions do not pass cardBrowser; a REVIEWER passes it only in
+  // jail mode for a UI-change review — obj 901229, planReviewerBrowser). A plan that
   // cannot keep the lockdown (tmux mode by default, image missing, guard down,
   // profile missing) is a REFUSAL — the session gets no browser plus
   // CC_CARD_BROWSER_REFUSED=<why> and a prompt line saying so, never a degraded

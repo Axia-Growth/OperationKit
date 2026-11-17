@@ -10,7 +10,7 @@ import { filesFromIntel, mergeAttachments, type TouchedFile } from '../lib/touch
 import { SessionViewer } from '../components/SessionViewer'
 import { ObjectiveModal } from '../components/ObjectiveModal'
 import { FileRail } from './FileRail'
-import { SubObjectiveRail } from './SubObjectiveRail'
+import { SubCardsDisclosure, SubObjectiveRail } from './SubObjectiveRail'
 import { SubCardPopup } from './SubCardPopup'
 import { FileQuestion, TriangleAlert } from 'lucide-react'
 import { Button } from '../components/ui/Button'
@@ -132,9 +132,17 @@ export function PreviewWorkspace({ workspaces }: { workspaces: Workspace[] }) {
   }
 
   return (
-    <div className="flex min-h-0 flex-1">
+    <div className="flex min-h-0 flex-1 flex-col md:flex-row">
       {!designMode && (
         <SubObjectiveRail
+          items={children}
+          activeId={peek?.id ?? objective.id}
+          onOpen={o => setPeekId(o.id)}
+        />
+      )}
+      {/* Phone width only (obj 901198): the rail above is hidden below md. */}
+      {!designMode && (
+        <SubCardsDisclosure
           items={children}
           activeId={peek?.id ?? objective.id}
           onOpen={o => setPeekId(o.id)}

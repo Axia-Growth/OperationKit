@@ -18,6 +18,10 @@ FROM node:22-bookworm-slim
 # bash + tmux (session persistence lives INSIDE the jail — PRD §6.3),
 # git + gh (the worker's only integration path is a PR),
 # ca-certificates/curl for outbound HTTPS. Node comes from the base image.
+# python3 (obj 901229): reviewers and workers run repo scripts and checks that
+# shell out to python3; a review of PR 835 was blocked because the jail had
+# none. It is in this BASE layer, so ok-jail:local and ok-jail-browser:local
+# (the same file with WITH_BROWSER=1) both carry it.
 #
 # NOT installed, on purpose: docker.io / docker-ce-cli / containerd. A jail that
 # can talk to a socket it should never see is not a jail; keeping the client out
@@ -30,6 +34,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       ca-certificates \
       less \
       procps \
+      python3 \
     && curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
          -o /usr/share/keyrings/githubcli-archive-keyring.gpg \
     && chmod go+r /usr/share/keyrings/githubcli-archive-keyring.gpg \
@@ -84,6 +89,10 @@ RUN if [ "$WITH_BROWSER" = "1" ]; then \
 RUN groupadd --gid 1001 jailuser \
     && useradd --uid 1001 --gid 1001 --create-home --shell /bin/bash jailuser \
     && mkdir -p /workspace && chown jailuser:jailuser /workspace
+
+# Assert at build time that python3 is on PATH (obj 901229) — a jail image
+# without it fails the build instead of failing a review later.
+RUN python3 --version
 
 # Assert at build time that no docker client leaked in via a transitive dep.
 RUN if command -v docker >/dev/null 2>&1; then echo "FATAL: docker CLI present in jail image" >&2; exit 1; fi

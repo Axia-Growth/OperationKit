@@ -10,7 +10,9 @@ import { MAX_CONCURRENT_SESSIONS } from '@operationkit/shared'
 import { getDb } from '../db/index.js'
 import { startSession } from './session-manager.js'
 import { logObjectiveAudit } from './objective-audit.js'
+import { readReviewRunnerFailure } from './review-hygiene.js'
 import { scheduleObjectiveWorktreeReap } from './worktree-reaper.js'
+import { cleanupOrphanedChildrenOnParentTerminal } from '../lib/cleanup-orphaned-children.js'
 import { broadcast } from '../ws/index.js'
 import { insertAlert } from './notifier.js'
 import { runCompletionGate, applyGateHandback } from './ci-green-gate.js'
@@ -349,6 +351,8 @@ export async function sweepAutoAcceptOnPass(): Promise<void> {
         workspace: obj.workspace ?? null,
       })
       scheduleObjectiveWorktreeReap(obj.id, { db })
+      // obj 901228: a machine close retires never-ran queued children too.
+      cleanupOrphanedChildrenOnParentTerminal(db, obj.id, broadcast, 'done')
       const updated = db.prepare('SELECT * FROM objectives WHERE id = ?').get(obj.id) as Objective
       broadcast({ type: 'objective_updated', payload: updated })
       console.warn(
@@ -442,6 +446,9 @@ export function buildHygieneDigest(
       )
       .all(`-${opts.hardExpiryDays} days`) as Objective[]
     for (const obj of expired) {
+      // obj 900959: a card whose reviewer session failed has an empty verdict
+      // because nothing reviewed it. It waits for a person; it never expires to done.
+      if (readReviewRunnerFailure(db, obj)) continue
       try {
         // ── CI-green gate, RECORD-ONLY (obj 704785) ─────────────────────────
         // This path exists SPECIFICALLY to break review limbo after N days. Holding
@@ -466,6 +473,8 @@ export function buildHygieneDigest(
           workspace: obj.workspace ?? null,
         })
         scheduleObjectiveWorktreeReap(obj.id, { db })
+        // obj 901228: a machine close retires never-ran queued children too.
+        cleanupOrphanedChildrenOnParentTerminal(db, obj.id, broadcast, 'done')
         hardExpiredIds.push(obj.id)
       } catch (err) {
         console.warn(`[state-poller] review-hard-expiry failed for #${obj.id}:`, (err as Error).message)

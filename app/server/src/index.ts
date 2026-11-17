@@ -93,6 +93,7 @@ import { createLlmGatewayRouter } from './routes/llm-gateway.js'
 import { securityHeaders } from './middleware/security-headers.js'
 import { getUserWorkspaces } from './middleware/workspace.js'
 import { WORKSPACES_JSON } from './config.js'
+import { readWorkspacesConfig, filterWorkspacesConfig } from './lib/workspaces-config.js'
 import { hydrateProcessEnvFromSecretsStore } from './services/secrets-store.js'
 import { kekStatus } from './services/secrets-kek.js'
 import {
@@ -377,24 +378,16 @@ app.use('/api/agent', agentControlRouter)
 // Kept under /api/workspaces-config so the new DB-backed /api/workspaces can own
 // the workspace list. ObjectiveModal/ConfigPage/ProjectFeed read this for project rosters.
 app.get('/api/workspaces-config', requireAuth, (req: AuthRequest, res) => {
-  try {
-    const content = fs.readFileSync(WORKSPACES_JSON, 'utf-8')
-    const parsed = JSON.parse(content) as { workspaces: Record<string, unknown> }
-    const user = req.user!
-    if (user.role === 'admin' || !parsed.workspaces) {
-      res.json(parsed)
-      return
-    }
-    // Phase 5: members only see their own workspaces' project rosters.
-    const allowed = new Set(getUserWorkspaces(user.id).map(w => w.workspace))
-    const filtered: Record<string, unknown> = {}
-    for (const [slug, ws] of Object.entries(parsed.workspaces)) {
-      if (allowed.has(slug)) filtered[slug] = ws
-    }
-    res.json({ ...parsed, workspaces: filtered })
-  } catch {
+  // A missing workspaces.json (fresh install) is an empty roster -> 200 (obj 901202).
+  const config = readWorkspacesConfig(WORKSPACES_JSON)
+  if (!config) {
     res.status(404).json({ error: 'Workspaces config not found' })
+    return
   }
+  const user = req.user!
+  // Phase 5: members only see their own workspaces' project rosters.
+  const allowed = user.role === 'admin' ? null : new Set(getUserWorkspaces(user.id).map(w => w.workspace))
+  res.json(filterWorkspacesConfig(config, allowed))
 })
 
 // Phase 5: per-objective intel exposes session summaries, blockers, and

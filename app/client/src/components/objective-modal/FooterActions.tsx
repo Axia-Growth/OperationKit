@@ -16,6 +16,7 @@ export function FooterActions({
   onDelete,
   onClose,
   onReopen,
+  onDiscardDraft,
 }: {
   isEdit: boolean
   loading: boolean
@@ -25,6 +26,8 @@ export function FooterActions({
   onDelete: () => void
   onClose: () => void
   onReopen?: (id: number) => void
+  /** New card only (obj 901200): forget the saved draft and empty the fields. */
+  onDiscardDraft?: () => void
 }) {
   return (
     <div className="flex items-center justify-between gap-2 border-t border-line-soft pt-3">
@@ -48,6 +51,10 @@ export function FooterActions({
             </Button>
           )}
         </div>
+      ) : onDiscardDraft ? (
+        <Button type="button" variant="ghost" onClick={onDiscardDraft} disabled={loading} className="px-3">
+          Discard draft
+        </Button>
       ) : (
         <div />
       )}

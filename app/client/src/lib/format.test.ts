@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import {
   formatAbsoluteTime, formatRelativeTime, formatDateTime, formatDate,
-  formatCost, formatDuration, formatBytes, humanize, describeCron, friendlyError,
+  formatCost, formatDuration, formatBytes, humanize, describeCron, friendlyError, actionErrorMessage, NETWORK_ERROR_MESSAGE,
 } from './format'
 
 const NOW = Date.parse('2026-11-15T12:00:00Z')
@@ -128,5 +128,18 @@ describe('friendlyError', () => {
     for (const s of [400, 401, 403, 404, 409, 413, 429, 500, 503]) {
       expect(friendlyError(s).message).not.toMatch(/HTTP|\d{3}/)
     }
+  })
+})
+
+describe('actionErrorMessage', () => {
+  it('turns a browser network failure into the plain sentence', () => {
+    expect(actionErrorMessage(new TypeError('Failed to fetch'), 'Message not sent')).toBe(NETWORK_ERROR_MESSAGE)
+    expect(actionErrorMessage(new TypeError('NetworkError when attempting to fetch resource.'), 'x')).toBe(NETWORK_ERROR_MESSAGE)
+    expect(actionErrorMessage(new TypeError('Load failed'), 'x')).toBe(NETWORK_ERROR_MESSAGE)
+  })
+  it('keeps a server message, and falls back when there is none', () => {
+    expect(actionErrorMessage(Object.assign(new Error('Message is too long'), { status: 400 }), 'Message not sent')).toBe('Message is too long')
+    expect(actionErrorMessage(new Error('Request timed out — message not sent'), 'x')).toBe('Request timed out — message not sent')
+    expect(actionErrorMessage(undefined, 'Message not sent')).toBe('Message not sent')
   })
 })

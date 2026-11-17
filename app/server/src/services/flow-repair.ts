@@ -72,6 +72,7 @@ import { initFlowSchema, type FlowRepairStatus } from '../db/schema/flow.js'
 import { initJobAccountingSchema } from '../db/schema/job-accounting.js'
 import { getSpend, setObjectiveCeiling } from './job-accounting.js'
 import { depthForParent } from '../lib/objective-depth.js'
+import { onMachineTerminal } from '../lib/status-lock.js'
 import { redactLive } from './live-redaction.js'
 import {
   flowDefinitionSha256, flowsEnabled, recordedFlowApprovals, saveFlowVersion, type FlowEngine, type FlowProblem,
@@ -880,11 +881,19 @@ export class FlowRepairWatcher {
       }
     }
     // §5.3 "notice on card, no action needed": an applied repair's card is done once its session ends.
-    this.db.prepare(
-      `UPDATE objectives SET status = 'done', updated_at = datetime('now')
+    const closing = this.db.prepare(
+      `SELECT id FROM objectives
         WHERE id IN (SELECT objective_id FROM flow_repairs WHERE status = 'applied' AND objective_id IS NOT NULL)
           AND status = 'review' AND session_id IS NULL`,
-    ).run()
+    ).all() as Array<{ id: number }>
+    for (const { id } of closing) {
+      const moved = this.db.prepare(
+        `UPDATE objectives SET status = 'done', updated_at = datetime('now')
+          WHERE id = ? AND status = 'review' AND session_id IS NULL`,
+      ).run(id)
+      // obj 901228: every close retires the card's never-ran queued children.
+      if (moved.changes > 0) onMachineTerminal(this.db, id, 'done')
+    }
   }
 
   // ── Responses + brief text ───────────────────────────────────────────────

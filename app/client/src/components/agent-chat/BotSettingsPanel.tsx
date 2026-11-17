@@ -83,12 +83,15 @@ export function BotSettingsPanel({
   isAdmin,
   onSaved,
   onClose,
+  fill = false,
 }: {
   agent: ChatAgentInfo
   meta: Meta
   isAdmin: boolean
   onSaved: (agent: ChatAgentInfo) => void
   onClose: () => void
+  /** Grow to the whole pane (a phone, where the chat steps aside; obj 901203). */
+  fill?: boolean
 }) {
   const catalog: ToolCatalogEntry[] = meta.tool_catalog ?? []
   const fileDefaults = agent.file_defaults ?? { provider: agent.provider, model: agent.model, tools: agent.tools }
@@ -243,7 +246,7 @@ export function BotSettingsPanel({
       ref={panelRef}
       aria-label={`Settings for ${agent.name}`}
       data-testid="bot-settings-panel"
-      className="relative min-h-0 shrink overflow-y-auto overscroll-contain border-b border-line bg-surface-1 px-3 py-3 sm:px-6"
+      className={cn('relative min-h-0 shrink overflow-y-auto overscroll-contain border-b border-line bg-surface-1 px-3 py-3 sm:px-6', fill && 'flex-1 border-b-0')}
     >
       <div className="mx-auto flex max-w-[760px] flex-col gap-4">
         <div className="flex items-center justify-between gap-2">

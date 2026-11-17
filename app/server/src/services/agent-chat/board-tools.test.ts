@@ -27,7 +27,7 @@ vi.mock('../kb-semantic/search.js', async importOriginal => {
 })
 
 const { initDb, getDb } = await import('../../db/index.js')
-const { runTool, runChatTool, toolSpecsFor, ToolUseError } = await import('./tools.js')
+const { runTool, runChatTool, toolSpecsFor, ToolUseError, chatCardAgent, chatOwnerBotName } = await import('./tools.js')
 const { seedExistingBotsOnce } = await import('./bot-workspaces.js')
 type Agent = import('./agent-defs.js').ChatAgent
 
@@ -374,7 +374,7 @@ describe('knowledge tools tell a broken setup from an empty knowledge base (obj 
 // in the text and the link was lost. create_objective now takes parent_id.
 describe('chat create_objective files a card under a parent (obj 900958)', () => {
   const filer: Agent = { ...agent, slug: 'operation-kit-dev', name: 'Operation Kit Dev', tools: ['create_objective', 'get_objective', 'list_objectives'] }
-  // A bot in the bot registry: its cards go through createBotJob, not the legacy insert.
+  // A bot in the bot registry: its cards are owned by that registry bot.
   const registered: Agent = { ...filer, slug: 'general', name: 'General' }
   // A bot added after per-bot workspace lists shipped: granted growth only.
   const scoped: Agent = { ...filer, slug: 'scoped-filer', name: 'Scoped Filer' }
@@ -411,7 +411,7 @@ describe('chat create_objective files a card under a parent (obj 900958)', () =>
     expect(b).not.toHaveProperty('parent_id')
   })
 
-  it('parent_id is stored and depth derived from the parent (legacy insert)', () => {
+  it('parent_id is stored and depth derived from the parent (bot outside the registry)', () => {
     const r = runTool(ctx(ALICE, filer), 'create_objective', { title: 'p958 child legacy', description: 'd', parent_id: ids['growth-queue'] }).result as Loose
     expect(r.parent_id).toBe(ids['growth-queue'])
     expect(row(r.id)).toMatchObject({ parent_id: ids['growth-queue'], depth: 1, workspace: GROWTH })
@@ -463,5 +463,137 @@ describe('chat create_objective files a card under a parent (obj 900958)', () =>
     const last = runTool(ctx(ALICE, filer), 'create_objective', { title: 'p958 cap twentieth', description: 'd', parent_id: parent }).result as Loose
     expect(row(last.id).parent_id).toBe(parent)
     refused(() => runTool(ctx(ALICE, filer), 'create_objective', { title: 'p958 cap over', description: 'd', parent_id: parent }), /already has 20 open cards under it \(the limit is 20\)/)
+  })
+})
+
+// obj 900960 (audit finding 6): a bot outside the bot registry used to file its
+// card with a second, unguarded INSERT, so a retried tool call filed a duplicate.
+// Every bot now goes through createBotJob.
+describe('chat create_objective: one guarded path for every bot (obj 900960)', () => {
+  const custom: Agent = { ...agent, slug: 'p960-custom-bot', name: 'Custom Helper', tools: ['create_objective', 'get_objective', 'list_objectives'] }
+  const registered: Agent = { ...custom, slug: 'general', name: 'General' }
+  const card960 = (id: number) => getDb().prepare('SELECT title, description, parent_id, depth, workspace, origin, category, owner_bot, agent_context, status, created_by, assigned_user_id FROM objectives WHERE id = ?').get(id) as Loose
+  const origin = (id: number) => getDb().prepare('SELECT * FROM bot_job_origins WHERE objective_id = ?').get(id) as Loose
+  const chatRows = (id: number) => getDb().prepare('SELECT user_id, agent_slug FROM agent_chat_cards WHERE objective_id = ?').all(id) as Loose[]
+  const count = () => (getDb().prepare('SELECT COUNT(*) AS n FROM objectives').get() as Loose).n as number
+  const file = (a: Agent, args: Loose, user = ALICE) => runTool(ctx(user, a), 'create_objective', args).result as Loose
+
+  beforeAll(async () => {
+    const { grantBotWorkspace } = await import('./bot-workspaces.js')
+    const { botForAgentSlug } = await import('../bots/bot-registry.js')
+    grantBotWorkspace('p960-custom-bot', GROWTH, 'test')
+    grantBotWorkspace('general', GROWTH, 'test')
+    // The premise of every test below.
+    expect(botForAgentSlug(custom.slug, getDb())).toBeFalsy()
+    expect(botForAgentSlug(registered.slug, getDb())).toBeTruthy()
+  })
+
+  it('an unregistered bot calling twice with the same title and description gets ONE card; the second call returns the first card\'s number', () => {
+    const before = count()
+    const first = file(custom, { title: 'p960 retry me', description: 'same ask' })
+    expect(first.note).toMatch(/^Filed/)
+    const second = file(custom, { title: 'p960 retry me', description: 'same ask' })
+    expect(second.id).toBe(first.id)
+    expect(second.note).toBe('This is the card you already filed for that request — not a new one.')
+    expect(count()).toBe(before + 1)
+    // Surrounding whitespace is not a different request.
+    expect(file(custom, { title: '  p960 retry me ', description: 'same ask\n' }).id).toBe(first.id)
+    expect(count()).toBe(before + 1)
+    expect(chatRows(first.id)).toEqual([{ user_id: ALICE, agent_slug: custom.slug }])
+  })
+
+  it('the unregistered bot\'s card keeps what it always had: footer, origin, category, owner, worker, parent', () => {
+    const r = file(custom, { title: 'p960 shape', description: 'the body', parent_id: ids['growth-queue'] })
+    const worker = chatCardAgent(custom, GROWTH)
+    const c = card960(r.id)
+    expect(c).toMatchObject({
+      title: 'p960 shape',
+      description: 'the body\n\n— Requested in chat with "Custom Helper" by user2. They follow this card\'s status from that chat.',
+      parent_id: ids['growth-queue'],
+      depth: 1,
+      workspace: GROWTH,
+      origin: 'agent_chat',
+      category: 'general',
+      agent_context: worker.agentContext,
+      owner_bot: worker.ownedByBot ? chatOwnerBotName(custom, getDb()) : null,
+      created_by: ALICE,
+      assigned_user_id: ALICE,
+    })
+    // Not a registered bot job: no read-only job-mode promise in the card text.
+    expect(c.description).not.toMatch(/Job mode/)
+    expect(r).toMatchObject({ status: c.status, workspace: GROWTH, parent_id: ids['growth-queue'] })
+    expect(chatRows(r.id)).toEqual([{ user_id: ALICE, agent_slug: custom.slug }])
+    // The replay key lives on the same origin row a registered bot's job has.
+    expect(origin(r.id)).toMatchObject({ thread_user_id: ALICE, thread_agent_slug: custom.slug, owner_bot: c.owner_bot ?? '', workspace: GROWTH })
+  })
+
+  it('filing does not start the card: same initial status as before, for both kinds of bot', () => {
+    const a = file(custom, { title: 'p960 status custom', description: 'd' })
+    const b = file(registered, { title: 'p960 status registered', description: 'd' })
+    expect(card960(a.id).status).toBe(card960(b.id).status)
+    expect(a.status).toBe(card960(a.id).status)
+    expect(['queue', 'backlog']).toContain(a.status)
+  })
+
+  it('same title with a different description is refused by the board duplicate guard, naming the open card', () => {
+    const first = file(custom, { title: 'p960 twin title', description: 'one' })
+    const before = count()
+    let err: unknown
+    try { file(custom, { title: 'p960 twin title', description: 'two' }) } catch (e) { err = e }
+    expect(err).toBeInstanceOf(ToolUseError)
+    expect((err as Error).message).toMatch(new RegExp(`already exists in growth \\(#${first.id},`))
+    expect(count()).toBe(before)
+  })
+
+  it('the same request under a parent is its own request: a retry replays it, and it is never answered with a card under another parent', () => {
+    const child = file(custom, { title: 'p960 under parent', description: 'd', parent_id: ids['growth-queue'] })
+    expect(file(custom, { title: 'p960 under parent', description: 'd', parent_id: ids['growth-queue'] }).id).toBe(child.id)
+    // Same words under ANOTHER parent: not a replay of the first card (the key
+    // carries the parent). Exactly as for a registered bot, the board's
+    // duplicate guard then refuses the second open card with that title.
+    let err: unknown
+    try { file(custom, { title: 'p960 under parent', description: 'd', parent_id: ids['growth-review-1'] }) } catch (e) { err = e }
+    expect(err).toBeInstanceOf(ToolUseError)
+    expect((err as Error).message).toMatch(new RegExp(`already exists in growth \\(#${child.id},`))
+    expect(card960(child.id).parent_id).toBe(ids['growth-queue'])
+  })
+
+  it('two people asking the same unregistered bot the same thing get two cards (the key is per thread)', () => {
+    const setSetting = (k: string, v: string) => getDb().prepare('INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value').run(k, v)
+    setSetting('duplicate_guard_enabled', '0') // isolate idempotency from the title guard
+    try {
+      const a = file(custom, { title: 'p960 per thread', description: 'd' }, ALICE)
+      const c = file(custom, { title: 'p960 per thread', description: 'd' }, CAROL)
+      expect(c.id).not.toBe(a.id)
+      expect(file(custom, { title: 'p960 per thread', description: 'd' }, CAROL).id).toBe(c.id)
+    } finally {
+      setSetting('duplicate_guard_enabled', '1')
+    }
+  })
+
+  it('a registered bot is unchanged: registry owner, its own footer, replay on retry, agent_chat_cards row', () => {
+    const before = count()
+    const r = file(registered, { title: 'p960 registered', description: 'the body' })
+    const c = card960(r.id)
+    expect(c.owner_bot).toBe(origin(r.id).owner_bot)
+    expect(c.owner_bot).toBeTruthy()
+    expect(c.description).toMatch(/^the body\n\n— Filed from the .+ conversation by user2\. Results go back to that same conversation\.\n— Job mode: read_only\./)
+    expect(c).toMatchObject({ origin: 'agent_chat', category: 'general', workspace: GROWTH, parent_id: null, depth: 0 })
+    const retry = file(registered, { title: 'p960 registered', description: 'the body' })
+    expect(retry.id).toBe(r.id)
+    expect(retry.note).toBe('This is the card you already filed for that request — not a new one.')
+    expect(count()).toBe(before + 1)
+    expect(chatRows(r.id)).toEqual([{ user_id: ALICE, agent_slug: registered.slug }])
+  })
+
+  it('"no owner bot" is not a way round the registry: createBotJob refuses null for a thread a registered bot owns', async () => {
+    const { createBotJob } = await import('../bots/bot-jobs.js')
+    const before = count()
+    const r = createBotJob(getDb(), { userId: ALICE, agentSlug: registered.slug, ownerBot: null, chatBot: { name: 'Impostor', ownerBot: null }, workspace: GROWTH, title: 'p960 bypass', description: 'd', idempotencyKey: 'p960-bypass' })
+    expect(r).toMatchObject({ ok: false, code: 'bot_agent_mismatch' })
+    // And an unregistered bot still cannot file where the person is not a member.
+    const x = createBotJob(getDb(), { userId: ALICE, agentSlug: custom.slug, ownerBot: null, chatBot: { name: custom.name, ownerBot: null }, workspace: OTHER, title: 'p960 x-ws', description: 'd', idempotencyKey: 'p960-xws' })
+    expect(x).toMatchObject({ ok: false, code: 'workspace_forbidden' })
+    expect(count()).toBe(before)
   })
 })
