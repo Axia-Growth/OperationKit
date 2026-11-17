@@ -1,4 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest'
+import fs from 'fs'
+import path from 'path'
+import { fileURLToPath } from 'url'
 import http from 'http'
 import express from 'express'
 import { CONTENT_SECURITY_POLICY, DESIGN_FRAME_CSP, securityHeaders } from './security-headers.js'
@@ -49,5 +52,32 @@ describe('securityHeaders', () => {
     expect(DESIGN_FRAME_CSP).not.toContain("script-src 'unsafe-inline' https:")
     expect(DESIGN_FRAME_CSP).toContain("base-uri https: 'self'")
     expect(DESIGN_FRAME_CSP).toContain("frame-ancestors 'self'")
+  })
+})
+
+// obj 901199: index.html used to carry an inline pre-paint theme script, which
+// the app's own `script-src 'self'` blocked on every load. Keep the shell free of
+// inline scripts (and the CSP free of 'unsafe-inline' / hashes for scripts).
+describe('index.html vs the app CSP', () => {
+  const here = path.dirname(fileURLToPath(import.meta.url))
+  const clientDir = path.resolve(here, '../../../client')
+  const html = fs.readFileSync(path.join(clientDir, 'index.html'), 'utf-8')
+
+  it('script-src stays self-only', () => {
+    const scriptSrc = CONTENT_SECURITY_POLICY.split('; ').find(d => d.startsWith('script-src '))
+    expect(scriptSrc).toBe("script-src 'self'")
+  })
+
+  it('has no inline <script> (every script has a same-origin src)', () => {
+    const tags = html.match(/<script\b[^>]*>/gi) ?? []
+    expect(tags.length).toBeGreaterThan(0)
+    for (const tag of tags) expect(tag, tag).toMatch(/\ssrc="\/[^/]/)
+    expect(html).not.toMatch(/\son[a-z]+\s*=/i)
+  })
+
+  it('loads the pre-paint theme script blocking, in <head>, before the app shell', () => {
+    const head = html.slice(0, html.indexOf('</head>'))
+    expect(head).toContain('<script src="/theme-init.js"></script>')
+    expect(fs.existsSync(path.join(clientDir, 'public', 'theme-init.js'))).toBe(true)
   })
 })

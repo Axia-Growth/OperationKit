@@ -83,7 +83,6 @@ which is the signal to remove the marker. Do not delete or loosen these.
 | `api: bot names and descriptions carry no vendor name under a custom brand` | #901033 |
 | `bots page shows no vendor name under a custom brand`, `no vendor name on /agents under a custom brand` | #901033 |
 | `narrow screens: a parent card still shows its sub-cards` | fixed by #901198 (was PA-3) |
-| `first load: the page blocks none of its own scripts` | PA-4 |
 
 `PA-n` is a finding number from the audit report
 (`decisions/2026-11-15-opkit-playwright-audit.md` in the operationkit knowledge
@@ -92,10 +91,12 @@ but were not filed when this was written, because the audit session could not
 reach the card API. When a card is filed, replace `PA-n` with its number here
 and in the specs.
 
-One known bug also shows up on pages that other tests visit. So that one bug does
-not turn every page test red, the shared helpers let exactly that symptom through,
-next to the expected-fail test that tracks it: `KNOWN_CONSOLE_ERRORS` in
-`helpers.ts` (PA-4). Delete the entry with its fix.
+If a known bug also shows up on pages that other tests visit, the shared helpers
+may let exactly that symptom through, next to the expected-fail test that tracks
+it, so one bug does not turn every page test red: `KNOWN_CONSOLE_ERRORS` in
+`helpers.ts` is the place for a console error of that kind. It is empty since
+#901199 (former PA-4, the CSP-blocked inline theme script) shipped. Delete each
+entry with its fix.
 
 ## In a card session (pinned browser)
 

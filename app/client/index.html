@@ -67,20 +67,10 @@
         html[data-theme="auto"] .as-card { background: #151b23; border-color: #3d444d; }
       }
     </style>
-    <script>
-      // Read the theme choice before first paint so the skeleton above doesn't flash
-      // the wrong mode (main.tsx re-applies this on every load; kept in sync here).
-      // Mirrors lib/theme.ts: explicit choice, else the OS preference.
-      (function () {
-        var t = null;
-        try { t = localStorage.getItem('ok-theme') || localStorage.getItem('cc.preview.theme.v2'); } catch (e) {}
-        if (t !== 'dark' && t !== 'light') {
-          t = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
-        }
-        document.documentElement.setAttribute('data-theme', t);
-        if (t === 'dark') document.querySelector('meta[name="theme-color"]').setAttribute('content', '#0d1117');
-      })();
-    </script>
+    <!-- Pre-paint theme (see public/theme-init.js). A same-origin file, never an
+         inline script: the CSP is script-src 'self' (obj 901199). Not async/defer
+         and not a module, so it runs before the skeleton paints. -->
+    <script src="/theme-init.js"></script>
   </head>
   <body class="h-full text-fg-0">
     <div id="root" class="h-full">

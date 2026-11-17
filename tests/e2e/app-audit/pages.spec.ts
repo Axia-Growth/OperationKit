@@ -5,7 +5,7 @@
  * tests/smoke/app-audit/<project>/.
  */
 import { expect } from '@playwright/test'
-import { test, login, seed, shot, watch, expectClean, expectNoSidewaysScroll, expectTheme, BOT, KNOWN_CONSOLE_ERRORS } from './helpers'
+import { test, login, seed, shot, watch, expectClean, expectNoSidewaysScroll, expectTheme, BOT } from './helpers'
 
 interface Stop { name: string; path: () => string; landmark: (p: import('@playwright/test').Page) => import('@playwright/test').Locator; allow?: Array<string | RegExp>; scrollTo?: boolean }
 
@@ -50,19 +50,55 @@ for (const stop of STOPS) {
   })
 }
 
-// Known bug, audit finding PA-4 (fix card drafted, not filed yet): index.html carries an inline script that sets the
-// theme before first paint, and the server's own Content-Security-Policy
-// (script-src 'self') blocks it, so every page logs a console error and the
-// loading skeleton can flash in the wrong theme. helpers.ts keeps that one error
-// out of the other tests (KNOWN_CONSOLE_ERRORS); this test is what tracks it.
+// Card #901199: index.html used to carry an inline pre-paint theme script that the
+// server's own Content-Security-Policy (script-src 'self') blocked on every load.
+// It is now a same-origin file (/theme-init.js). This test catches any CSP
+// violation on first load, and checks the pre-paint theme was still applied.
 test('first load: the page blocks none of its own scripts', async ({ page }, info) => {
-  test.fail(true, 'Known bug — audit finding PA-4 (fix card drafted, not filed yet) (CSP blocks the inline pre-paint theme script in index.html)')
   const blocked: string[] = []
-  page.on('console', m => { if (m.type() === 'error' && KNOWN_CONSOLE_ERRORS.some(k => k.match.test(m.text()))) blocked.push(m.text()) })
+  page.on('console', m => { if (m.type() === 'error' && /Content Security Policy/i.test(m.text())) blocked.push(m.text()) })
   await login(page, info)
   await page.goto('/')
   await expect(page.getByTestId('board-header')).toBeVisible()
   expect(blocked).toEqual([])
+})
+
+// Card #901199: the pre-paint theme comes from /theme-init.js alone. With the app
+// bundle blocked (so React never runs), the skeleton must still carry the theme.
+test('first load: the theme is set before the app bundle runs', async ({ page }, info) => {
+  await login(page, info)
+  const blocked: string[] = []
+  page.on('console', m => { if (m.type() === 'error' && /Content Security Policy/i.test(m.text())) blocked.push(m.text()) })
+  await page.route(/\/assets\/.*\.js(\?.*)?$/, r => r.abort())
+  const init = page.waitForResponse(r => new URL(r.url()).pathname === '/theme-init.js')
+  await page.goto('/')
+  expect((await init).status()).toBe(200)
+  await expect(page.locator('#app-shell')).toBeAttached()
+  await expectTheme(page, info)
+  expect(blocked).toEqual([])
+})
+
+// Card #901199: the sign-in page is served before login, so /theme-init.js must load
+// there too (no auth gate on it). Signed out, the only 4xx are the two auth probes
+// (401 GET /api/auth/me, 404 POST /api/auth/cloudflare-access without Access in front), whose
+// "Failed to load resource" lines are the browser noting them; anything else fails.
+test('first load, signed out: the sign-in page loads /theme-init.js with no CSP or script error', async ({ page }, info) => {
+  const p = watch(page)
+  const csp: string[] = []
+  page.on('console', m => { if (m.type() === 'error' && /Content Security Policy/i.test(m.text())) csp.push(m.text()) })
+  const init = page.waitForResponse(r => new URL(r.url()).pathname === '/theme-init.js')
+  await page.goto('/')
+  expect((await init).status()).toBe(200)
+  await expect(page.locator('input[type="password"]').first()).toBeVisible()
+  await page.waitForLoadState('networkidle')
+  await expectTheme(page, info)
+  expect(csp).toEqual([])
+  const PROBES = ['401 GET /api/auth/me', '404 POST /api/auth/cloudflare-access']
+  const probes = p.badResponses.filter(l => PROBES.includes(l))
+  const loadNotes = p.consoleErrors.filter(l => /^Failed to load resource: the server responded with a status of 40[14] /.test(l))
+  expect(loadNotes.length, 'one "Failed to load resource" line per auth probe, no more').toBeLessThanOrEqual(probes.length)
+  expect({ ...p, consoleErrors: p.consoleErrors.filter(l => !loadNotes.includes(l)), badResponses: p.badResponses.filter(l => !PROBES.includes(l)) })
+    .toEqual({ consoleErrors: [], pageErrors: [], failedRequests: [], badResponses: [] })
 })
 
 test('old addresses redirect instead of 404-ing', async ({ page }, info) => {
