@@ -59,7 +59,7 @@ export function extractDocument(name: string, buf: Buffer): Extracted {
   }
   switch (kind) {
     case 'spreadsheet': return extractXlsx(buf)
-    case 'csv': return extractCsv(buf, path.extname(name).toLowerCase() === '.tsv' ? '\t' : ',')
+    case 'csv': return extractCsv(buf, path.extname(name).toLowerCase() === '.tsv' ? '\t' : undefined)
     case 'pdf': return extractPdf(buf)
     case 'word': return extractDocx(buf)
     case 'text': return extractText(name, buf)
@@ -242,12 +242,33 @@ export function parseDelimited(text: string, delim: string): string[][] {
 
 function decodeText(buf: Buffer): string {
   if (buf[0] === 0xff && buf[1] === 0xfe) return buf.subarray(2).toString('utf16le')
-  const s = buf.toString('utf8')
-  return s.charCodeAt(0) === 0xfeff ? s.slice(1) : s
+  if (buf[0] === 0xfe && buf[1] === 0xff) return Buffer.from(buf.subarray(2)).swap16().toString('utf16le')
+  try {
+    const s = new TextDecoder('utf-8', { fatal: true }).decode(buf)
+    return s.charCodeAt(0) === 0xfeff ? s.slice(1) : s
+  } catch {
+    return new TextDecoder('windows-1252').decode(buf)
+  }
 }
 
-export function extractCsv(buf: Buffer, delim: string): Extracted {
-  const rows = parseDelimited(decodeText(buf), delim)
+export function sniffDelimiter(text: string): string {
+  const candidates = [',', ';', '\t', '|']
+  const counts = new Map<string, number>(candidates.map(c => [c, 0]))
+  let quoted = false
+  for (const ch of text.slice(0, 8192)) {
+    if (ch === '"') quoted = !quoted
+    else if (!quoted && (ch === '\n' || ch === '\r')) {
+      if ([...counts.values()].some(n => n > 0)) break
+    } else if (!quoted && counts.has(ch)) counts.set(ch, counts.get(ch)! + 1)
+  }
+  let best = ','
+  for (const c of candidates) if (counts.get(c)! > counts.get(best)!) best = c
+  return best
+}
+
+export function extractCsv(buf: Buffer, delim?: string): Extracted {
+  const text = decodeText(buf)
+  const rows = parseDelimited(text, delim ?? sniffDelimiter(text))
   const warnings: string[] = []
   const shown = rows.slice(0, MAX_ROWS_PER_SHEET)
   if (rows.length > shown.length) warnings.push(`Showing first ${MAX_ROWS_PER_SHEET} rows, ${rows.length - shown.length} more not shown.`)

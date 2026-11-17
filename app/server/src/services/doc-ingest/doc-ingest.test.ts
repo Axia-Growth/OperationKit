@@ -4,7 +4,7 @@ import os from 'os'
 import path from 'path'
 import zlib from 'zlib'
 import { writeZip, readZip } from './zip.js'
-import { extractDocument, kindForFile, UnsupportedFileError } from './extract.js'
+import { extractDocument, kindForFile, sniffDelimiter, UnsupportedFileError } from './extract.js'
 import { upsertEntityNote, notePathFor, relLink, slugify, loadEntityIndex, sameOrganization, writeOrganized, type Entity, type SourceRef } from './notes.js'
 import { applyNameGroups, claimInbox, drainQueue, ingestOne, mergeOrganized, reconcileNames, parseOrganizeReply, readManifest, recoverInterrupted, requeue, splitForOrganize } from './ingest.js'
 import { askKnowledgeBase, rankNotes, terms } from './ask.js'
@@ -81,6 +81,41 @@ describe('extract', () => {
   it('reads CSV with quoted commas and a BOM', () => {
     const ex = extractDocument('x.csv', Buffer.from('﻿Company,Notes\n"Acme, Inc.","said ""no"""\n'))
     expect(ex.markdown).toContain('| Acme, Inc. | said "no" |')
+  })
+
+  it('detects semicolon-separated CSV (common Excel locale export)', () => {
+    const ex = extractDocument('x.csv', Buffer.from('name;amount\nAcme;100\n"Beta; Co";200\n'))
+    expect(ex.markdown).toContain('| name | amount |')
+    expect(ex.markdown).toContain('| Beta; Co | 200 |')
+  })
+
+  it('keeps commas as the CSV default and honours .tsv', () => {
+    expect(sniffDelimiter('a,b,c\n1,2,3\n')).toBe(',')
+    expect(sniffDelimiter('just one column\nvalue\n')).toBe(',')
+    expect(sniffDelimiter('"a;b",c\n1,2\n')).toBe(',')
+    expect(extractDocument('x.tsv', Buffer.from('a\tb\n1\t2\n')).markdown).toContain('| a | b |')
+  })
+
+  it('reads Windows-1252 and UTF-16 text without garbling accents', () => {
+    const cp1252 = extractDocument('x.csv', Buffer.from('name,city\nJosé,Zürich\n', 'latin1'))
+    expect(cp1252.markdown).toContain('| José | Zürich |')
+    const be = Buffer.concat([Buffer.from([0xfe, 0xff]), Buffer.from('é;ü\n1;2\n', 'utf16le').swap16()])
+    expect(extractDocument('x.csv', be).markdown).toContain('| é | ü |')
+  })
+
+  it('detects pipe-separated CSV', () => {
+    const ex = extractDocument('x.csv', Buffer.from('name|amount\nAcme|100\n'))
+    expect(ex.markdown).toContain('| name | amount |')
+    expect(ex.markdown).toContain('| Acme | 100 |')
+  })
+
+  it('reads UTF-16 little-endian CSV with a BOM', () => {
+    const le = Buffer.concat([Buffer.from([0xff, 0xfe]), Buffer.from('é;ü\n1;2\n', 'utf16le')])
+    expect(extractDocument('x.csv', le).markdown).toContain('| é | ü |')
+  })
+
+  it('looks past a first line that has no delimiter', () => {
+    expect(sniffDelimiter('Report\nname;amount\nAcme;100\n')).toBe(';')
   })
 
   it('reads Word paragraphs and tables in order', () => {
