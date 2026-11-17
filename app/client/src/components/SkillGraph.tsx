@@ -59,6 +59,10 @@ export interface SkillGraphPayload {
   skills: Record<string, GraphSkill>
   tools: Record<string, { skills: string[] }>
   orphans: { tools: string[]; skills: string[] }
+  /** `not_set_up` = this install has no layer-graph generator yet; the graph is
+   *  empty on purpose and `reason` says why (obj 901202). Absent = an older server. */
+  status?: 'ready' | 'not_set_up'
+  reason?: string
 }
 
 type Layer = 'agent' | 'skill' | 'tool'
@@ -575,6 +579,18 @@ export function SkillGraphTab() {
           icon={<Network className="h-5 w-5" />}
           title="Skill graph unavailable"
           description={error ? friendlyError(error).message : 'The skill graph came back empty.'}
+        />
+      </div>
+    )
+  }
+
+  if (data.status === 'not_set_up') {
+    return (
+      <div className="grid h-full place-items-center p-6">
+        <EmptyState
+          icon={<Network className="h-5 w-5" />}
+          title="Skill graph not set up"
+          description={data.reason || 'The skill graph is not set up on this install yet.'}
         />
       </div>
     )

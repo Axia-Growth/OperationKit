@@ -37,8 +37,11 @@ beforeEach(() => {
     const method = init?.method ?? 'GET'
     requests.push({ url, method, body })
     if (method === 'PUT') {
-      current = { ...current, ...body, runs_per_day: runsPerDay(body.level), wake_times: wakeTimes('acme-cto', body.level), updated_by: 'jordan',
-        routine: body.enabled ? { id: 7, enabled: true, last_run_at: null, auto_paused_at: null, auto_pause_reason: null } : current.routine }
+      // Like the server: a patch carries only what changed; `resume` is an action, not a stored field.
+      const { resume, ...fields } = body
+      const level = fields.level ?? current.level
+      current = { ...current, ...fields, runs_per_day: runsPerDay(level), wake_times: wakeTimes('acme-cto', level), updated_by: 'jordan',
+        routine: fields.enabled || resume ? { id: 7, enabled: true, last_run_at: null, auto_paused_at: null, auto_pause_reason: null } : current.routine }
     }
     if (method === 'POST') {
       current = { ...current, last_wake: { objective_id: 4242, status: 'queue', created_at: '2026-11-13 09:00:00' } }
@@ -166,12 +169,38 @@ describe('HighAgencySection', () => {
     expect(host.querySelector('a[href="/o/4242"]')).not.toBeNull()
   })
 
-  it('tells the admin when the wake schedule is paused, and saving resumes it', async () => {
-    current = { ...OFF, enabled: true, level: 2, routine: { id: 7, enabled: false, last_run_at: null, auto_paused_at: '2026-11-12', auto_pause_reason: '5 consecutive failures' } }
+  // obj 900961: a plain Save used to be the resume click (it sent enabled: true).
+  // Resuming is now its own button, and Save sends only what the admin changed.
+  const PAUSED: HighAgencyInfo = { ...OFF, enabled: true, level: 2, workspace: 'ops', routine: { id: 7, enabled: false, last_run_at: null, auto_paused_at: '2026-11-12', auto_pause_reason: '5 consecutive failures' } }
+
+  it('tells the admin when the wake schedule is paused; Resume wakes sends resume: true and nothing else', async () => {
+    current = { ...PAUSED }
     await render(true)
     expect(host.textContent).toContain('On · paused')
     expect(host.textContent).toContain('paused on the Jobs page (5 consecutive failures)')
-    expect(button('Save High Agency')!.disabled).toBe(false)
+    expect(host.textContent).not.toContain('Save here to resume')
+    expect(button('Save High Agency')!.disabled).toBe(true) // nothing changed, nothing to save
+    await click(button('Resume wakes')!)
+    const puts = requests.filter(r => r.method === 'PUT')
+    expect(puts).toHaveLength(1)
+    expect(puts[0].body).toEqual({ resume: true })
+  })
+
+  it('a save on a paused schedule sends only the changed field: no enabled, no resume', async () => {
+    current = { ...PAUSED }
+    await render(true)
+    await slide(5)
+    await click(button('Save High Agency')!)
+    const puts = requests.filter(r => r.method === 'PUT')
+    expect(puts).toHaveLength(1)
+    expect(puts[0].body).toEqual({ level: 5 })
+  })
+
+  it('a non-admin sees the paused notice without a Resume button', async () => {
+    current = { ...PAUSED }
+    await render(false)
+    expect(host.textContent).toContain('paused on the Jobs page')
+    expect(button('Resume wakes')).toBeUndefined()
   })
 
   it('a non-admin sees the setting read-only, with no Save or Wake now', async () => {

@@ -44,7 +44,13 @@ export function useObjectives(scope: Workspace | Workspace[] = 'all') {
   const workspace = workspaces.length === 1 ? workspaces[0] : 'all'
   const [objectives, setObjectives] = useState<Objective[]>([])
   const [loading, setLoading] = useState(true)
-  const [error, setError] = useState<string | null>(null)
+  // obj 901197: a failed MAIN list load is its own state, never overwritten by a
+  // done/retired page error, so the board can show "could not load" + Retry
+  // instead of empty columns. The returned `error` is that, else the page error.
+  const [loadError, setLoadError] = useState<string | null>(null)
+  const [pageError, setError] = useState<string | null>(null)
+  const [reloadKey, setReloadKey] = useState(0)
+  const reload = useCallback(() => setReloadKey(k => k + 1), [])
   // Cards this tab marked done/cancelled. Ignore later WS working/review so a
   // dying session cannot put them back on the live board.
   const locallyDoneIds = useRef(new Set<number>())
@@ -133,7 +139,10 @@ export function useObjectives(scope: Workspace | Workspace[] = 'all') {
   }, [workspace, connected, send])
 
   useEffect(() => {
+    let cancelled = false
     setLoading(true)
+    setLoadError(null)
+    setError(null)
     // Reset the lazy Done column whenever the workspace changes — the previously
     // loaded done rows belong to the old scope.
     setDoneObjectives([])
@@ -147,10 +156,17 @@ export function useObjectives(scope: Workspace | Workspace[] = 'all') {
     const params = q ? `?${q}` : ''
     // Default list — active pipeline only (server excludes status=done).
     api.get<Objective[]>(`/objectives${params}`)
-      .then(data => setObjectives(data))
-      .catch(err => setError(`Could not load the board. ${friendlyError(err).message}`))
-      .finally(() => setLoading(false))
-  }, [wsKey])
+      .then(data => { if (!cancelled) setObjectives(data) })
+      .catch(err => {
+        if (cancelled) return
+        // Drop rows from an older scope: a failed load must not show stale
+        // cards as if they belonged to this view.
+        setObjectives([])
+        setLoadError(`Could not load the board. ${friendlyError(err).message}`)
+      })
+      .finally(() => { if (!cancelled) setLoading(false) })
+    return () => { cancelled = true }
+  }, [wsKey, reloadKey])
 
   // Fetch the next page of done objectives on demand (obj 700512). Newest-first,
   // workspace-scoped, DONE_PAGE_SIZE at a time. Offset is the count already held.
@@ -258,7 +274,11 @@ export function useObjectives(scope: Workspace | Workspace[] = 'all') {
   return {
     objectives,
     loading,
-    error,
+    error: loadError ?? pageError,
+    /** Set when the main card list failed to load (obj 901197). */
+    loadError,
+    /** Re-fetch the main card list: the board's Retry (obj 901197). */
+    reload,
     connected,
     connectionState,
     createObjective,

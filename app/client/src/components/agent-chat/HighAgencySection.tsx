@@ -138,7 +138,7 @@ export function HighAgencySection({
   const [form, setForm] = useState<HaForm>({ enabled: false, level: DEFAULT_LEVEL, workspace: '', allow_cards: true, allow_workflows: true })
   const { enabled, level, workspace, allow_cards: allowCards, allow_workflows: allowWorkflows } = form
 
-  const [busy, setBusy] = useState<'save' | 'wake' | 'grant' | null>(null)
+  const [busy, setBusy] = useState<'save' | 'wake' | 'grant' | 'resume' | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [grantOffer, setGrantOffer] = useState<GrantOffer | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
@@ -223,8 +223,6 @@ export function HighAgencySection({
       if (form.allow_cards !== saved.allow_cards) body.allow_cards = form.allow_cards
       if (form.allow_workflows !== saved.allow_workflows) body.allow_workflows = form.allow_workflows
     }
-    // Saving a paused schedule with nothing else changed is the "resume" click.
-    if (!Object.keys(body).length && info?.enabled) body.enabled = true
     return { ...body, ...extra }
   }
 
@@ -266,6 +264,22 @@ export function HighAgencySection({
     setForm(f => ({ ...f, workspace: ws }))
     setWorkspaces(w => (w.includes(ws) ? w : [...w, ws]))
     await save({ workspace: ws })
+  }
+
+  /** Resume a paused wake schedule. Sends only `resume`; unsaved edits stay unsaved. */
+  const resume = async () => {
+    setBusy('resume')
+    setError(null)
+    setNotice(null)
+    try {
+      const r = await api.put<HighAgencyResponse>(url, { resume: true } satisfies HighAgencyPatch)
+      adopt(r, { keepEdits: true })
+      setNotice('Wake schedule resumed. Nothing else on this page changed.')
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Could not resume the wake schedule')
+    } finally {
+      setBusy(null)
+    }
   }
 
   const wake = async () => {
@@ -402,7 +416,17 @@ export function HighAgencySection({
       )}
       {paused && (
         <Alert tone="amber">
-          The wake schedule is paused on the Jobs page{info?.routine?.auto_pause_reason ? ` (${info.routine.auto_pause_reason})` : ''}. Save here to resume it.
+          <div className="flex flex-wrap items-center gap-2" data-testid="high-agency-paused">
+            <p>
+              The wake schedule is paused on the Jobs page{info?.routine?.auto_pause_reason ? ` (${info.routine.auto_pause_reason})` : ''}.
+              {isAdmin ? ' Saving here does not resume it.' : ''}
+            </p>
+            {isAdmin && (
+              <Button variant="secondary" size="sm" loading={busy === 'resume'} disabled={busy !== null} onClick={() => void resume()}>
+                Resume wakes
+              </Button>
+            )}
+          </div>
         </Alert>
       )}
       {error && <Alert tone="alarm">{error}</Alert>}
@@ -432,7 +456,7 @@ export function HighAgencySection({
       )}
       {isAdmin && (
         <div className="flex flex-wrap items-center gap-2">
-          <Button variant="primary" size="sm" loading={busy === 'save'} disabled={!info || busy !== null || (!dirty && !paused)} onClick={() => void save()}>
+          <Button variant="primary" size="sm" loading={busy === 'save'} disabled={!info || busy !== null || !dirty} onClick={() => void save()}>
             Save High Agency
           </Button>
           <Button variant="ghost" size="sm" loading={busy === 'wake'} disabled={!info || busy !== null} onClick={() => void wake()}>

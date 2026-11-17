@@ -112,6 +112,10 @@ function Harness({ objective, workspace = 'example' }: { objective: Objective | 
 
 const SAMPLE_OBJECTIVE = { id: 42, title: 'Edit me', workspace: 'example' } as unknown as Objective
 
+// obj 901200: the New card dialog keeps its draft in localStorage. Start every
+// test from an empty store so one test's typed title never seeds the next.
+beforeEach(() => { localStorage.clear() })
+
 describe('ObjectiveModal — memoized against parent re-renders (obj 700128)', () => {
   let container: HTMLElement
   let root: Root
@@ -484,5 +488,100 @@ describe('ObjectiveModal model picker uses the shared model list (obj 900863)', 
       flushSync(() => root.unmount())
       container.remove()
     }
+  })
+})
+
+// ── obj 901200: a typed new-card draft is never lost silently on close ────────
+describe('ObjectiveModal — new-card draft survives closing (obj 901200)', () => {
+  let container: HTMLElement
+  let root: Root
+
+  beforeEach(() => {
+    onCreate.mockClear()
+    container = document.createElement('div')
+    document.body.appendChild(container)
+    root = createRoot(container)
+  })
+
+  async function mount(objective: Objective | null) {
+    flushSync(() => root.render(<Harness objective={objective} />))
+    await flush()
+    return container.querySelector('[role="dialog"]') as HTMLElement
+  }
+  function unmount() { flushSync(() => root.render(<></>)) }
+  function type(el: HTMLTextAreaElement, value: string) {
+    setNativeValue(el, value)
+    flushSync(() => el.dispatchEvent(new Event('input', { bubbles: true })))
+  }
+  const fields = (d: HTMLElement) => [...d.querySelectorAll('textarea')] as HTMLTextAreaElement[]
+
+  it('restores the title and description after the dialog closes and reopens', async () => {
+    let dialog = await mount(null)
+    const [title, desc] = fields(dialog)
+    type(title, 'Draft title that should not be lost')
+    type(desc, 'Some detail')
+    unmount() // Escape / click outside / X / Cancel all unmount the dialog
+
+    dialog = await mount(null)
+    const [title2, desc2] = fields(dialog)
+    expect(title2.value).toBe('Draft title that should not be lost')
+    expect(desc2.value).toBe('Some detail')
+    expect(dialog.querySelector('[data-testid="new-card-draft-restored"]')).toBeTruthy()
+  })
+
+  it('forgets the draft once the card is created', async () => {
+    let dialog = await mount(null)
+    type(fields(dialog)[0], 'Ship it')
+    const form = dialog.querySelector('form') as HTMLFormElement
+    flushSync(() => form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true })))
+    await flush()
+    expect(onCreate).toHaveBeenCalledTimes(1)
+    unmount()
+
+    dialog = await mount(null)
+    expect(fields(dialog)[0].value).toBe('')
+    expect(dialog.querySelector('[data-testid="new-card-draft-restored"]')).toBeNull()
+  })
+
+  it('keeps the draft when the create is refused', async () => {
+    onCreate.mockImplementationOnce(() => Promise.reject(new Error('boom')))
+    let dialog = await mount(null)
+    type(fields(dialog)[0], 'Refused card')
+    const form = dialog.querySelector('form') as HTMLFormElement
+    flushSync(() => form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true })))
+    await flush()
+    unmount()
+
+    dialog = await mount(null)
+    expect(fields(dialog)[0].value).toBe('Refused card')
+  })
+
+  it('"Discard draft" empties the fields and forgets the draft', async () => {
+    let dialog = await mount(null)
+    expect([...dialog.querySelectorAll('button')].some(b => b.textContent === 'Discard draft')).toBe(false)
+    type(fields(dialog)[0], 'Throw me away')
+    const discard = [...dialog.querySelectorAll('button')].find(b => b.textContent === 'Discard draft')!
+    expect(discard).toBeTruthy()
+    flushSync(() => discard.click())
+    expect(fields(dialog)[0].value).toBe('')
+    unmount()
+
+    dialog = await mount(null)
+    expect(fields(dialog)[0].value).toBe('')
+  })
+
+  it('edit mode neither reads nor writes the new-card draft', async () => {
+    let dialog = await mount(null)
+    type(fields(dialog)[0], 'New card draft')
+    unmount()
+
+    dialog = await mount(SAMPLE_OBJECTIVE)
+    expect(fields(dialog)[0].value).toBe('Edit me')
+    type(fields(dialog)[0], 'Edited title')
+    expect([...dialog.querySelectorAll('button')].some(b => b.textContent === 'Discard draft')).toBe(false)
+    unmount()
+
+    dialog = await mount(null)
+    expect(fields(dialog)[0].value).toBe('New card draft')
   })
 })

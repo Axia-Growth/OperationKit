@@ -211,6 +211,23 @@ const STATUS_SENTENCES: Record<number, string> = {
   429: 'Too many requests right now. Wait a moment and try again.',
 }
 
+/** The browser's own words for "the request never reached the server" (Chrome, Firefox, Safari). */
+const NETWORK_FAILURE = /failed to fetch|networkerror|network request failed|load failed/i
+export const NETWORK_ERROR_MESSAGE = 'Could not reach the server. Check your connection and try again.'
+
+/**
+ * The message to show for a failed action: a network failure (the browser's raw
+ * "Failed to fetch") becomes the plain sentence above; anything else keeps its
+ * own message, because a server's `error` text is usually the useful part;
+ * no message at all gives `fallback`. Unlike `friendlyError`, it never swaps a
+ * specific server message for a generic one.
+ */
+export function actionErrorMessage(err: unknown, fallback: string): string {
+  const raw = err instanceof Error ? err.message : typeof err === 'string' ? err : ''
+  if (raw && NETWORK_FAILURE.test(raw)) return NETWORK_ERROR_MESSAGE
+  return raw || fallback
+}
+
 /**
  * A plain sentence for a failure, plus the technical detail to show collapsed.
  * `friendlyError(500)` → "Something went wrong on our side. Try again in a moment."
@@ -230,8 +247,8 @@ export function friendlyError(err: unknown): { message: string; detail: string }
     const m = /\bHTTP\s*(\d{3})\b/i.exec(detail) ?? /^(\d{3})\b/.exec(detail)
     if (m) status = Number(m[1])
   }
-  if (status == null && /failed to fetch|networkerror|network request failed|load failed/i.test(detail)) {
-    return { message: 'Could not reach the server. Check your connection and try again.', detail }
+  if (status == null && NETWORK_FAILURE.test(detail)) {
+    return { message: NETWORK_ERROR_MESSAGE, detail }
   }
   if (status != null) {
     const message = STATUS_SENTENCES[status]

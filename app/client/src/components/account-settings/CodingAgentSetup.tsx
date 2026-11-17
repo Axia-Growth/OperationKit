@@ -29,16 +29,37 @@ export const CODING_AGENTS: { key: CodingAgent; label: string }[] = [
   { key: 'other', label: 'Other agent' },
 ]
 
-const SERVER_NAME = 'command-center'
+/** Server name used when the brand name has no usable letters or digits (e.g. empty or all symbols). */
+export const FALLBACK_SERVER_NAME = 'board'
+
+/**
+ * The name the coding agent registers the MCP server under, derived from the
+ * install's brand name (obj 901205): "Acme Ops" → "acme-ops". Lowercase ASCII
+ * letters, digits and single hyphens only, so it is a valid Claude Code server
+ * name, a JSON key and a bare TOML key alike. Never a hard-coded product name:
+ * under a custom brand the customer must not be told to register a server
+ * named after the vendor's internal product.
+ */
+export function mcpServerName(brandName: string | null | undefined): string {
+  const slug = (brandName ?? '')
+    .normalize('NFKD')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    // Non-alphanumeric runs are already one hyphen, so at most one at each end.
+    .replace(/^-|-$/g, '')
+    .slice(0, 40)
+    .replace(/-$/, '')
+  return slug || FALLBACK_SERVER_NAME
+}
 const KEY_ENV = 'CC_AGENT_KEY'
 
 /** The install step, in the agent's own config format. */
-function installStep(agent: CodingAgent, mcpUrl: string): string {
+function installStep(agent: CodingAgent, mcpUrl: string, serverName: string): string {
   switch (agent) {
     case 'claude-code':
       return (
         `Run this in my terminal (it reads the key from $${KEY_ENV}):\n\n` +
-        `claude mcp add --transport http --scope user ${SERVER_NAME} ${mcpUrl} \\\n` +
+        `claude mcp add --transport http --scope user ${serverName} ${mcpUrl} \\\n` +
         `  --header "Authorization: Bearer $${KEY_ENV}"\n\n` +
         `Then tell me to restart Claude Code (or run /mcp) so the new server loads.`
       )
@@ -47,7 +68,7 @@ function installStep(agent: CodingAgent, mcpUrl: string): string {
         `Add this entry under "mcpServers" in ~/.cursor/mcp.json (create the file if it does not exist, ` +
         `keep any servers already in it):\n\n` +
         JSON.stringify(
-          { mcpServers: { [SERVER_NAME]: { url: mcpUrl, headers: { Authorization: `Bearer \${env:${KEY_ENV}}` } } } },
+          { mcpServers: { [serverName]: { url: mcpUrl, headers: { Authorization: `Bearer \${env:${KEY_ENV}}` } } } },
           null,
           2,
         ) +
@@ -56,7 +77,7 @@ function installStep(agent: CodingAgent, mcpUrl: string): string {
     case 'codex':
       return (
         `Add this to ~/.codex/config.toml (keep everything already in it):\n\n` +
-        `[mcp_servers.${SERVER_NAME}]\n` +
+        `[mcp_servers.${serverName}]\n` +
         `url = "${mcpUrl}"\n` +
         `bearer_token_env_var = "${KEY_ENV}"\n\n` +
         `Then tell me to restart Codex so the new server loads.`
@@ -64,7 +85,7 @@ function installStep(agent: CodingAgent, mcpUrl: string): string {
     case 'other':
       return (
         `Add a remote MCP server to your MCP config:\n` +
-        `- name: ${SERVER_NAME}\n` +
+        `- name: ${serverName}\n` +
         `- transport: Streamable HTTP\n` +
         `- URL: ${mcpUrl}\n` +
         `- header: Authorization: Bearer <value of $${KEY_ENV}>\n\n` +
@@ -77,6 +98,7 @@ function installStep(agent: CodingAgent, mcpUrl: string): string {
 /** The whole copy-paste prompt. Exported for tests. */
 export function buildSetupPrompt(agent: CodingAgent, origin: string, brandName: string): string {
   const mcpUrl = `${origin}/api/mcp`
+  const serverName = mcpServerName(brandName)
   return [
     `Connect yourself to my ${brandName} (${origin}) over MCP, so you can read and work my board and Context.`,
     ``,
@@ -85,9 +107,9 @@ export function buildSetupPrompt(agent: CodingAgent, origin: string, brandName: 
       `${origin}/settings/api-mcp (Agent keys) and export it as ${KEY_ENV}. Never ask me to paste the key into chat, ` +
       `and never write the key itself into a file you show me.`,
     ``,
-    `2. Install. ${installStep(agent, mcpUrl)}`,
+    `2. Install. ${installStep(agent, mcpUrl, serverName)}`,
     ``,
-    `3. Verify. Call the "whoami" tool on the ${SERVER_NAME} server and tell me the key name, workspaces and scopes ` +
+    `3. Verify. Call the "whoami" tool on the ${serverName} server and tell me the key name, workspaces and scopes ` +
       `it reports. Then call "get_attention" and summarise anything that needs me.`,
     ``,
     `Reference if you need it: ${origin}/api/openapi.json (full API) and ${origin}/api/agent (discovery).`,

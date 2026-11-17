@@ -21,6 +21,7 @@ import { parseDuplicateError, cardHref, type DuplicateCard } from '../lib/duplic
 import { Select } from './ui/Select'
 import { ModelPicker } from './ModelPicker'
 import { friendlyError } from '../lib/format'
+import { dropNewCardDraft, hasDraftText, readNewCardDraft, writeNewCardDraft } from '../lib/newCardDraft'
 
 interface ObjectiveModalProps {
   objective: Objective | null
@@ -40,8 +41,25 @@ function ObjectiveModalImpl({ objective, workspace, onClose, onCreate, onUpdate,
   const { confirm, confirmDialog } = useConfirm()
   const isAdmin = currentUser?.role === 'admin'
   const isEdit = !!objective
-  const [title, setTitle] = useState(objective?.title || '')
-  const [description, setDescription] = useState(objective?.description || '')
+  // obj 901200: a NEW card's title + description are a draft that outlives the
+  // dialog. Escape / click outside / X / Cancel close it and keep the draft; it
+  // is forgotten only on a successful create or an explicit "Discard draft".
+  const draftUserId = currentUser?.id ?? null
+  const [restoredDraft] = useState(() => (objective ? null : readNewCardDraft(draftUserId)))
+  const [title, setTitle] = useState(objective ? objective.title || '' : restoredDraft?.title ?? '')
+  const [description, setDescription] = useState(objective ? objective.description || '' : restoredDraft?.description ?? '')
+  const [draftRestored, setDraftRestored] = useState(() => !!restoredDraft && hasDraftText(restoredDraft))
+  useEffect(() => {
+    if (isEdit) return
+    writeNewCardDraft(draftUserId, { title, description })
+  }, [isEdit, draftUserId, title, description])
+  function discardDraft() {
+    dropNewCardDraft(draftUserId)
+    setTitle('')
+    setDescription('')
+    setDraftRestored(false)
+    titleRef.current?.focus()
+  }
   const [descHydrated, setDescHydrated] = useState(!objective)
   // All / multi-org views must not silently default to Example — that routed
   // Example Project creates into the wrong organization.
@@ -236,6 +254,8 @@ function ObjectiveModalImpl({ objective, workspace, onClose, onCreate, onUpdate,
           ...(owner.value ? { owner_bot: owner.value } : {}),
           ...(force ? { force: true } : {}),
         })
+        // The card exists now: its draft is spent.
+        dropNewCardDraft(draftUserId)
         if (pendingFiles.length > 0 && created?.id) {
           setUploading(true)
           await uploadFiles(created.id)
@@ -336,6 +356,12 @@ function ObjectiveModalImpl({ objective, workspace, onClose, onCreate, onUpdate,
               </Button>
             </div>
           </div>
+        )}
+
+        {draftRestored && !isEdit && (
+          <p data-testid="new-card-draft-restored" className="mb-4 text-sm text-fg-2">
+            Your unsaved draft is back. It stays until you create the card or discard it.
+          </p>
         )}
 
         <form onSubmit={handleSubmit} className="space-y-4">
@@ -576,6 +602,7 @@ function ObjectiveModalImpl({ objective, workspace, onClose, onCreate, onUpdate,
             onDelete={handleDelete}
             onClose={onClose}
             onReopen={onReopen}
+            onDiscardDraft={!isEdit && (title.trim() || description.trim()) ? discardDraft : undefined}
           />
         </form>
       </div>

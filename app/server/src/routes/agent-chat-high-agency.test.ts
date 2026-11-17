@@ -519,7 +519,9 @@ describe('DST: the cron follows the install timezone', () => {
 })
 
 describe('boot resync', () => {
-  it('never un-pauses a paused wake routine, but a Save does', async () => {
+  // obj 900961: this test used to assert that any Save un-pauses. That was the
+  // bug; a paused routine now resumes only on an explicit resume (or off → on).
+  it('never un-pauses a paused wake routine, and neither does a plain Save; resume: true does', async () => {
     const db = getDb()
     db.prepare("UPDATE routines SET enabled = 0, auto_paused_at = datetime('now'), auto_pause_reason = '5 consecutive failures' WHERE name = 'high-agency:cto'").run()
     resyncHighAgencyRoutines(listAgents().agents)
@@ -527,9 +529,53 @@ describe('boot resync', () => {
     const v = await call('GET', '/agents/cto/high-agency', { as: MEMBER })
     expect(v.json.high_agency.routine.auto_pause_reason).toBe('5 consecutive failures')
 
-    await admin('PUT', '/agents/cto/high-agency', { enabled: true })
+    // A save that re-sends the switch as it already is does not resume.
+    expect((await admin('PUT', '/agents/cto/high-agency', { enabled: true })).status).toBe(200)
+    expect(routine('cto').enabled).toBe(0)
+    expect(routine('cto').auto_paused_at).not.toBeNull()
+
+    // A level change is applied to the routine, which stays auto-paused.
+    const before = (await admin('GET', '/agents/cto/high-agency')).json.high_agency.level as number
+    const other = before === 5 ? 6 : 5
+    const lv = await admin('PUT', '/agents/cto/high-agency', { level: other })
+    expect(lv.status).toBe(200)
+    expect(lv.json.high_agency.level).toBe(other)
+    expect(routine('cto').cron_expr).toBe(cronFor('cto', other))
+    expect(routine('cto').enabled).toBe(0)
+    expect(routine('cto').auto_pause_reason).toBe('5 consecutive failures')
+
+    // Wake now does not resume the schedule either.
+    const spy = stubSpawn()
+    try { await admin('POST', '/agents/cto/high-agency/wake') } finally { spy.mockRestore() }
+    expect(routine('cto').enabled).toBe(0)
+    db.prepare("UPDATE objectives SET status = 'done' WHERE status NOT IN ('done', 'cancelled')").run()
+
+    // The explicit Resume does. It must be a real boolean.
+    expect((await admin('PUT', '/agents/cto/high-agency', { resume: 'yes' })).status).toBe(400)
+    expect(routine('cto').enabled).toBe(0)
+    const r = await admin('PUT', '/agents/cto/high-agency', { resume: true })
+    expect(r.status).toBe(200)
+    expect(r.json.high_agency.level).toBe(other) // resume changed nothing else
     expect(routine('cto').enabled).toBe(1)
     expect(routine('cto').auto_paused_at).toBeNull()
+    expect(routine('cto').auto_pause_reason).toBeNull()
+    await admin('PUT', '/agents/cto/high-agency', { level: before })
+  })
+
+  it('a routine paused by hand on the Jobs page also stays paused through a save; off → on resumes it', async () => {
+    const db = getDb()
+    db.prepare("UPDATE routines SET enabled = 0 WHERE name = 'high-agency:cto'").run()
+    await admin('PUT', '/agents/cto/high-agency', { allow_workflows: false })
+    expect(routine('cto').enabled).toBe(0)
+    await admin('PUT', '/agents/cto/high-agency', { allow_workflows: true })
+    expect(routine('cto').enabled).toBe(0)
+
+    await admin('PUT', '/agents/cto/high-agency', { enabled: false })
+    // resume while off is refused: there is nothing to run.
+    expect((await admin('PUT', '/agents/cto/high-agency', { resume: true })).status).toBe(400)
+    expect(routine('cto').enabled).toBe(0)
+    await admin('PUT', '/agents/cto/high-agency', { enabled: true })
+    expect(routine('cto').enabled).toBe(1)
   })
 
   it('switches off the wakes of a bot whose file was removed', async () => {
@@ -540,6 +586,57 @@ describe('boot resync', () => {
     expect(res.disabled).toBe(1)
     expect(routine('temp').enabled).toBe(0)
   })
+})
+
+describe('who owns the wake cards (obj 900961)', () => {
+  const ADMIN_B = 3
+  const adminB = (method: string, p: string, body?: unknown) => call(method, p, { as: ADMIN_B, role: 'admin', body })
+  const row = () => getDb().prepare("SELECT run_as_user_id, updated_by, enabled FROM agent_chat_high_agency WHERE slug = 'cto'").get() as Loose
+  const assignee = () => JSON.parse(routine('cto').objective_template).assigned_user_id
+
+  it('a later save by another admin does not take the wake cards over', async () => {
+    getDb().prepare("INSERT OR IGNORE INTO users (id, username, password_hash, role) VALUES (3, 'user3', 'x', 'admin')").run()
+    expect(row()).toMatchObject({ run_as_user_id: ADMIN, enabled: 1 })
+    const before = (await admin('GET', '/agents/cto/high-agency')).json.high_agency.level as number
+    const other = before === 7 ? 8 : 7
+
+    const r = await adminB('PUT', '/agents/cto/high-agency', { level: other })
+    expect(r.status).toBe(200)
+    expect(r.json.high_agency.level).toBe(other)
+    expect(r.json.high_agency.run_as_user_id).toBe(ADMIN)
+    expect(row()).toMatchObject({ run_as_user_id: ADMIN, updated_by: 'user3' }) // who saved is still recorded
+    expect(assignee()).toBe(ADMIN)
+
+    // Re-sending the switch as it is, or resuming, is not a takeover either.
+    await adminB('PUT', '/agents/cto/high-agency', { enabled: true })
+    await adminB('PUT', '/agents/cto/high-agency', { resume: true })
+    expect(row().run_as_user_id).toBe(ADMIN)
+    expect(assignee()).toBe(ADMIN)
+    await admin('PUT', '/agents/cto/high-agency', { level: before })
+  })
+
+  it('off → on sets the owner to the admin who switched it on', async () => {
+    await adminB('PUT', '/agents/cto/high-agency', { enabled: false })
+    expect(row().run_as_user_id).toBe(ADMIN) // switching off changes no owner
+    await adminB('PUT', '/agents/cto/high-agency', { enabled: true })
+    expect(row()).toMatchObject({ run_as_user_id: ADMIN_B, enabled: 1 })
+    expect(assignee()).toBe(ADMIN_B)
+
+    await admin('PUT', '/agents/cto/high-agency', { enabled: false })
+    await admin('PUT', '/agents/cto/high-agency', { enabled: true })
+    expect(row().run_as_user_id).toBe(ADMIN)
+    expect(assignee()).toBe(ADMIN)
+  })
+
+  it('a row with no owner gets one on the next save while on', async () => {
+    getDb().prepare("UPDATE agent_chat_high_agency SET run_as_user_id = NULL WHERE slug = 'cto'").run()
+    await adminB('PUT', '/agents/cto/high-agency', { allow_cards: true })
+    expect(row().run_as_user_id).toBe(ADMIN_B)
+    await admin('PUT', '/agents/cto/high-agency', { enabled: false })
+    await admin('PUT', '/agents/cto/high-agency', { enabled: true })
+    expect(row().run_as_user_id).toBe(ADMIN)
+  })
+
 })
 
 describe('upgrade from the cadence picker (obj 900748 rows)', () => {

@@ -34,6 +34,7 @@ const HAVE_GENERATOR = fs.existsSync(REAL_GENERATOR)
 function graph(overrides: Partial<SkillGraph> = {}): SkillGraph {
   return {
     source: 'frontmatter-layer-graph',
+    status: 'ready',
     generated_at: '2026-08-19T00:00:00Z',
     counts: {
       agents: 1, skills: 1, skills_top_level: 1, subskills: 0,
@@ -115,10 +116,22 @@ describe('mergeRegistryStats', () => {
 describe('runLayerGraph', () => {
   beforeEach(() => clearSkillGraphCache())
 
-  it('rejects with a readable message when the generator is absent', async () => {
+  // Fresh install (obj 901202): no generator is an empty state, not an error.
+  it('resolves to an empty not_set_up graph when the generator is absent', async () => {
     process.env.LAYER_GRAPH_SCRIPT = '/nonexistent/generate-layer-graph.py'
-    await expect(runLayerGraph()).rejects.toThrow(/not found/)
-    delete process.env.LAYER_GRAPH_SCRIPT
+    try {
+      const graph = await runLayerGraph()
+      expect(graph.status).toBe('not_set_up')
+      expect(graph.reason).toMatch(/not set up/)
+      expect(graph.reason).not.toContain('/nonexistent')
+      expect(layerGraphShapeError(graph)).toBeNull()
+      expect(graph.counts.agents).toBe(0)
+      expect(graph.agents).toEqual({})
+      expect(graph.skills).toEqual({})
+      expect(graph.tools).toEqual({})
+    } finally {
+      delete process.env.LAYER_GRAPH_SCRIPT
+    }
   })
 
   it('invokes the generator with --json and parses its stdout', async () => {
@@ -136,6 +149,7 @@ describe('runLayerGraph', () => {
     const out = await runLayerGraph()
     expect(out.source).toBe('frontmatter-layer-graph')
     expect(out.counts.agents).toBe(19)
+    expect(out.status).toBe('ready')
     delete process.env.LAYER_GRAPH_SCRIPT
   })
 

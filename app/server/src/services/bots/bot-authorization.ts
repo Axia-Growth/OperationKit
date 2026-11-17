@@ -27,8 +27,13 @@ export interface BotJobPrincipal {
   /** The person who asked, resolved from the thread. */
   userId: number
   username: string
-  /** The validated bot that will own the card. Canonical registry id. */
-  bot: BotDefinition
+  /**
+   * The validated bot that will own the card (canonical registry id), or null
+   * for a chat bot OUTSIDE the bot registry (obj 900960). Null is only ever the
+   * result of the caller passing `ownerBot: null` for a thread no registered
+   * bot owns; it is never a fallback for a bot that failed to resolve.
+   */
+  bot: BotDefinition | null
   /** The ONE workspace this job may touch. */
   workspace: string
   /** The chat agent whose thread this is. */
@@ -49,7 +54,11 @@ export type AuthorizeRefusal =
 export interface AuthorizeInput {
   userId: number
   agentSlug: string
-  /** Caller-supplied, required. Validated against the registry; never inferred. */
+  /**
+   * Caller-supplied, required. Validated against the registry; never inferred.
+   * An explicit `null` means "this chat bot is not in the registry": accepted
+   * only when no registered bot owns the thread's agent.
+   */
   ownerBot: unknown
   /** Caller-supplied, required. Validated against the person's membership. */
   workspace: unknown
@@ -84,22 +93,37 @@ export function authorizeBotJob(db: Database, input: AuthorizeInput): AuthorizeR
     return { ok: false, code: 'unknown_user', error: `No such user (${input.userId}). A bot job is always filed on behalf of a real person.` }
   }
 
-  const resolved = resolveBot(input.ownerBot, db)
-  if (!resolved.ok) return { ok: false, code: 'unknown_bot', error: resolved.error }
-
-  // The bot must actually own this thread's agent. Otherwise "Operation Kit"
-  // could file a card out of the General's conversation and the
-  // completion message would land in a thread nobody asked in.
   const threadBot = botForAgentSlug(input.agentSlug, db)
-  if (!threadBot || threadBot.id !== resolved.bot.id) {
-    return {
-      ok: false,
-      code: 'bot_agent_mismatch',
-      error:
-        `owner_bot "${resolved.bot.id}" does not own the "${input.agentSlug}" conversation` +
-        (threadBot ? ` (that thread belongs to "${threadBot.id}")` : ' (no registered bot owns that agent)') +
-        '. A job must be owned by the bot the person is actually talking to.',
+  let bot: BotDefinition | null = null
+  if (input.ownerBot === null) {
+    // A chat bot outside the registry (obj 900960). "No owner bot" must not be
+    // a way round the registry: a thread a registered bot owns is filed as
+    // that bot, or not at all.
+    if (threadBot) {
+      return {
+        ok: false,
+        code: 'bot_agent_mismatch',
+        error: `The "${input.agentSlug}" conversation belongs to the registered bot "${threadBot.id}". A job from it must name that bot as owner_bot.`,
+      }
     }
+  } else {
+    const resolved = resolveBot(input.ownerBot, db)
+    if (!resolved.ok) return { ok: false, code: 'unknown_bot', error: resolved.error }
+
+    // The bot must actually own this thread's agent. Otherwise "Operation Kit"
+    // could file a card out of the General's conversation and the
+    // completion message would land in a thread nobody asked in.
+    if (!threadBot || threadBot.id !== resolved.bot.id) {
+      return {
+        ok: false,
+        code: 'bot_agent_mismatch',
+        error:
+          `owner_bot "${resolved.bot.id}" does not own the "${input.agentSlug}" conversation` +
+          (threadBot ? ` (that thread belongs to "${threadBot.id}")` : ' (no registered bot owns that agent)') +
+          '. A job must be owned by the bot the person is actually talking to.',
+      }
+    }
+    bot = resolved.bot
   }
 
   if (typeof input.workspace !== 'string' || !input.workspace.trim()) {
@@ -116,6 +140,6 @@ export function authorizeBotJob(db: Database, input: AuthorizeInput): AuthorizeR
 
   return {
     ok: true,
-    principal: { userId: user.id, username: user.username, bot: resolved.bot, workspace, agentSlug: input.agentSlug },
+    principal: { userId: user.id, username: user.username, bot, workspace, agentSlug: input.agentSlug },
   }
 }

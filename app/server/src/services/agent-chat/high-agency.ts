@@ -419,7 +419,7 @@ function routineRow(id: number | null, slug: string): RoutineRow | undefined {
 export function syncHighAgencyRoutine(
   agent: ChatAgent,
   s: HighAgencySettings,
-  opts: { create?: boolean; keepRunState?: boolean; now?: Date } = {},
+  opts: { create?: boolean; keepRunState?: boolean; resume?: boolean; now?: Date } = {},
 ): RoutineRow | null {
   const db = getDb()
   const existing = routineRow(s.routine_id, agent.slug)
@@ -439,12 +439,14 @@ export function syncHighAgencyRoutine(
   const wasEnabled = existing ? Number(existing.enabled) === 1 : false
   // keepRunState (the boot resync, a bot-config change): refresh schedule +
   // brief only. A routine an operator paused on the Jobs page, or that
-  // auto-paused, stays paused until someone saves the panel again.
+  // auto-paused, stays paused until an admin resumes it.
   if (opts.keepRunState && existing) {
     // run state untouched
-  } else if (s.enabled && (!wasEnabled || existing?.auto_paused_at)) {
-    // Switching on (or saving while auto-paused) is the operator's explicit
-    // "run this": same effect as Resume on the Jobs page.
+  } else if (s.enabled && (opts.resume || !existing) && (!wasEnabled || existing?.auto_paused_at)) {
+    // Only an explicit "run this" resumes (obj 900961): High Agency going from
+    // off to on, or the panel's Resume button. Same effect as Resume on the
+    // Jobs page. Any other save (a level change, a Wake now) leaves a paused
+    // or auto-paused routine paused. A routine created just now starts enabled.
     resumeRoutine(id, `high-agency:${s.updated_by ?? 'admin'}`)
   } else if (!s.enabled && wasEnabled) {
     db.prepare('UPDATE routines SET enabled = 0 WHERE id = ?').run(id)
@@ -502,6 +504,8 @@ export interface HighAgencyPatch {
   workspace?: unknown
   allow_cards?: unknown
   allow_workflows?: unknown
+  /** true = resume a paused wake schedule (the panel's Resume button). Not stored. */
+  resume?: unknown
   times_per_day?: unknown
   first_hour?: unknown
 }
@@ -565,6 +569,8 @@ export function setHighAgency(
   const cur = getHighAgency(agent.slug)
   const next: HighAgencySettings = { ...cur }
   if (patch.enabled !== undefined) next.enabled = bool(patch.enabled, 'enabled')
+  const resume = patch.resume !== undefined && bool(patch.resume, 'resume')
+  const turningOn = next.enabled && !cur.enabled
   if (patch.allow_cards !== undefined) next.allow_cards = bool(patch.allow_cards, 'allow_cards')
   if (patch.allow_workflows !== undefined) next.allow_workflows = bool(patch.allow_workflows, 'allow_workflows')
   if (patch.level !== undefined) {
@@ -589,8 +595,11 @@ export function setHighAgency(
     if (!next.workspace) next.workspace = workspaceOptions(actor.id, agent.slug)[0] ?? null
     // obj 900797: a bot only wakes in a workspace it is granted.
     if (!botMayUseWorkspace(agent.slug, next.workspace)) throw notGranted(agent, next.workspace, actor.id)
-    next.run_as_user_id = actor.id
+    // The owner of the wake cards is whoever switched High Agency ON (obj
+    // 900961). A later save by another admin does not take the cards over.
+    if (turningOn || next.run_as_user_id == null) next.run_as_user_id = actor.id
   }
+  if (resume && !next.enabled) throw new HighAgencyError('Turn High Agency on to resume the wake schedule')
   next.updated_by = actor.username
 
   getDb()
@@ -607,7 +616,7 @@ export function setHighAgency(
       next.allow_cards ? 1 : 0, next.allow_workflows ? 1 : 0, next.run_as_user_id, next.routine_id, next.updated_by,
     )
   const saved = getHighAgency(agent.slug)
-  syncHighAgencyRoutine(agent, saved)
+  syncHighAgencyRoutine(agent, saved, { resume: turningOn || resume })
 
   if (cur.enabled !== saved.enabled || cur.level !== saved.level) {
     try {

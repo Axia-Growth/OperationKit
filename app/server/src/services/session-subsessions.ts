@@ -14,6 +14,7 @@ import { TRANSCRIPT_DIR } from '../config.js'
 import { getEffectiveGateMode, isBackendOnlyChange } from './design-context.js'
 import { resolveWorkdir } from './prompt-builder.js'
 import { spawnInTmux } from './session-tmux.js'
+import { jailEnabled } from './session-jail.js'
 import { getPlannerModelId, getReviewerModelId } from './model-registry.js'
 import { buildSpawnEnv } from './session-spawn-env.js'
 import { buildPlannerPrompt } from './session-planner-prompt.js'
@@ -106,6 +107,35 @@ export async function stopPlannerSession(sessionId: string): Promise<void> {
 // against the approved plan (when present) and emits <verdict>pass|fail|blocked</verdict>
 // plus <findings>…</findings>. The state-poller detects the reviewer's death,
 // extracts the verdict, and transitions the objective accordingly.
+
+/**
+ * Which browser (if any) a reviewer gets — obj 901229. Pure, so the decision is
+ * unit-testable apart from the spawn.
+ *
+ *   attachPlaywright — the review needs a browser: not a backend-only change,
+ *                      and a PR or a non-off vision gate (unchanged rule).
+ *   hostMcpConfig    — tmux mode: write the reviewer Playwright MCP config
+ *                      (control-plane guard; null ⇒ no browser, fail closed).
+ *   jailBrowser      — jail mode: pass `cardBrowser` so spawnInTmux plans the
+ *                      worker browser jail (ok-jail-browser image, seccomp,
+ *                      in-jail guard, Playwright MCP in the jail HOME).
+ * At most one of hostMcpConfig / jailBrowser is ever true; a backend-only
+ * review gets neither and stays on the default jail image.
+ */
+export function planReviewerBrowser(opts: {
+  filesTouched: string[]
+  prNumber?: number | null
+  gateMode: string
+  jailed: boolean
+}): { attachPlaywright: boolean; hostMcpConfig: boolean; jailBrowser: boolean } {
+  const attachPlaywright =
+    !isBackendOnlyChange(opts.filesTouched) && !!(opts.prNumber || opts.gateMode !== 'off')
+  return {
+    attachPlaywright,
+    hostMcpConfig: attachPlaywright && !opts.jailed,
+    jailBrowser: attachPlaywright && opts.jailed,
+  }
+}
 
 export async function spawnReviewerSession(objective: Objective): Promise<string> {
   const sessionId = generateReviewerSessionId(objective)
@@ -203,9 +233,24 @@ export async function spawnReviewerSession(objective: Objective): Promise<string
   // browser for ~3 minutes (and often cap out). Empty filesTouched is NOT
   // treated as backend-only, so we still attach when we don't know.
   // UI PRs and a non-off vision gate still get Playwright.
-  const attachPlaywright =
-    !isBackendOnlyChange(filesTouched) && !!(objective.pr_number || gateMode !== 'off')
-  const mcpConfigPath = attachPlaywright
+  //
+  // obj 901229: WHERE that browser lives depends on the isolation mode.
+  //   * tmux mode (live droplet): unchanged — the reviewer Playwright MCP config
+  //     behind the control-plane guard (writeReviewerPlaywrightMcpConfig, which
+  //     fails closed to "no browser" when the guard is down).
+  //   * jail mode: that host config is dropped by spawnInTmux (its path is not
+  //     mounted), so a jailed UI reviewer used to run on the stock ok-jail:local
+  //     with no browser at all. It now takes the WORKER browser-jail path
+  //     (cardBrowser): the ok-jail-browser image (SESSION_JAIL_BROWSER_IMAGE),
+  //     the browser seccomp profile, the in-jail egress guard and the same
+  //     Playwright MCP contract. A backend-only review never asks for it.
+  const browser = planReviewerBrowser({
+    filesTouched,
+    prNumber: objective.pr_number,
+    gateMode,
+    jailed: jailEnabled(),
+  })
+  const mcpConfigPath = browser.hostMcpConfig
     ? writeReviewerPlaywrightMcpConfig(sessionId, account.homeDir) ?? undefined
     : undefined
 
@@ -222,6 +267,7 @@ export async function spawnReviewerSession(objective: Objective): Promise<string
     effort: 'low',  // Fresh-context verification doesn't need deep effort — cheap tier.
     model: reviewerModel,
     mcpConfigPath,
+    cardBrowser: browser.jailBrowser,
     // Reviewer keeps the per-objective TESTCRED_* spread AFTER the consolidated base
     // env (unchanged order) — those are objective-scoped, orthogonal to secret tiering.
     env: { ...buildSpawnEnv({ objective, homeDir: account.homeDir, sessionKind: 'reviewer' }), ...credEnv },

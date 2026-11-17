@@ -630,11 +630,33 @@ describe('wiring — the chat tool the person actually uses goes through the gua
     expect(findJobByIdempotency(getDb(), OUTSIDER, AGENT, key)).toBeNull()
   })
 
-  it('an UNREGISTERED agent keeps the original behaviour — legacy compatibility', () => {
+  // obj 900960 changed this contract on purpose. It used to assert that an
+  // unregistered agent's card had NO origin row ("legacy compatibility"). That
+  // unguarded second path is what let a retried tool call file a duplicate card,
+  // so the unregistered agent now files through createBotJob too. What stays
+  // legacy is asserted instead: the card itself (footer, no registry owner, no
+  // read-only job-mode line) is what it always was.
+  it('an UNREGISTERED agent files through the same guarded path, and its card keeps its original shape', () => {
     const title = uniqueTitle('Legacy filed')
     const out = runTool(chatCtx('not-a-registered-bot'), 'create_objective', { title, description: 'still works' })
     expect(out.objective_id).toBeGreaterThan(0)
-    expect(getJobOrigin(getDb(), out.objective_id!)).toBeNull()
+    const id = out.objective_id!
+    const card = getDb().prepare('SELECT description, owner_bot, origin, status FROM objectives WHERE id = ?').get(id) as { description: string; owner_bot: string | null; origin: string; status: string }
+    expect(card.origin).toBe('agent_chat')
+    expect(card.description).toMatch(/^still works\n\n— Requested in chat with ".+" by .+\. They follow this card's status from that chat\.$/)
+    expect(card.description).not.toMatch(/Job mode/)
+    // Never a registry bot's id: the registry does not know this agent.
+    expect(card.owner_bot).not.toBe(BOT)
+    const origin = getJobOrigin(getDb(), id)
+    expect(origin).toBeTruthy()
+    expect(origin!.thread_agent_slug).toBe('not-a-registered-bot')
+    expect(origin!.owner_bot).toBe(card.owner_bot ?? '')
+    // The point of the change: the identical call again is the same card.
+    const again = runTool(chatCtx('not-a-registered-bot'), 'create_objective', { title, description: 'still works' })
+    expect(again.objective_id).toBe(id)
+    expect(String((again.result as { note: string }).note)).toMatch(/already filed/)
+    expect((getDb().prepare('SELECT COUNT(*) AS n FROM objectives WHERE title = ?').get(title) as { n: number }).n).toBe(1)
+    expect((getDb().prepare('SELECT status FROM objectives WHERE id = ?').get(id) as { status: string }).status).toBe(card.status)
     expect(ToolUseError).toBeTruthy()
   })
 })

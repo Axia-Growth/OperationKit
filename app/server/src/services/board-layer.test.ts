@@ -27,6 +27,7 @@ import type { SkillGraph } from './skill-graph.js'
 function graph(): SkillGraph {
   return {
     source: 'frontmatter-layer-graph',
+    status: 'ready',
     generated_at: '2026-09-21T00:00:00Z',
     counts: {
       agents: 2, skills: 2, skills_top_level: 2, subskills: 0,

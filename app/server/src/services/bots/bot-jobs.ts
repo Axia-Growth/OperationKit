@@ -1,6 +1,11 @@
 /**
  * The ONE guarded path from a bot conversation to a board job (obj 900323).
  *
+ * Every chat bot goes through here (obj 900960): a bot in the registry as its
+ * validated owner, a bot outside it with `ownerBot: null`. The second kind gets
+ * the same idempotency, duplicate guard, start decision and origin row; only the
+ * registry check, the card's owner_bot and the footer differ.
+ *
  * Gates G1-G4 and G12 all live here, because they are all the same decision:
  * *may this message become a card, and if so, exactly one card?*
  *
@@ -54,7 +59,18 @@ export interface BotJobOrigin {
 export interface CreateBotJobInput {
   userId: number
   agentSlug: string
+  /**
+   * The registered bot that owns the card, or an explicit `null` for a chat bot
+   * outside the bot registry (obj 900960). Null is refused when a registered
+   * bot owns the thread, and it needs `chatBot`.
+   */
   ownerBot: unknown
+  /**
+   * Only read when `ownerBot` is null: the unregistered chat bot's display
+   * name (for the card footer) and the owner_bot to write on the card, which
+   * the CALLER has already chosen (null = filed unowned).
+   */
+  chatBot?: { name: string; ownerBot: string | null }
   workspace: unknown
   title: string
   description: string
@@ -123,6 +139,13 @@ export function createBotJob(db: Database, input: CreateBotJobInput): CreateBotJ
   })
   if (!auth.ok) return { ok: false, code: auth.code, error: auth.error }
   const principal: BotJobPrincipal = auth.principal
+  const chatBotName = trimmed(input.chatBot?.name, 200)
+  if (!principal.bot && !chatBotName) {
+    return { ok: false, code: 'invalid', error: 'chatBot.name is required when owner_bot is null' }
+  }
+  // What the card's owner_bot column gets: the registry id, or for a chat bot
+  // outside the registry whatever the caller resolved (possibly nothing).
+  const cardOwnerBot = principal.bot ? principal.bot.id : trimmed(input.chatBot?.ownerBot, 200) || null
 
   // (2) Exact replay. Checked BEFORE the title guard so a retry is a quiet
   // success rather than a "duplicate" refusal the caller has to interpret.
@@ -154,11 +177,18 @@ export function createBotJob(db: Database, input: CreateBotJobInput): CreateBotJ
     }
   }
 
+  // A chat bot outside the registry keeps the footer its cards always had: the
+  // read-only job-mode line is a promise about REGISTERED bot jobs, and adding
+  // it here would change what those workers are told they may do.
   const body = [
     trimmed(input.description, 20_000),
     '',
-    `— Filed from the ${principal.bot.name} conversation by ${principal.username}. Results go back to that same conversation.`,
-    `— Job mode: ${MVP_JOB_MODE}. This job may READ; it may not send, post, purchase or delete.`,
+    ...(principal.bot
+      ? [
+          `— Filed from the ${principal.bot.name} conversation by ${principal.username}. Results go back to that same conversation.`,
+          `— Job mode: ${MVP_JOB_MODE}. This job may READ; it may not send, post, purchase or delete.`,
+        ]
+      : [`— Requested in chat with "${chatBotName}" by ${principal.username}. They follow this card's status from that chat.`]),
   ].join('\n')
 
   const created = db.transaction((): { id: number; status: string } => {
@@ -178,16 +208,18 @@ export function createBotJob(db: Database, input: CreateBotJobInput): CreateBotJ
         principal.userId,
         principal.userId,
         status,
-        principal.bot.id,
+        cardOwnerBot,
         (input.model && input.model.trim()) || defaultModelIdIn(db),
       )
     const id = Number(info.lastInsertRowid)
     // The thread linkage the existing chat UI already reads.
     db.prepare('INSERT OR IGNORE INTO agent_chat_cards (objective_id, user_id, agent_slug) VALUES (?, ?, ?)').run(id, principal.userId, principal.agentSlug)
+    // owner_bot is NOT NULL on this table: '' = a chat bot outside the registry
+    // filed the card unowned. job_mode is the column's only allowed value.
     db.prepare(
       `INSERT INTO bot_job_origins (objective_id, thread_user_id, thread_agent_slug, owner_bot, owner_user_id, workspace, job_mode, idempotency_key, start_mode)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'manual')`,
-    ).run(id, principal.userId, principal.agentSlug, principal.bot.id, principal.userId, principal.workspace, MVP_JOB_MODE, idempotencyKey)
+    ).run(id, principal.userId, principal.agentSlug, cardOwnerBot ?? '', principal.userId, principal.workspace, MVP_JOB_MODE, idempotencyKey)
     return { id, status }
   })()
 

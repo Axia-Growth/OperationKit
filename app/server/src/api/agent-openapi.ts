@@ -367,6 +367,21 @@ export const AGENT_OPENAPI = {
           },
           stalled_at: { type: ['string', 'null'], description: 'ISO UTC when the watchdog flagged it; null when not stalled.' },
           stall_reason: { type: ['string', 'null'], description: 'One line: stall class (never_spawned | died_silently | hung_startup | hung_no_heartbeat), idle minutes, session id.' },
+          review_runner_failure: {
+            type: ['object', 'null'],
+            description: 'Set when the reviewer session gave no verdict (failed to start, died, or ended without one). ai_review_verdict stays null: the card was not reviewed.',
+            properties: { cause: { type: 'string', enum: ['no_output', 'no_verdict'] }, reason: { type: 'string' }, at: { type: 'string' } },
+          },
+          closed_over_review: {
+            type: ['object', 'null'],
+            description: 'Set on a done card that was closed while its review verdict was not pass, from the audit trail.',
+            properties: {
+              verdict: { type: ['string', 'null'], enum: ['fail', 'blocked', null] },
+              by: { type: ['string', 'null'], description: 'Audit actor: user, bot:<key label>, state-poller.' },
+              reason: { type: ['string', 'null'], description: 'The override_reason given on the close, if any.' },
+              at: { type: 'string' },
+            },
+          },
           created_at: { type: 'string' },
           updated_at: { type: 'string' },
         },

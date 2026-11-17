@@ -137,6 +137,10 @@ To close it anyway, state why. The reason is stored with the key label on the au
 `override_reason` must be non-empty text (kept up to 1,000 characters). It is ignored on any other move, and it
 does not replace the `board:done` scope or any other completion gate. Never put a secret in it.
 
+Over MCP it is the same field: `update_status(id, "done", override_reason)`. Without a reason the tool error carries
+`code: "no_passing_review"`. With one, the card closes and its payload carries
+`closed_over_review { verdict, by, reason, at }` read back from that audit row.
+
 Over MCP the loop is the same with typed tools: `whoami` → `get_attention` → `get_changes` → `get_objective` /
 `get_progress` → `create_objective` / `send_message` / `start_objective`. See the [parity table](#parity-every-rest-action-a-bot-takes--its-mcp-tool).
 
@@ -501,7 +505,7 @@ surface with the tool's scope, in the OpenAPI spec, and the only call the tool m
 | Start / restart | `PATCH /api/objectives/:id/status {"status":"working"}` | `start_objective(id)`. Retries **once** on a 5xx and re-reads the card first, so it never double-starts. 4xx is not retried | board:start |
 | Park / reopen | `PATCH …/status {"status":"queue"\|"planning"}` | `update_status(id, status)` | board:write |
 | Cancel a duplicate | `PATCH …/status {"status":"cancelled"}` | `update_status(id, "cancelled")` | **board:cancel** |
-| Sign off (done) | `PATCH …/status {"status":"done"}` | `update_status(id, "done")` | **board:done** (no bot key has it) |
+| Sign off (done) | `PATCH …/status {"status":"done"[, "override_reason"]}` | `update_status(id, "done"[, override_reason])` | **board:done** (no bot key has it) |
 | Edit title / brief / goal | `PUT /api/objectives/:id` | `update_objective(id, title?, description?, completion_goal?, agent_context?, project?, model?, effort?, owner_bot?)` | board:write |
 | Follow-up message | `POST /api/objectives/:id/message` (+ `Idempotency-Key`) | `send_message(id, message, idempotency_key?)` | board:write |
 | How's it going | `GET /api/objectives/:id/progress` | `get_progress(id, limit?)` | board:read |
