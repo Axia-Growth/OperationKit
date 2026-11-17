@@ -73,10 +73,7 @@ export async function shot(page: Page, info: TestInfo, name: string): Promise<st
  * when fixed) and a fix card; listing it here keeps one known bug from turning
  * every other page test red. Delete the entry when its card ships.
  */
-export const KNOWN_CONSOLE_ERRORS: Array<{ match: RegExp; card: string }> = [
-  // index.html's inline pre-paint theme script is blocked by the server's own CSP (script-src 'self').
-  { match: /Executing inline script violates the following Content Security Policy directive/, card: 'PA-4 (audit finding; fix card drafted, not filed yet)' },
-]
+export const KNOWN_CONSOLE_ERRORS: Array<{ match: RegExp; card: string }> = []
 
 export interface PageProblems {
   consoleErrors: string[]
