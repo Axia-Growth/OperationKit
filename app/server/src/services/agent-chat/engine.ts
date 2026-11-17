@@ -473,7 +473,19 @@ export interface TurnInput {
   /** web_search / web_fetch fetches (obj 900671) — tests inject; production uses the guarded defaults. */
   webDeps?: Pick<WebToolDeps, 'fetch' | 'pageFetch'>
   now?: () => Date
+  /**
+   * An explicit cancel from the CALLER (tests, a shutdown path). Never wire an
+   * HTTP request's 'close' to this: a dropped connection is not Stop (obj 901329).
+   * The person's Stop reaches a running turn through stopTurn, not this signal.
+   */
   signal?: AbortSignal
+  /**
+   * obj 901329: true once nobody is waiting on this turn's HTTP response (the
+   * browser left mid-turn). The turn still runs to the end; this only stops it
+   * from taking the person's message back on an "AI unavailable" failure, since
+   * no error status can reach them — the row and the error stay in the thread.
+   */
+  responseGone?: () => boolean
   /**
    * obj 900949: no new message — this turn only delivers what is already queued
    * in the lane. Used by the drain that follows a turn; an empty queue is a no-op.
@@ -632,7 +644,11 @@ export function stopTurn(
   // Drop first, so the drain that follows the stopped turn finds nothing to send.
   const dropped = opts.dropQueued ? discardQueued(userId, slug, lane) : 0
   const running = inFlight.get(turnKey(userId, slug, lane))
-  if (running) running.controller.abort()
+  if (running) {
+    // obj 901329: logged distinctly from a dropped connection (routes/agent-chat.ts).
+    console.log(`[agent-chat] stop: the person pressed Stop (user=${userId} bot=${slug} lane=${lane.kind === 'main' ? 'main' : `thread:${lane.id}`}${dropped ? ` dropped_queued=${dropped}` : ''})`)
+    running.controller.abort()
+  }
   return { stopped: !!running, dropped, ...laneTurnState(userId, slug, lane) }
 }
 
@@ -686,8 +702,10 @@ export async function runTurn(input: TurnInput): Promise<{ messages: ChatMessage
     if (existing) return { messages: [existing] }
   }
   if (inFlight.has(key)) throw new ChatBusyError('This agent is still answering your last message.')
-  // One controller per turn: the caller's signal (the HTTP request closing) and
-  // Stop (stopTurn) both cancel it.
+  // One controller per turn. Stop (stopTurn) cancels it; so does an explicit
+  // caller signal. The HTTP request closing does NOT (obj 901329): the route no
+  // longer passes one, so a dropped connection lets the turn finish and persist,
+  // exactly like the drain below that already outlives its request.
   const controller = new AbortController()
   if (input.signal) {
     if (input.signal.aborted) controller.abort()
@@ -724,14 +742,18 @@ export async function runTurn(input: TurnInput): Promise<{ messages: ChatMessage
     if (incoming.length === 0) return { messages: created }
     touchThread(lane)
 
-    const demo = isDemoOn(env) || agent.slug === DEMO_AGENT_SLUG
     // Demo switched on by env (AGENT_CHAT_DEMO=1) never went through the settings
     // route, so its sample notes may not be in the knowledge base yet.
     if (agent.slug === DEMO_AGENT_SLUG) {
       try { seedDemoKnowledge(env) } catch { /* the to-do tools report a missing file */ }
     }
-    const connectors = resolveConnectors({ demo, now })
-    const ctx: ToolContext = { userId, username: input.username, workspace: workspaceFor(userId, agent.slug), agent, kbRoot: knowledgeRoot(env), connectors, now, web: { env, signal, ...input.webDeps }, lane }
+    // obj 901331: demo is per bot. Only the demo assistant gets the sample inbox
+    // (resolveConnectors decides by slug); every other bot gets the person's own
+    // Google account when connected and allowed by "Who can use it". The install
+    // switch (isDemoOn) only lists the demo assistant now.
+    const chatWorkspace = workspaceFor(userId, agent.slug)
+    const connectors = resolveConnectors({ agentSlug: agent.slug, userId, workspace: chatWorkspace, now })
+    const ctx: ToolContext = { userId, username: input.username, workspace: chatWorkspace, agent, kbRoot: knowledgeRoot(env), connectors, now, web: { env, signal, ...input.webDeps }, lane }
 
     let providerId: ChatProviderId | null = null
     let provider: ChatProvider
@@ -800,7 +822,9 @@ export async function runTurn(input: TurnInput): Promise<{ messages: ChatMessage
       // Nothing ran yet: take the message back so a retry is clean. After a
       // tool step, keep what happened so far and say so in the history. A
       // queue drain has no one waiting on a response, so it always records it.
-      if (loop.step === 0 && userRow && delivered.length === 0) {
+      // obj 901329: unless the browser already left — then no error status
+      // reaches anyone, so the message and the error stay in the thread.
+      if (loop.step === 0 && userRow && delivered.length === 0 && !input.responseGone?.()) {
         deleteMessage(userRow.id)
         created.length = 0
       } else {

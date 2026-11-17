@@ -28,8 +28,7 @@ import { SENDER_MARKER } from '../lib/message-provenance.js'
 import { SESSION_SECRET_ACCESS_FLAG, readSettingFlag, verifiedSenderStampsEnabled } from '../lib/session-trust.js'
 import { listForCaller } from './secrets-broker.js'
 import { resolveSecretNames } from './secrets-store.js'
-import { allowlistedKeys, getSessionEnvMode, sessionSubjects } from './secret-env-policy.js'
-import { githubSessionAccess, resolveActingUserId } from './session-spawn-env.js'
+import { githubSessionAccess, resolveActingUserId, sessionSecretKeyFilter } from './session-spawn-env.js'
 import { resolveWriteWorkspace } from './workspaces.js'
 import { resolveBrandName } from './branding-config.js'
 import { resolveOwnerName } from '../lib/install-defaults.js'
@@ -107,10 +106,11 @@ export function buildSecretsInventoryBlock(objective: Objective): string[] {
     names = resolveSecretNames({ workspace, userId })
     // D4 (obj 900540): in enforce mode the env holds only allowlisted names, so
     // only those are listed as "already exported". The rest go via the broker.
-    if (getSessionEnvMode() === 'enforce') {
-      const allowed = allowlistedKeys(sessionSubjects(objective, userId))
-      withheld = names.filter(n => !allowed.has(n)).length
-      names = names.filter(n => allowed.has(n))
+    // obj 901330: a scoped bot's session holds only its pack, in either mode.
+    const keep = sessionSecretKeyFilter(objective, userId)
+    if (keep) {
+      withheld = names.filter(n => !keep(n)).length
+      names = names.filter(n => keep(n))
     }
     if (brokerEnabled) {
       for (const item of listForCaller({ userId: userId ?? 0, isAdmin: false, workspaces: [workspace] }, { workspace })) {
@@ -223,6 +223,9 @@ export function buildGithubAccessLines(objective: Objective, secretNames: Set<st
     access_rule:
       'the owner limited their GitHub connection to other agents or workspaces in Settings → Connectors → GitHub.',
     cross_user: 'the GitHub connection belongs to someone else.',
+    bot_scope: "this card's bot does not have GitHub on its connector list (obj 901330). Only the owner can change a bot's list; do not work around it.",
+    no_grant:
+      "the owner's Settings → Connectors → GitHub → Who can use it list does not name this card's bot. The owner adds the bot there; do not ask for a GH_TOKEN secret.",
   }
   return [
     `${head} not available to this session — ${fix[access.reason]} When you report it, name THAT fix. A \`GH_TOKEN\` in Settings → Secrets is only an optional override, not the required path; do not ask for one first. (If \`gh auth status\` succeeds anyway, this install has a shared bot login configured and you may use it.)`,

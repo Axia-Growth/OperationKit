@@ -24,7 +24,7 @@ import { withResolvedKnowledgeFolders } from './knowledge-folders.js'
 import { getDb } from '../../db/index.js'
 import { frameAndScan } from '../injection-telemetry.js'
 import { findAgent, installDefaultProvider, knowledgeRoot, runModelLoop, systemPromptFor, type LoopRecord } from './engine.js'
-import { DEMO_AGENT_SLUG, type ChatAgent } from './agent-defs.js'
+import type { ChatAgent } from './agent-defs.js'
 import { resolveConnectors } from './connectors.js'
 import { chooseProviderId, createProvider, type ChatMessage, type ProviderDeps } from './providers.js'
 import { mcpToolSetFor, type McpToolSet } from './mcp-tools.js'
@@ -252,8 +252,9 @@ async function wake(msg: BotMessage, conversation: BotConversation, opts: DrainO
     return retryOrFail(msg, conversation, `${recipient.name} has no AI provider it can use: ${err instanceof Error ? err.message : String(err)}`, now(), env)
   }
 
-  const demo = recipient.slug === DEMO_AGENT_SLUG
-  const connectors = resolveConnectors({ demo, now })
+  // obj 901331: the woken bot gets the sending person's own Google account when
+  // "Who can use it" allows it in this workspace; only the demo assistant gets sample data.
+  const connectors = resolveConnectors({ agentSlug: recipient.slug, userId, workspace: conversation.workspace, now })
   const ac = new AbortController()
   const timer = setTimeout(() => ac.abort(), WAKE_TIMEOUT_MS)
   timer.unref?.()

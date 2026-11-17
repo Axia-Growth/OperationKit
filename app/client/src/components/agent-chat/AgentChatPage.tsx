@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ClipboardEvent, type KeyboardEvent } from 'react'
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { ChevronLeft, Info, Paperclip, Pin, Square, X } from 'lucide-react'
-import { api } from '../../lib/api'
+import { api, isRequestTimeout } from '../../lib/api'
 import { actionErrorMessage } from '../../lib/format'
 import { useAuth } from '../../context/AuthContext'
 import { useFileDrop, filesFromClipboard } from '../../hooks/useFileDrop'
@@ -520,6 +520,14 @@ function Conversation({
       // The strip shows per-lane message counts and ordering by last activity.
       void loadThreads()
     } catch (e) {
+      // obj 901329: the 240s timeout is UI-only. The server already holds the
+      // message and keeps working on it (a dropped request is not Stop), so
+      // this is not "not sent": re-read the thread, where the answer lands.
+      if (isRequestTimeout(e)) {
+        void load()
+        void loadThreads()
+        return
+      }
       // Nothing typed is lost: put it back unless the person is already typing the next one.
       setText(cur => (cur.trim() ? cur : msg))
       setImages(cur => (cur.length ? cur : attached))

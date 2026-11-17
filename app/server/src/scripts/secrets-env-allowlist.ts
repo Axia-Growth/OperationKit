@@ -14,6 +14,9 @@
  *                                  suggests, per agent. Dry run without --yes.
  *   mode   migration|enforce       switch (audited). enforce = only allowlisted names
  *                                  reach a session env; the rest via the broker.
+ *   bots   [--json]                the per-bot packs (obj 901330): names on each
+ *                                  scoped bot's list and whether each is saved.
+ *                                  Read-only.
  *
  * Every change is written to the append-only secrets audit log (action
  * env_policy, source cli).
@@ -30,6 +33,7 @@ import {
   type AllowlistSubjectType,
 } from '../services/secret-env-policy.js'
 import { getDb } from '../db/index.js'
+import { EXAMPLE_BOT_PACKS, botSessionScopeEnabled, describePack } from '../services/bot-session-scope.js'
 import { readSettingFlag, SESSION_SECRET_ACCESS_FLAG } from '../lib/session-trust.js'
 
 export function parseArgs(argv: string[]): { cmd: string; flags: Record<string, string | true>; rest: string[] } {
@@ -115,6 +119,34 @@ export function run(argv: string[], out: (s: string) => void = console.log): num
         }
       }
       if (!yes) out('dry run — re-run with --yes to write these entries')
+      return 0
+    }
+    case 'bots': {
+      const saved = new Set(
+        (getDb().prepare('SELECT DISTINCT key FROM secrets').all() as { key: string }[]).map(r => r.key),
+      )
+      const packs = Object.values(EXAMPLE_BOT_PACKS).map(p => {
+        const d = describePack(p)
+        return {
+          ...d,
+          saved: d.keys.filter(k => saved.has(k)),
+          not_saved: d.keys.filter(k => !saved.has(k)),
+          family_matches: d.key_families.map(f => ({ family: f, saved: [...saved].filter(k => k.startsWith(f.slice(0, -1))).sort() })),
+        }
+      })
+      if (flags.json) {
+        out(JSON.stringify({ enabled: botSessionScopeEnabled(), packs }, null, 2))
+        return 0
+      }
+      out(`per-bot scope: ${botSessionScopeEnabled() ? 'ON' : 'OFF (bot_session_scope_enabled=0)'}`)
+      for (const p of packs) {
+        out(`${p.slug}`)
+        out(`  saved:     ${p.saved.join(', ') || '-'}`)
+        if (p.not_saved.length) out(`  not saved: ${p.not_saved.join(', ')}`)
+        for (const f of p.family_matches) out(`  ${f.family}: ${f.saved.join(', ') || '-'}`)
+        if (p.denied.length) out(`  denied:    ${p.denied.join(', ')}`)
+        out(`  connectors: ${p.connectors.join(', ') || '-'}${p.google ? ` (google: ${p.google})` : ''}`)
+      }
       return 0
     }
     case 'mode': {

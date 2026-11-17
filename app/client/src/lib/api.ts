@@ -2,9 +2,14 @@
 const BASE = '/api'
 
 class ApiError extends Error {
-  constructor(public status: number, public body: unknown, message: string) {
+  constructor(public status: number, public body: unknown, message: string, public timedOut = false) {
     super(message)
   }
+}
+
+/** True when the CLIENT gave up waiting (timeoutMs) — the server may still be working on it. */
+export function isRequestTimeout(e: unknown): boolean {
+  return e instanceof ApiError && e.timedOut
 }
 
 async function request<T>(path: string, options?: RequestInit & { timeoutMs?: number }): Promise<T> {
@@ -21,7 +26,7 @@ async function request<T>(path: string, options?: RequestInit & { timeoutMs?: nu
     })
   } catch (err) {
     if (ctrl?.signal.aborted) {
-      throw new ApiError(0, null, 'Request timed out — message not sent')
+      throw new ApiError(0, null, 'Request timed out — message not sent', true)
     }
     throw err
   } finally {

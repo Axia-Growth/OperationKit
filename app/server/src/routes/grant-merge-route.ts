@@ -16,14 +16,26 @@ import { logActivity } from './feed.js'
 
 type Allowed = Extract<DelegationDecision, { kind: 'allowed' }>
 
+/**
+ * Which door the approval came through, for the audit row and the card line.
+ * The card-message path omits it (the request's agent key is used); a chat
+ * turn (obj 901347, services/agent-chat/grant-merge-tool.ts) has no agent key
+ * and passes `{ id: null, label: 'chat:<slug>' }`.
+ */
+export interface GrantMergeVia {
+  id: number | null
+  label: string
+}
+
 export async function runGrantApprovedMerge(
   req: AuthRequest,
   card: Objective,
   d: Allowed,
   message: string,
+  via?: GrantMergeVia,
 ): Promise<{ status: number; body: Record<string, unknown> }> {
   const db = getDb()
-  const key = req.agentKey!
+  const key: GrantMergeVia = via ?? { id: req.agentKey!.id, label: req.agentKey!.label }
   const actor = req.user?.username ?? 'unknown'
   const base = {
     objective_id: card.id,
@@ -80,7 +92,7 @@ export async function runGrantApprovedMerge(
 
   // Only now, with the PR merged, close the card.
   const done = await runStatusChange(req, card.id, 'done', {
-    actor: `bot:${d.bot} (key ${key.label})`,
+    actor: via ? `bot:${d.bot} (${key.label})` : `bot:${d.bot} (key ${key.label})`,
     pathway: `grant-merge:#${d.grantId}`,
     humanTerminal: false,
   })

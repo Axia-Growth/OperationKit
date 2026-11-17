@@ -377,13 +377,29 @@ export function decideDelegatedApproval(
     if (!auto) return deny(403, 'unknown_bot', `No delegation: ${bot.error} Pass owner_bot = the bot that is approving.`)
     botName = auto.id
   }
-  const grant = findActiveGrant(db, { botName, workspace, action, grantorUserId: req.user.id, now })
+  return grantDecision(db, deny, { botName, workspace, action, grantor: req.user, now })
+}
+
+/**
+ * The grant half of every delegated approval, shared by the card-message path
+ * (`decideDelegatedApproval`) and the chat-turn path (`decideChatBotApproval`),
+ * so there is ONE rule for "does an active grant cover this": exact bot ×
+ * workspace × action, issued by this person, who is still an admin, not
+ * revoked, not expired.
+ */
+function grantDecision(
+  db: Database,
+  deny: (status: number, code: string, error: string, extra?: Partial<AuditEntry>) => DelegationDecision,
+  q: { botName: string; workspace: string; action: DelegationAction; grantor: { id: number; username: string }; now: Date },
+): DelegationDecision {
+  const { botName, workspace, action, now } = q
+  const grant = findActiveGrant(db, { botName, workspace, action, grantorUserId: q.grantor.id, now })
   if (!grant) {
     return deny(
       403,
       'no_active_grant',
       `No delegation: there is no active grant for "${botName}" to approve ${DELEGATION_ACTION_LABELS[action]} in workspace "${workspace}" ` +
-        `on behalf of ${req.user.username}. Grants are issued by the owner in Settings → Bots → the bot → Approve on my behalf; expired or revoked grants never count.`,
+        `on behalf of ${q.grantor.username}. Grants are issued by the owner in Settings → Bots → the bot → Approve on my behalf; expired or revoked grants never count.`,
       { bot_name: botName },
     )
   }
@@ -393,10 +409,96 @@ export function decideDelegatedApproval(
     kind: 'delegated',
     verified: false,
     label: botName,
-    username: req.user.username,
+    username: q.grantor.username,
     delegation: { grant_id: grant.id, action, bot: botName, on_behalf_of: onBehalfOf },
   }
   return { kind: 'allowed', sender, grantId: grant.id, action, bot: botName, onBehalfOf }
+}
+
+/**
+ * The audit label a chat-turn approval is recorded under (obj 901347). A chat
+ * turn has no agent key; the bot is named by its chat slug instead, so a row
+ * in `delegation_audit` always says which door the approval came through.
+ */
+export function chatTurnAuditLabel(slug: string): string {
+  return `chat:${slug}`
+}
+
+/**
+ * A delegated approval made from a CHAT TURN (obj 901347): a chat bot, talking
+ * with a person in the product, approves one action on a card under that
+ * person's grant. Same grant rule as `decideDelegatedApproval` (it calls the
+ * same `grantDecision`); what differs is only how the principal is known:
+ *
+ *  - the bot is NOT declared by the caller: `botName` is the server-derived
+ *    identity of the chat bot running the turn (its registry id or automatic
+ *    identity — the one its settings page issues grants to);
+ *  - the grantor is the person the chat turn acts for (the signed-in user of
+ *    the conversation), so a member chatting with a bot can never use the
+ *    owner's grant — `findActiveGrant` also requires the grantor still be an admin.
+ *
+ * A refusal writes the same `approval_denied` audit row; the caller records an
+ * allowed one (for a merge: `runGrantApprovedMerge` writes `approval_used`).
+ */
+export function decideChatBotApproval(
+  db: Database,
+  principal: { user: { id: number; username: string } | null; botName: string | null; chatSlug: string },
+  objective: Pick<Objective, 'id' | 'workspace'>,
+  action: unknown,
+  message: string,
+  now = new Date(),
+): DelegationDecision {
+  const label = chatTurnAuditLabel(principal.chatSlug)
+  const deny = (status: number, code: string, error: string, extra: Partial<AuditEntry> = {}): DelegationDecision => {
+    try {
+      writeDelegationAudit(db, {
+        event: 'approval_denied',
+        objective_id: objective.id,
+        workspace: objective.workspace ?? null,
+        action: typeof action === 'string' ? action : null,
+        actor: principal.user?.username ?? null,
+        agent_key_id: null,
+        agent_key_label: label,
+        bot_name: principal.botName,
+        reason: code,
+        message,
+        ...extra,
+      })
+    } catch (err) {
+      console.warn('[delegated-approval] audit write failed:', (err as Error).message)
+    }
+    return { kind: 'denied', status, code, error }
+  }
+  if (!isDelegationAction(action)) {
+    return deny(400, 'approval_invalid', `approval must be one of: merge, prod_migration, deploy (got "${String(action)}").`)
+  }
+  if (!principal.user) return deny(403, 'no_person', 'This chat turn is not acting for a signed-in person, so no grant can cover it.')
+  if (!principal.botName) return deny(403, 'unknown_bot', `No delegation: chat bot "${principal.chatSlug}" has no bot identity, so no grant can name it.`)
+  const workspace = objective.workspace?.trim()
+  if (!workspace) return deny(403, 'no_workspace', 'This card has no workspace, so no grant can cover it.')
+  return grantDecision(db, deny, { botName: principal.botName, workspace, action, grantor: principal.user, now })
+}
+
+/**
+ * Does this person hold ANY active grant for this bot and action, in any
+ * workspace? Used only to decide whether a chat turn is OFFERED the grant
+ * tool; the call itself is still checked per card by `decideChatBotApproval`.
+ */
+export function hasAnyActiveGrant(db: Database, q: { botName: string; action: DelegationAction; grantorUserId: number; now?: Date }): boolean {
+  const column = ACTION_COLUMN[q.action]
+  if (!column) return false
+  try {
+    const row = db
+      .prepare(
+        `SELECT 1 FROM delegation_grants g JOIN users u ON u.id = g.granting_user_id
+          WHERE g.bot_name = ? AND g.${column} = 1 AND g.granting_user_id = ?
+            AND g.revoked_at IS NULL AND g.expires_at > ? AND u.role = 'admin' LIMIT 1`,
+      )
+      .get(q.botName, q.grantorUserId, sqliteUtc(q.now ?? new Date()))
+    return !!row
+  } catch {
+    return false
+  }
 }
 
 /** The one-line card/audit sentence for a delegated approval. */

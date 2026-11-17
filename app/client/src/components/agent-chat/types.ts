@@ -258,7 +258,7 @@ export const ACCEPTED_IMAGE_TYPES = ['image/png', 'image/jpeg', 'image/gif', 'im
 export const MAX_IMAGES_PER_MESSAGE = 4
 export const MAX_IMAGE_BYTES = 5 * 1024 * 1024
 
-export interface EmailDraftPayload { to: string; subject: string; body: string; in_reply_to?: string | null }
+export interface EmailDraftPayload { to: string; subject: string; body: string; in_reply_to?: string | null; remote_id?: string | null }
 export interface EventDraftPayload { title: string; start: string; end: string; with: string[]; note?: string | null }
 
 export interface ChatDraft {
