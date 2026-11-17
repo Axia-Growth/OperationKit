@@ -107,6 +107,7 @@ import { startDreamCycleScheduler } from './services/dream-cycle.js'
 import { startRoutineScheduler } from './services/routine-scheduler.js'
 import { resyncHighAgencyRoutines, startHighAgencyCronRefresh } from './services/agent-chat/high-agency.js'
 import { startBotMessageDelivery } from './services/agent-chat/bot-wake.js'
+import { startCardWakeDelivery } from './services/agent-chat/card-wakes.js'
 import { startHighAgencySupervisor } from './services/high-agency-supervisor-scheduler.js'
 import { seedExistingBotsOnce } from './services/agent-chat/bot-workspaces.js'
 import { listAgents } from './services/agent-chat/engine.js'
@@ -533,6 +534,10 @@ if (scratchVerdict.scratch) {
   // scratch copy never spends a model call. Kill switch:
   // settings.bot_messaging_enabled = '0'.
   startBotMessageDelivery()
+  // needs_agent card wakes (obj 901328): a card owned by an Operation Kit chat bot
+  // wakes that bot in its "Card wakes" thread instead of a webhook. Host only.
+  // Kill switch: settings.bot_card_wakes_enabled = '0'; per bot: its settings panel.
+  startCardWakeDelivery()
   // Workflow engine (obj 900638, docs/design/WORKFLOWS.md §4). Arms its 2s tick here
   // (never on a scratch instance — startFlowEngine re-checks); every tick is a
   // heartbeat-only no-op until settings.flows_enabled = '1' (default '0' until B4).

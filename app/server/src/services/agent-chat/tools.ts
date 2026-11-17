@@ -49,6 +49,7 @@ import type { ChatLane } from './threads.js'
 import { fullAccessActive, fullAccessAnywhere, protectedCardRefusal, refuseExclusion } from './bot-full-access.js'
 import { exclusionGate, type OutboundCall } from './full-access-exclusions.js'
 import { FULL_ACCESS_FNS, fullAccessToolSpecs, runFullAccessTool, withFullAccess, type FullAccessHost } from './full-access-tools.js'
+import { runCardWakeTool, type CardWakeScope } from './card-wake-tools.js'
 import { CARD_SANDBOX_FNS, cardSandboxToolSpecs, runCardSandboxTool } from './card-sandbox-tools.js'
 import { CARD_BROWSER_FNS, cardBrowserToolSpecs, runCardBrowserTool } from './card-browser-tools.js'
 import {
@@ -95,6 +96,13 @@ export interface ToolContext {
   botWake?: { conversationId: number; depth: number }
   /** obj 900972: how a Full access tool starts or messages a card. Tests pass a stub; the host default uses the internal routes. */
   fullAccessHost?: FullAccessHost
+  /**
+   * obj 901328: set when this turn is a needs_agent CARD WAKE (card-wakes.ts).
+   * The turn then has ONLY the own-card tools (card-wake-tools.ts): runChatTool
+   * refuses every other tool name, so a wake can never reach the board-wide or
+   * Full access tools, whatever the model asks for.
+   */
+  cardWake?: CardWakeScope
 }
 
 /** What the chat UI shows for a tool call (drafts get buttons, cards get a status chip). */
@@ -1052,6 +1060,8 @@ function s(args: Record<string, unknown>, key: string, required = false): string
  */
 export async function runChatTool(ctxIn: ToolContext, fnName: string, args: Record<string, unknown>): Promise<ToolOutcome> {
   // obj 900948: knowledge folders resolved for this KB's layout (workspaces/<ws>/…).
+  // obj 901328: a card wake is confined to the own-card tools, before anything else.
+  if (ctxIn.cardWake) return runCardWakeTool(ctxIn, fnName, args)
   const ctx = withKbFolders(ctxIn)
   // obj 900972: the Full access tool family. Checked again inside, on every call.
   if (FULL_ACCESS_FNS.has(fnName)) return runFullAccessTool(ctx, fnName, args)

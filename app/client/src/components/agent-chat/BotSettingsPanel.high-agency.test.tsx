@@ -89,6 +89,7 @@ function serve(url: string, method: string, body: Record<string, unknown> | null
       workspace_options: [{ slug: 'your-org', name: 'Example Growth' }, { slug: 'operationkit', name: 'Operation Kit' }],
     }, method === 'POST' ? 201 : 200)
   }
+  if (url.includes('/card-wakes')) return json({ card_wakes: { slug: 'cto', enabled: true, is_default: true, updated_at: null, install_enabled: true, thread_title: 'Card wakes' }, recent: [] })
   if (url.includes('/delegations')) return json({ bot: null, workspace_options: [], grants: [], can_manage: false })
   if (url.endsWith('/config')) {
     return json({ agent: { ...CTO, model: (body?.model as string) ?? null, config: method === 'DELETE' ? null : { ...body, updated_by: 'operator', updated_at: '' } } })

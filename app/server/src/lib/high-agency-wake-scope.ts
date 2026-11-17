@@ -128,6 +128,18 @@ export type WakeCardRefusal = 'not_found' | 'other_workspace' | 'not_owned'
 
 /** May this wake act on card `targetId`? Its bot must own it, in the wake's workspace. */
 export function wakeMayActOnCard(wake: HighAgencyWake, targetId: number, db: Database.Database): { ok: true } | { ok: false; reason: WakeCardRefusal } {
+  return botMayActOnOwnCard(wake, targetId, db)
+}
+
+/**
+ * The own-card gate itself, for any scoped bot turn (obj 901328): a High Agency
+ * wake above, and the needs_agent card wake (services/agent-chat/card-wakes.ts).
+ * The bot (by chat slug) must own card `targetId` by `cardOwnerBot`, and the
+ * card must sit in `scope.workspace`. Nothing else is consulted, so the two
+ * kinds of wake cannot drift apart.
+ */
+export function botMayActOnOwnCard(scope: { slug: string; workspace: string }, targetId: number, db: Database.Database): { ok: true } | { ok: false; reason: WakeCardRefusal } {
+  const wake = scope
   try {
     const row = db
       .prepare('SELECT id, workspace, owner_bot, agent_context, deleted_at FROM objectives WHERE id = ?')

@@ -86,6 +86,9 @@ export interface ChatMessageRow {
      * message when a reload returns it mid-turn.
      */
     client_msg_id?: string
+    /** obj 901328: the card wake this row belongs to ("Card wakes" thread). */
+    card_wake_id?: number
+    need?: string
   } | null
   /** Images attached to this message (obj 900157). Metadata only — never bytes. */
   images: StoredImage[]
@@ -220,7 +223,8 @@ export function listMessages(
   return withImages(rows.map(mapRow))
 }
 
-function addMessage(
+/** Store one row in a lane. Exported for the card-wake drain (obj 901328), which writes into its own lane. */
+export function addMessage(
   userId: number,
   slug: string,
   m: Omit<ChatMessageRow, 'id' | 'created_at' | 'images'>,
