@@ -54,10 +54,29 @@ ADMIN_EMAIL=""
 
 # ── Who may open the site (Cloudflare Access) ─────────────────────────────────
 # Nobody reaches the sign-in page unless Cloudflare Access lets them through.
-# Comma-separated list of exact email addresses …
+# Comma-separated list of exact email addresses. This name-by-name list is the
+# default: only the people listed here (plus the teammates an admin adds later
+# in Settings → Users, see below) ever see the site at all.
 ACCESS_ALLOWED_EMAILS="alex.partner@example-capital.com"
-# … and/or a whole email domain (everyone @example-capital.com). Optional.
+# … and/or a whole email domain (everyone @example-capital.com). Optional, and
+# left empty by default. Neither the installer nor the app ever adds a domain
+# rule on its own; only a value you type here does.
 ACCESS_ALLOWED_EMAIL_DOMAIN=""
+
+# Adding teammates later: once the install is up, an admin adds people in
+# Settings → Users. Cloudflare Access is a SECOND door in front of the app, so
+# a new teammate is still turned away until their email is on the Access list
+# too. The way to make that automatic is the Cloudflare sign-in sync token: a
+# Cloudflare token with ONE permission (Account → Access: Apps and Policies →
+# Edit). The client's admin pastes it into Settings → Users → Cloudflare
+# sign-in sync (stored encrypted, never shown again, no restart), or you hand
+# it over at install time as CLOUDFLARE_ACCESS_SYNC_TOKEN in the hand-over
+# file. With it, the app adds the one address when the user is created and
+# takes it out again when the user is deleted. It only ever touches THIS
+# install's own "Allowed people" policy, never the addresses listed above, and
+# never a domain rule.
+# Without that token nothing breaks: Settings → Users simply shows each new
+# person as "blocked at Cloudflare" until someone adds them in the dashboard.
 
 # How people prove who they are at the Cloudflare door:
 #   otp        — a one-time code is emailed to them (works everywhere, no setup)

@@ -229,6 +229,21 @@ export function actionErrorMessage(err: unknown, fallback: string): string {
 }
 
 /**
+ * The server's own reason for a refused request (obj 901196). A 4xx whose JSON
+ * body carries `error` states a rule the person can act on ("Agent 'general' is
+ * not in workspace 'x' pool …"), so a form shows it instead of a generic line.
+ * Null for a 5xx, a network failure, or an error without server text.
+ */
+export function serverReason(err: unknown): string | null {
+  if (!err || typeof err !== 'object') return null
+  const status = (err as { status?: unknown }).status
+  if (typeof status !== 'number' || status < 400 || status >= 500) return null
+  const body = (err as { body?: unknown }).body
+  const msg = body && typeof body === 'object' ? (body as { error?: unknown }).error : null
+  return typeof msg === 'string' && msg.trim() ? msg.trim() : null
+}
+
+/**
  * A plain sentence for a failure, plus the technical detail to show collapsed.
  * `friendlyError(500)` → "Something went wrong on our side. Try again in a moment."
  * Accepts an HTTP status, an Error, a Response-like `{status}` or a string such

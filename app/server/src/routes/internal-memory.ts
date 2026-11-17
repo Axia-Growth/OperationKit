@@ -14,6 +14,7 @@
  * an allowlist (`ARTIFACT.md`, the scratch file, `live/<name>`), enforced in
  * `services/live-artifacts.ts` together with the size cap and containment.
  */
+import { withSandboxCardGuard } from '../lib/card-session-scope.js'
 import type { Request, Response, Router } from 'express'
 import { requireBoardPrincipal } from '../middleware/internal-board-auth.js'
 import { sessionTokenFromHeaders } from '../lib/session-trust.js'
@@ -49,7 +50,7 @@ function sendError(res: Response, err: unknown, what: string): void {
 }
 
 export function registerInternalMemoryRoutes(router: Router): void {
-  router.put('/objectives/:id/memory/file', (req, res) => {
+  router.put('/objectives/:id/memory/file', withSandboxCardGuard((req, res) => {
     const id = ownCard(req, res)
     if (id === null) return
     const body = (req.body ?? {}) as { path?: unknown; content?: unknown }
@@ -58,9 +59,9 @@ export function registerInternalMemoryRoutes(router: Router): void {
     } catch (err) {
       sendError(res, err, 'write')
     }
-  })
+  }))
 
-  router.get('/objectives/:id/memory/file', (req, res) => {
+  router.get('/objectives/:id/memory/file', withSandboxCardGuard((req, res) => {
     const id = ownCard(req, res)
     if (id === null) return
     try {
@@ -68,5 +69,5 @@ export function registerInternalMemoryRoutes(router: Router): void {
     } catch (err) {
       sendError(res, err, 'read')
     }
-  })
+  }))
 }

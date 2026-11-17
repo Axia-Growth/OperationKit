@@ -5,7 +5,7 @@ import { defineConfig } from '@playwright/test'
 
 const desktop = { width: 1440, height: 900 }
 const narrow = { width: 390, height: 844 }
-const apiOnly = /api\.spec\.ts$/
+const apiOnly = /(api|jail)\.spec\.ts$/
 
 export default defineConfig({
   testDir: '.',
@@ -19,7 +19,7 @@ export default defineConfig({
   // Project names are "<theme>-<width>"; helpers.ts reads the theme from the name.
   // Scoping is done here, never by opting out inside a test (scripts/test-integrity.py):
   //  - tests tagged @desktop run in the desktop projects only, @narrow in the narrow ones;
-  //  - api.spec.ts does not depend on theme or width, so it runs once, in light-desktop.
+  //  - api.spec.ts and jail.spec.ts do not depend on theme or width, so they run once, in light-desktop.
   projects: [
     { name: 'light-desktop', grepInvert: /@narrow/, use: { colorScheme: 'light', viewport: desktop } },
     { name: 'dark-desktop', grepInvert: /@narrow/, testIgnore: apiOnly, use: { colorScheme: 'dark', viewport: desktop } },

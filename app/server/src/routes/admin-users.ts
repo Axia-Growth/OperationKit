@@ -5,7 +5,23 @@ import { requireAuth, requireAdmin, type AuthRequest } from '../middleware/auth.
 import { sendInvite, sendTempPassword } from '../services/mailer/account-emails.js'
 import type { SendResult } from '../services/mailer/types.js'
 import { rateLimit } from '../services/file-access.js'
+import {
+  cfAccessApplies,
+  cfAccessStatuses,
+  cfAccessSyncHealth,
+  clearCfAccessStatusCache,
+  syncUserAccessEmail,
+  type CfAccessStatus,
+} from '../services/cf-access-user-sync.js'
+import {
+  cfAccessTokenStatus,
+  clearCfAccessToken,
+  looksLikeCfToken,
+  saveCfAccessToken,
+} from '../services/cf-access-token.js'
+import { authenticatedViaCookie } from '../lib/message-provenance.js'
 import type {
+  CfAccessSyncState,
   CreateUserRequest,
   ResetPasswordRequest,
   User,
@@ -53,6 +69,22 @@ function emailOutcome(r: SendResult | null): { sent: boolean; error?: string; no
 const EMAIL = /^[^\s@,]+@[^\s@,]+\.[^\s@,]+$/
 
 /**
+ * The Cloudflare Access badge for one user (obj 900023). A user with no
+ * sign-in email can never be matched at the Cloudflare door, so they are
+ * blocked by definition — unless this install is not behind Access at all, in
+ * which case there is no second door and nothing to badge.
+ */
+function cfAccessForUser(
+  statuses: Map<string, CfAccessStatus>,
+  email: string | null,
+  applies: boolean,
+): CfAccessStatus {
+  if (!applies) return { status: 'not_applicable', detail: 'access_not_configured' }
+  const key = (email || '').trim().toLowerCase()
+  return statuses.get(key) ?? { status: 'blocked', detail: 'no_email' }
+}
+
+/**
  * Normalise a sign-in email (obj 720332). Behind Cloudflare Access the verified
  * Access email picks the user, so it must be unique (case-insensitive).
  * Returns { email } (null = clear) or { error }.
@@ -66,8 +98,11 @@ function parseEmail(raw: unknown, selfId: number | null): { email: string | null
   return { email }
 }
 
-// GET /api/admin/users — list every user with their workspace memberships
-router.get('/', (_req: AuthRequest, res) => {
+// GET /api/admin/users — list every user with their workspace memberships.
+// Also carries `cloudflare_access` per user (obj 900023): behind Cloudflare
+// Access the app is only the second door, so an admin needs to see whether
+// Cloudflare will actually let this person in. One Cloudflare read per list.
+router.get('/', async (_req: AuthRequest, res) => {
   const db = getDb()
   const users = db
     .prepare('SELECT id, username, role, email, created_at FROM users ORDER BY username')
@@ -102,12 +137,91 @@ router.get('/', (_req: AuthRequest, res) => {
     })
   }
 
+  // Never fatal: a missing or under-scoped Cloudflare token degrades to a
+  // "blocked at Cloudflare" badge, it does not break the Users screen.
+  let statuses: Map<string, CfAccessStatus>
+  let applies = false
+  try {
+    applies = cfAccessApplies()
+    statuses = applies ? await cfAccessStatuses(users.map(u => u.email)) : new Map()
+  } catch {
+    statuses = new Map()
+  }
+
   res.json(
     users.map(u => ({
       ...u,
       workspaces: byUser.get(u.id) ?? [],
+      cloudflare_access: cfAccessForUser(statuses, u.email, applies),
     }))
   )
+})
+
+/**
+ * Cloudflare sign-in sync state (obj 900023): is the install behind Access, is
+ * a sync token set (and from Settings or the env), and does it work. NEVER the
+ * token — there is no route that reads it back, by design.
+ */
+async function cfSyncState(): Promise<CfAccessSyncState> {
+  const applies = cfAccessApplies()
+  const token = cfAccessTokenStatus()
+  if (!applies || !token.configured) {
+    return { applies, configured: token.configured, source: token.source, updated_at: token.updated_at, health: null }
+  }
+  const health = await cfAccessSyncHealth()
+  return {
+    applies,
+    configured: true,
+    source: token.source,
+    updated_at: token.updated_at,
+    health: health.ok ? 'ok' : health.reason,
+  }
+}
+
+/** Saving or removing the token rewrites who may open the site: web-UI admins only. */
+function requireCookieAdmin(req: AuthRequest, res: Response): boolean {
+  if (authenticatedViaCookie(req)) return true
+  res.status(403).json({ error: 'Only an admin signed in to the web app can change the Cloudflare sync token.' })
+  return false
+}
+
+// GET /api/admin/users/cloudflare-sync — status only, never the token.
+router.get('/cloudflare-sync', async (_req: AuthRequest, res) => {
+  try {
+    res.json(await cfSyncState())
+  } catch {
+    res.json({ applies: false, configured: false, source: null, updated_at: null, health: null } satisfies CfAccessSyncState)
+  }
+})
+
+// PUT /api/admin/users/cloudflare-sync  body: { token }
+// Stores the token encrypted (secrets store, server-only) and uses it from the
+// next sync on — no restart. The response carries the state, not the token.
+router.put('/cloudflare-sync', adminWriteLimited, async (req: AuthRequest, res) => {
+  if (!requireCookieAdmin(req, res)) return
+  const token = (req.body as { token?: unknown } | undefined)?.token
+  if (!looksLikeCfToken(token)) {
+    // Never echo what was sent: it may be a real credential pasted wrongly.
+    return res.status(400).json({ error: 'That does not look like a Cloudflare API token. Paste the token value Cloudflare showed when you created it.' })
+  }
+  try {
+    saveCfAccessToken(token, req.user?.id ?? null)
+  } catch {
+    return res.status(500).json({ error: 'Could not store the token. Check that the secrets store is set up on this install.' })
+  }
+  clearCfAccessStatusCache()
+  console.log(`[cf-access-sync] sync token saved in Settings by user ${req.user?.id ?? '?'}`)
+  res.json(await cfSyncState())
+})
+
+// DELETE /api/admin/users/cloudflare-sync — forget the stored token. An
+// OK_CF_ACCESS_API_TOKEN env fallback, if the installer set one, applies again.
+router.delete('/cloudflare-sync', async (req: AuthRequest, res) => {
+  if (!requireCookieAdmin(req, res)) return
+  clearCfAccessToken(req.user?.id ?? null)
+  clearCfAccessStatusCache()
+  console.log(`[cf-access-sync] sync token removed in Settings by user ${req.user?.id ?? '?'}`)
+  res.json(await cfSyncState())
 })
 
 // POST /api/admin/users  body: { username, password, role?, email? }
@@ -158,6 +272,9 @@ router.post('/', adminWriteLimited, async (req: AuthRequest, res) => {
     if (invite.ok) db.prepare('UPDATE users SET must_change_password = 1 WHERE id = ?').run(user.id)
   }
 
+  // obj 900023: let them through the Cloudflare door too, when this install can.
+  await syncUserAccessEmail(null, parsed.email)
+
   res.status(201).json({ ...user, invite_email: emailOutcome(sendEmail ? invite ?? { ok: false, provider: null, code: 'invalid', error: 'This user has no email address' } : null) })
 })
 
@@ -200,7 +317,7 @@ router.post('/:id/reset-password', adminWriteLimited, async (req: AuthRequest, r
 
 // DELETE /api/admin/users/:id — kill switch; cascades to user_workspaces.
 // Refuses to delete the caller's own account.
-router.delete('/:id', (req: AuthRequest, res) => {
+router.delete('/:id', async (req: AuthRequest, res) => {
   const idParam = req.params.id
   const userId = parseInt(typeof idParam === 'string' ? idParam : '', 10)
   if (Number.isNaN(userId)) {
@@ -212,16 +329,20 @@ router.delete('/:id', (req: AuthRequest, res) => {
     return
   }
   const db = getDb()
+  const before = db.prepare('SELECT email FROM users WHERE id = ?').get(userId) as { email: string | null } | undefined
   const result = db.prepare('DELETE FROM users WHERE id = ?').run(userId)
   if (result.changes === 0) {
     res.status(404).json({ error: 'User not found' })
     return
   }
+  // obj 900023: revoke at the Cloudflare door as well, so a deleted user is
+  // actually gone rather than still able to reach the app's sign-in page.
+  await syncUserAccessEmail(before?.email ?? null, null)
   res.json({ ok: true })
 })
 
 // PATCH /api/admin/users/:id  body: { role?, email? }  (email null/'' clears it)
-router.patch('/:id', (req: AuthRequest, res) => {
+router.patch('/:id', async (req: AuthRequest, res) => {
   const idParam = req.params.id
   const userId = parseInt(typeof idParam === 'string' ? idParam : '', 10)
   if (Number.isNaN(userId)) {
@@ -240,10 +361,13 @@ router.patch('/:id', (req: AuthRequest, res) => {
     return
   }
   const db = getDb()
-  if (!db.prepare('SELECT id FROM users WHERE id = ?').get(userId)) {
+  const existing = db.prepare('SELECT id, email FROM users WHERE id = ?').get(userId) as
+    { id: number; email: string | null } | undefined
+  if (!existing) {
     res.status(404).json({ error: 'User not found' })
     return
   }
+  let emailChange: { before: string | null; after: string | null } | null = null
   if (hasEmail) {
     const parsed = parseEmail(body.email, userId)
     if ('error' in parsed) {
@@ -251,8 +375,12 @@ router.patch('/:id', (req: AuthRequest, res) => {
       return
     }
     db.prepare('UPDATE users SET email = ? WHERE id = ?').run(parsed.email, userId)
+    emailChange = { before: existing.email, after: parsed.email }
   }
   if (role !== undefined) db.prepare('UPDATE users SET role = ? WHERE id = ?').run(role, userId)
+  // obj 900023: an email change moves the allow entry — the new address in, the
+  // old one out — so the Cloudflare door tracks the app's idea of this person.
+  if (emailChange) await syncUserAccessEmail(emailChange.before, emailChange.after)
   const user = db
     .prepare('SELECT id, username, role, email, created_at FROM users WHERE id = ?')
     .get(userId) as User

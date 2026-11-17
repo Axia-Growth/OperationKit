@@ -36,6 +36,8 @@ jobs:
         run: bash install/test/api-bypass-paths-test.sh
       - name: Browser-integrity exception stays narrow (scope, matching, 1010 vs 401)
         run: bash install/test/bic-lib-test.sh
+      - name: Allowed-people merge keeps app-added teammates (obj 900023)
+        run: bash install/test/access-policy-lib-test.sh
       - name: Cloudflare API logic against a mock
         run: bash install/test/cloudflare-mock-test.sh
       - name: Claude sign-in (link + code) against a mock

@@ -99,7 +99,7 @@ describe('starter pack: knowledge-import', () => {
     expect(r.status).toBe(401)
   })
 
-  it('switches on: agent registered + pooled, setup hook ran, library folder readable', async () => {
+  it('switches on: agent registered, open pool left open, setup hook ran, library folder readable', async () => {
     const dry = await fetch(`${base}/api/internal/starter-packs/${PACK_ID}/enable`, { method: 'POST', headers: INTERNAL, body: JSON.stringify({ workspace: 'acme-services', dry_run: true }) })
     expect(dry.status).toBe(200)
     expect(getDb().prepare("SELECT value FROM settings WHERE key = ?").get(`starter_pack:${PACK_ID}`)).toBeUndefined()
@@ -111,7 +111,10 @@ describe('starter pack: knowledge-import', () => {
     expect(getDb().prepare('SELECT slug FROM agents WHERE slug = ?').get('kb-librarian')).toBeTruthy()
     expect(fs.existsSync(path.join(process.env.AI_WORKSPACE_DIR!, 'agents/kb-librarian.md'))).toBe(true)
     const ws = getWorkspace('acme-services')!
-    expect(ws.default_agent_pool).toContain('kb-librarian')
+    // The workspace pool was open (any bot): it stays open, so kb-librarian is
+    // allowed without locking out every other bot (obj 901196).
+    expect(ws.default_agent_pool).toEqual([])
+    expect(body.steps.join('\n')).toContain('left open')
     expect(ws.doc_read_roots).toContain(path.resolve(KB))
     expect(ws.doc_write_roots).toContain(path.resolve(KB))  // imported notes are editable on the Knowledge base page
     expect(fs.existsSync(path.join(KB, 'sources/inbox'))).toBe(true)

@@ -20,6 +20,16 @@ WORK="$(mktemp -d "${E2E_WORK_ROOT:-${TMPDIR:-/tmp}}/ok-app-audit.XXXXXX")"
 export E2E_BASE_URL="http://127.0.0.1:$PORT"
 export E2E_ADMIN_USER=e2e-admin E2E_MEMBER_USER=e2e-member E2E_PASS="${E2E_PASS:-e2e-$(date +%s)-pass}"
 export E2E_SEED_FILE="$WORK/seed.json"
+# jail.spec.ts (card #901195): the server treats THIS machine's own non-loopback
+# IPv4 as the jail network (that one /32 only), so a request sent to it arrives
+# the way a call from inside a card's sandbox does. The JWT secret is a throwaway.
+export E2E_JWT_SECRET=scratch-only-e2e
+JAIL_IP="${E2E_JAIL_PEER_IP:-$(hostname -I 2>/dev/null | tr ' ' '\n' | grep -E '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$' | grep -vE '^127\.|\.0\.1$' | head -1 || true)}"
+JAIL_ENV=()
+if [ -n "$JAIL_IP" ]; then
+  export E2E_JAIL_BASE_URL="http://$JAIL_IP:$PORT"
+  JAIL_ENV=(INTERNAL_TRUSTED_PEER_CIDRS="$JAIL_IP/32")
+fi
 # A brand name that is NOT the default, so a hard-coded product name shows up as a failure.
 export E2E_BRAND_NAME="${E2E_BRAND_NAME:-Acme Ops}"
 
@@ -36,13 +46,13 @@ mkdir -p "$WORK/home" "$WORK/vault" "$WORK/agents" "$WORK/ai-workspace" "$WORK/p
 node "$HERE/seed.mjs" files "$WORK/vault" "$WORK/agents"
 
 setsid env -i PATH="$PATH" HOME="$WORK/home" \
-  CC_SCRATCH_SERVER=1 PORT="$PORT" DB_PATH="$WORK/cc.db" JWT_SECRET=scratch-only-e2e \
+  CC_SCRATCH_SERVER=1 PORT="$PORT" DB_PATH="$WORK/cc.db" JWT_SECRET="$E2E_JWT_SECRET" "${JAIL_ENV[@]}" \
   SECRETS_KEK_PROVIDER=env SECRETS_MASTER_KEY="$(head -c 32 /dev/urandom | base64)" \
   CC_ACCOUNT_ROUTER_STATE_FILE="$WORK/account-router-state.json" CC_RATE_LIMIT_LOG="$WORK/rate-limit.jsonl" \
   CC_SEAT_HOME_ROOT="$WORK/seats" CC_LEGACY_CODEX_HOME="$WORK/no-codex" GROK_HOME_DIR="$WORK/no-grok" \
   SECOND_BRAIN_ROOT="$WORK/vault" AGENT_FILES_DIR="$WORK/agents" AGENT_CHAT_PROVIDER=demo \
   AI_WORKSPACE_DIR="$WORK/ai-workspace" PROJECTS_DIR="$WORK/projects" USER_HOME="$WORK/home" \
-  TRANSCRIPT_DIR="$WORK/transcripts" ASSISTANT_DIR="$WORK/assistant" SECOND_BRAIN_DIR="$WORK/vault" \
+  OBJECTIVE_MEMORY_ROOT="$WORK/objective-memory" TRANSCRIPT_DIR="$WORK/transcripts" ASSISTANT_DIR="$WORK/assistant" SECOND_BRAIN_DIR="$WORK/vault" \
   OK_BRAND_NAME="${E2E_BRAND_NAME}" \
   bash -c 'cd "$0/app/server" && exec npx tsx src/index.ts' "$REPO" > "$WORK/server.log" 2>&1 &
 SRV=$!

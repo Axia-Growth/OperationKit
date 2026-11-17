@@ -221,6 +221,68 @@ export interface UserWorkspace {
   objective_visibility?: ObjectiveVisibility
 }
 
+/**
+ * Whether Cloudflare Access will let this user through the front door (obj 900023).
+ *
+ * Behind Cloudflare Access the app is the SECOND door: Cloudflare checks the
+ * email first and shows "That account does not have access" to anyone who is
+ * not on the Access application's allow policy. So an admin who has just added
+ * a teammate in Settings -> Users needs to know whether that teammate can
+ * actually sign in yet.
+ *
+ *   can_sign_in     the allow policy covers this email (directly or by domain)
+ *   blocked         it does not, or we cannot confirm that it does — which for
+ *                   the admin means the same thing: do not promise it works
+ *   not_applicable  this install is not behind Cloudflare Access at all
+ */
+export type CfAccessUserStatus = 'can_sign_in' | 'blocked' | 'not_applicable'
+
+/** Fixed vocabulary; never carries a credential, a URL or a Cloudflare id. */
+export type CfAccessStatusDetail =
+  | 'access_not_configured'
+  | 'allowed_directly'
+  | 'allowed_by_domain'
+  | 'no_email'
+  | 'not_allowed'
+  | 'sync_not_configured'
+  | 'not_configured'
+  | 'forbidden'
+  | 'app_not_found'
+  | 'policy_not_found'
+  | 'policy_refused'
+  | 'unreachable'
+  | 'cloudflare_error'
+
+export interface CfAccessStatus {
+  status: CfAccessUserStatus
+  detail: CfAccessStatusDetail
+}
+
+/**
+ * GET/PUT/DELETE /api/admin/users/cloudflare-sync (obj 900023). Describes the
+ * Cloudflare Access sync token WITHOUT ever carrying it: the token is write-only.
+ */
+export interface CfAccessSyncState {
+  /** This install is behind Cloudflare Access (there is a second door at all). */
+  applies: boolean
+  /** A sync token is set, in Settings or via OK_CF_ACCESS_API_TOKEN. */
+  configured: boolean
+  source: 'settings' | 'env' | null
+  /** When the Settings token was last saved; null for env or none. */
+  updated_at: string | null
+  /** 'ok' when the token can read the Allowed people policy; else the reason. Null = not checked. */
+  health:
+    | 'ok'
+    | 'not_configured'
+    | 'forbidden'
+    | 'app_not_found'
+    | 'policy_not_found'
+    | 'policy_refused'
+    | 'unreachable'
+    | 'cloudflare_error'
+    | null
+}
+
 export interface User {
   id: number
   username: string
@@ -240,6 +302,11 @@ export interface User {
    * /auth/logout with 403 `password_change_required` until it is replaced.
    */
   must_change_password?: boolean
+  /**
+   * Cloudflare Access sign-in status, on GET /api/admin/users only (obj 900023).
+   * Absent on installs that never computed it.
+   */
+  cloudflare_access?: CfAccessStatus
   created_at: string
 }
 

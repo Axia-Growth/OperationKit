@@ -577,10 +577,24 @@ export function buildJailAttachCommand(id: string | number, sessionId: string): 
   return `docker exec -it ${jailName(id)} tmux attach-session -t ${sessionId}`
 }
 
+/**
+ * obj 901195 — server credentials that must NEVER enter a jail, whatever the
+ * secrets store or the spawn env holds (e.g. a stored copy passed through in
+ * `secrets_session_env_mode='migration'`). A jailed card reaches its own card's
+ * internal routes with its `CC_SESSION_TOKEN` (lib/card-session-scope.ts); holding
+ * either of these would make it board-wide on `/api/internal`.
+ */
+export const JAIL_FORBIDDEN_ENV: readonly string[] = [
+  'INTERNAL_API_SECRET',
+  'OBJECTIVES_API_TOKEN',
+  'OBJECTIVES_API_TOKEN_FILE',
+]
+
 /** Serialise a scoped env bag to docker `--env-file` format (KEY=value, one per line). */
 export function renderEnvFile(env: Record<string, string>): string {
   return Object.entries(env)
     .filter(([k]) => /^[A-Za-z_][A-Za-z0-9_]*$/.test(k))
+    .filter(([k]) => !JAIL_FORBIDDEN_ENV.includes(k.toUpperCase()))
     // docker --env-file has no quoting/escaping; a newline would inject a var.
     .map(([k, v]) => `${k}=${String(v ?? '').replace(/[\r\n]+/g, ' ')}`)
     .join('\n') + '\n'
