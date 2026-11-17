@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach, type Mock } from 'vitest'
 import { createRoot, type Root } from 'react-dom/client'
 import { MemoryRouter, Routes, Route } from 'react-router-dom'
 
@@ -236,7 +236,7 @@ describe('switching bots (obj 900865)', () => {
     await settle()
     // Send to alpha, holding the server's answer.
     let answer!: (r: Response) => void
-    const fetchMock = globalThis.fetch as unknown as ReturnType<typeof vi.fn>
+    const fetchMock = globalThis.fetch as unknown as Mock<(url: string, init?: RequestInit) => Promise<Response>>
     const inner = fetchMock.getMockImplementation()!
     fetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
       if (url === '/api/agent-chat/agents/alpha/messages' && init?.method === 'POST') {
