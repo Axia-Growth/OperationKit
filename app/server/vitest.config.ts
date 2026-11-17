@@ -14,15 +14,17 @@ export default defineConfig({
     // command-center container spawns ~30 forks (~2GB each), exhausting the
     // host's 62GB RAM + swap and starving the live backend -> site-wide 502.
     // Cap to 2 concurrent forks so a hung/orphaned run leaves 2 workers, not 32.
+    // Vitest 4+ removed `poolOptions` and `minWorkers` (they are silently
+    // ignored); the top-level `maxWorkers` is now the one cap for the fork pool.
     pool: "forks",
-    poolOptions: { forks: { minForks: 1, maxForks: 2 } },
-    minWorkers: 1,
     maxWorkers: 2,
     // obj-2376: the canary fixtures under fixtures/canaries/ are KNOWN-BAD
     // artifacts (incl. a deliberately-named *.test.mjs anti-signal file). They are
     // run by the harness via runFloor, NOT by vitest — exclude them from collection
     // so the default glob doesn't try to load a fixture as a real suite.
-    exclude: [...configDefaults.exclude, '**/fixtures/**'],
+    // Vitest 4+ dropped `**/dist/**` from configDefaults.exclude; keep it out so
+    // `tsc`'s compiled copies of the tests in dist/ are never collected after a build.
+    exclude: [...configDefaults.exclude, '**/dist/**', '**/fixtures/**'],
     // app/shared has no test runner of its own; its pure modules (e.g. the
     // okflow/1 validator in shared/flow/) are tested from here.
     include: ['**/*.{test,spec}.?(c|m)[jt]s?(x)', '../shared/**/*.test.ts'],

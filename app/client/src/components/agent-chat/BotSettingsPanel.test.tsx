@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach, type Mock } from 'vitest'
 import { createRoot, type Root } from 'react-dom/client'
 import { act } from 'react'
 import { BotSettingsPanel } from './BotSettingsPanel'
@@ -66,11 +66,11 @@ const WORKSPACE_ACCESS = {
 let host: HTMLDivElement
 let root: Root
 let requests: { url: string; method: string; body: unknown }[] = []
-let onSaved: ReturnType<typeof vi.fn>
+let onSaved: Mock<(agent: ChatAgentInfo) => void>
 
 beforeEach(() => {
   requests = []
-  onSaved = vi.fn()
+  onSaved = vi.fn<(agent: ChatAgentInfo) => void>()
   vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
     // The High Agency section (obj 900748) loads its own setting; it has its own
     // test file, so its calls are answered here and kept out of `requests`.
