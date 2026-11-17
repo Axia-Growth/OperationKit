@@ -34,6 +34,7 @@ import { initAgentControlSchema } from './schema/agent-control.js'
 import { initAgentChatSchema } from './schema/agent-chat.js'
 import { initBotJobsSchema } from './schema/bot-jobs.js'
 import { initBotMessagesSchema } from './schema/bot-messages.js'
+import { initBotCardWakesSchema } from './schema/bot-card-wakes.js'
 import { initAgentWebhooksSchema } from './schema/agent-webhooks.js'
 import { initEmailSchema } from './schema/email.js'
 import { initAccountabilitySchema } from './schema/accountability.js'
@@ -1107,6 +1108,8 @@ export function initDb(): Database.Database {
   initBotMessagesSchema(db)
   // Agent-key webhooks outbox (obj 719278) — reads objective_events, so after it.
   initAgentWebhooksSchema(db)
+  // needs_agent card wakes for in-product chat bots (obj 901328). Additive only.
+  initBotCardWakesSchema(db)
   // One-time email sign-in links (obj 900497). Additive CREATE TABLE only.
   initEmailSchema(db)
   // Accountability record + the one decision queue (obj 900367, Stage 1).

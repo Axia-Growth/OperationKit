@@ -83,6 +83,7 @@ import botWorkRouter from './agent-chat-bot-work.js'
 import { markFeedMessage } from '../services/agent-chat/bot-attention.js'
 import { resolveNeedsYouMessages } from '../services/decision-queue.js'
 import { isHighAgencyActivityCard } from '../services/agent-chat/high-agency-cards.js'
+import { CARD_WAKES_THREAD_TITLE, cardWakesGloballyEnabled, getCardWakeSwitch, setCardWakeSwitch } from '../services/agent-chat/card-wake-routing.js'
 
 /**
  * Built-in agent chat (obj 719987) — /api/agent-chat
@@ -106,6 +107,8 @@ import { isHighAgencyActivityCard } from '../services/agent-chat/high-agency-car
  *   GET    /agents/:slug/high-agency   this bot's High Agency setting, wake times and last wake (obj 900748)
  *   PUT    /agents/:slug/high-agency   admin: High Agency on/off, level 1-10 (obj 900794), workspace, permissions
  *   POST   /agents/:slug/high-agency/wake  admin: one wake now (works while off, to try it)
+ *   GET    /agents/:slug/card-wakes    needs_agent card wakes: on/off (default on) + recent wakes (obj 901328)
+ *   PUT    /agents/:slug/card-wakes    admin: {enabled} — turn this bot's card wakes off / back on
  *   GET    /agents/:slug/workspaces    the bot's workspace access list (obj 900797)
  *   PUT    /agents/:slug/workspaces    admin: set the whole list (restricts the bot)
  *   POST   /agents/:slug/workspaces    admin: grant one workspace
@@ -487,6 +490,52 @@ router.post('/agents/:slug/high-agency/wake', async (req: AuthRequest, res) => {
     console.error('[agent-chat] high agency wake failed:', err instanceof Error ? err.message : err)
     res.status(500).json({ error: 'The wake failed. Try again.' })
   }
+})
+
+// ── needs_agent card wakes (obj 901328): per-bot switch, default ON ──
+
+function cardWakesPayload(req: AuthRequest, slug: string) {
+  const sw = getCardWakeSwitch(slug)
+  const mine = req.user?.role === 'admin' ? null : callerWorkspaceFilter(req)
+  let recent: Array<Record<string, unknown>> = []
+  try {
+    recent = (getDb()
+      .prepare(
+        `SELECT id, objective_id, workspace, need_kind, status, skip_reason, last_error, thread_id, created_at, finished_at
+           FROM bot_card_wakes WHERE lower(slug) = lower(?) ORDER BY id DESC LIMIT 50`,
+      )
+      .all(slug) as Array<Record<string, unknown>>)
+      .filter(r => !mine || mine.has(String(r.workspace)))
+      .slice(0, 20)
+  } catch { recent = [] }
+  return { card_wakes: { ...sw, install_enabled: cardWakesGloballyEnabled(), thread_title: CARD_WAKES_THREAD_TITLE }, recent }
+}
+
+router.get('/agents/:slug/card-wakes', (req: AuthRequest, res) => {
+  const a = agentOr404(req, res)
+  if (!a) return
+  res.json(cardWakesPayload(req, a.slug))
+})
+
+router.put('/agents/:slug/card-wakes', (req: AuthRequest, res) => {
+  if (!adminSessionOr403(req, res)) return
+  const a = agentOr404(req, res)
+  if (!a) return
+  const enabled = (req.body as { enabled?: unknown } | undefined)?.enabled
+  if (typeof enabled !== 'boolean') {
+    res.status(400).json({ error: 'enabled must be true or false' })
+    return
+  }
+  setCardWakeSwitch(a.slug, enabled, req.user!.id)
+  try {
+    logActivity({
+      project: 'operationkit',
+      event_type: 'decision',
+      title: `${a.name}: card wakes turned ${enabled ? 'on' : 'off'} by ${req.user!.username}`,
+      metadata: { kind: 'bot_card_wakes_switched', slug: a.slug, enabled },
+    })
+  } catch { /* the feed never decides the change */ }
+  res.json(cardWakesPayload(req, a.slug))
 })
 
 // ── Workspace access (obj 900797): which workspaces a global bot may work in ──

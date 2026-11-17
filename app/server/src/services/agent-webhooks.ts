@@ -62,6 +62,7 @@ import {
 import { isBlockedAddress, pinnedHttpsPost, resolveWebhookDestination, type PinnedPostInit } from './webhook-egress.js'
 import { resolveBot } from './bots/bot-registry.js'
 import { publicCardUrl } from '../lib/public-url.js'
+import { cardWakesGloballyEnabled, enqueueCardWake, resolveCardWakeRoute, type CardWakeRoute, type RouteOptions } from './agent-chat/card-wake-routing.js'
 
 export const CURSOR_SETTING = 'agent_webhook_cursor'
 export const MAX_ATTEMPTS = 5
@@ -374,6 +375,11 @@ interface EventJoinRow {
   /** obj 900372: set while the stall watchdog has the card flagged. */
   stall_reason?: string | null
   stalled_at?: string | null
+  /** obj 901328: the card's own fields the in-product card-wake route reads. */
+  card_key_id?: number | null
+  agent_context?: string | null
+  assigned_user_id?: number | null
+  created_by?: number | null
   key_id: number
   key_label: string
   key_workspaces: string | null
@@ -740,7 +746,7 @@ function writeCursor(db: Database.Database, v: number): void {
  * the current head — turning the feature on never replays 30 days of history.
  * Returns how many deliveries were queued.
  */
-export function enqueueAgentWebhookEvents(db: Database.Database = getDb(), now = new Date()): number {
+export function enqueueAgentWebhookEvents(db: Database.Database = getDb(), now = new Date(), opts: RouteOptions = {}): number {
   return db.transaction((): number => {
     const head = (db.prepare('SELECT COALESCE(MAX(id), 0) AS head FROM objective_events').get() as { head: number }).head
     const cursor = readCursor(db)
@@ -766,7 +772,8 @@ export function enqueueAgentWebhookEvents(db: Database.Database = getDb(), now =
     const cardCols = `e.id, e.objective_id, e.kind, e.from_value, e.to_value, e.detail, e.created_at,
               o.title, o.status, o.workspace, o.pr_url,
               o.has_blockers, o.ai_review_verdict, o.blocked_reason, o.needs_secret, o.deleted_at, o.owner_bot,
-              o.stalled_at, o.stall_reason`
+              o.stalled_at, o.stall_reason,
+              o.agent_key_id AS card_key_id, o.agent_context, o.assigned_user_id, o.created_by`
     const keyedSql = `SELECT ${cardCols},
               k.id AS key_id, k.label AS key_label, k.workspaces AS key_workspaces, w.events,
               u.role AS owner_role,
@@ -779,13 +786,18 @@ export function enqueueAgentWebhookEvents(db: Database.Database = getDb(), now =
         WHERE e.id > ? AND e.id <= ?`
     // Keyless cards (agent_key_id IS NULL) ride the SAME page, so the cursor and
     // batch semantics are unchanged; their recipient is resolved per row below.
+    // obj 901328: with in-product card wakes on, the NULL-key half covers EVERY
+    // card (one row per event), so a card owned by an Operation Kit chat bot is
+    // seen whether or not any webhook exists. Keyless webhook routing below still
+    // only acts on its own cards (card_key_id IS NULL), so nothing widens.
+    const cardWakesOn = cardWakesGloballyEnabled(db)
     const keylessSql = `SELECT ${cardCols},
               NULL AS key_id, NULL AS key_label, NULL AS key_workspaces, NULL AS events,
               NULL AS owner_role, 0 AS owner_member
          FROM objective_events e
          JOIN objectives o ON o.id = e.objective_id
-        WHERE o.agent_key_id IS NULL AND e.id > ? AND e.id <= ?`
-    const rows = (keylessCandidates.length
+        WHERE ${cardWakesOn ? '1 = 1' : 'o.agent_key_id IS NULL'} AND e.id > ? AND e.id <= ?`
+    const rows = (keylessCandidates.length || cardWakesOn
       ? db.prepare(`SELECT * FROM (${keyedSql} UNION ALL ${keylessSql}) ORDER BY id ASC LIMIT ?`)
         .all(cursor, head, cursor, head, ENQUEUE_BATCH + 1)
       : db.prepare(`${keyedSql} ORDER BY e.id ASC LIMIT ?`).all(cursor, head, ENQUEUE_BATCH + 1)) as Array<EventJoinRow | KeylessEventRow>
@@ -812,7 +824,7 @@ export function enqueueAgentWebhookEvents(db: Database.Database = getDb(), now =
      * card starts needing the agent or escalates (NEED_ORDER); a de-escalation only
      * records the new kind; leaving the needing states re-arms the next wake.
      */
-    const enqueueNeed = (row: EventJoinRow): number => {
+    const enqueueNeed = (row: EventJoinRow, wake?: CardWakeRoute & { ok: true }): number => {
       const need = classifyNeed(row)
       const prev = (getNeed.get(row.objective_id) as { kind: AgentNeedKind } | undefined)?.kind
       if (!need) {
@@ -820,10 +832,25 @@ export function enqueueAgentWebhookEvents(db: Database.Database = getDb(), now =
         return 0
       }
       if (prev === need.kind) return 0
-      setNeed.run(row.objective_id, need.kind, row.key_id)
+      setNeed.run(row.objective_id, need.kind, wake ? null : row.key_id)
       if (prev && NEED_ORDER.indexOf(need.kind) > NEED_ORDER.indexOf(prev)) return 0
+      // obj 901328: the same one-wake-per-need ladder, delivered in-product.
+      if (wake) return queueCardWake(row, wake, need, `cc_wake_${row.objective_id}_e${row.id}_${need.kind}`)
       const payload = buildNeedPayload(row, need)
       return insert.run(payload.event_id, row.key_id, row.objective_id, row.id, 'needs_agent', JSON.stringify(payload), sqliteNow(now)).changes
+    }
+    const queueCardWake = (row: EventJoinRow, wake: CardWakeRoute & { ok: true }, need: AgentNeed, eventId: string): number => {
+      const r = enqueueCardWake(db, {
+        event_id: eventId,
+        slug: wake.slug,
+        objective_id: row.objective_id,
+        workspace: wake.workspace,
+        user_id: wake.userId,
+        source_event_id: row.id,
+        need_kind: need.kind,
+        need_why: need.why,
+      }, now)
+      return r && r.status === 'pending' ? 1 : 0
     }
     /**
      * A completion wake (obj 900309). Separate from enqueueNeed on purpose: the
@@ -834,7 +861,7 @@ export function enqueueAgentWebhookEvents(db: Database.Database = getDb(), now =
      * cycle, a replayed PR state transition, or two keys racing the same tick
      * cannot produce a duplicate. Returns rows queued (0 or 1).
      */
-    const enqueueCompletion = (row: EventJoinRow): number => {
+    const enqueueCompletion = (row: EventJoinRow, wake?: CardWakeRoute & { ok: true }): number => {
       const need = classifyCompletion({
         kind: row.kind,
         from_value: row.from_value,
@@ -842,12 +869,46 @@ export function enqueueAgentWebhookEvents(db: Database.Database = getDb(), now =
         deleted_at: row.deleted_at,
       })
       if (!need) return 0
+      // Deterministic per card (no key): a second done/merge for the card is a no-op.
+      if (wake) return queueCardWake(row, wake, need, `cc_wake_${need.kind}_${row.objective_id}`)
       const payload = buildCompletionPayload(row, need)
       return insert.run(payload.event_id, row.key_id, row.objective_id, row.id, 'needs_agent', JSON.stringify(payload), sqliteNow(now)).changes
+    }
+    // obj 901328: one routing decision per card per tick, shared by the NULL-key
+    // row and the keyed rows of the same card, so they never disagree.
+    const routes = new Map<number, CardWakeRoute>()
+    const routeFor = (row: EventJoinRow | KeylessEventRow): CardWakeRoute => {
+      if (!cardWakesOn) return { ok: false, reason: 'globally_off' }
+      let r = routes.get(row.objective_id)
+      if (!r) {
+        r = resolveCardWakeRoute({
+          id: row.objective_id,
+          owner_bot: row.owner_bot,
+          agent_context: row.agent_context ?? null,
+          workspace: row.workspace,
+          assigned_user_id: row.assigned_user_id ?? null,
+          created_by: row.created_by ?? null,
+        }, db, opts)
+        routes.set(row.objective_id, r)
+      }
+      return r
     }
     let queued = 0
     for (const raw of page) {
       if (raw.key_id == null) {
+        // obj 901328: the card's owner is an Operation Kit chat bot that may work
+        // here → the needs_agent family becomes an in-product card wake, and NO
+        // webhook gets it (keyed or keyless). Otherwise fall through unchanged.
+        const route = routeFor(raw)
+        if (route.ok) {
+          const asRow = raw as unknown as EventJoinRow
+          queued += enqueueNeed(asRow, route)
+          queued += enqueueCompletion(asRow, route)
+          continue
+        }
+        // A keyed card's NULL-key row exists only for the route check above.
+        if (raw.card_key_id != null) continue
+        if (!keylessCandidates.length) continue
         // obj 900553: a card no key filed (browser/UI, chat). Only the needs_agent
         // family (needs, completed, pr_merged) — never the raw status events, which
         // stay a "cards YOU filed" feed. Same event ids, same dedupe as keyed cards.
@@ -877,7 +938,8 @@ export function enqueueAgentWebhookEvents(db: Database.Database = getDb(), now =
         const r = insert.run(payload.event_id, row.key_id, row.objective_id, row.id, mapped.event, JSON.stringify(payload), sqliteNow(now))
         queued += r.changes
       }
-      if (subscribed.includes('needs_agent')) {
+      // obj 901328: a card routed in-product had its needs_agent family handled on its NULL-key row.
+      if (subscribed.includes('needs_agent') && !routeFor(row).ok) {
         queued += enqueueNeed(row)
         queued += enqueueCompletion(row)
       }
