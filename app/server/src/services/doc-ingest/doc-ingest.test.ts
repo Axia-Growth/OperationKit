@@ -78,6 +78,21 @@ describe('extract', () => {
     expect(ex.markdown).toContain('2 non-empty row(s)')
   })
 
+  it('leaves Excel phonetic guides (furigana) out of cell text', () => {
+    const rPh = '<rPh sb="0" eb="2"><t>ヤマダ</t></rPh><rPh sb="2" eb="4"><t>タロウ</t></rPh><phoneticPr fontId="1"/>'
+    const ex = extractDocument('顧客.xlsx', writeZip([
+      ['xl/workbook.xml', '<workbook><sheets><sheet name="顧客" sheetId="1" r:id="rId1"/></sheets></workbook>'],
+      ['xl/_rels/workbook.xml.rels', '<Relationships><Relationship Id="rId1" Target="worksheets/sheet1.xml"/></Relationships>'],
+      ['xl/sharedStrings.xml', `<sst><si><t>山田太郎</t>${rPh}</si><si><r><t>山田</t></r><r><t>太郎</t></r>${rPh}</si></sst>`],
+      ['xl/worksheets/sheet1.xml', '<worksheet><sheetData><row r="1">' +
+        '<c r="A1" t="s"><v>0</v></c><c r="B1" t="s"><v>1</v></c>' +
+        `<c r="C1" t="inlineStr"><is><t>山田太郎</t>${rPh}</is></c>` +
+        '</row></sheetData></worksheet>'],
+    ]))
+    expect(ex.markdown).toContain('| 山田太郎 | 山田太郎 | 山田太郎 |')
+    expect(ex.markdown).not.toContain('ヤマダ')
+  })
+
   it('reads CSV with quoted commas and a BOM', () => {
     const ex = extractDocument('x.csv', Buffer.from('﻿Company,Notes\n"Acme, Inc.","said ""no"""\n'))
     expect(ex.markdown).toContain('| Acme, Inc. | said "no" |')

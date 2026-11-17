@@ -93,6 +93,14 @@ function textRuns(xml: string, tag: string): string {
   return out
 }
 
+/**
+ * Excel stores furigana (phonetic guides) for text typed with a Japanese IME as
+ * <rPh> runs next to the real text. They are reading aids, not cell content.
+ */
+function stripPhonetic(xml: string): string {
+  return xml.replace(/<rPh\b[\s\S]*?<\/rPh>/g, '')
+}
+
 function mdCell(v: string): string {
   return v.replace(/\r?\n/g, ' ').replace(/\|/g, '\\|').trim()
 }
@@ -143,7 +151,7 @@ export function extractXlsx(buf: Buffer): Extracted {
 
   const shared: string[] = []
   const sst = get('xl/sharedStrings.xml')
-  if (sst) for (const m of sst.matchAll(/<si>([\s\S]*?)<\/si>/g)) shared.push(textRuns(m[1], 't'))
+  if (sst) for (const m of sst.matchAll(/<si>([\s\S]*?)<\/si>/g)) shared.push(textRuns(stripPhonetic(m[1]), 't'))
 
   // Which style indexes are dates: cellXfs[i].numFmtId → built-in or custom date format.
   const dateStyles = new Set<number>()
@@ -194,7 +202,7 @@ export function extractXlsx(buf: Buffer): Extracted {
         const v = body.match(/<v>([\s\S]*?)<\/v>/)?.[1]
         let val = ''
         if (t === 's') val = shared[Number(v)] ?? ''
-        else if (t === 'inlineStr') val = textRuns(body, 't')
+        else if (t === 'inlineStr') val = textRuns(stripPhonetic(body), 't')
         else if (t === 'b') val = v === '1' ? 'TRUE' : 'FALSE'
         else if (v !== undefined) {
           val = decodeXmlEntities(v)
