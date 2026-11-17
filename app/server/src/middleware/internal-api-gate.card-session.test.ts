@@ -493,12 +493,15 @@ describe('criterion 7 — every internal call the session prompts tell a card to
   // (tmux mode) exactly as before. This list is EXACT: a new cross-card call in
   // a prompt fails the test until someone decides about it.
   const JAIL_REFUSED_FOLLOW_UP: Record<string, string> = {
-    'GET /objectives': 'board read (HA wake: owned_by_bot list)',
+    // obj 901280: a High Agency wake now reaches these four for its OWN bot's
+    // cards (lib/high-agency-wake-scope.ts); every other caller is still refused,
+    // so they stay off the own-card list. Delegators remain a follow-up.
+    'GET /objectives': 'board read (HA wake: owned_by_bot list — wake-scoped since 901280)',
     'GET /objectives/1/siblings': 'reads other cards',
     'GET /objectives/1/output': "reads another card's transcript (delegator → child)",
-    'PATCH /objectives/1/status': "changes another card's status (delegator / HA close-out)",
-    'POST /objectives/1/message': 'steers another card (delegator / HA)',
-    'GET /supervisor/flags': 'board read (HA wake)',
+    'PATCH /objectives/1/status': "changes another card's status (delegator; HA close-out wake-scoped since 901280)",
+    'POST /objectives/1/message': 'steers another card (delegator; HA wake-scoped since 901280)',
+    'GET /supervisor/flags': 'board read (HA wake — wake-scoped since 901280)',
     'GET /full-access': 'Full access (HA wake)',
     'POST /full-access/cards/1/take-over': 'acts on another card (HA wake)',
   }

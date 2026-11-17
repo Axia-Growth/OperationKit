@@ -312,7 +312,7 @@ export function buildHighAgencyBrief(agent: BriefAgent, s: BriefSettings, owner 
     '   ```',
     '',
     '**2. Close the loop.** Only on cards you own:',
-    '   - done / cancelled: `curl -s -X PATCH http://localhost:3002/api/internal/objectives/<id>/status -H \'Content-Type: application/json\' -H "X-CC-Session-Token: $CC_SESSION_TOKEN" -d \'{"status":"done"}\'` (or `"cancelled"`). A refused transition is not yours to force — note it in the report.',
+    '   - done / cancelled: `curl -s -X PATCH http://localhost:3002/api/internal/objectives/<id>/status -H \'Content-Type: application/json\' -H "X-CC-Session-Token: $CC_SESSION_TOKEN" -d \'{"status":"done"}\'` (or `"cancelled"`; `"review"` holds a running card for a person; `"working"` starts or restarts one). A card with a pull request and no passing AI review closes as done only with a stated reason: add `"override_reason":"<why>"` (it goes on the audit trail). A refused transition is not yours to force — note it in the report.',
     '   - unblock or steer a running card: `curl -s -X POST http://localhost:3002/api/internal/objectives/<id>/message -H \'Content-Type: application/json\' -H "X-CC-Session-Token: $CC_SESSION_TOKEN" -d \'{"message":"<what to do next>"}\'`',
     '   - learnings: a short note through the knowledge-base API (`PUT http://localhost:3002/api/docs/file` with your session token), in your area\'s folder.',
     '',
