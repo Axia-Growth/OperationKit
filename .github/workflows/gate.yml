@@ -161,6 +161,9 @@ jobs:
       - name: Negative control — allowlist hides no real-shaped secret
         run: bash scripts/oss-gitleaks-config-check.sh scripts/oss-gitleaks.toml
 
+  # Dependency-free prerequisite checker (scripts/setup-check.mjs, ported from
+  # public OperationKit #95). Runs on Windows too: the script's whole point is to
+  # give a clear answer on hosts that are NOT supported, so its tests must pass there.
   setup-check:
     name: setup-check (${{ matrix.os }})
     runs-on: ${{ matrix.os }}

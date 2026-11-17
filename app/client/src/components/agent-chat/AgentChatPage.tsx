@@ -106,6 +106,19 @@ export function suggestionsFor(a: ChatAgentInfo): string[] {
 
 // ── the lane strip: main conversation + side threads (obj 900370) ──
 
+/**
+ * The Bots page fills the viewport; only its inner lists scroll (obj 901252).
+ * An absolutely positioned descendant (an sr-only label, e.g. the Pro/Con text
+ * of a decision briefing in the thread) is laid out against its nearest
+ * POSITIONED ancestor. With none, it escaped every overflow box, sat at its
+ * static spot thousands of pixels down the thread and stretched the document:
+ * the window scrolled past the composer into a blank area. So the root and every
+ * scroller below it are `relative` (each scroller clips its own content), and the
+ * root clips as a backstop with `overflow-clip`, which unlike `overflow-hidden`
+ * is not a scroll container that focus() or scrollIntoView() could move.
+ */
+export const CHAT_PAGE_ROOT_CLASS = 'relative flex h-full min-h-0 overflow-clip bg-surface-0'
+
 const MAIN_LANE = 'main'
 
 const MODEL_WORDS: Record<string, string> = { gpt: 'GPT', ai: 'AI', llama: 'Llama', o1: 'o1', o3: 'o3', o4: 'o4' }
@@ -605,7 +618,7 @@ function Conversation({
   const answeredBy = `${PROVIDER_LABELS[agent.answered_by.id]}${agent.answered_by.model ? ` · ${friendlyModelName(agent.answered_by.model)}` : ''}`
 
   return (
-    <section aria-label={`Conversation with ${agent.name}`} className="flex h-full min-w-0 flex-col">
+    <section aria-label={`Conversation with ${agent.name}`} className="flex h-full min-h-0 min-w-0 flex-col">
       <header className="flex flex-wrap items-center gap-x-2 gap-y-1 border-b border-line bg-surface-1 px-2 py-2 sm:flex-nowrap sm:px-4">
         <IconButton label="All bots" onClick={onBack} className="md:hidden">
           <ChevronLeft aria-hidden="true" className="h-5 w-5" />
@@ -773,8 +786,8 @@ function Conversation({
         )}
       </div>
 
-      {view === 'work' && <div className="min-h-0 flex-1 overflow-y-auto"><BotWorkTab agent={agent} /></div>}
-      {view === 'activity' && <div className="min-h-0 flex-1 overflow-y-auto"><BotActivityFeed agent={agent} /></div>}
+      {view === 'work' && <div className="relative min-h-0 flex-1 overflow-y-auto"><BotWorkTab agent={agent} /></div>}
+      {view === 'activity' && <div className="relative min-h-0 flex-1 overflow-y-auto"><BotActivityFeed agent={agent} /></div>}
 
       {view === 'chat' && (<>
       <LaneStrip threads={threads} lane={lane} maxOpen={maxOpen} busy={laneBusy} onPick={setLane} onOpen={() => void openLane()} />
@@ -785,7 +798,8 @@ function Conversation({
           Closing settings brings it back at the same (bottom) scroll position. */}
       <div
         ref={scroller}
-        className={cn('flex-1 overflow-y-auto overflow-x-clip px-3 sm:px-6', settingsOpen && meta?.tool_catalog ? 'py-0' : 'py-4')}
+        data-testid="chat-message-list"
+        className={cn('relative min-h-0 flex-1 overflow-y-auto overflow-x-clip px-3 sm:px-6', settingsOpen && meta?.tool_catalog ? 'py-0' : 'py-4')}
         aria-live="polite"
       >
         <div className="mx-auto flex max-w-[760px] flex-col gap-3">
@@ -1235,7 +1249,7 @@ export function AgentChatPage() {
   }
   if (!data) {
     return (
-      <div className="flex h-full min-h-0 bg-surface-0" aria-busy="true" aria-label="Loading bots">
+      <div className={CHAT_PAGE_ROOT_CLASS} aria-busy="true" aria-label="Loading bots">
         <div className={cn('h-full w-full shrink-0 space-y-2 border-line bg-surface-1 p-4 md:block md:w-[300px] md:border-r', slug ? 'hidden' : 'block')}>
           {[0, 1, 2].map(i => <Skeleton key={i} className="h-14 w-full rounded-lg" />)}
         </div>
@@ -1273,8 +1287,8 @@ export function AgentChatPage() {
   }
 
   return (
-    <div className="flex h-full min-h-0 bg-surface-0">
-      <aside className={cn('h-full w-full shrink-0 border-line bg-surface-1 md:block md:w-[300px] md:border-r', active ? 'hidden' : 'block')}>
+    <div className={CHAT_PAGE_ROOT_CLASS} data-testid="chat-page">
+      <aside className={cn('relative h-full w-full shrink-0 border-line bg-surface-1 md:block md:w-[300px] md:border-r', active ? 'hidden' : 'block')}>
         <BotSidebar
           data={data}
           active={active?.slug ?? null}
@@ -1293,7 +1307,7 @@ export function AgentChatPage() {
           }}
         />
       </aside>
-      <main className={cn('h-full min-w-0 flex-1', active ? 'block' : 'hidden md:block')}>
+      <main className={cn('relative h-full min-w-0 flex-1', active ? 'block' : 'hidden md:block')}>
         {active ? (
           <Conversation
             key={active.slug}
