@@ -29,7 +29,7 @@
  *    GitHub refuse it instead of merging unchecked code.
  *
  *  - A reserved PR is never merged under a grant (`reservedPrMatch`): the
- *    built-in seed `operationkit#645` plus whatever the server-side
+ *    built-in seed (PR 645 in the private repo and in operationkit) plus whatever the server-side
  *    setting `grant_merge_reserved_prs` / env `CC_GRANT_MERGE_RESERVED_PRS`
  *    adds. It is decided before any GitHub call. The setting lives in the
  *    `settings` table, which no route writes (host / DB only), so a sandboxed
@@ -94,8 +94,22 @@ export interface ReservedPr {
   number: number
 }
 
-/** Always reserved, whatever the configuration says. */
-export const GRANT_MERGE_RESERVED_SEED: readonly ReservedPr[] = [{ repo: 'operationkit', number: 645 }]
+/**
+ * Always reserved, whatever the configuration says.
+ *
+ * Both forms of PR 645 are listed, and the FIRST entry must stay byte-for-byte
+ * as written (obj 901326). The live host runs the PUBLISHED tree, and the
+ * publish transform (scripts/oss-genericize.sh) rewrites the private repo name
+ * to `operationkit` everywhere. reservedPrMatch is repo-scoped, so a rewritten
+ * seed stopped matching the private PR's URL. scripts/oss-reserved-pr-shield.txt
+ * shields the first entry's exact literal; the second entry is what the private
+ * form becomes, so the published seed carries both. Pinned by
+ * scripts/oss-reserved-pr-shield-test.sh and routes/grant-merge.test.ts.
+ */
+export const GRANT_MERGE_RESERVED_SEED: readonly ReservedPr[] = [
+  { repo: 'command-center-infra', number: 645 },
+  { repo: 'operationkit', number: 645 },
+]
 
 export const GRANT_MERGE_RESERVED_SETTING = 'grant_merge_reserved_prs'
 export const GRANT_MERGE_RESERVED_ENV = 'CC_GRANT_MERGE_RESERVED_PRS'

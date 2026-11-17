@@ -21,6 +21,7 @@ import path from 'path'
 import http from 'http'
 import express from 'express'
 import cookieParser from 'cookie-parser'
+import type { ReservedPr } from '../services/grant-merge.js'
 
 const TMP = fs.mkdtempSync(path.join(os.tmpdir(), 'cc-grant-merge-'))
 process.env.DB_PATH = path.join(TMP, 'db.sqlite')
@@ -434,6 +435,24 @@ describe('reserved PRs are never merged under a grant', () => {
     expect(reservedPrMatch({ pr_url: 'https://github.com/your-org/operationkit/pull/645', pr_number: 12 }, GRANT_MERGE_RESERVED_SEED)).not.toBeNull()
     // No readable repo → fail closed on the number.
     expect(reservedPrMatch({ pr_url: null, pr_number: 645 }, GRANT_MERGE_RESERVED_SEED)).not.toBeNull()
+  })
+
+  // obj 901326: the published tree (which the live host runs) must still block the
+  // PRIVATE repo's PR 645. The literal on the next line is shielded from the publish
+  // transform (scripts/oss-reserved-pr-shield.txt), so this assertion ships verbatim
+  // and fails in the public tree if the private form is ever rewritten again.
+  const PRIVATE_645: ReservedPr = { repo: 'command-center-infra', number: 645 }
+  it('the seed reserves PR 645 in BOTH the private repo and operationkit, by URL', () => {
+    expect(GRANT_MERGE_RESERVED_SEED).toContainEqual(PRIVATE_645)
+    expect(GRANT_MERGE_RESERVED_SEED).toContainEqual({ repo: 'operationkit', number: 645 })
+    expect(PRIVATE_645.repo).not.toBe('operationkit')
+    for (const owner of ['some-org', 'm1keluka']) {
+      const priv = `https://github.com/${owner}/${PRIVATE_645.repo}/pull/645`
+      expect(reservedPrMatch({ pr_url: priv, pr_number: 645 }, GRANT_MERGE_RESERVED_SEED)).toEqual(PRIVATE_645)
+      expect(reservedPrMatch({ pr_url: priv, pr_number: null }, GRANT_MERGE_RESERVED_SEED)).toEqual(PRIVATE_645)
+      const pub = `https://github.com/${owner}/OperationKit/pull/645`
+      expect(reservedPrMatch({ pr_url: pub, pr_number: 645 }, GRANT_MERGE_RESERVED_SEED)).not.toBeNull()
+    }
   })
 
   it('parseReservedPrs accepts owner/repo#N, repo#N, #N, N and ignores junk', () => {

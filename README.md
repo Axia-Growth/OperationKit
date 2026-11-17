@@ -11,22 +11,6 @@ optional chat with ready-made agents, and a secure connection for the AI apps th
 use (Claude, ChatGPT, Grok). The consultant starts every engagement 80 to 90 percent of the way
 there and spends their time on the client's actual workflows.
 
-## We're hiring
-
-Operation Kit started as our internal tool for running our own operations on AI agents, and we're
-now rolling it out to other teams. We're looking for an **AI Infrastructure Engineer** (remote,
-contract, 20 to 40 hours a week with a path to full-time, $70–110/hr) to work on the agent runtime
-and review loop, the MCP server and API, knowledge-base ingestion, and one-command self-hosted
-installs. Stack: TypeScript/Node, Postgres, Docker, MCP, Cloudflare.
-
-How to apply (about 15 minutes, no cover letter):
-
-1. Look through the repo and star it. Stars are how we verify you actually checked it out; we
-   match them to your GitHub username.
-2. Tell us the first thing you'd change or build, and why. Link a file, issue or PR (opening an
-   issue or a small PR is the best signal).
-3. Apply here: [Operation Kit application](https://docs.google.com/forms/d/e/1FAIpQLSd4a3B8JAnq06iNr0v_fhDQcyOpkPzlwadWRPWJ43Eo2ywkug/viewform)
-
 ## Why the client owns the install
 
 - **Their server, their data.** Every client has its own copy on its own server. There is no shared

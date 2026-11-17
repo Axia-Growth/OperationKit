@@ -906,6 +906,11 @@ export function BotSidebar({
           >
             {data.demo ? 'Demo bot is on — turn it off' : 'Turn on the demo bot (sample inbox + calendar)'}
           </button>
+          <p className="mt-1 px-2 text-xs text-fg-2">
+            Demo mode adds one bot, the demo assistant, which uses a made-up inbox and calendar. Your other bots are not
+            affected: they use your own connected Google account (Settings → Account → Google Workspace), only if its
+            &ldquo;Who can use it&rdquo; list allows them, and they only ever make drafts you send yourself.
+          </p>
         </div>
       )}
 

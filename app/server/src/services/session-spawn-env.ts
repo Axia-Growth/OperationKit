@@ -41,6 +41,7 @@ import {
 } from '../lib/session-trust.js'
 import { sessionKbAccessEnabled, verifiedSenderStampsEnabled } from '../lib/session-trust.js'
 import { resolveWriteWorkspace } from './workspaces.js'
+import { botKeyFilter, botScopeEnv, sessionBotScope, type BotScope } from './bot-session-scope.js'
 
 // ────────────────────────────────────────────────────────────────────────────
 // Spawn-env construction (obj-2202 / onboarding gate B1–B4)
@@ -395,6 +396,9 @@ export function buildSpawnEnv(opts: {
   const connectorUse = { agent: objective.agent_context, workspace: objective.workspace }
   const delegated = isDelegatedCard(objective)
   const actor = spawnActor(objective, actingUserId)
+  // obj 901330 — a card for one of the scoped Example bots gets only its pack:
+  // connectors on its list AND named in the owner's Who can use it rule.
+  const botScope = safeBotScope(objective)
   const mayUse = (connectorId: string): boolean =>
     checkConnectorCredential({
       connectorId,
@@ -402,6 +406,7 @@ export function buildSpawnEnv(opts: {
       actor,
       use: connectorUse,
       delegated,
+      botScope,
     }).allowed
 
   if (mayUse(GITHUB_CONNECTOR)) {
@@ -484,7 +489,7 @@ export function buildSpawnEnv(opts: {
   // workspace B's servers or tokens; a card with no workspace receives none.
   // Never blocks a spawn.
   try {
-    Object.assign(env, workspaceMcpSpawnEnv(objective.workspace))
+    Object.assign(env, workspaceMcpSpawnEnv(objective.workspace, botScope ? { allowSlug: slug => botScope.mcpServers.has(slug) } : undefined))
   } catch (err) {
     console.warn('[session-manager] workspace MCP injection failed (env unchanged):', (err as Error).message)
   }
@@ -496,6 +501,9 @@ export function buildSpawnEnv(opts: {
   // for a GH_TOKEN secret it was already holding. Applied AFTER the secrets
   // store so a Settings → Secrets GH_TOKEN override is used the same way.
   Object.assign(env, githubPushHelperEnv(env))
+
+  // Markers so a scoped worker can tell what it holds and why (names only).
+  if (botScope) Object.assign(env, botScopeEnv(botScope))
 
   applySessionTrustEnv(env, objective, actingUserId)
 
@@ -514,12 +522,44 @@ export function sessionSecretKeyFilter(
   objective: Objective,
   actingUserId: number | null,
 ): ((key: string) => boolean) | undefined {
+  // obj 901330 — a scoped bot is filtered to its pack in EITHER mode, so an
+  // empty allowlist under migration no longer means "every key" for it.
+  const scope = safeBotScope(objective)
+  if (scope) {
+    let subjects = null
+    try {
+      subjects = sessionSubjects(objective, actingUserId)
+    } catch {
+      subjects = null
+    }
+    try {
+      return botKeyFilter(scope, subjects)
+    } catch {
+      return () => false
+    }
+  }
   const mode = getSessionEnvMode()
   if (mode !== 'enforce') return undefined
   try {
     return sessionKeyFilter(mode, allowlistedKeys(sessionSubjects(objective, actingUserId)))
   } catch {
     return () => false
+  }
+}
+
+/**
+ * The scoped-bot pack for this card, or null. A card whose agent_context names
+ * a scoped bot is scoped even if the ownership lookup fails.
+ */
+export function safeBotScope(objective: Objective): BotScope | null {
+  try {
+    return sessionBotScope(objective as Objective & { owner_bot?: string | null })
+  } catch {
+    try {
+      return sessionBotScope(objective, { ownerSlugs: () => [] })
+    } catch {
+      return null
+    }
   }
 }
 
@@ -576,6 +616,7 @@ export function githubSessionAccess(objective: Objective): GithubSessionAccess {
       actor,
       use: { agent: objective.agent_context, workspace: objective.workspace },
       delegated: isDelegatedCard(objective),
+      botScope: safeBotScope(objective),
     })
     if (!decision.allowed) return { state: 'unavailable', reason: decision.reason, ownerUserId, keyLabel }
     const summary = ownerUserId != null ? getForUser(ownerUserId) : null

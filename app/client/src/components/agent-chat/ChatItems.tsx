@@ -336,6 +336,13 @@ export function DraftCard({
           </>
         )}
         {draft.connector === 'demo' && <p className="pt-1 text-xs text-fg-2">Demo account — sample data, nothing leaves the server.</p>}
+        {draft.connector.startsWith('google:') && (
+          <p className="pt-1 text-xs text-fg-2">
+            {isEmail
+              ? `From ${draft.connector.slice('google:'.length)}.${(p as EmailDraftPayload).remote_id ? ' Also saved in your Gmail Drafts.' : ''} Nothing is sent until you press Send.`
+              : `For the calendar of ${draft.connector.slice('google:'.length)}. Nothing is added until you press Add to calendar; guests are not emailed.`}
+          </p>
+        )}
       </div>
       {open && (
         <footer className="flex flex-wrap items-center gap-2 border-t border-line-soft px-3.5 py-2.5">

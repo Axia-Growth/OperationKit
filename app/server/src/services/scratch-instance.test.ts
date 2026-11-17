@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest'
+import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach } from 'vitest'
 import fs from 'fs'
 import os from 'os'
 import path from 'path'
@@ -11,12 +11,21 @@ import { execSync, spawnSync } from 'child_process'
 // (cc-900543-1794373470759), the scratch server's temp DB has no such objective,
 // so it was "an orphan" and got killed — taking the worker with it.
 
-// Isolated DB + isolated tmux server for this file.
+// Isolated DB + isolated tmux servers for this file.
 const TMP_DB = path.join(os.tmpdir(), `cc-scratch-guard-${process.pid}-${Date.now()}.db`)
 process.env.DB_PATH = TMP_DB
-const TMUX_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'cc-scratch-tmux-'))
-process.env.TMUX_TMPDIR = TMUX_DIR
+// obj 901235 — every test gets its OWN tmux socket directory (TMUX_TMPDIR, which
+// sweepOrphanWorkerTmux's `tmux` calls inherit through process.env). Before, all
+// tests shared one socket and beforeEach ran `tmux kill-server`. kill-server
+// returns before the server has finished exiting, so the next test's
+// `tmux new-session` could connect to the dying server and fail with
+// "server exited unexpectedly" (CI flake on PR 838 / 843; reproduced locally
+// ~1 in 60 with a tight kill-server → new-session loop). A fresh socket per test
+// means no client ever talks to a server that is shutting down.
+const TMUX_ROOT = fs.mkdtempSync(path.join(os.tmpdir(), 'cc-scratch-tmux-'))
+process.env.TMUX_TMPDIR = TMUX_ROOT
 delete process.env.TMUX
+let tmuxCase = 0
 
 const { initDb, getDb } = await import('../db/index.js')
 const { sweepOrphanWorkerTmux, selectOrphanWorkerSessions } = await import('./session-manager.js')
@@ -33,13 +42,20 @@ beforeAll(() => {
   initDb()
 })
 afterAll(() => {
-  try { execSync('tmux kill-server 2>/dev/null') } catch { /* none */ }
   try { getDb().close() } catch { /* closed */ }
   for (const s of ['', '-wal', '-shm']) { const f = `${TMP_DB}${s}`; if (fs.existsSync(f)) fs.unlinkSync(f) }
-  fs.rmSync(TMUX_DIR, { recursive: true, force: true })
+  fs.rmSync(TMUX_ROOT, { recursive: true, force: true })
 })
 beforeEach(() => {
   getDb().prepare('DELETE FROM objectives').run()
+  // Fresh, empty tmux server namespace for this test (never reused).
+  const dir = path.join(TMUX_ROOT, `t${++tmuxCase}`)
+  fs.mkdirSync(dir, { mode: 0o700 })
+  process.env.TMUX_TMPDIR = dir
+})
+afterEach(() => {
+  // Tear down this test's server. Racing its shutdown is harmless: the socket
+  // directory is never used again.
   try { execSync('tmux kill-server 2>/dev/null') } catch { /* none */ }
 })
 
@@ -61,6 +77,7 @@ describe.skipIf(!HAS_TMUX)('sweepOrphanWorkerTmux on a scratch DB (the #900543 k
        VALUES (777001, 'moved on', 'cto', 'example', 'review', 'cc-777001-2')`,
     ).run()
     execSync(`tmux new-session -d -s cc-777001-1 'sleep 60'`)
+    expect(tmuxHas('cc-777001-1')).toBe(true)
     sweepOrphanWorkerTmux()
     expect(tmuxHas('cc-777001-1')).toBe(false)
   })

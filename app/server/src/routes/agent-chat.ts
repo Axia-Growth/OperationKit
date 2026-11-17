@@ -42,7 +42,7 @@ import {
 import {
   getDraft,
   listDrafts,
-  resolveConnectors,
+  resolveDelivery,
   setDraftStatus,
   type DraftRow,
   type EmailDraft,
@@ -770,12 +770,27 @@ router.post('/agents/:slug/messages', async (req: AuthRequest, res) => {
     return
   }
   const clientMsgId = typeof rawId === 'string' ? rawId : undefined
-  const ac = new AbortController()
-  res.on('close', () => { if (!res.writableEnded) ac.abort() })
+  // obj 901329: a response that closes before we answer (tab closed, page
+  // reloaded, network blip, the client's own 240s UI timeout, a proxy hanging
+  // up) is NOT the person pressing Stop. The turn is never bound to this
+  // request: it runs to the end and stores its answer, which the person sees
+  // when they come back. Only POST /agents/:slug/stop cancels a turn.
+  let disconnectedAt: number | null = null
+  const startedAt = Date.now()
+  const where = `user=${req.user!.id} bot=${a.slug} lane=${lane.kind === 'main' ? 'main' : `thread:${lane.id}`}`
+  res.on('close', () => {
+    if (res.writableEnded) return
+    disconnectedAt = Date.now()
+    console.warn(`[agent-chat] disconnect: response closed mid-turn after ${disconnectedAt - startedAt}ms (${where}) — not a Stop; the turn keeps running`)
+  })
   try {
     // obj 900949: a lane that is busy QUEUES the message (202) instead of
     // refusing it; the turn that follows the running one delivers it, in order.
-    const r = await submitMessage({ userId: req.user!.id, username: req.user!.username, agent: a, text, images, lane, signal: ac.signal, clientMsgId })
+    const r = await submitMessage({ userId: req.user!.id, username: req.user!.username, agent: a, text, images, lane, clientMsgId, responseGone: () => disconnectedAt !== null })
+    if (disconnectedAt !== null) {
+      console.log(`[agent-chat] disconnect: turn finished ${Date.now() - disconnectedAt}ms after the response closed (${where}); ${r.messages.length} row(s) stored for the person to see on return`)
+      return
+    }
     res.status(r.queued ? 202 : 200).json({
       messages: r.messages,
       ...attachments(req.user!.id, a.slug, r.messages),
@@ -785,6 +800,10 @@ router.post('/agents/:slug/messages', async (req: AuthRequest, res) => {
       turn: laneTurnState(req.user!.id, a.slug, lane),
     })
   } catch (err) {
+    if (disconnectedAt !== null) {
+      console.warn(`[agent-chat] disconnect: turn ended with an error after the response closed (${where}):`, err instanceof Error ? err.message : err)
+      return
+    }
     if (err instanceof ChatBusyError) {
       res.status(409).json({ error: err.message })
       return
@@ -901,7 +920,16 @@ router.put('/drafts/:id', (req: AuthRequest, res) => {
   res.json({ draft: getDraft(d.id) })
 })
 
-router.post('/drafts/:id/send', (req: AuthRequest, res) => {
+// A click in flight per draft: a double-click must not send twice.
+const draftsInFlight = new Set<number>()
+
+/**
+ * The person's Send / "Add to calendar" click (obj 901331): the ONLY path that
+ * delivers a draft. Signed-in browser of the draft's own person only; agent
+ * keys and tools can never reach it. A Google draft is sent from the clicking
+ * person's own account, and only if it is still the account it was made for.
+ */
+router.post('/drafts/:id/send', async (req: AuthRequest, res) => {
   if (!signedInBrowser(req)) {
     res.status(403).json({ error: 'Only the person, signed in to the app, can send a draft' })
     return
@@ -912,31 +940,44 @@ router.post('/drafts/:id/send', (req: AuthRequest, res) => {
     res.status(409).json({ error: `This draft is already ${d.status}` })
     return
   }
-  const conns = resolveConnectors({ demo: isDemoOn() || d.connector === 'demo' })
-  if (d.kind === 'email') {
-    if (!conns.mail || conns.mail.id !== d.connector) {
-      res.status(409).json({ error: 'The email account this draft was made for is not connected any more' })
-      return
+  if (draftsInFlight.has(d.id)) {
+    res.status(409).json({ error: 'This draft is already being sent' })
+    return
+  }
+  const delivery = resolveDelivery(req.user!.id, d.connector)
+  if (!delivery) {
+    res.status(409).json({ error: d.kind === 'email' ? 'The email account this draft was made for is not connected any more' : 'The calendar this draft was made for is not connected any more' })
+    return
+  }
+  draftsInFlight.add(d.id)
+  try {
+    if (d.kind === 'email') {
+      await delivery.sendEmail(d.payload as EmailDraft)
+      setDraftStatus(d.id, 'sent')
+    } else {
+      await delivery.addEvent(d.payload as EventDraft)
+      setDraftStatus(d.id, 'added')
     }
-    conns.mail.deliver(d.payload as EmailDraft)
-    setDraftStatus(d.id, 'sent')
-  } else {
-    if (!conns.calendar || conns.calendar.id !== d.connector) {
-      res.status(409).json({ error: 'The calendar this draft was made for is not connected any more' })
-      return
-    }
-    conns.calendar.add(d.payload as EventDraft)
-    setDraftStatus(d.id, 'added')
+  } catch (err) {
+    res.status(502).json({ error: err instanceof Error ? err.message : String(err) })
+    return
+  } finally {
+    draftsInFlight.delete(d.id)
   }
   res.json({ draft: getDraft(d.id) })
 })
 
-router.post('/drafts/:id/discard', (req: AuthRequest, res) => {
+router.post('/drafts/:id/discard', async (req: AuthRequest, res) => {
   const d = ownDraft(req, res)
   if (!d) return
   if (d.status !== 'draft') {
     res.status(409).json({ error: `This draft is already ${d.status}` })
     return
+  }
+  // Also remove the copy in the Gmail Drafts folder. Best effort: the chat draft
+  // is discarded either way, and a leftover Gmail draft never sends by itself.
+  if (d.kind === 'email' && (d.payload as EmailDraft).remote_id && signedInBrowser(req)) {
+    try { await resolveDelivery(req.user!.id, d.connector)?.discardEmail(d.payload as EmailDraft) } catch { /* left in Gmail Drafts */ }
   }
   setDraftStatus(d.id, 'discarded')
   res.json({ draft: getDraft(d.id) })

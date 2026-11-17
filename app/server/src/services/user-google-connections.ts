@@ -46,6 +46,15 @@ export function __setFetchForTests(f: FetchLike | null): void {
   _fetch = f ?? ((input, init) => globalThis.fetch(input, init))
 }
 
+/**
+ * Fetch for Google API calls made with a user's access token (Gmail, Calendar;
+ * obj 901331). Goes through the same seam as the token calls so a test fakes
+ * refresh and API traffic with one function.
+ */
+export function googleApiFetch(input: string, init?: RequestInit): Promise<Response> {
+  return _fetch(input, init)
+}
+
 // ── OAuth configuration ─────────────────────────────────────────────────────
 
 export const AUTH_ENDPOINT = 'https://accounts.google.com/o/oauth2/v2/auth'
@@ -374,8 +383,21 @@ export async function fetchUserInfo(
  * Returns null when the user has no connection or the refresh fails (the
  * failure is recorded on the row as `last_error`, never thrown at the caller).
  */
-export async function getAccessTokenForUser(userId: number, actor: ConnectorActor): Promise<string | null> {
-  if (!checkConnectorCredential({ connectorId: CONNECTOR_ID, ownerUserId: userId, actor }).allowed) {
+export async function getAccessTokenForUser(
+  userId: number,
+  actor: ConnectorActor,
+  opts: {
+    /** Which agent / workspace this use is for, so the owner's "Who can use it" rules apply (obj 901331). */
+    use?: { agent?: string | null; workspace?: string | null }
+    /**
+     * Skip the cached access token and refresh now. Used once after Google
+     * answers 401 to a cached token (revoked early, clock skew). Never revokes
+     * or replaces the stored refresh token.
+     */
+    forceRefresh?: boolean
+  } = {},
+): Promise<string | null> {
+  if (!checkConnectorCredential({ connectorId: CONNECTOR_ID, ownerUserId: userId, actor, use: opts.use }).allowed) {
     return null
   }
   const row = getDb()
@@ -383,7 +405,7 @@ export async function getAccessTokenForUser(userId: number, actor: ConnectorActo
     .get(userId) as ConnectionRow | undefined
   if (!row) return null
 
-  if (row.access_token_encrypted && row.access_token_expires_at) {
+  if (!opts.forceRefresh && row.access_token_encrypted && row.access_token_expires_at) {
     const expiresAt = new Date(row.access_token_expires_at).getTime()
     if (Number.isFinite(expiresAt) && expiresAt - Date.now() > 60_000) {
       try {

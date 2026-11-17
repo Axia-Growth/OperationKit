@@ -22,6 +22,7 @@ import { getDb } from '../db/index.js'
 import { isApiKey } from '../lib/api-keys.js'
 import { rateLimit } from '../services/file-access.js'
 import { callerForAgentKey, executeHttp, listForCaller, recordBrokerUse, type BrokerUseIdentity, type Caller } from '../services/secrets-broker.js'
+import { sessionBrokerKeyFilter } from '../services/bot-session-scope.js'
 import {
   SESSION_SECRET_ACCESS_FLAG,
   readSettingFlag,
@@ -69,7 +70,8 @@ function limited(req: AuthRequest, res: Response, bucket: string, limit: number)
 
 function callerOf(req: BrokerRequest): Caller {
   if (req.sessionScope) {
-    return { userId: req.user!.id, isAdmin: false, workspaces: [req.sessionScope.workspace] }
+    const keyFilter = sessionBrokerKeyFilter(req.sessionScope.objectiveId)
+    return { userId: req.user!.id, isAdmin: false, workspaces: [req.sessionScope.workspace], ...(keyFilter ? { keyFilter } : {}) }
   }
   if (req.agentKey) {
     return callerForAgentKey(req.user!, req.agentKey.workspaces, getUserWorkspaces(req.user!.id).map(w => w.workspace))
