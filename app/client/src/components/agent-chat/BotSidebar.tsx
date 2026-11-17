@@ -770,7 +770,7 @@ export function BotSidebar({
 
       <nav
         aria-label="Bots"
-        className="flex-1 overflow-y-auto px-2 pb-3"
+        className="relative min-h-0 flex-1 overflow-y-auto px-2 pb-3"
         onPointerOver={warm}
         onPointerDown={warm}
         onFocus={warm}
@@ -869,7 +869,7 @@ export function BotSidebar({
       </nav>
 
       {isAdmin && (data.problems?.length ?? 0) > 0 && (
-        <section aria-label="Bots that need fixing" className="max-h-[40%] shrink-0 overflow-y-auto border-t border-line-soft px-3 py-3">
+        <section aria-label="Bots that need fixing" className="relative max-h-[40%] shrink-0 overflow-y-auto border-t border-line-soft px-3 py-3">
           <h3 className="px-1 text-xs font-medium text-fg-2">Needs fixing</h3>
           <ul className="mt-1.5 space-y-1.5">
             {data.problems!.map(p => (
