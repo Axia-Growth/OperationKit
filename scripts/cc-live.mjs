@@ -49,6 +49,9 @@ async function call(method, path, body) {
   const headers = {}
   if (body) headers['Content-Type'] = 'application/json'
   if (process.env.INTERNAL_API_SECRET) headers['X-Internal-Secret'] = process.env.INTERNAL_API_SECRET
+  // obj 901195: a jailed card reaches /api/internal only with its OWN session
+  // token, and only on its own card-scoped routes (lib/card-session-scope.ts).
+  if (process.env.CC_SESSION_TOKEN) headers['X-CC-Session-Token'] = process.env.CC_SESSION_TOKEN
   const res = await fetch(`${BASE}${path}`, {
     method,
     headers: Object.keys(headers).length ? headers : undefined,

@@ -186,6 +186,16 @@ describe('renderEnvFile', () => {
   it('drops keys that are not valid shell identifiers', () => {
     expect(renderEnvFile({ 'BAD-KEY': '1', OK: '2' })).toBe('OK=2\n')
   })
+  it('never writes the internal secret or the objectives token into a jail (obj 901195)', () => {
+    const out = renderEnvFile({
+      INTERNAL_API_SECRET: 'x',
+      OBJECTIVES_API_TOKEN: 'y',
+      OBJECTIVES_API_TOKEN_FILE: '/run/secrets/t',
+      internal_api_secret: 'z',
+      CC_SESSION_TOKEN: 'ccs_ok',
+    })
+    expect(out).toBe('CC_SESSION_TOKEN=ccs_ok\n')
+  })
 })
 
 describe('SESSION_ISOLATION flag resolution', () => {

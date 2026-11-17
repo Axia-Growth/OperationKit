@@ -57,11 +57,26 @@
  * peer is on-box for REACHABILITY, never for AUTHORITY: it must present
  * `X-Internal-Secret` / the objectives token like any other off-box caller.
  * Genuine loopback and the docker-bridge-gateway address are unaffected.
+ *
+ * ## The one exception: a card's own session token (obj 901195)
+ *
+ * A jailed card is TOLD by its prompt to call a handful of internal routes on
+ * its own card (memory files, progress, job-disposition, child cards, …) with
+ * its `CC_SESSION_TOKEN`. A sandbox peer passes only with a valid token for a
+ * LIVE card, on a route of the explicit allow-list in
+ * `lib/card-session-scope.ts`, aimed at that card. Each of those handlers
+ * re-checks the same binding (`withSandboxCardGuard`). Every other request from
+ * a sandbox peer gets the same 403 as before.
  */
 import type { NextFunction, Request, Response } from 'express'
 import { isLocalhost, isSandboxPeer } from '../lib/is-localhost.js'
 import { hasValidInternalSecret } from './internal-secret.js'
 import { hasValidObjectivesToken } from './objectives-token.js'
+import { authorizeCardSessionRequest } from '../lib/card-session-scope.js'
+
+/** The refusal a sandbox peer gets (unchanged wording since obj 901027). */
+export const SANDBOX_PEER_REFUSAL =
+  'Internal API: a sandboxed session peer must present X-Internal-Secret or the objectives token — reachability on the jail network is not authority.'
 
 /** True when bare-localhost is no longer sufficient and a credential is required. */
 export function internalApiRequiresSecret(): boolean {
@@ -86,9 +101,20 @@ export function internalApiGate(req: Request, res: Response, next: NextFunction)
   // when internalApiRequiresSecret() is off — it was never "local origin" in
   // the sense that allowance means, only reachable via the jail network.
   if (isSandboxPeer(req)) {
-    res.status(403).json({
-      error: 'Internal API: a sandboxed session peer must present X-Internal-Secret or the objectives token — reachability on the jail network is not authority.',
-    })
+    // obj 901195: the ONE exception — a live card session token, on a route of
+    // the card-scoped allow-list (lib/card-session-scope.ts), aimed at that
+    // card. Everything else stays refused with the same message as before.
+    authorizeCardSessionRequest(req)
+      .then((decision) => {
+        if (decision.ok) {
+          next()
+          return
+        }
+        res.status(403).json({ error: SANDBOX_PEER_REFUSAL })
+      })
+      .catch(() => {
+        res.status(403).json({ error: SANDBOX_PEER_REFUSAL })
+      })
     return
   }
   if (!internalApiRequiresSecret() && isLocalhost(req)) {

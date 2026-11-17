@@ -59,6 +59,27 @@ A later “PE diligence” pass is: dedicated tenant, MFA/SSO, socket-less membe
   `app/server/src/lib/browser-pins.ts`, then `sudo bash install/update.sh --config client.conf`
   (rebuilds the image and prints the versions now running) and `install/verify.sh`. Step-by-step:
   [Updating the card browser](docs/wiki/Card-Browser-Lockdown.md#updating-the-card-browser).
+- **Cloudflare Access allow-list sync** (optional, off unless a token is present): when an admin
+  adds, re-emails or deletes a user in Settings → Users, the server syncs that ONE email into or
+  out of this install's own Access "Allowed people" policy. Scope is pinned at three levels — one
+  account (`OK_CF_ACCOUNT_ID`), one application (matched on the AUD tag this install already
+  verifies its sign-in JWTs against), one `allow` policy — and the verify-robot policy is refused
+  by name AND by decision. Domain rules are never created, edited or removed; addresses from
+  `ACCESS_ALLOWED_EMAILS` are never removed; a removal that would empty the policy is refused.
+  The token is entered by an admin in Settings → Users → Cloudflare sign-in sync (stored
+  AES-256-GCM in the secrets store under the server-only key `CC_SERVER_CF_ACCESS_SYNC_TOKEN`,
+  write-only, cookie-admin only to set or remove, never hydrated into the process env, a session
+  env or the secrets broker), with `OK_CF_ACCESS_API_TOKEN` in the environment as the fallback.
+  Either way it is never logged, never returned by an API route, never put in an error message
+  and never in the client bundle — asserted in `app/server/src/lib/cf-access-policy.test.ts`,
+  `app/server/src/routes/admin-users.cf-sync-token.test.ts` and
+  `app/client/src/components/config/CfAccessSyncCard.bundle.test.ts`. When
+  `OK_CF_ACCOUNT_ID` is absent the account is resolved read-only from the token (the one account
+  whose Access apps include this install's AUD). Re-running the installer MERGES client.conf
+  into "Allowed people" rather than overwriting it, so it never drops app-added addresses. Least privilege for it is a single Cloudflare
+  permission: **Account → Access: Apps and Policies → Edit**, scoped to that one account. Absent,
+  wrong or under-scoped, the feature degrades to a per-user "blocked at Cloudflare" badge and
+  changes nothing else.
 - SSH for session git: `StrictHostKeyChecking=accept-new` and `IdentitiesOnly=yes`
 - Workspace-scoped board APIs; WebSocket auth via the same cookie
 
@@ -74,6 +95,8 @@ Set these before exposing the app. Compose maps `CC_JWT_SECRET` → `JWT_SECRET`
 | `UPTIMEROBOT_WEBHOOK_TOKEN` | recommended | Put `?token=…` on the UptimeRobot webhook URL. Unset = route stays open and the server logs a warning |
 | `CORS_ORIGINS` | if your public origin is not the default | Comma-separated |
 | `CARD_BROWSER_*` | no (safe defaults) | Card browser lockdown. `SANDBOX`/`EGRESS_GUARD` default on; `ALLOW_PRIVATE_NETWORK`/`ALLOW_METADATA` default off. Set from `client.conf` `BROWSER_*` by the installer — see [Card-Browser-Lockdown](docs/wiki/Card-Browser-Lockdown.md) |
+| `OK_CF_ACCESS_API_TOKEN` | optional | Cloudflare token for the Access allow-list sync. Give it exactly ONE permission — Account → Access: Apps and Policies → Edit — scoped to the single account that hosts this install. Omit it and Settings → Users still works; it just cannot update Cloudflare |
+| `OK_CF_ACCOUNT_ID`, `OK_CF_ACCESS_APP_ID`, `OK_CF_ACCESS_PROTECTED_EMAILS` | with the above | Not secrets. Written by `install/cloudflare.sh`; they pin the sync to one account, one app and the installer-owned addresses it must never remove |
 
 See `.env.example`. Never commit `.env`.
 
@@ -95,6 +118,10 @@ We will acknowledge, fix, and credit (unless you ask not to).
 5. Change the seed password immediately (`changeme` in `app/server/src/db/seed.ts` is a first-boot default).
 6. Do not publish the Docker socket to a network, and do not add untrusted session spawners.
 7. Leave `BROWSER_SANDBOX` and the card browser egress guard on, and keep Playwright pinned to a release whose Chromium is at or above current Chrome stable (`install/update.sh` prints what you are running).
+8. If you enable the Cloudflare Access allow-list sync, issue a **separate** token for it with the
+   single Access: Apps and Policies → Edit permission. Do not reuse the installer's token: that one
+   can also edit DNS, tunnels, identity providers and service tokens, and it only needs to exist for
+   the length of the install.
 
 ## Known gaps (documented, not hidden)
 

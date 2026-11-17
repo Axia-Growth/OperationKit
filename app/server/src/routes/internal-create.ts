@@ -2,6 +2,7 @@
  * Bulk POST /objectives — extracted from internal.ts (behavior frozen).
  * Localhost-or-bearer auth and SQL unchanged.
  */
+import { pinCreateItemsToCaller, sandboxCallerOf, withSandboxCardGuard } from '../lib/card-session-scope.js'
 import { Router } from 'express'
 import { getDb, resolveStrategyId } from '../db/index.js'
 import { broadcast } from '../ws/index.js'
@@ -60,7 +61,7 @@ export function registerInternalCreateRoutes(router: Router): void {
 // must present a valid `Authorization: Bearer <OBJECTIVES_API_TOKEN>`. Anything
 // that is neither localhost nor a valid token is rejected with 401. The token is
 // scoped to objective-create ONLY (deploy/restart stay behind INTERNAL_API_SECRET).
-router.post('/objectives', async (req, res) => {
+router.post('/objectives', withSandboxCardGuard(async (req, res) => {
   if (!hasValidObjectivesToken(req) && !isLocalhost(req)) {
     res.status(401).json({ error: 'Unauthorized: valid Authorization: Bearer <OBJECTIVES_API_TOKEN> required for cross-host objective creation' })
     return
@@ -114,6 +115,15 @@ router.post('/objectives', async (req, res) => {
   if (!Array.isArray(items) || items.length === 0) {
     res.status(400).json({ error: 'Expected array of objectives' })
     return
+  }
+
+  // obj 901195: a SANDBOXED card filing cards (fanout children, a High Agency
+  // project card) files them AS itself: the gate and withSandboxCardGuard have
+  // already refused any item naming another parent, source or workspace; here
+  // every item is pinned to the caller's workspace and linked back to it.
+  const sandboxCaller = sandboxCallerOf(res)
+  if (sandboxCaller) {
+    pinCreateItemsToCaller(sandboxCaller, items.filter((it) => it && typeof it === 'object' && !Array.isArray(it)) as unknown as Array<Record<string, unknown>>)
   }
 
   // ── obj 706230 (W7): no silent drops ──────────────────────────────────────
@@ -757,7 +767,7 @@ router.post('/objectives', async (req, res) => {
     deduped: deduped.length + duplicates.length,
     deduped_details: [...deduped, ...duplicates],
   })
-})
+}))
 
 
 }

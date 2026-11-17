@@ -2,6 +2,7 @@
  * Preview TLS check + PR-created hook — extracted from internal.ts
  * (behavior frozen). Localhost gate and SQL unchanged.
  */
+import { withSandboxCardGuard } from '../lib/card-session-scope.js'
 import { Router } from 'express'
 import { getDb } from '../db/index.js'
 import { broadcast } from '../ws/index.js'
@@ -27,7 +28,7 @@ router.get('/check-preview', (req, res) => {
 })
 
 // Session reports PR creation — updates objective with branch/PR info
-router.post('/pr-created', (req, res) => {
+router.post('/pr-created', withSandboxCardGuard((req, res) => {
   if (!isLocalhost(req)) {
     res.status(403).json({ error: 'Internal API: localhost only' })
     return
@@ -88,6 +89,6 @@ router.post('/pr-created', (req, res) => {
   // gates merge and close. Do not reintroduce a child here.
 
   res.json({ ok: true })
-})
+}))
 
 }

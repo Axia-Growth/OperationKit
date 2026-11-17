@@ -32,8 +32,8 @@ test('a long card title does not push the board sideways', async ({ page }, info
   expect(box && column && box.width <= column.width + 1, 'card is no wider than its column').toBeTruthy()
 })
 
-// Uses the card in the second workspace: in the main one the seed enables a starter
-// pack, and that makes every card there unsaveable (audit finding PA-1 (fix card drafted, not filed yet), test below).
+// Uses the card in the second workspace; the main one, where the seed enables a
+// starter pack, is covered by the #901196 test below.
 test('open a card from the board, edit it, and the edit is still there after a reload', async ({ page }, info) => {
   await login(page, info)
   const problems = watch(page)
@@ -63,23 +63,25 @@ test('open a card from the board, edit it, and the edit is still there after a r
   expectClean(problems)
 })
 
-// Known bug, audit finding PA-1 (fix card drafted, not filed yet): enabling a starter pack on a workspace whose bot pool
-// is open ("any bot") narrows the pool to the pack's bot. Cards already there, run by
-// the default bot, then fail to save with a 400, and the dialog only says "Something
-// went wrong". Remove test.fail when that card ships.
+// Fixed by card #901196 (was audit finding PA-1): enabling a starter pack on a
+// workspace whose bot pool is open ("any bot") used to narrow the pool to the pack's
+// bot, so cards already there, run by the default bot, failed to save with a 400 and
+// the dialog only said "Something went wrong". The pool now stays open, and the
+// dialog shows the server's reason for a 400.
 test('a card still saves after a starter pack is enabled in its workspace', async ({ page }, info) => {
-  test.fail(true, 'Known bug — audit finding PA-1 (fix card drafted, not filed yet) (starter pack narrows the workspace bot pool; existing cards cannot be saved)')
   expect(seed().graphPack, 'seed.mjs enabled the knowledge-import pack in the main workspace').toBe(true)
   await login(page, info)
   await page.goto(`/o/${seed().cards.longTitle}`)
   await page.getByRole('button', { name: 'Edit card' }).first().click()
   const dialogTitle = page.locator('#objective-modal-title')
   await expect(dialogTitle).toHaveText('Edit card')
-  await page.getByLabel('Description / instructions').fill(`Saved after the pack was enabled (${info.project.name}).`)
+  const text = `Saved after the pack was enabled (${info.project.name}).`
+  await page.getByLabel('Description / instructions').fill(text)
   await page.getByRole('button', { name: 'Update', exact: true }).click()
-  await page.waitForTimeout(1500)
-  await shot(page, info, 'card-edit-save-refused')
   await expect(dialogTitle).toBeHidden()
+  await shot(page, info, 'card-edit-saved-after-pack')
+  const saved = await (await page.request.get(`/api/objectives/${seed().cards.longTitle}`)).json()
+  expect(saved.description, 'the edit was stored').toBe(text)
 })
 
 // A double click sends the request twice (the button has no busy state). The server

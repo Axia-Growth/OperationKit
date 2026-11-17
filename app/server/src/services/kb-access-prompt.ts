@@ -182,6 +182,6 @@ export function buildSandboxedObjectiveMemoryBlock(objectiveId: number): string[
 export function sandboxedLiveOutputLines(objectiveId: number): string[] {
   return [
     '- Partial outputs: PUT them as `live/<name>` through the memory route above (`put live/partial.csv ~/cc-memory/live/partial.csv`) — listed and readable through the API while you run (secret-redacted). Your scratch file is never served.',
-    `- \`${SANDBOX_LIVE_SCRIPT}\` exists when this card's repo is the app's own. In any other repo, post the same snapshot with curl: \`curl -s -X POST ${CC_API}/api/internal/objectives/${objectiveId}/progress -H 'Content-Type: application/json' -d '{"step":2,"total_steps":5,"label":"…","note":"…"}'\``,
+    `- \`${SANDBOX_LIVE_SCRIPT}\` exists when this card's repo is the app's own. In any other repo, post the same snapshot with curl: \`curl -s -X POST ${CC_API}/api/internal/objectives/${objectiveId}/progress -H 'Content-Type: application/json' -H "X-CC-Session-Token: $CC_SESSION_TOKEN" -d '{"step":2,"total_steps":5,"label":"…","note":"…"}'\``,
   ]
 }

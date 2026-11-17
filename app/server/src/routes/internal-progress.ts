@@ -2,6 +2,7 @@
  * Internal mid-session progress reporting — extracted from internal.ts
  * (behavior frozen). Localhost gate unchanged.
  */
+import { withSandboxCardGuard } from '../lib/card-session-scope.js'
 import { resolveWriteWorkspace } from '../services/workspaces.js'
 import { Router, type Request, type Response } from 'express'
 import type { Objective } from '@operationkit/shared'
@@ -75,7 +76,7 @@ router.post('/progress', (req, res) => {
 // them). Same localhost gate as the rest of /api/internal.
 
 // Structured progress snapshot: step N of M, label, note, partial result, artifact refs.
-router.post('/objectives/:id/progress', (req, res) => {
+router.post('/objectives/:id/progress', withSandboxCardGuard((req, res) => {
   if (!localOnly(req, res)) return
   const objective = loadObjective(req, res)
   if (!objective) return
@@ -153,7 +154,7 @@ router.post('/objectives/:id/progress', (req, res) => {
     }
     throw err
   }
-})
+}))
 
 // The accountability record + the server's classification of it (obj 900367).
 // Read-only; the write side is the POST above (worker/lead) and the server's own
@@ -167,7 +168,7 @@ router.get('/objectives/:id/accountability', (req, res) => {
 })
 
 // Same view bots get — lets a parent read its children's progress mid-run.
-router.get('/objectives/:id/progress', (req, res) => {
+router.get('/objectives/:id/progress', withSandboxCardGuard((req, res) => {
   if (!localOnly(req, res)) return
   const objective = loadObjective(req, res)
   if (!objective) return
@@ -177,16 +178,16 @@ router.get('/objectives/:id/progress', (req, res) => {
     return
   }
   res.json(buildProgressView(getDb(), objective, q))
-})
+}))
 
-router.get('/objectives/:id/artifacts', (req, res) => {
+router.get('/objectives/:id/artifacts', withSandboxCardGuard((req, res) => {
   if (!localOnly(req, res)) return
   const objective = loadObjective(req, res)
   if (!objective) return
   res.json({ objective_id: objective.id, ...listArtifacts(objective.id) })
-})
+}))
 
-router.get('/objectives/:id/artifacts/file', (req, res) => {
+router.get('/objectives/:id/artifacts/file', withSandboxCardGuard((req, res) => {
   if (!localOnly(req, res)) return
   const objective = loadObjective(req, res)
   if (!objective) return
@@ -200,12 +201,12 @@ router.get('/objectives/:id/artifacts/file', (req, res) => {
   } catch (err) {
     sendArtifactError(res, err)
   }
-})
+}))
 
 // Fan out: register already-created children (POST /api/internal/objectives with
 // parent_id) as a parallel group with a concurrency ceiling, and start the first
 // wave now. Later waves start from the poller as siblings finish.
-router.post('/objectives/:id/fanout', async (req, res) => {
+router.post('/objectives/:id/fanout', withSandboxCardGuard(async (req, res) => {
   if (!localOnly(req, res)) return
   const objective = loadObjective(req, res)
   if (!objective) return
@@ -221,6 +222,6 @@ router.post('/objectives/:id/fanout', async (req, res) => {
     }
     throw err
   }
-})
+}))
 
 }

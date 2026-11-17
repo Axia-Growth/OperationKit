@@ -20,7 +20,7 @@ import { FooterActions } from './objective-modal/FooterActions'
 import { parseDuplicateError, cardHref, type DuplicateCard } from '../lib/duplicateGuard'
 import { Select } from './ui/Select'
 import { ModelPicker } from './ModelPicker'
-import { friendlyError } from '../lib/format'
+import { friendlyError, serverReason } from '../lib/format'
 import { dropNewCardDraft, hasDraftText, readNewCardDraft, writeNewCardDraft } from '../lib/newCardDraft'
 
 interface ObjectiveModalProps {
@@ -74,6 +74,9 @@ function ObjectiveModalImpl({ objective, workspace, onClose, onCreate, onUpdate,
   const [errorDetail, setErrorDetail] = useState('')
   const setError = (msg: string) => { setErrorText(msg); setErrorDetail('') }
   const showError = (err: unknown) => {
+    // A 4xx with a server reason says what to change, so it is shown as-is (obj 901196).
+    const reason = serverReason(err)
+    if (reason) { setError(reason); return }
     const f = friendlyError(err)
     setErrorText(f.message)
     setErrorDetail(f.detail)

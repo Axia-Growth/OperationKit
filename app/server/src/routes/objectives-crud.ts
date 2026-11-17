@@ -539,13 +539,18 @@ router.put('/:id', (req: AuthRequest, res) => {
     }
   }
 
-  // Agent-pool gate: only checked when caller is actually changing agent or
-  // workspace. Use the post-update values for the lookup (caller-supplied or
-  // existing).
-  if (agent_context !== undefined || workspace !== undefined) {
-    const finalWs = workspace ?? existing.workspace
-    const finalAgent = agent_context ?? existing.agent_context
-    const finalProject = project ?? existing.project
+  // Agent-pool gate: only checked when caller is actually CHANGING agent,
+  // workspace or project. The edit dialog re-sends the unchanged values on every
+  // save, so "field present" is not "field changed": a card whose bot was valid
+  // when it was filed must stay editable after the pool is narrowed later
+  // (obj 901196). Use the post-update values for the lookup.
+  const finalWs = workspace ?? existing.workspace
+  const finalAgent = agent_context ?? existing.agent_context
+  const finalProject = project ?? existing.project
+  const placementChanged = finalWs !== existing.workspace
+    || finalAgent !== existing.agent_context
+    || (project !== undefined && (project || null) !== (existing.project || null))
+  if (placementChanged) {
     const poolError = checkAgentInWorkspacePool(finalWs, finalAgent, finalProject)
     if (poolError) {
       res.status(400).json({ error: poolError })

@@ -2,6 +2,7 @@
  * Hermes localhost read + control endpoints — extracted from internal.ts
  * (behavior frozen). Localhost gate unchanged.
  */
+import { withSandboxCardGuard } from '../lib/card-session-scope.js'
 import { relaySender } from '../lib/message-provenance.js'
 import { resolveMessageCaller } from '../lib/message-caller.js'
 import { frameAndScan, noteUntrustedPayload } from '../services/injection-telemetry.js'
@@ -230,7 +231,7 @@ function frameCardProseForSession(objective: Objective, readerId: number | null)
 }
 
 // GET /api/internal/objectives/:id — single objective detail
-router.get('/objectives/:id', (req, res) => {
+router.get('/objectives/:id', withSandboxCardGuard((req, res) => {
   const principal = requireBoardPrincipal(req, res)
   if (!principal) return
   const db = getDb()
@@ -258,7 +259,7 @@ router.get('/objectives/:id', (req, res) => {
   const body = principal.kind === 'session' ? frameCardProseForSession(objective, principal.objectiveId) : objective
   // Embed the full PR log (obj 2300) so a curl against the detail shows every PR.
   res.json({ ...body, prs: listObjectivePRs(objective.id), strategy })
-})
+}))
 
 // GET /api/internal/objectives/:id/siblings — the sanctioned sibling read edge
 // (obj 707038, P1-3). Direct siblings only (same parent_id, self excluded), and
@@ -318,7 +319,7 @@ router.get('/objectives/:id/siblings', (req, res) => {
 })
 
 // GET /api/internal/objectives/:id/output — session conversation history (no JWT)
-router.get('/objectives/:id/output', (req, res) => {
+router.get('/objectives/:id/output', withSandboxCardGuard((req, res) => {
   const principal = requireBoardPrincipal(req, res)
   if (!principal) return
   const db = getDb()
@@ -362,7 +363,7 @@ router.get('/objectives/:id/output', (req, res) => {
   const limit = parseInt(req.query.limit as string, 10) || 50
   const tail = messages.length > limit ? messages.slice(-limit) : messages
   res.json({ messages: tail, total: messages.length, status: objective.status, session_id: targetId })
-})
+}))
 
 // GET /api/internal/briefing — daily briefing (admin-equivalent, no JWT)
 router.get('/briefing', (req, res) => {
@@ -395,7 +396,7 @@ router.get('/briefing', (req, res) => {
 })
 
 // PATCH /api/internal/objectives/:id/status — status transitions (no JWT)
-router.patch('/objectives/:id/status', async (req, res) => {
+router.patch('/objectives/:id/status', withSandboxCardGuard(async (req, res) => {
   if (!isLocalhost(req)) {
     res.status(403).json({ error: 'Internal API: localhost only' })
     return
@@ -636,10 +637,10 @@ router.patch('/objectives/:id/status', async (req, res) => {
   }
 
   res.json(updated)
-})
+}))
 
 // POST /api/internal/objectives/:id/message — send follow-up message (no JWT)
-router.post('/objectives/:id/message', (req, res) => {
+router.post('/objectives/:id/message', withSandboxCardGuard((req, res) => {
   if (!isLocalhost(req)) {
     res.status(403).json({ error: 'Internal API: localhost only' })
     return
@@ -835,7 +836,7 @@ router.post('/objectives/:id/message', (req, res) => {
     console.error('[internal] message → sendFollowUp failed for %s:', req.params.id, err)
     res.status(500).json({ error: err instanceof Error ? err.message : 'Failed to send message' })
   }
-})
+}))
 
 // POST /api/internal/objectives/:id/decision — a STRATEGY node submits a
 // Stage-0 Decision Request and parks for Operator's confirm/deny (obj 2385).
@@ -905,7 +906,7 @@ router.get('/objectives/:id/decision', (req, res) => {
 // objective) records its end-of-run disposition. localhost-only; called by the
 // job session itself. Orthogonal to status: disposition is the *outcome* the
 // Jobs board lanes on (Needs Review vs Complete), not the worker lifecycle.
-router.post('/objectives/:id/job-disposition', (req, res) => {
+router.post('/objectives/:id/job-disposition', withSandboxCardGuard((req, res) => {
   if (!isLocalhost(req)) {
     res.status(403).json({ error: 'Internal API: localhost only' })
     return
@@ -980,6 +981,6 @@ router.post('/objectives/:id/job-disposition', (req, res) => {
     return
   }
   res.json(updated)
-})
+}))
 
 }

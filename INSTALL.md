@@ -139,6 +139,11 @@ them.
    *"the Cloudflare API token cannot write Configuration Rules"*. See
    [Browser Integrity Check](#and-not-getting-turned-away-by-browser-integrity-check-error-1010).
 
+This token is used **once**, by the installer. A client who wants their admin
+to add teammates from Settings → Users without opening Cloudflare again can also
+hand over a second, much smaller token that stays on the server — see
+[Adding a teammate later](#adding-a-teammate-later--the-clients-admin-from-the-app).
+
 Nothing else needs copying out of Cloudflare:
 
 - **Account id:** the installer reads it from the zone
@@ -200,7 +205,7 @@ every setting is explained there in plain words.
 | `BRAND_NAME` / `BRAND_LOGO` | What name (and logo file) should people see? | `Example Capital OS` |
 | `ADMIN_USERNAME` | Username for the first admin? | `admin` |
 | `ADMIN_EMAIL` | The first admin's email (signs them in through Cloudflare). Empty = the first address in `ACCESS_ALLOWED_EMAILS` | `alex.partner@example-capital.com` |
-| `ACCESS_ALLOWED_EMAILS` / `ACCESS_ALLOWED_EMAIL_DOMAIN` | Who may open the site? | `alex.partner@example-capital.com` |
+| `ACCESS_ALLOWED_EMAILS` / `ACCESS_ALLOWED_EMAIL_DOMAIN` | Who may open the site? A name-by-name list of addresses is the default; the domain field is optional and stays empty unless the client asks for it | `alex.partner@example-capital.com` |
 | `ACCESS_LOGIN_METHOD` | Email code, Google or Microsoft? | `otp` |
 | `CLAUDE_AUTH` | Claude subscription (`login`) or API key (`api-key`)? | `login` |
 | `AGENTS_ENABLED` | Which AI agents? | `general,coo,cfo` |
@@ -208,6 +213,23 @@ every setting is explained there in plain words.
 | `BACKUP_TARGET` | Should nightly backups also go off the server, to Backblaze B2? If **yes**, leave it empty here: after the install the person runs `install/b2-setup.sh` in their own terminal (step 10 and [Backups](#backups-and-restore)), which fills it in. If they already use another S3 bucket, write its address. | empty, or `s3:https://s3.us-west-004.backblazeb2.com/clientfirm-ok/operationkit` |
 
 Write it with a heredoc over SSH. The file holds no secrets.
+
+#### Who may open the site
+
+List each person by address in `ACCESS_ALLOWED_EMAILS`, and leave
+`ACCESS_ALLOWED_EMAIL_DOMAIN` empty. Only listed people ever see the app at all.
+
+Teammates added later do **not** need a new `client.conf`: the client's admin
+adds them in **Settings → Users**, and the app puts that one address on the
+Cloudflare Access list itself once the admin has pasted the small Access-edit
+token into **Settings → Users → Cloudflare sign-in sync** (see
+[Letting the app update the Access list itself](#letting-the-app-update-the-access-list-itself-optional)).
+Without that token, new people show **blocked at Cloudflare** in Settings →
+Users until someone adds them in the dashboard.
+
+`ACCESS_ALLOWED_EMAIL_DOMAIN` still works for installs that already set it, but
+it is not the recommended setup, and neither the installer nor the app ever adds
+a domain rule on its own.
 
 ### Step 5: Hand over the Cloudflare token (and API key, if used)
 
@@ -221,6 +243,12 @@ environment variables so nothing is printed:
   # printf 'ANTHROPIC_API_KEY=%s\n' "$ANTHROPIC_API_KEY"
 } | ssh SERVER 'umask 077; cat > /root/ok-handover.env'
 ```
+
+`CLOUDFLARE_ACCESS_SYNC_TOKEN` is optional and separate: a least-privilege
+token (Account → Access: Apps and Policies → Edit, this account only) that lets
+the running app add a teammate's email to the Cloudflare allow list when an
+admin creates them in Settings → Users. See
+[Adding a teammate later](#adding-a-teammate-later--the-clients-admin-from-the-app).
 
 Other names the installer accepts in this file: `OPENAI_API_KEY`,
 `GEMINI_API_KEY`, `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `AZURE_CLIENT_ID`,
@@ -399,10 +427,13 @@ before anything else in the app works.
   ignored and the password page shows instead. The keys are cached and
   re-fetched when Cloudflare rotates them.
 - **Who gets in.** The email must belong to exactly one Operation Kit user. The
-  installer links the first admin. For everyone else: add their email to the
-  Cloudflare Access list, then in **Settings → Users** create them (or open
-  their row) and fill in **Sign-in email**. An allowed email with no user gets a
-  plain "No account for this email" page. Nobody is ever created automatically.
+  installer links the first admin. For everyone else: in **Settings → Users**
+  create them (or open their row) and fill in **Sign-in email**. Their email
+  must also be on the Cloudflare Access list — the app does that for you when
+  the install holds an Access-edit token, and tells you per person either way
+  (see [Adding a teammate later](#adding-a-teammate-later--the-clients-admin-from-the-app)).
+  An allowed email with no user gets a plain "No account for this email" page.
+  Nobody is ever created automatically.
 - **Sign out** clears the app session and then signs the person out of
   Cloudflare Access too (`/cdn-cgi/access/logout`), so the next visit asks for
   the email again.
@@ -423,6 +454,132 @@ before anything else in the app works.
   settings empty, so the app keeps its own password sign-in.
   `cloudflare.sh down` empties them too. After changing them by hand, restart
   the app.
+
+### Adding a teammate later (👤 the client's admin, from the app)
+
+Once the install is up, the client's admin adds people themselves in
+**Settings → Users**: username, a temporary password, a role, and a **sign-in
+email**. They do not need you, a terminal, or the Cloudflare dashboard.
+
+There is one catch worth understanding, because it is the thing clients call
+about. **Cloudflare Access is a second door in front of the app.** Creating the
+user teaches *Operation Kit* who they are; it does not teach *Cloudflare* to let
+them past the sign-in page. Someone whose email is not on the Access allow list
+sees Cloudflare's **"That account does not have access"** and never reaches the
+app at all.
+
+Settings → Users now says which side of that door each person is on, with a
+badge next to their name:
+
+| Badge | Means |
+|---|---|
+| **can sign in** | the Access policy covers this email (by address, or by a domain rule if the install set the optional `ACCESS_ALLOWED_EMAIL_DOMAIN`) |
+| **blocked at Cloudflare** | it does not — or the app cannot confirm that it does. Hover the badge for which |
+| *(no badge)* | this install is not behind Cloudflare Access, so there is no second door |
+
+#### Letting the app update the Access list itself (optional)
+
+Give the install a Cloudflare token with **one** permission and Settings → Users
+becomes the only place anyone has to go:
+
+| Type | Permission | Access |
+|---|---|---|
+| Account | Access: Apps and Policies | Edit |
+
+Scope it to the **client's account only** — nothing else, no zone permissions.
+This is deliberately NOT the install token from
+[step 2](#step-2-cloudflare--you-about-5-minutes-one-time-per-client): that one
+can edit DNS, tunnels and identity providers and is used once; this one lives on
+the server for as long as the install does, so it gets the smallest permission
+that works.
+
+**The usual way: the client's admin pastes it into the app.** In
+**Settings → Users → Cloudflare sign-in sync**, paste the token and press
+**Save token**.
+
+- It works from the very next user they add, re-email or remove. There is no
+  restart and no server step.
+- It is stored encrypted in the app's secrets store and is **never shown
+  again**. The field stays empty and no screen or API sends the value back.
+  To change it, paste a new one. **Remove token** forgets it.
+- It is kept for the server alone. AI sessions, the secrets broker and the
+  server's shared environment never receive it.
+- Until a token is saved, the card says **"Cloudflare sync not set up"**, and
+  each new person shows **blocked at Cloudflare** until someone adds them.
+- Right after saving, the card checks the token. If the token can't edit Access
+  policies, it shows a note saying exactly that (**"Cloudflare sync is paused"**),
+  not an error. User administration keeps working either way.
+
+Saving and removing the token is allowed only for an admin signed in to the web
+app. An API key cannot do it.
+
+**Or hand it over at install time** (a fallback; a token saved in Settings
+wins). Use the same hand-over file as every other secret (step 5), under the
+name `CLOUDFLARE_ACCESS_SYNC_TOKEN`:
+
+```bash
+{ printf 'CLOUDFLARE_API_TOKEN=%s\n' "$CF_API_TOKEN"
+  printf 'CLOUDFLARE_ACCESS_SYNC_TOKEN=%s\n' "$CF_ACCESS_SYNC_TOKEN"
+} | ssh SERVER 'umask 077; cat > /root/ok-handover.env'
+```
+
+The installer stores that as `OK_CF_ACCESS_API_TOKEN` in `secrets/stack.env`.
+Editing it there by hand works too, but needs an app restart. The Settings
+field does not.
+
+**Installs made before this feature.** Running `install/update.sh` records the
+two non-secret settings the sync needs, `OK_CF_ACCOUNT_ID` and
+`OK_CF_ACCESS_APP_ID`, in `secrets/stack.env`. If an install never got them,
+the app finds the account from the token itself. It looks through the accounts
+the token can see for the one Access application whose AUD tag is this
+install's. So pasting the token in Settings is enough either way.
+
+With that token in place:
+
+- **Creating a user with a sign-in email** adds that one address to this
+  install's **"Allowed people"** policy. The person can sign in immediately.
+- **Changing their email** moves the entry: the new address in, the old one out.
+- **Deleting the user** takes their address back out, so they are gone from both
+  doors rather than just one.
+
+What it will **not** do, by design:
+
+- It touches **one** Access application — the one this install already verifies
+  its sign-ins against (matched on the AUD tag) — and **one** policy on it,
+  *"Allowed people"*. The *"Install verify robot"* policy, the key-auth API app,
+  other applications and other accounts are never written to. A policy that is
+  not an `allow` policy is refused even if it carries the right name.
+- It never adds, edits or removes a **domain** rule. If
+  `ACCESS_ALLOWED_EMAIL_DOMAIN` already covers someone, the app notices and
+  writes nothing at all.
+- It never removes an address that `ACCESS_ALLOWED_EMAILS` put there — those
+  belong to the installer.
+- It will not empty the policy. A removal that would leave the policy matching
+  nobody is refused, because that locks everyone out of the front door.
+- It is idempotent. Re-creating the same user makes no Cloudflare write at all
+  when the address is already allowed.
+- **Updates keep your teammates.** `install/update.sh` re-runs the installer,
+  which rebuilds the Access settings. It does not overwrite the "Allowed people"
+  list: it reads the live list and **merges** `client.conf` into it.
+  - Every address the app added from Settings → Users stays, and so does any rule
+    someone added by hand in the Cloudflare dashboard.
+  - The only entries it removes are ones an earlier installer run put there from
+    `client.conf` and that `client.conf` no longer lists.
+  - The installer's log says how many app-added addresses it kept.
+
+**Without the token nothing breaks.** No token, a wrong token, an under-scoped
+token or Cloudflare being down all behave the same way: the app writes nothing,
+user administration works exactly as before, the Cloudflare sign-in sync card
+shows a note ("not set up" or "paused", with the reason), and the badge reads
+"blocked at Cloudflare" with the reason in its tooltip. There is no error
+dialog, and adding or deleting a user never fails because of Cloudflare.
+
+#### Doing it by hand instead
+
+Leave the token out and add the address in the Cloudflare dashboard: *Zero Trust
+→ Access → Applications → (this install) → Policies → "Allowed people" → Add
+include → Emails*. The badge turns to **can sign in** within about 15 seconds of
+a page refresh.
 
 ### Letting bots reach the API with their key
 

@@ -112,6 +112,15 @@ services:
       CARD_BROWSER_ALLOW_PRIVATE_NETWORK: ${OK_BROWSER_ALLOW_PRIVATE_NETWORK:-off}
       CARD_BROWSER_ALLOW_METADATA: "off"
       OK_DOMAIN: ${OK_DOMAIN:-localhost}
+      # Adding a teammate from Settings -> Users (obj 900023). The first three
+      # are not secrets (account, app, and the addresses client.conf already
+      # listed); OK_CF_ACCESS_API_TOKEN is, and is optional — without it the app
+      # neither reads nor writes the Access allow list.
+      OK_CF_ACCOUNT_ID: ${OK_CF_ACCOUNT_ID:-}
+      OK_CF_ACCESS_APP_ID: ${OK_CF_ACCESS_APP_ID:-}
+      OK_CF_ACCESS_PROTECTED_EMAILS: ${OK_CF_ACCESS_PROTECTED_EMAILS:-}
+      OK_CF_ACCESS_ALLOWED_DOMAIN: ${OK_CF_ACCESS_ALLOWED_DOMAIN:-}
+      OK_CF_ACCESS_API_TOKEN: ${OK_CF_ACCESS_API_TOKEN:-}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       GEMINI_API_KEY: ${GEMINI_API_KEY:-}
     healthcheck:

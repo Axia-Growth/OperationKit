@@ -10,6 +10,7 @@ import {
 } from '../ui'
 import { useWorkspaces } from '../../hooks/useWorkspaces'
 import {
+  type CfAccessStatus,
   type User,
   type UserRole,
   type Workspace,
@@ -21,9 +22,46 @@ import type { EmailOutcome } from '../../lib/email'
 import { generateTempPassword } from '../../lib/tempPassword'
 import { Select } from '../ui/Select'
 import { humanize } from '../../lib/format'
+import { CfAccessSyncCard } from './CfAccessSyncCard'
 
 interface AdminUser extends User {
   workspaces: WorkspaceMembership[]
+}
+
+/**
+ * Behind Cloudflare Access the app is the SECOND door (obj 900023). Someone an
+ * admin has just added here still meets Cloudflare's "That account does not
+ * have access" page unless their email is on the Access allow policy. This
+ * badge says, per user, which side of that door they are on — and the tooltip
+ * says what to do about it, in plain language rather than an error code.
+ */
+const CF_ACCESS_HINT: Record<CfAccessStatus['detail'], string> = {
+  allowed_directly: 'Cloudflare Access allows this exact email.',
+  allowed_by_domain: 'Cloudflare Access allows this email domain.',
+  not_allowed: 'Cloudflare Access does not allow this email yet. Save this user again to retry the sync, or add the address in the Cloudflare dashboard.',
+  no_email: 'No sign-in email, so Cloudflare Access cannot match this person. Set one below.',
+  sync_not_configured: 'Cloudflare sync is not set up, so this address cannot be added at Cloudflare from here. Add the token under Cloudflare sign-in sync above.',
+  not_configured: 'Cloudflare sync is not configured on this install, so the status cannot be confirmed here.',
+  forbidden: 'The Cloudflare API token cannot read the Access policy. It needs Access: Apps and Policies Edit on this account.',
+  app_not_found: 'No Cloudflare Access application matches this install. Re-run install/cloudflare.sh.',
+  policy_not_found: 'The Access application has no "Allowed people" policy. Re-run install/cloudflare.sh.',
+  policy_refused: 'The configured Access policy is not an allow policy, so it is left alone.',
+  unreachable: 'Cloudflare could not be reached, so the status is unconfirmed.',
+  cloudflare_error: 'Cloudflare returned an error, so the status is unconfirmed.',
+  access_not_configured: 'This install is not behind Cloudflare Access.',
+}
+
+
+function CfAccessBadge({ access }: { access?: CfAccessStatus }) {
+  if (!access || access.status === 'not_applicable') return null
+  const allowed = access.status === 'can_sign_in'
+  return (
+    <span title={CF_ACCESS_HINT[access.detail] ?? ''} className="inline-flex">
+      <Badge tone={allowed ? 'verify' : 'amber'}>
+        {allowed ? 'can sign in' : 'blocked at Cloudflare'}
+      </Badge>
+    </span>
+  )
 }
 
 export function UsersTab() {
@@ -277,6 +315,11 @@ export function UsersTab() {
         </form>
       </Card>
 
+      {/* Cloudflare sign-in sync (obj 900023): the write-only token field, plus a
+          note when no token is set or when it lacks rights. A broken token is a
+          note, never an error; the Users screen keeps working either way. */}
+      <CfAccessSyncCard onChanged={() => void reload()} />
+
       {/* User list */}
       {users.map(user => {
         const memberships = user.workspaces
@@ -293,6 +336,7 @@ export function UsersTab() {
               <ChevronRight className={cn('h-4 w-4 shrink-0 text-fg-3 transition-transform', isOpen && 'rotate-90')} />
               <span className="text-sm font-medium text-fg-0">{user.username}</span>
               <Badge tone={user.role === 'admin' ? 'accent' : 'neutral'}>{humanize(user.role)}</Badge>
+              <CfAccessBadge access={user.cloudflare_access} />
               {user.email && <span className="hidden truncate text-xs text-fg-2 sm:inline">{user.email}</span>}
               <span className="ml-auto text-xs text-fg-3">
                 {memberships.length} workspace{memberships.length === 1 ? '' : 's'}
@@ -316,7 +360,7 @@ export function UsersTab() {
                 <Field
                   label="Sign-in email"
                   id={`user-email-${user.id}`}
-                  hint="Behind Cloudflare Access, signing in at the Cloudflare door with this email opens the app as this user."
+                  hint={<>Behind Cloudflare Access, signing in at the Cloudflare door with this email opens the app as this user.{user.cloudflare_access && user.cloudflare_access.status !== 'not_applicable' && <> {CF_ACCESS_HINT[user.cloudflare_access.detail]}</>}</>}
                 >
                   <div className="flex flex-wrap items-center gap-2">
                     <Input

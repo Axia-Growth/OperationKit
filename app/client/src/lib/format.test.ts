@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import {
   formatAbsoluteTime, formatRelativeTime, formatDateTime, formatDate,
-  formatCost, formatDuration, formatBytes, humanize, describeCron, friendlyError, actionErrorMessage, NETWORK_ERROR_MESSAGE,
+  formatCost, formatDuration, formatBytes, humanize, describeCron, friendlyError, actionErrorMessage, NETWORK_ERROR_MESSAGE, serverReason,
 } from './format'
 
 const NOW = Date.parse('2026-11-15T12:00:00Z')
@@ -128,6 +128,21 @@ describe('friendlyError', () => {
     for (const s of [400, 401, 403, 404, 409, 413, 429, 500, 503]) {
       expect(friendlyError(s).message).not.toMatch(/HTTP|\d{3}/)
     }
+  })
+})
+
+describe('serverReason (obj 901196)', () => {
+  const apiErr = (status: number, body: unknown) => Object.assign(new Error('x'), { status, body })
+  it('returns the server text of a 4xx', () => {
+    expect(serverReason(apiErr(400, { error: "Agent 'general' is not in workspace 'w' pool (allowed: kb-librarian)" })))
+      .toBe("Agent 'general' is not in workspace 'w' pool (allowed: kb-librarian)")
+  })
+  it('is null for a 5xx, a missing body, a network error or a non-object', () => {
+    expect(serverReason(apiErr(500, { error: 'stack trace' }))).toBeNull()
+    expect(serverReason(apiErr(400, null))).toBeNull()
+    expect(serverReason(apiErr(400, { error: '  ' }))).toBeNull()
+    expect(serverReason(new Error('Failed to fetch'))).toBeNull()
+    expect(serverReason('HTTP 400')).toBeNull()
   })
 })
 

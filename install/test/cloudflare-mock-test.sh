@@ -22,7 +22,10 @@ check "proxied CNAME to the tunnel" "$(st '.result.dns[0]|(.type+" "+(.proxied|t
 check "one Access app on the bare domain" "$(st '[.result.apps[]|select(.domain=="ops.example-capital.com")|.domain]')" '["ops.example-capital.com"]'
 check "one-time PIN login method" "$(st '[.result.idps[].type]')" '["onetimepin"]'
 check "app admits only the one-time PIN, auto-redirect, 24h session" "$(st '.result.apps[0]|[(.allowed_idps|length), .auto_redirect_to_identity, .session_duration]')" '[1,true,"24h"]'
-check "allowed-people policy" "$(st '[.result.policies[][]|select(.name=="Allowed people")|.include[0].email.email]')" '["alex.partner@example-capital.com"]'
+# client.conf.example ships the name-by-name default (obj 900023): the listed
+# address only, and NO domain-wide rule.
+check "allowed-people policy is the email list (the default)" "$(st '[.result.policies[][]|select(.name=="Allowed people")|.include[]|.email_domain.domain // .email.email]')" '["alex.partner@example-capital.com"]'
+check "no email_domain rule is written by default" "$(st '[.result.policies[][]|.include[]|select(has("email_domain"))]|length')" 0
 check "verify robot policy" "$(st '[.result.policies[][]|select(.name=="Install verify robot")|.decision]')" '["non_identity"]'
 # Step 8 (obj 900028): the key-auth API bypass app, created by `up` by default.
 API_Q='[.result.apps[]|select(.name=="Operation Kit API (key auth)")]'
@@ -35,13 +38,32 @@ check "bots can reach the board and MCP" "$(st "$API_Q|.[0].destinations|map(.ur
 check "operator routes are NOT bypassed" "$(st "$API_Q|.[0].destinations|map(.uri)|map(select(test(\"/api/(internal|admin|secrets|secret-upload|webhooks|public|llm|alerts|costs|intel|status)\")))|length")" 0
 check "/api/auth bypassed only at the exact /api/auth/me" "$(st "$API_Q|.[0].destinations|map(.uri)|map(select(contains(\"/api/auth\")))")" '["ops.example-capital.com/api/auth/me"]'
 check "no blanket /api wildcard" "$(st "$API_Q|.[0].destinations|map(.uri)|map(select(endswith(\"/api\") or endswith(\"/api/*\")))|length")" 0
-check "secrets stored by name" "$(cut -d= -f1 "$WORK/ok/secrets/stack.env" | sort | tr '\n' ' ')" "OK_CF_ACCESS_AUD OK_CF_ACCESS_TEAM OK_VERIFY_CF_CLIENT_ID OK_VERIFY_CF_CLIENT_SECRET TUNNEL_TOKEN "
+check "secrets stored by name" "$(cut -d= -f1 "$WORK/ok/secrets/stack.env" | sort | tr '\n' ' ')" "OK_CF_ACCESS_ALLOWED_DOMAIN OK_CF_ACCESS_APP_ID OK_CF_ACCESS_AUD OK_CF_ACCESS_PROTECTED_EMAILS OK_CF_ACCESS_TEAM OK_CF_ACCOUNT_ID OK_VERIFY_CF_CLIENT_ID OK_VERIFY_CF_CLIENT_SECRET TUNNEL_TOKEN "
+check "no domain recorded (the email-list default)" "$(grep '^OK_CF_ACCESS_ALLOWED_DOMAIN=' "$WORK/ok/secrets/stack.env" | cut -d= -f2)" ""
+check "the listed address is recorded as installer-owned" "$(grep '^OK_CF_ACCESS_PROTECTED_EMAILS=' "$WORK/ok/secrets/stack.env" | cut -d= -f2)" alex.partner@example-capital.com
+check "no Access sync token unless one was handed over" "$(grep -c '^OK_CF_ACCESS_API_TOKEN=' "$WORK/ok/secrets/stack.env" || true)" 0
 check "one login: team domain stored" "$(grep '^OK_CF_ACCESS_TEAM=' "$WORK/ok/secrets/stack.env" | cut -d= -f2)" example-capital.cloudflareaccess.com
 check "one login: the app's AUD tag stored" "$(grep '^OK_CF_ACCESS_AUD=' "$WORK/ok/secrets/stack.env" | cut -d= -f2)" "$(st '.result.apps[0].aud' | tr -d '"')"
 check "stack.env is mode 600" "$(stat -c %a "$WORK/ok/secrets/stack.env")" 600
 check "no secret value printed" "$(bash "$CF" status --config "$WORK/client.conf" | grep -c 'mock-svc-secret\|mock-tunnel-token\|mock-token' || true)" 0
 
+# obj 900023: between runs the APP adds two teammates from Settings -> Users
+# (exactly what lib/cf-access-policy.ts does: PUT the policy with one more
+# {email:{email}} entry each). update.sh re-runs `up`; they must survive it.
+APP1=$(st '.result.apps[]|select(.domain=="ops.example-capital.com")|.id' | tr -d '"')
+POL1=$(st ".result.policies[\"$APP1\"][]|select(.name==\"Allowed people\")|.id" | tr -d '"')
+app_adds() { curl -fs -X PUT -H 'Authorization: Bearer mock-token' -H 'Content-Type: application/json' \
+  "http://127.0.0.1:$PORT/client/v4/accounts/acct1/access/apps/$APP1/policies/$POL1" \
+  --data "$(jq -nc --argjson inc "$1" '{name:"Allowed people", decision:"allow", precedence:1, include:$inc}')" >/dev/null; }
+app_adds '[{"email":{"email":"alex.partner@example-capital.com"}},{"email":{"email":"contractor@outside.dev"}},{"email":{"email":"advisor@another.org"}}]'
+check "the app added two teammates" "$(st "[.result.policies[\"$APP1\"][]|select(.name==\"Allowed people\")|.include[]|.email.email // empty]")" '["alex.partner@example-capital.com","contractor@outside.dev","advisor@another.org"]'
+
 echo "== up #2 (re-run must reuse everything)"; bash "$CF" up --config "$WORK/client.conf" | sed 's/^/    /'
+PEOPLE_Q="[.result.policies[\"$APP1\"][]|select(.name==\"Allowed people\")|.include[]|.email_domain.domain // .email.email]"
+check "re-run KEEPS the teammates added from Settings -> Users" "$(st "$PEOPLE_Q")" '["alex.partner@example-capital.com","contractor@outside.dev","advisor@another.org"]'
+check "re-run says it kept them" "$(bash "$CF" up --config "$WORK/client.conf" | grep -c "keeping 2 address(es) added from Settings -> Users")" 1
+check "no duplicate entries after two re-runs" "$(st "$PEOPLE_Q|length")" 3
+check "re-runs never add an email_domain rule" "$(st "[.result.policies[\"$APP1\"][]|.include[]|select(has(\"email_domain\"))]|length")" 0
 check "still one tunnel" "$(st '[.result.tunnels[]|select(.deleted|not)]|length')" 1
 check "still one dns record" "$(st '.result.dns|length')" 1
 check "still two apps (host-wide + key-auth API)" "$(st '.result.apps|length')" 2
@@ -51,6 +73,16 @@ check "still one bypass policy" "$(st '[.result.policies[][]|select(.decision=="
 check "key-auth app still covers 29 paths" "$(st '[.result.apps[]|select(.name=="Operation Kit API (key auth)")][0].destinations|length')" 29
 check "still one service token" "$(st '.result.svc|length')" 1
 check "AUD unchanged on re-run" "$(grep '^OK_CF_ACCESS_AUD=' "$WORK/ok/secrets/stack.env" | cut -d= -f2)" "$(st '.result.apps[0].aud' | tr -d '"')"
+
+echo "== client.conf owns ITS entries: a listed address is added, and dropped again when unlisted"
+cp "$WORK/client.conf" "$WORK/client.conf.bak"
+sed -i 's#^ACCESS_ALLOWED_EMAILS=.*#ACCESS_ALLOWED_EMAILS="alex.partner@example-capital.com,Owner@Example-Capital.com"#' "$WORK/client.conf"
+bash "$CF" up --config "$WORK/client.conf" >/dev/null
+check "a client.conf address is added alongside the app's" "$(st "$PEOPLE_Q")" '["alex.partner@example-capital.com","contractor@outside.dev","advisor@another.org","owner@example-capital.com"]'
+cp "$WORK/client.conf.bak" "$WORK/client.conf"
+bash "$CF" up --config "$WORK/client.conf" >/dev/null
+check "unlisting it in client.conf removes ONLY that address" "$(st "$PEOPLE_Q")" '["alex.partner@example-capital.com","contractor@outside.dev","advisor@another.org"]'
+check "the verify robot policy is untouched by the merge" "$(st "[.result.policies[\"$APP1\"][]|select(.name==\"Install verify robot\")|.include[0]|keys[0]]")" '["service_token"]'
 
 echo "== agent-pass add (an outside AI tool gets its own door key)"
 bash "$CF" agent-pass add claude-code --config "$WORK/client.conf" > "$WORK/out"; sed 's/^/    /' "$WORK/out"

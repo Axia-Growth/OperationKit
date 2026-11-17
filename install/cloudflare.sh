@@ -22,7 +22,11 @@
 #      "One-time PIN" provider: it works for every install with no Google or
 #      Microsoft app to register
 #   5. creates a Cloudflare Access application on DOMAIN that only lets
-#      ACCESS_ALLOWED_EMAILS / ACCESS_ALLOWED_EMAIL_DOMAIN through. Its
+#      ACCESS_ALLOWED_EMAILS / ACCESS_ALLOWED_EMAIL_DOMAIN through (the
+#      default is the name-by-name email list; a domain rule is written only
+#      when client.conf sets one). Teammates added later in Settings → Users
+#      reach this list through the app's Cloudflare sign-in sync token, one
+#      address at a time — never as a domain rule. Its
 #      allowed_idps holds ONLY that one login method, with auto-redirect on (no
 #      provider picker) and ACCESS_SESSION_DURATION (default 24h)
 #   6. creates an Access service token used ONLY by install/verify.sh to test the
@@ -104,6 +108,8 @@ source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 source "$(dirname "${BASH_SOURCE[0]}")/api-bypass-lib.sh"
 # shellcheck source=install/bic-lib.sh
 source "$(dirname "${BASH_SOURCE[0]}")/bic-lib.sh"
+# shellcheck source=install/access-policy-lib.sh
+source "$(dirname "${BASH_SOURCE[0]}")/access-policy-lib.sh"
 
 CF_API=${CF_API_BASE:-https://api.cloudflare.com/client/v4}
 ACTION=${1:-}; shift || true
@@ -683,9 +689,9 @@ else
   log "verify service token created (stored by name in secrets/stack.env)"
 fi
 
-include=$(jq -nc --arg emails "$(conf ACCESS_ALLOWED_EMAILS)" --arg dom "$(conf ACCESS_ALLOWED_EMAIL_DOMAIN)" '
-  [($emails | split(",")[] | gsub("\\s"; "") | select(length > 0) | {email:{email:.}}),
-   ($dom | gsub("\\s"; "") | select(length > 0) | {email_domain:{domain:.}})]')
+# What client.conf asks for. On a re-run this is MERGED into the live policy
+# below, never written over it (obj 900023) — see install/access-policy-lib.sh.
+include=$(ok_access_conf_include "$(conf ACCESS_ALLOWED_EMAILS)" "$(conf ACCESS_ALLOWED_EMAIL_DOMAIN)")
 app_body=$(jq -nc --arg n "$APP_NAME" --arg d "$DOMAIN" --arg idp "$IDP_ID" --arg dur "$(conf ACCESS_SESSION_DURATION 24h)" '
   {name:$n, domain:$d, type:"self_hosted", session_duration:$dur, allowed_idps:[$idp],
    auto_redirect_to_identity:true, app_launcher_visible:false, http_only_cookie_attribute:true,
@@ -707,9 +713,19 @@ upsert_policy() { # name json
   else mut POST "/accounts/$ACCOUNT_ID/access/apps/$APP_ID/policies" "$body" >/dev/null; log "policy '$name' created"; fi
 }
 if [ "$DRY_RUN" -eq 1 ]; then
-  log "  [dry-run] would upsert policies: 'Allowed people' include=$(jq -c 'length' <<<"$include") rule(s); 'Install verify robot'"
+  log "  [dry-run] would merge $(jq -c 'length' <<<"$include") client.conf rule(s) into 'Allowed people' (addresses added from Settings -> Users are kept); upsert 'Install verify robot'"
 else
-  upsert_policy "Allowed people" "$(jq -nc --argjson inc "$include" '{name:"Allowed people", decision:"allow", include:$inc, precedence:1}')"
+  # Keep the teammates the app added from Settings -> Users (obj 900023): read
+  # the live include list and merge client.conf into it, dropping only what an
+  # EARLIER run of this script wrote and client.conf no longer lists.
+  existing_inc=$(cf GET "/accounts/$ACCOUNT_ID/access/apps/$APP_ID/policies" 2>/dev/null \
+    | jq -c '[.result[]? | select(.name == "Allowed people" and (.decision // "") == "allow")][0].include // empty' || true)
+  merged_inc=$(ok_access_merge_include "$existing_inc" "$include" \
+    "$(env_get "$OK_SECRETS_ENV" OK_CF_ACCESS_PROTECTED_EMAILS)" "$(env_get "$OK_SECRETS_ENV" OK_CF_ACCESS_ALLOWED_DOMAIN)")
+  [ -n "$merged_inc" ] && [ "$merged_inc" != "[]" ] || merged_inc=$include
+  kept=$(ok_access_app_added "$merged_inc" "$include")
+  [ "$kept" = "0" ] || log "keeping $kept address(es) added from Settings -> Users (or by hand) in 'Allowed people'"
+  upsert_policy "Allowed people" "$(jq -nc --argjson inc "$merged_inc" '{name:"Allowed people", decision:"allow", include:$inc, precedence:1}')"
   upsert_policy "Install verify robot" "$(jq -nc --arg t "$SVC_ID" '{name:"Install verify robot", decision:"non_identity", include:[{service_token:{token_id:$t}}], precedence:2}')"
 fi
 
@@ -740,6 +756,25 @@ else
   env_set "$OK_SECRETS_ENV" OK_CF_ACCESS_TEAM "$org"
   env_set "$OK_SECRETS_ENV" OK_CF_ACCESS_AUD "$APP_AUD"
   log "team $org + app AUD stored: people who pass Cloudflare Access skip the app's own sign-in"
+
+  # Adding a teammate from Settings -> Users (obj 900023). None of these three
+  # is a secret: they say WHICH account, WHICH app and WHICH addresses the
+  # installer itself put in the policy. The app needs them to find its own
+  # "Allowed people" policy — and only that one. The credential that makes the
+  # sync actually work is separate and optional: CLOUDFLARE_ACCESS_SYNC_TOKEN in
+  # the hand-over file (see INSTALL.md, "Adding a teammate"). Without it the app
+  # reads nothing and writes nothing; it just shows "blocked at Cloudflare".
+  env_set "$OK_SECRETS_ENV" OK_CF_ACCOUNT_ID "$ACCOUNT_ID"
+  env_set "$OK_SECRETS_ENV" OK_CF_ACCESS_APP_ID "$APP_ID"
+  # Addresses from client.conf are the installer's to manage, so the app treats
+  # them as read-only and will never take them out of the policy.
+  env_set "$OK_SECRETS_ENV" OK_CF_ACCESS_PROTECTED_EMAILS "$(conf ACCESS_ALLOWED_EMAILS)"
+  # The optional domain from client.conf, if (and only if) one was set there:
+  # every address on it already passes the door, so Settings -> Users can show
+  # those people "can sign in" without a token. Empty by default. The app only
+  # reads this; it never writes an email_domain rule.
+  env_set "$OK_SECRETS_ENV" OK_CF_ACCESS_ALLOWED_DOMAIN "$(conf ACCESS_ALLOWED_EMAIL_DOMAIN | tr -d '[:space:]' | tr '[:upper:]' '[:lower:]')"
+  log "account + app recorded: Settings -> Users can show who Cloudflare lets in$([ -n "$(env_get "$OK_SECRETS_ENV" OK_CF_ACCESS_API_TOKEN)" ] && echo " and update the allow list" || echo " (read-only: no Access sync token)")"
 fi
 
 log "Cloudflare done: https://$DOMAIN is served through the tunnel and gated by Access ($idp_name)."

@@ -271,7 +271,16 @@ export async function enablePack(id: string, opts: EnableOptions): Promise<Enabl
     steps.push(`${dry ? 'would register' : 'registered'} agent ${a.slug}`)
     pool.add(a.slug)
   }
-  if ((m.agents ?? []).length && !dry) updateWorkspace(opts.workspace, { default_agent_pool: [...pool] })
+  // An EMPTY pool means "any bot may work here" (checkAgentInWorkspacePool).
+  // Writing the pack's bot into it would CLOSE the workspace to every other bot
+  // and make existing cards unsaveable (obj 901196), so an open pool stays open:
+  // the pack's bot is already allowed. Only a curated pool gains the pack's bot.
+  const poolWasOpen = ws.default_agent_pool.length === 0
+  if (poolWasOpen) {
+    if ((m.agents ?? []).length) steps.push('workspace bot pool is open (any bot) — left open')
+  } else if ((m.agents ?? []).length && !dry) {
+    updateWorkspace(opts.workspace, { default_agent_pool: [...pool] })
+  }
 
   // 2. Routines: upsert by name, pinned to this workspace, switched on.
   for (const r of m.routines ?? []) {

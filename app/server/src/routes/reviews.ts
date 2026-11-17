@@ -4,7 +4,8 @@
  * Split into two routers:
  * - `reviewsRouter` — workspace-scoped auth (`/api/objectives/:id/reviews`).
  *   Lists `objective_reviews` rows for the SessionViewer "AI Review" tab.
- * - `internalReviewsRouter` — localhost-only, no auth. Mounted under
+ * - `internalReviewsRouter` — localhost-only, no auth (a JAILED reviewer passes with its own
+ *   `X-CC-Session-Token`, for its own card only — `withSandboxCardGuard`, obj 901195). Mounted under
  *   `/api/internal/reviews/:id/criteria`. Used by the reviewer subagent to:
  *     • POST iteration-1 acceptance criteria (locked into
  *       `objectives.acceptance_criteria`).
@@ -35,6 +36,7 @@ import type {
   ObjectiveReview,
 } from '@operationkit/shared'
 import { isLocalhost } from '../lib/is-localhost.js'
+import { withSandboxCardGuard } from '../lib/card-session-scope.js'
 
 interface ObjectiveReviewRow {
   id: number
@@ -151,7 +153,7 @@ export const internalReviewsRouter = Router()
 // POST /api/internal/reviews/:id/criteria
 // Body: { criteria: AcceptanceCriterion[] }
 // Locks the rubric onto the objective. If already set, 409 + existing payload.
-internalReviewsRouter.post('/:id/criteria', (req, res) => {
+internalReviewsRouter.post('/:id/criteria', withSandboxCardGuard((req, res) => {
   if (!isLocalhost(req)) {
     res.status(403).json({ error: 'Internal API: localhost only' })
     return
@@ -199,7 +201,7 @@ internalReviewsRouter.post('/:id/criteria', (req, res) => {
   ).run(JSON.stringify(criteria), row.id)
 
   res.status(201).json({ ok: true, criteria })
-})
+}))
 
 // GET /api/internal/reviews/:id/criteria — return locked rubric (or null).
 //
@@ -218,7 +220,7 @@ internalReviewsRouter.post('/:id/criteria', (req, res) => {
 // every one of those cases failed OPEN into "grade the browser rubric anyway". That is how
 // pure-backend workers got hard-failed on ds-a11y-contrast / qa-smoke for deliverables
 // with no UI in them at all. The diff is ground truth and cannot be empty for a real PR.
-internalReviewsRouter.get('/:id/criteria', async (req, res) => {
+internalReviewsRouter.get('/:id/criteria', withSandboxCardGuard(async (req, res) => {
   if (!isLocalhost(req)) {
     res.status(403).json({ error: 'Internal API: localhost only' })
     return
@@ -257,4 +259,4 @@ internalReviewsRouter.get('/:id/criteria', async (req, res) => {
     backend_only: isBackendOnlyChange(filesTouched),
     files_touched_source: source,
   })
-})
+}))

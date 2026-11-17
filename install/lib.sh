@@ -119,7 +119,11 @@ conf_validate() {
   case "$(conf API_KEY_AUTH_BYPASS on)" in on|yes|1|true|off|no|0|false) ;; *) die "API_KEY_AUTH_BYPASS must be on or off (got '$(conf API_KEY_AUTH_BYPASS)')" ;; esac
   case "$(conf API_BROWSER_INTEGRITY_EXCEPTION on)" in on|yes|1|true|off|no|0|false) ;; *) die "API_BROWSER_INTEGRITY_EXCEPTION must be on or off (got '$(conf API_BROWSER_INTEGRITY_EXCEPTION)')" ;; esac
   [ "$local_only" -eq 1 ] || [ -n "$(conf ACCESS_ALLOWED_EMAILS)$(conf ACCESS_ALLOWED_EMAIL_DOMAIN)" ] \
-    || die "set ACCESS_ALLOWED_EMAILS or ACCESS_ALLOWED_EMAIL_DOMAIN — otherwise nobody could open the site"
+    || die "set ACCESS_ALLOWED_EMAILS (or the optional ACCESS_ALLOWED_EMAIL_DOMAIN) — otherwise nobody could open the site"
+  [ -z "$(conf ACCESS_ALLOWED_EMAIL_DOMAIN)" ] || [[ "$(conf ACCESS_ALLOWED_EMAIL_DOMAIN)" =~ ^[a-z0-9.-]+\.[a-z]{2,}$ ]] \
+    || die "ACCESS_ALLOWED_EMAIL_DOMAIN must be a bare domain like example.com — no @, no spaces, lowercase (got '$(conf ACCESS_ALLOWED_EMAIL_DOMAIN)')"
+  [ "$local_only" -eq 1 ] || [ -n "$(admin_email)" ] \
+    || warn "ADMIN_EMAIL is empty and ACCESS_ALLOWED_EMAILS has no address — the first admin is not linked to a Cloudflare sign-in and will use the password page. Set ADMIN_EMAIL to fix."
   case "$(conf CLAUDE_AUTH login)" in login|api-key) ;; *) die "CLAUDE_AUTH must be login or api-key" ;; esac
   case "$(conf SESSION_ISOLATION docker)" in docker|tmux) ;; *) die "SESSION_ISOLATION must be docker or tmux" ;; esac
   # Card browser lockdown (obj 900024). A typo in one of these would otherwise

@@ -129,6 +129,17 @@ if [ -n "$SECRETS_HANDOVER" ]; then
         env_set "$OK_SECRETS_ENV" SESSION_JAIL_ANTHROPIC_API_KEY "$val"; log "  ANTHROPIC_API_KEY: stored for sandboxed sessions" ;;
       CLAUDE_CODE_OAUTH_TOKEN)
         env_set "$OK_SECRETS_ENV" SESSION_JAIL_CLAUDE_OAUTH_TOKEN "$val"; log "  CLAUDE_CODE_OAUTH_TOKEN: stored for sandboxed sessions" ;;
+      CLOUDFLARE_ACCESS_SYNC_TOKEN)
+        # Optional, and deliberately SEPARATE from CLOUDFLARE_API_TOKEN (obj
+        # 900023). The install token is a one-off that can edit DNS, tunnels and
+        # identity providers; this one lives on the server for as long as the
+        # install does, so it should carry ONE permission — Access: Apps and
+        # Policies Edit, on this account only. It lets the running app add a
+        # teammate's email to the Access allow policy when an admin adds them in
+        # Settings -> Users. Leave it out and nothing changes: the app simply
+        # shows "blocked at Cloudflare" for anyone the policy does not cover.
+        env_set "$OK_SECRETS_ENV" OK_CF_ACCESS_API_TOKEN "$val"
+        log "  CLOUDFLARE_ACCESS_SYNC_TOKEN: stored (lets Settings -> Users update the Access allow list)" ;;
       OPENAI_API_KEY|GEMINI_API_KEY|GOOGLE_CLIENT_ID|GOOGLE_CLIENT_SECRET|AZURE_CLIENT_ID|AZURE_CLIENT_SECRET|AZURE_DIRECTORY_ID)
         env_set "$OK_SECRETS_ENV" "$key" "$val"; log "  $key: stored" ;;
       BACKUP_ACCESS_KEY_ID|BACKUP_SECRET_ACCESS_KEY)

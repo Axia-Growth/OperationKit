@@ -596,8 +596,16 @@ export const SERVER_ONLY_SECRET_PREFIX = 'CC_AGENT_WEBHOOK_KEY_'
  * broker must not hand these out by name either.
  */
 export const MCP_SERVER_SECRET_PREFIX = 'CC_MCP_SERVER_'
+/**
+ * obj 900023: exact keys the server keeps to itself. The Cloudflare Access sync
+ * token (Settings → Users) can rewrite who may open the site, so no session,
+ * broker call or boot hydration into the shared process env may carry it; the
+ * server reads it at call time (services/cf-access-token.ts).
+ */
+export const SERVER_ONLY_SECRET_KEYS: readonly string[] = ['CC_SERVER_CF_ACCESS_SYNC_TOKEN']
 export function isServerOnlySecretKey(key: string): boolean {
   return key.startsWith(SERVER_ONLY_SECRET_PREFIX) || key.startsWith(MCP_SERVER_SECRET_PREFIX)
+    || SERVER_ONLY_SECRET_KEYS.includes(key)
 }
 
 export interface ResolveOptions {
