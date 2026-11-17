@@ -38,6 +38,13 @@ there and spends their time on the client's actual workflows.
 
 ## Install
 
+**Check your setup before downloading dependencies.** From this checkout, run
+`node scripts/setup-check.mjs` for source development, or
+`node scripts/setup-check.mjs --mode server` on the target installation host.
+The check needs no npm packages and reports host, Node and Docker problems with
+next steps. Node is needed to run this optional check, but is not a prerequisite
+for the Ubuntu server installer itself. See [setup checks](./INSTALL.md#check-your-environment-first).
+
 A fresh Ubuntu 24.04 server, the client's domain on Cloudflare, and a Claude account. Claude Code on
 your laptop follows [INSTALL.md](./INSTALL.md) and does the work; you answer a few questions and do two
 short sign-ins. About 30 to 45 minutes, most of it waiting for the build.
