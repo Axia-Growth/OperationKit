@@ -161,9 +161,24 @@ jobs:
       - name: Negative control — allowlist hides no real-shaped secret
         run: bash scripts/oss-gitleaks-config-check.sh scripts/oss-gitleaks.toml
 
+  setup-check:
+    name: setup-check (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 5
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: node --test scripts/setup-check.test.mjs
+
   gate:
     if: always()
-    needs: [typecheck, unit, build, test-integrity, shellcheck, gitleaks-config]
+    needs: [typecheck, unit, build, test-integrity, shellcheck, gitleaks-config, setup-check]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:

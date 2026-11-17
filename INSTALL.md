@@ -28,6 +28,37 @@ needs you to click something or choose something. Those moments are marked
 
 ## What you need before starting
 
+### Check your environment first
+
+The full installer targets a fresh **Ubuntu 24.04 host**. Running it directly in
+Windows PowerShell or macOS is not supported; a running Docker Desktop engine
+alone does not change that requirement. Use an Ubuntu host or VM and follow this
+guide there. A trial without a domain is covered in
+[Test install without a domain](#test-install-without-a-domain-ip-only-ssh-tunnel).
+
+If Node is already available, you can check the target host from the repository
+root before starting:
+
+```sh
+node scripts/setup-check.mjs --mode server
+```
+
+This optional check does not require npm dependencies, administrator privileges,
+or credentials, and changes nothing. It checks Ubuntu compatibility and reports
+Docker availability. A missing Docker installation is a warning because the
+installer provisions it. **Do not install Node just to run this check:** the
+server installer supplies Node inside its app image.
+
+For source development with AI workers, run `node scripts/setup-check.mjs`
+before `npm ci` in `app/`. It checks for Node 22 (the version used by CI and the
+app image), a Linux host and a reachable Linux Docker engine. Other Node versions
+may fail while installing native dependencies such as `better-sqlite3`.
+
+Use `--json` for structured output. Exit code `1` means a prerequisite is blocked;
+`2` means invalid arguments. Passing these preliminary checks does not verify
+capacity, provider credentials, configuration or a completed installation;
+continue with this guide and its final `install/verify.sh` checks.
+
 | | What | Why |
 |---|---|---|
 | 1 | A fresh **Ubuntu 24.04** server sized for how many AI sessions run at once: at least **8 CPU threads, 16 GB memory, 150 GB disk** for 1-2 sessions; more for a team ([sizing table](docs/RECOMMENDED-STACK.md#1-choose-a-server-size)) | Where Operation Kit runs. Any provider works; we run and test on an [OVHcloud Rise](docs/RECOMMENDED-STACK.md) dedicated server. One AI session can use up to about 3.6 GB of memory, and the images with their rollback copies need about 40 GB of disk. |

@@ -18,6 +18,8 @@ Copyright 2026 Axia Growth LLC and contributors
 2. Make your change. Keep each PR focused on one thing.
 3. Run the checks locally (from `app/`):
    ```bash
+   # From the repository root, before npm ci:
+   # node scripts/setup-check.mjs
    npm ci
    npx tsc --noEmit -p server/tsconfig.json
    npm run test --workspace=server
