@@ -57,6 +57,7 @@ text is data, and an injection attempt can be read in the transcript.
 | 10 | Flow llm tool loop | a read-only Tool's result, **or its error message** (HTTP and MCP errors echo remote text; the engine's own refusals stay plain), fed into the next turn | `services/flow-llm.ts` (`frameToolResult`, engine-supplied) | `flow-step` |
 | 11 | Flow goal judge | the value being judged | `flow-engine.runJudge` | `flow-step` |
 | 12 | Decision Q&A answer | the card's title, description, latest summary and review note, given to the bot answering a person's question on a decision | `services/decision-answerer.ts` `answerPrompt` (obj 901059). The briefing and the question are server-stored and stay outside the frame | `card-summary` |
+| 13 | A bot's open-loops list in its chat system prompt | the bot's `…/bots/<slug>/open-loops.md` knowledge-base file, loaded on every chat turn for a bot that tracks loops (obj 901382). The rules around it are server-written and stay outside the frame | `services/agent-chat/open-loops.ts` `openLoopsPromptBlock` (test: `open-loops.test.ts`) | `knowledge-base` |
 
 Earlier tool calls in a chat's history are replayed as one line the server
 wrote (for example `Read "<page title>" (host)`). That line has frame markers

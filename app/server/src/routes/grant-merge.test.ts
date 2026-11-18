@@ -32,6 +32,10 @@ const TMP_AGENTS = fs.mkdtempSync(path.join(os.tmpdir(), 'cc-grant-merge-agents-
 process.env.AGENT_FILES_DIR = TMP_AGENTS
 process.env.AGENT_CHAT_BUILTINS = '0'
 process.env.AGENT_CHAT_PROVIDER = 'demo'
+// obj 901372: these suites model an install whose SERVER has its own GitHub login,
+// so the merge runs through the (faked) server `gh`. The no-credential case is in
+// services/grant-merge-github-auth.test.ts.
+process.env.GH_TOKEN = 'test-server-login'
 
 // ── fake GitHub ──────────────────────────────────────────────────────────────
 interface FakePr {

@@ -108,6 +108,7 @@ import { startRoutineScheduler } from './services/routine-scheduler.js'
 import { resyncHighAgencyRoutines, startHighAgencyCronRefresh } from './services/agent-chat/high-agency.js'
 import { startBotMessageDelivery } from './services/agent-chat/bot-wake.js'
 import { startCardWakeDelivery } from './services/agent-chat/card-wakes.js'
+import { startOpenLoopsDigestHook } from './services/agent-chat/open-loops-hook.js'
 import { startHighAgencySupervisor } from './services/high-agency-supervisor-scheduler.js'
 import { seedExistingBotsOnce } from './services/agent-chat/bot-workspaces.js'
 import { listAgents } from './services/agent-chat/engine.js'
@@ -538,6 +539,10 @@ if (scratchVerdict.scratch) {
   // wakes that bot in its "Card wakes" thread instead of a webhook. Host only.
   // Kill switch: settings.bot_card_wakes_enabled = '0'; per bot: its settings panel.
   startCardWakeDelivery()
+  // Open-loop tracking (obj 901382): when a High Agency wake of a bot that tracks
+  // loops ends, post its waiting-on-owner list into the bot's chat thread. Host
+  // only. Off: settings.open_loops_bots = '0'.
+  startOpenLoopsDigestHook()
   // Workflow engine (obj 900638, docs/design/WORKFLOWS.md §4). Arms its 2s tick here
   // (never on a scratch instance — startFlowEngine re-checks); every tick is a
   // heartbeat-only no-op until settings.flows_enabled = '1' (default '0' until B4).

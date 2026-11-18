@@ -141,7 +141,7 @@ export async function runGrantMergeTool(ctx: ToolContext, fnName: string, args: 
 
   // 4. The PR 858 merge path, unchanged: policy, reserved PRs, CI, merge, audit, done.
   const req = { user, headers: {}, authVia: 'session' } as unknown as AuthRequest
-  const r = await runGrantApprovedMerge(req, card, d, message, { id: null, label })
+  const r = await runGrantApprovedMerge(req, card, d, message, { id: null, label, agent: ctx.agent.slug })
   const body = r.body as { merged?: boolean; code?: string; error?: string; pr_url?: string; merge_line?: string }
   if (r.status !== 200) {
     if (body.merged) {
