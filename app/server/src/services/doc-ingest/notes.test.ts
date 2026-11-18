@@ -1,4 +1,8 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
+
+// notes.ts also imports the semantic writer, which loads node-pty through the
+// application runtime. These pure slug tests must not load that native module.
+vi.mock('../kb-semantic/service.js', () => ({ noteKbWrite: vi.fn() }))
 import { notePathFor, slugify } from './notes.js'
 
 describe('Unicode note slugs', () => {
@@ -12,7 +16,7 @@ describe('Unicode note slugs', () => {
   })
 
   it('does not collapse distinct non-Latin names to the same path', () => {
-    expect(slugify('東京')).not.toBe(slugify('京都'))
+    expect(notePathFor('person', '田中太郎')).not.toBe(notePathFor('person', '佐藤花子'))
     expect(notePathFor('person', 'Иван')).not.toBe(notePathFor('person', 'Пётр'))
   })
 
