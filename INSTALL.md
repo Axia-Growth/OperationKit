@@ -203,7 +203,7 @@ code** option needs none of this. Use it unless the client asks otherwise.
 
 ```bash
 ssh SERVER 'sudo apt-get update -qq && sudo apt-get install -y -qq git && \
-  sudo git clone https://github.com/m1keluka/OperationKit.git /opt/operationkit-src'
+  sudo git clone https://github.com/Axia-Growth/OperationKit.git /opt/operationkit-src'
 ```
 
 (As `root`, the `sudo`s are harmless.) Keep the code in `/opt/operationkit-src`:
@@ -907,7 +907,7 @@ kept.
 
 **Updates are manual: nothing pulls new Operation Kit code by itself.** The automatic updates the
 installer switches on are Ubuntu's security patches for the operating system only. To hear about new
-versions, watch <https://github.com/m1keluka/OperationKit> on GitHub and read
+versions, watch <https://github.com/Axia-Growth/OperationKit> on GitHub and read
 [CHANGELOG.md](CHANGELOG.md). To see what is waiting:
 `ssh SERVER 'cd /opt/operationkit-src && sudo git -c safe.directory="*" fetch -q origin main && git -c safe.directory="*" log --oneline HEAD..origin/main'`.
 
