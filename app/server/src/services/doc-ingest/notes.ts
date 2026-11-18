@@ -97,8 +97,17 @@ export function relLink(from: string, to: string): string {
   return [...Array(a.length - i).fill('..'), ...b.slice(i)].join('/') || to
 }
 
-function yamlStr(s: string): string {
-  return /^[\w .,'()&/-]+$/.test(s) && !/^[-?:]/.test(s) && !/:\s/.test(s) ? s : JSON.stringify(s)
+// Plain scalars a YAML reader (Obsidian, js-yaml, `yaml`) would not read back as the same string:
+// booleans/null in YAML 1.1 or 1.2, and numbers, hex/octal/binary, .inf/.nan and dates.
+const YAML_NON_STRING = /^(?:~|null|true|false|yes|no|on|off|y|n|[-+]?(?:\d[\d_]*(?:\.[\d_]*)?(?:e[-+]?\d+)?|\.\d[\d_]*(?:e[-+]?\d+)?|0x[\da-f_]+|0o[0-7_]+|0b[01_]+|\.inf|\.nan)|\d{4}-\d\d?-\d\d?.*)$/i
+
+/**
+ * YAML scalar: bare when a YAML reader returns exactly `s`, else JSON-quoted (valid YAML, and what
+ * parseNote reads back). A leading `'` starts a single-quoted scalar and `&` an anchor, so either
+ * one makes the whole frontmatter unreadable outside this app.
+ */
+export function yamlStr(s: string): string {
+  return /^[\w .,'()&/-]+$/.test(s) && !/^[-?:'&]/.test(s) && !/:\s/.test(s) && !YAML_NON_STRING.test(s) ? s : JSON.stringify(s)
 }
 
 function yamlList(items: string[]): string {
