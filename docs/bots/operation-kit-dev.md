@@ -35,6 +35,14 @@ Cards it files are ordinary task cards (the same path as any chat bot not in the
 It is deliberately **not** in the bot registry (`services/bots/bot-registry.ts`):
 registered bots file *read-only* jobs, which would stop it from handing off build work.
 
+## Operator tools (obj 901424)
+
+On the owner's install, an admin chatting with Operation Kit Dev also gets its **operator
+tools** — merge its own PRs once CI is green, the standard `update.sh` deploy with automatic
+rollback, closing cards whose PR was merged by hand, and Cloudflare Access / DNS. They sit
+behind one switch on the bot's settings panel (on by default for this bot only) and every
+call is audit-logged. See [Operator tools](../wiki/Operation-Kit-Dev-Operator-Tools.md).
+
 ## Creating a bot, agent or skill
 
 The **Agents** page now opens with **Make a new bot, agent or skill**:

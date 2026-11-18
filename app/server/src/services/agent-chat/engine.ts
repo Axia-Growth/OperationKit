@@ -490,6 +490,12 @@ export interface TurnInput {
    */
   responseGone?: () => boolean
   /**
+   * obj 901424: the message came from the person's signed-in browser (cookie
+   * session; never an API key or a bearer token). Only such a turn may reach
+   * the operator tools. A drain turn (queued messages) never counts.
+   */
+  browserSession?: boolean
+  /**
    * obj 900949: no new message — this turn only delivers what is already queued
    * in the lane. Used by the drain that follows a turn; an empty queue is a no-op.
    */
@@ -681,7 +687,7 @@ export function drainLaneQueue(input: Omit<TurnInput, 'text' | 'images' | 'signa
   if (laneTurnState(input.userId, input.agent.slug, lane).queued === 0) return
   // runTurn claims the lane synchronously (before its first await), so no new
   // message can slip in between this check and the drain's turn starting.
-  const p = runTurn({ ...input, lane, text: '', images: [], drainOnly: true })
+  const p = runTurn({ ...input, lane, text: '', images: [], drainOnly: true, browserSession: false })
     .catch(err => {
       if (err instanceof ChatBusyError) return
       console.error('[agent-chat] queued turn failed:', err instanceof Error ? err.message : err)
@@ -756,7 +762,7 @@ export async function runTurn(input: TurnInput): Promise<{ messages: ChatMessage
     // switch (isDemoOn) only lists the demo assistant now.
     const chatWorkspace = workspaceFor(userId, agent.slug)
     const connectors = resolveConnectors({ agentSlug: agent.slug, userId, workspace: chatWorkspace, now })
-    const ctx: ToolContext = { userId, username: input.username, workspace: chatWorkspace, agent, kbRoot: knowledgeRoot(env), connectors, now, web: { env, signal, ...input.webDeps }, lane }
+    const ctx: ToolContext = { userId, username: input.username, workspace: chatWorkspace, agent, kbRoot: knowledgeRoot(env), connectors, now, web: { env, signal, ...input.webDeps }, lane, browserSession: !!input.browserSession && !input.drainOnly }
 
     let providerId: ChatProviderId | null = null
     let provider: ChatProvider

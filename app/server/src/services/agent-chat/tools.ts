@@ -52,6 +52,8 @@ import { FULL_ACCESS_FNS, fullAccessToolSpecs, runFullAccessTool, withFullAccess
 import { runCardWakeTool, type CardWakeScope } from './card-wake-tools.js'
 import { CARD_SANDBOX_FNS, cardSandboxToolSpecs, runCardSandboxTool } from './card-sandbox-tools.js'
 import { GRANT_MERGE_FNS, grantMergeToolSpecs, runGrantMergeTool } from './grant-merge-tool.js'
+import { DEV_OPS_FNS, devOpsToolSpecs, runDevOpsTool } from './dev-ops-tools.js'
+import { writeDevOpsAudit } from '../dev-ops/audit.js'
 import { CARD_BROWSER_FNS, cardBrowserToolSpecs, runCardBrowserTool } from './card-browser-tools.js'
 import {
   BotMessageRefused,
@@ -104,6 +106,12 @@ export interface ToolContext {
    * Full access tools, whatever the model asks for.
    */
   cardWake?: CardWakeScope
+  /**
+   * obj 901424: this turn's message came from the person's signed-in browser
+   * (cookie session), not an API key / bearer token / queued drain. Required by
+   * the operator tools (dev-ops-tools.ts).
+   */
+  browserSession?: boolean
 }
 
 /** What the chat UI shows for a tool call (drafts get buttons, cards get a status chip). */
@@ -317,6 +325,8 @@ export function toolSpecsForContext(ctx: ToolContext): ToolSpec[] {
   // obj 901347: merge one of the bot's own cards under the person's merge grant.
   // Offered by the grant, never by Full access or "all tools".
   out.push(...grantMergeToolSpecs(ctx))
+  // obj 901424: Operation Kit Dev's operator tools, behind their one admin switch.
+  out.push(...devOpsToolSpecs(ctx))
   return out
 }
 
@@ -1125,12 +1135,19 @@ async function runMailCalendarTool(ctx: ToolContext, fnName: string, args: Recor
 export async function runChatTool(ctxIn: ToolContext, fnName: string, args: Record<string, unknown>): Promise<ToolOutcome> {
   // obj 900948: knowledge folders resolved for this KB's layout (workspaces/<ws>/…).
   // obj 901328: a card wake is confined to the own-card tools, before anything else.
-  if (ctxIn.cardWake) return runCardWakeTool(ctxIn, fnName, args)
+  if (ctxIn.cardWake) {
+    // obj 901424: an operator tool asked for in a card wake is refused below; audit the attempt.
+    if (DEV_OPS_FNS.has(fnName)) {
+      writeDevOpsAudit({ bot_slug: ctxIn.agent.slug, user_id: ctxIn.userId, username: ctxIn.username, action: fnName, outcome: 'refused', code: 'wake_turn', detail: 'asked for in a card wake' })
+    }
+    return runCardWakeTool(ctxIn, fnName, args)
+  }
   const ctx = withKbFolders(ctxIn)
   // obj 900972: the Full access tool family. Checked again inside, on every call.
   if (FULL_ACCESS_FNS.has(fnName)) return runFullAccessTool(ctx, fnName, args)
   if (CARD_SANDBOX_FNS.has(fnName)) return runCardSandboxTool(ctx, fnName, args)
   if (GRANT_MERGE_FNS.has(fnName)) return runGrantMergeTool(ctx, fnName, args)
+  if (DEV_OPS_FNS.has(fnName)) return runDevOpsTool(ctx, fnName, args)
   if (CARD_BROWSER_FNS.has(fnName)) return runCardBrowserTool(ctx, fnName, args)
   if (BOT_MESSAGE_FNS.has(fnName)) return runBotMessageTool(ctx, fnName, args)
   if (fnName === 'secrets_list' || fnName === 'secret_http') return runSecretTool(ctx, fnName, args)
