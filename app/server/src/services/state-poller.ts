@@ -106,6 +106,7 @@ export {
   extractScreenshotsTag,
   extractJsonArrayTag,
   parseCriteriaResults,
+  reconcilePassVerdict,
   extractScreenshotPaths,
   parseAcceptanceCriteria,
   AI_REVIEW_ITERATION_CAP,

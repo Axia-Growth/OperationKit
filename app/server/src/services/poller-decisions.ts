@@ -353,6 +353,23 @@ export function parseCriteriaResults(
   return results
 }
 
+/**
+ * Checks a "pass" verdict against the reviewer's own criterion lines. The prompt
+ * says pass means every criterion passed, so a pass with a [FAIL] line becomes a
+ * fail, and `contradictedBy` names the failed criteria. Any [FAIL] line counts,
+ * even one whose id is not in the saved list. A missing or skipped criterion does
+ * not, because for backend-only changes the reviewer gets a trimmed list
+ * (`rubricForChangedFiles`) that differs from the saved one.
+ */
+export function reconcilePassVerdict<V extends string | null>(
+  verdict: V,
+  results: Pick<AcceptanceCriterionResult, 'criterion_id' | 'status'>[],
+): { verdict: V | 'fail'; contradictedBy: string[] } {
+  if (verdict !== 'pass') return { verdict, contradictedBy: [] }
+  const contradictedBy = [...new Set(results.filter(r => r.status === 'fail').map(r => r.criterion_id))]
+  return { verdict: contradictedBy.length > 0 ? 'fail' : verdict, contradictedBy }
+}
+
 // Bounce cap after a FAIL. Last 7d in prod: 350 first-pass passes vs 9 third-round
 // passes (and 12 third-round fails). A third bounce is mostly token burn; escalate.
 export const AI_REVIEW_ITERATION_CAP = 2

@@ -6,6 +6,7 @@ import {
   parseAcceptanceCriteria,
   decideRespawnAction,
   failingCriterionIds,
+  reconcilePassVerdict,
 } from './state-poller.js'
 
 // QW4 — the AI-review gate used to persist criteria_results/screenshot_paths as
@@ -98,6 +99,47 @@ describe('parseCriteriaResults', () => {
     const results = parseCriteriaResults(lines.join('\n'), [])
     expect(performance.now() - started).toBeLessThan(1000)
     expect(results).toEqual([])
+  })
+})
+
+describe('reconcilePassVerdict — a pass must agree with its own criterion lines', () => {
+  const pass = (id: string) => ({ criterion_id: id, status: 'pass' as const, evidence: 'ok' })
+  const fail = (id: string) => ({ criterion_id: id, status: 'fail' as const, evidence: 'broken' })
+  const skipped = (id: string) => ({ criterion_id: id, status: 'skipped' as const, evidence: '' })
+
+  it('records fail when the reviewer said pass but marked a criterion [FAIL]', () => {
+    expect(reconcilePassVerdict('pass', [pass('crit-1'), fail('crit-2')]))
+      .toEqual({ verdict: 'fail', contradictedBy: ['crit-2'] })
+  })
+
+  it('treats conflicting duplicate lines for one criterion as a fail, listed once', () => {
+    expect(reconcilePassVerdict('pass', [pass('crit-1'), fail('crit-1'), fail('crit-1')]))
+      .toEqual({ verdict: 'fail', contradictedBy: ['crit-1'] })
+  })
+
+  it('counts a [FAIL] line whose id is not in the rubric — the reviewer still reported a failure', () => {
+    expect(reconcilePassVerdict('pass', [pass('crit-1'), fail('made-up')]))
+      .toEqual({ verdict: 'fail', contradictedBy: ['made-up'] })
+  })
+
+  it('leaves a consistent pass alone', () => {
+    expect(reconcilePassVerdict('pass', [pass('crit-1'), pass('crit-2')]))
+      .toEqual({ verdict: 'pass', contradictedBy: [] })
+  })
+
+  // For backend-only changes the reviewer gets a trimmed list of criteria, so only
+  // an explicit [FAIL] counts against a pass.
+  it('does not downgrade a pass for ungraded, skipped or unknown-but-passing criteria', () => {
+    expect(reconcilePassVerdict('pass', [pass('crit-1')]).verdict).toBe('pass')
+    expect(reconcilePassVerdict('pass', [pass('crit-1'), skipped('ds-a11y-contrast')]).verdict).toBe('pass')
+    expect(reconcilePassVerdict('pass', [pass('backend-correctness')]).verdict).toBe('pass')
+    expect(reconcilePassVerdict('pass', []).verdict).toBe('pass')
+  })
+
+  it('never changes a fail, blocked or missing verdict', () => {
+    expect(reconcilePassVerdict('fail', [pass('crit-1')])).toEqual({ verdict: 'fail', contradictedBy: [] })
+    expect(reconcilePassVerdict('blocked', [fail('crit-1')])).toEqual({ verdict: 'blocked', contradictedBy: [] })
+    expect(reconcilePassVerdict(null, [fail('crit-1')])).toEqual({ verdict: null, contradictedBy: [] })
   })
 })
 
