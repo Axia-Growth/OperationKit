@@ -64,6 +64,41 @@ describe('parseCriteriaResults', () => {
   it('returns [] only when there is neither findings nor a rubric', () => {
     expect(parseCriteriaResults(null, [])).toEqual([])
   })
+
+  // The reviewer prompt tells the reviewer to use [BLOCKED], so the parser has to read it.
+  it('keeps a [BLOCKED] line as a not-verified criterion instead of dropping it', () => {
+    const findings = [
+      '- [PASS] crit-1: row dump shows the INSERT',
+      '- [BLOCKED] crit-2: awaits the nightly job, not before 22:00 UTC',
+    ].join('\n')
+    const results = parseCriteriaResults(findings, RUBRIC)
+    expect(results.map(r => r.criterion_id)).toEqual(['crit-1', 'crit-2'])
+    expect(results[1]).toMatchObject({ status: 'skipped', evidence: 'awaits the nightly job, not before 22:00 UTC' })
+  })
+
+  it('still trims the id and the evidence, and stops the id at the first colon', () => {
+    const results = parseCriteriaResults('  *  [ FAIL ]   crit 2  :   saw a: b  ', [])
+    expect(results).toMatchObject([{ criterion_id: 'crit 2', status: 'fail', evidence: 'saw a: b' }])
+  })
+
+  it('does not treat a tagged line with no criterion id as a result', () => {
+    expect(parseCriteriaResults('- [FAIL] : no id here\n- [PASS]: nor here', [])).toEqual([])
+  })
+
+  // This runs inside the poll loop, so one slow line stalls the server. A pattern
+  // that lets two of its parts compete for the same spaces needs seconds per line here.
+  it('rejects a long whitespace run without stalling the poll loop', () => {
+    const lines = [
+      `- [FAIL]${' '.repeat(2_000)}a`,
+      `- [BLOCKED]${'\u00a0'.repeat(2_000)}a`,
+      `${' '.repeat(2_000)}x`,
+      `- [FAIL] a${' '.repeat(2_000)}:${' '.repeat(2_000)}x\ry`,
+    ]
+    const started = performance.now()
+    const results = parseCriteriaResults(lines.join('\n'), [])
+    expect(performance.now() - started).toBeLessThan(1000)
+    expect(results).toEqual([])
+  })
 })
 
 describe('extractScreenshotPaths', () => {

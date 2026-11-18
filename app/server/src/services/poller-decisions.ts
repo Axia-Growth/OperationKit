@@ -289,8 +289,11 @@ export function extractJsonArrayTag(text: string, tag: string): string {
 }
 
 /** Tolerant matcher for a single findings line. Allows a leading bullet, mixed
- *  case, and SKIP/SKIPPED. Captures status, criterion id, and trailing evidence. */
-const CRITERION_LINE_RE = /^\s*[-*]?\s*\[\s*(PASS|FAIL|SKIP|SKIPPED)\s*\]\s*([^:\]]+?)\s*:\s*(.*)$/i
+ *  case, and BLOCKED/SKIP/SKIPPED (all three are saved as `skipped`). Captures
+ *  status, criterion id, and trailing evidence. Each stretch of whitespace
+ *  belongs to exactly one part of the pattern, so a line with thousands of
+ *  spaces is rejected quickly instead of stalling the poll loop. */
+const CRITERION_LINE_RE = /^\s*(?:[-*]\s*)?\[\s*(PASS|FAIL|BLOCKED|SKIP|SKIPPED)\s*\]\s*([^:\]\s](?:[^:\]]*[^:\]\s])?)\s*:\s*((?:\S.*)?)$/i
 
 /** Match filesystem paths / filenames ending in a screenshot image extension. */
 const SCREENSHOT_PATH_RE = /(?:~?\/|\.\/)?[\w./-]+\.(?:png|jpe?g|gif|webp)/gi
