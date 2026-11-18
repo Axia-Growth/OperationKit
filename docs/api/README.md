@@ -554,7 +554,7 @@ Every **write** answers with a short receipt: `{ confirmation: "Created #1234 \"
 url: "https://<your-install-host>/o/1234", title, status, workspace }`. The base URL follows `APP_BASE_URL` if the app
 moves hosts.
 
-Outputs are trimmed to save tokens: slim rows, long prose clipped, and tool payloads stripped from thread output. A REST error comes back as a tool result with `isError: true` and text `Error <status>: <message>`, so the model can see a `409` and react to it. A scope refusal adds ` (missing_scope: board:done)` to that text and `structuredContent: { error, status, missing_scope }`. The server `instructions` and tool descriptions carry the bot rules: **attention → changes, not the board**, **always an idempotency_key on create**, **read before you write**, and **`done` is a human signature (Operator's)**.
+Outputs are trimmed to save tokens: slim rows, long prose clipped, and tool payloads stripped from thread output. A successful call returns that JSON object as `structuredContent` and the same JSON in the text block, so a client can read the object directly and an older client can keep parsing the text. A REST error comes back as a tool result with `isError: true` and text `Error <status>: <message>`, so the model can see a `409` and react to it. A scope refusal adds ` (missing_scope: board:done)` to that text and `structuredContent: { error, status, missing_scope }`. The server `instructions` and tool descriptions carry the bot rules: **attention → changes, not the board**, **always an idempotency_key on create**, **read before you write**, and **`done` is a human signature (Operator's)**.
 
 ### xAI API (Grok) — remote MCP tool
 
