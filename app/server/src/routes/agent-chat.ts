@@ -84,6 +84,8 @@ import { markFeedMessage } from '../services/agent-chat/bot-attention.js'
 import { resolveNeedsYouMessages } from '../services/decision-queue.js'
 import { isHighAgencyActivityCard } from '../services/agent-chat/high-agency-cards.js'
 import { CARD_WAKES_THREAD_TITLE, cardWakesGloballyEnabled, getCardWakeSwitch, setCardWakeSwitch } from '../services/agent-chat/card-wake-routing.js'
+import { getDevOpsSwitch, setDevOpsSwitch } from '../services/dev-ops/switch.js'
+import { listDevOpsAudit, writeDevOpsAudit } from '../services/dev-ops/audit.js'
 
 /**
  * Built-in agent chat (obj 719987) — /api/agent-chat
@@ -257,7 +259,7 @@ function enabledModelsOrEmpty() {
 /** Only a signed-in admin may change what a bot runs on — never an API key (a bot must not grant itself tools). */
 function adminSessionOr403(req: AuthRequest, res: Response): boolean {
   if (req.user?.role !== 'admin' || req.authVia !== 'session') {
-    res.status(403).json({ error: 'Only an admin signed in to Command Center can change a bot\'s settings (model, tools, workspace access, High Agency).' })
+    res.status(403).json({ error: 'Only an admin signed in to the app in the browser can change a bot\'s settings (model, tools, workspace access, High Agency).' })
     return false
   }
   return true
@@ -407,7 +409,7 @@ router.delete('/agents/:slug/config', (req: AuthRequest, res) => {
  */
 router.delete('/agents/:slug', (req: AuthRequest, res) => {
   if (req.user?.role !== 'admin' || req.authVia !== 'session') {
-    res.status(403).json({ error: 'Only an admin signed in to Command Center can delete a bot.' })
+    res.status(403).json({ error: 'Only an admin signed in to the app in the browser can delete a bot.' })
     return
   }
   const a = agentOr404(req, res)
@@ -536,6 +538,52 @@ router.put('/agents/:slug/card-wakes', (req: AuthRequest, res) => {
     })
   } catch { /* the feed never decides the change */ }
   res.json(cardWakesPayload(req, a.slug))
+})
+
+// ── Operator tools (obj 901424): Operation Kit Dev's merge / deploy / close / Cloudflare switch ──
+
+function devOpsPayload(req: AuthRequest, slug: string) {
+  const sw = getDevOpsSwitch(slug)
+  let recent: unknown[] = []
+  if (sw.eligible && req.user?.role === 'admin') {
+    try { recent = listDevOpsAudit(20) } catch { recent = [] }
+  }
+  return { dev_ops: sw, recent }
+}
+
+router.get('/agents/:slug/dev-ops', (req: AuthRequest, res) => {
+  const a = agentOr404(req, res)
+  if (!a) return
+  res.json(devOpsPayload(req, a.slug))
+})
+
+router.put('/agents/:slug/dev-ops', (req: AuthRequest, res) => {
+  if (!adminSessionOr403(req, res)) return
+  const a = agentOr404(req, res)
+  if (!a) return
+  const enabled = (req.body as { enabled?: unknown } | undefined)?.enabled
+  if (typeof enabled !== 'boolean') {
+    res.status(400).json({ error: 'enabled must be true or false' })
+    return
+  }
+  const set = setDevOpsSwitch(a.slug, enabled, req.user!.id)
+  writeDevOpsAudit({
+    bot_slug: a.slug, user_id: req.user!.id, username: req.user!.username, action: 'switch',
+    outcome: set ? 'done' : 'refused', code: set ? (enabled ? 'on' : 'off') : 'bot_not_eligible',
+  })
+  if (!set) {
+    res.status(400).json({ error: 'Only the built-in Dev bot has operator tools.', code: 'bot_not_eligible' })
+    return
+  }
+  try {
+    logActivity({
+      project: 'operationkit',
+      event_type: 'decision',
+      title: `${a.name}: operator tools turned ${enabled ? 'on' : 'off'} by ${req.user!.username}`,
+      metadata: { kind: 'dev_ops_switched', slug: a.slug, enabled },
+    })
+  } catch { /* the feed never decides the change */ }
+  res.json(devOpsPayload(req, a.slug))
 })
 
 // ── Workspace access (obj 900797): which workspaces a global bot may work in ──
@@ -786,7 +834,7 @@ router.post('/agents/:slug/messages', async (req: AuthRequest, res) => {
   try {
     // obj 900949: a lane that is busy QUEUES the message (202) instead of
     // refusing it; the turn that follows the running one delivers it, in order.
-    const r = await submitMessage({ userId: req.user!.id, username: req.user!.username, agent: a, text, images, lane, clientMsgId, responseGone: () => disconnectedAt !== null })
+    const r = await submitMessage({ userId: req.user!.id, username: req.user!.username, agent: a, text, images, lane, clientMsgId, responseGone: () => disconnectedAt !== null, browserSession: signedInBrowser(req) })
     if (disconnectedAt !== null) {
       console.log(`[agent-chat] disconnect: turn finished ${Date.now() - disconnectedAt}ms after the response closed (${where}); ${r.messages.length} row(s) stored for the person to see on return`)
       return

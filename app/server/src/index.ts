@@ -4,7 +4,6 @@ import { createCsrfGuard, csrfGuardEnabled } from './middleware/csrf-guard.js'
 import { apiRateLimitPerMinute, createApiRateLimiter } from './middleware/api-rate-limit.js'
 import cors from 'cors'
 import { createServer } from 'http'
-import fs from 'fs'
 import path from 'path'
 import { fileURLToPath } from 'url'
 import { initDb, getDb } from './db/index.js'
@@ -13,6 +12,7 @@ import { startPoller } from './services/state-poller.js'
 import { logPreviewSpoolHealth } from './services/preview-spool.js'
 import authRouter from './routes/auth.js'
 import brandingRouter, { renderBrandedIndex } from './routes/branding.js'
+import { mountSpaFallback } from './lib/spa-fallback.js'
 import agentKeyWebhooksRouter from './routes/agent-key-webhooks.js'
 import { startAgentWebhooks } from './services/agent-webhooks.js'
 import { agentKeyGuard } from './middleware/agent-key-guard.js'
@@ -108,6 +108,7 @@ import { startRoutineScheduler } from './services/routine-scheduler.js'
 import { resyncHighAgencyRoutines, startHighAgencyCronRefresh } from './services/agent-chat/high-agency.js'
 import { startBotMessageDelivery } from './services/agent-chat/bot-wake.js'
 import { startCardWakeDelivery } from './services/agent-chat/card-wakes.js'
+import { startDevOpsTicks } from './services/dev-ops/tick.js'
 import { startOpenLoopsDigestHook } from './services/agent-chat/open-loops-hook.js'
 import { startHighAgencySupervisor } from './services/high-agency-supervisor-scheduler.js'
 import { seedExistingBotsOnce } from './services/agent-chat/bot-workspaces.js'
@@ -458,13 +459,8 @@ const clientDist = path.join(__dirname, '../../client/dist')
 // index: false — the SPA shell is served below with the install's brand name
 // and favicon injected, so the very first paint is white-labeled (obj 900543).
 app.use(express.static(clientDist, { index: false }))
-app.get('*', (_req, res) => {
-  fs.readFile(path.join(clientDist, 'index.html'), 'utf-8', (err, html) => {
-    if (err) { res.status(404).send('Frontend not built'); return }
-    res.setHeader('Cache-Control', 'no-cache')
-    res.type('html').send(renderBrandedIndex(html))
-  })
-})
+// Unmatched /api/* → JSON 404 (any method); every other GET → the app shell (obj 901031).
+mountSpaFallback(app, clientDist, renderBrandedIndex)
 
 // Initialize WebSocket
 initWebSocket(server)
@@ -539,6 +535,9 @@ if (scratchVerdict.scratch) {
   // wakes that bot in its "Card wakes" thread instead of a webhook. Host only.
   // Kill switch: settings.bot_card_wakes_enabled = '0'; per bot: its settings panel.
   startCardWakeDelivery()
+  // Operation Kit Dev operator tools (obj 901424): merge updated branches once CI is
+  // green, and settle update.sh deploys after the restart they cause. Host only.
+  startDevOpsTicks()
   // Open-loop tracking (obj 901382): when a High Agency wake of a bot that tracks
   // loops ends, post its waiting-on-owner list into the bot's chat thread. Host
   // only. Off: settings.open_loops_bots = '0'.
