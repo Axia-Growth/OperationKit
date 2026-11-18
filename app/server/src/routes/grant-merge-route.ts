@@ -25,6 +25,8 @@ type Allowed = Extract<DelegationDecision, { kind: 'allowed' }>
 export interface GrantMergeVia {
   id: number | null
   label: string
+  /** The chat bot's slug, for the person's GitHub "Who can use it" rule (obj 901372). */
+  agent?: string
 }
 
 export async function runGrantApprovedMerge(
@@ -48,7 +50,9 @@ export async function runGrantApprovedMerge(
     message,
   }
 
-  const merged = await mergeUnderGrant(card)
+  // The grantor is the person this request acts for (grantDecision keys the grant
+  // on req.user), so theirs is the GitHub connection a merge may fall back to.
+  const merged = await mergeUnderGrant(card, { auth: { grantorUserId: req.user?.id ?? null, agent: via?.agent ?? null } })
   if (!merged.ok) {
     try {
       writeDelegationAudit(db, { ...base, event: 'approval_denied', grant_id: d.grantId, reason: `grant_merge:${merged.code}` })

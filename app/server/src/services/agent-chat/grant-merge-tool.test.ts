@@ -27,6 +27,10 @@ import path from 'path'
 
 const TMP = fs.mkdtempSync(path.join(os.tmpdir(), 'cc-grant-merge-tool-'))
 process.env.DB_PATH = path.join(TMP, 'db.sqlite')
+// obj 901372: these suites model an install whose SERVER has its own GitHub login,
+// so the merge runs through the (faked) server `gh`. The no-credential case is in
+// services/grant-merge-github-auth.test.ts.
+process.env.GH_TOKEN = 'test-server-login'
 process.env.JWT_SECRET = 'test-secret-grant-merge-tool'
 process.env.TRANSCRIPT_DIR = TMP
 process.env.CC_REDACT_ENV_FILES = ''
@@ -246,6 +250,33 @@ describe('1. happy path: own card + active merge grant + pass + green + clean â†
     expect(moved.pathway).toBe(`grant-merge:#${g.id}`)
     expect(String(moved.actor)).toContain('bot:dev (chat:dev)')
     expect(autoMergeSetting()).toBe('0') // never touched
+  })
+})
+
+describe('1b. the server has no GitHub credential (obj 901372)', () => {
+  it('refuses in plain words, audits it, runs no gh and leaves the card in review', async () => {
+    const saved = { GH_TOKEN: process.env.GH_TOKEN, GITHUB_TOKEN: process.env.GITHUB_TOKEN, GH_CONFIG_DIR: process.env.GH_CONFIG_DIR }
+    delete process.env.GH_TOKEN
+    delete process.env.GITHUB_TOKEN
+    process.env.GH_CONFIG_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'cc-no-gh-login-')) // no hosts.yml
+    try {
+      const g = grant()
+      const id = card()
+      const out = await merge(id)
+      const r = out.result as Loose
+      expect(r.merged).toBe(false)
+      expect(r.code).toBe('github_credential_missing')
+      expect(r.error).toContain('The server has no GitHub credential for merges')
+      expect(r.error).not.toMatch(/gh auth login/)
+      expect(fake.calls).toEqual([])
+      expect(statusOf(id)).toBe('review')
+      expect(lastAudit(id)).toMatchObject({ event: 'approval_denied', grant_id: g.id, reason: 'grant_merge:github_credential_missing' })
+    } finally {
+      for (const [k, v] of Object.entries(saved)) {
+        if (v === undefined) delete process.env[k]
+        else process.env[k] = v
+      }
+    }
   })
 })
 

@@ -25,7 +25,18 @@ every workspace, client workspaces included.
    ceiling guard on a new path, `queue_autostart`, whose default policy is
    **enforce**: a card with no finite ceiling is **not** started (see
    [Job Ceilings Rollout](./Job-Ceilings-Rollout)). The usual choice is a
-   wall-clock ceiling, which the runner enforces:
+   wall-clock ceiling, which the runner enforces.
+
+   **The easiest way (obj 901375):** Settings → Platform → *Queue auto-start* →
+   each workspace row has a **Job time limit (minutes)** field. Type a whole
+   number of minutes (1 to 1440) and press Save; cards bots start on their own
+   in that workspace are stopped after that many minutes, counted across every
+   attempt. Clearing the field removes the limit (falls back to the global
+   default, or to none). This writes the exact same `settings` key as the SQL
+   below, through `PUT /api/admin/queue-autostart/<workspace>/time-limit
+   {"minutes": 120}` (admin only; `{"minutes": null}` clears it).
+
+   Or, directly on the server:
 
    ```sql
    INSERT INTO settings (key, value) VALUES ('job_wallclock_ceiling_ms:<workspace>', '7200000')
@@ -77,6 +88,7 @@ is an operator decision; this PR does not change any install's settings.
 | `settings.queue_autostart_max_concurrent` / `CC_QUEUE_AUTOSTART_MAX_CONCURRENT` | `4` (env wins) | Most auto-started cards running at once, across all workspaces. |
 | `CC_QUEUE_AUTOSTART_GRACE_MIN` | `1` | Minutes a new, un-requested card waits in queue before it is eligible (time to hold or cancel it). |
 | `settings.job_ceiling_policy:queue_autostart[:<ws>]` | `enforce` | Ceiling policy for this path: `enforce`, `observe` or `off`. |
+| `settings.job_wallclock_ceiling_ms:<ws>` | none | Per-workspace job time limit in ms, editable from Settings → Platform (see above) or `PUT /api/admin/queue-autostart/<ws>/time-limit`. Also honoured by cards a bot files from chat, not just auto-start. |
 
 ---
 

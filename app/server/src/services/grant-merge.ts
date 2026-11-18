@@ -43,7 +43,7 @@
 import type { Objective } from '@operationkit/shared'
 import { decideAutoMerge } from './auto-merge.js'
 import { isMoneyPath } from './merge-lane.js'
-import { defaultExec, fetchPrCheckState, fetchRequiredChecks } from './ci-green-gate-github.js'
+import { fetchPrCheckState, fetchRequiredChecks } from './ci-green-gate-github.js'
 import {
   DEFAULT_CONFIG,
   evaluateCiGate,
@@ -54,6 +54,14 @@ import {
   type RollupEntry,
 } from './ci-green-gate-decide.js'
 import { repoFromPrUrl } from './ci-green-gate-run.js'
+import {
+  isGhCredentialRejected,
+  isGhNotLoggedIn,
+  NO_MERGE_CREDENTIAL_MESSAGE,
+  resolveMergeGithubAuth,
+  type MergeGithubAuth,
+  type MergeGithubAuthQuery,
+} from './grant-merge-github-auth.js'
 import { getDb } from '../db/index.js'
 
 export type GrantMergeRefusal =
@@ -70,6 +78,8 @@ export type GrantMergeRefusal =
   | 'pr_state_unreadable'
   | 'head_sha_unreadable'
   | 'merge_failed'
+  | 'github_credential_missing'
+  | 'github_credential_rejected'
 
 export type GrantMergeCard = Pick<
   Objective,
@@ -242,7 +252,12 @@ export interface GrantMergeOk {
 }
 
 export interface GrantMergeDeps {
+  /** A ready `gh` runner (tests). When given, no credential is resolved. */
   exec?: ExecFn
+  /** Who the merge is for, so a GitHub credential can be found at call time (obj 901372). */
+  auth?: MergeGithubAuthQuery
+  /** Credential resolver; defaults to `resolveMergeGithubAuth`. */
+  resolveAuth?: (q: MergeGithubAuthQuery) => MergeGithubAuth | null
   /** Reserved PRs; defaults to `loadReservedPrs()` (seed + server-side setting/env). */
   reserved?: readonly ReservedPr[]
 }
@@ -254,10 +269,27 @@ export interface GrantMergeDeps {
 export async function mergeUnderGrant(card: GrantMergeCard, deps: GrantMergeDeps = {}): Promise<GrantMergeOk | Refusal> {
   const pre = precheckGrantMerge(card, deps.reserved ?? loadReservedPrs())
   if (pre) return pre
-  const exec = deps.exec ?? defaultExec
   const prNumber = Number(card.pr_number)
   const repo = repoFromPrUrl(card.pr_url)
   if (!repo) return refuse(409, 'pr_state_unreadable', `Card #${card.id} has PR #${prNumber} but no GitHub PR link to read its repo from. Nothing was merged.`)
+
+  // obj 901372 — find a GitHub credential before the first call. The server's own
+  // login when it has one, else the grantor's connected GitHub account, else the
+  // workspace integration. None → a plain refusal, never gh's "run gh auth login".
+  let exec = deps.exec
+  if (!exec) {
+    const auth = (deps.resolveAuth ?? resolveMergeGithubAuth)({ workspace: card.workspace, ...deps.auth })
+    if (!auth) return refuse(503, 'github_credential_missing', `${NO_MERGE_CREDENTIAL_MESSAGE} Nothing was merged and the card was not closed.`)
+    exec = auth.exec
+  }
+  const authRefusal = (err: unknown): Refusal | null => {
+    const m = (err as Error)?.message ?? ''
+    if (isGhNotLoggedIn(m)) return refuse(503, 'github_credential_missing', `${NO_MERGE_CREDENTIAL_MESSAGE} Nothing was merged and the card was not closed.`)
+    if (isGhCredentialRejected(m)) {
+      return refuse(502, 'github_credential_rejected', `GitHub rejected the credential the server used for this merge (expired, revoked, or not authorised for ${repo}). Reconnect GitHub in Settings → Integrations. Nothing was merged and the card was not closed.`)
+    }
+    return null
+  }
 
   let headSha = ''
   let prUrl = card.pr_url ?? ''
@@ -275,6 +307,8 @@ export async function mergeUnderGrant(card: GrantMergeCard, deps: GrantMergeDeps
     prState = String(j.state ?? '').toUpperCase()
     mergeState = String(j.mergeStateStatus ?? '').toUpperCase()
   } catch (err) {
+    const a = authRefusal(err)
+    if (a) return a
     return refuse(502, 'pr_state_unreadable', `Could not read PR #${prNumber} on ${repo} from GitHub (${(err as Error).message}). Nothing was merged and the card was not closed.`)
   }
 
@@ -299,6 +333,8 @@ export async function mergeUnderGrant(card: GrantMergeCard, deps: GrantMergeDeps
   try {
     await exec('gh', ['pr', 'merge', String(prNumber), '--squash', '--delete-branch', '--repo', repo, '--match-head-commit', headSha])
   } catch (err) {
+    const a = authRefusal(err)
+    if (a) return a
     return refuse(502, 'merge_failed', `GitHub refused the squash-merge of PR #${prNumber} (${(err as Error).message}). The card was not closed.`)
   }
   return { ok: true, repo, prNumber, prUrl, headSha, ci: ci.reason }

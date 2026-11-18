@@ -27,6 +27,7 @@ import {
 } from './attachments.js'
 import { agentHasTool, botWorkspacesForPerson, kbWorkspacesForChat, runChatTool, toolSpecsFor, toolSpecsForContext, ToolUseError, type ToolContext } from './tools.js'
 import { fullAccessPromptLine, withFullAccess } from './full-access-tools.js'
+import { openLoopsPromptBlock } from './open-loops.js'
 import { mcpToolSetFor, runMcpTool, type McpToolSet } from './mcp-tools.js'
 import { botReplyForModel, earlierActionForModel, toolResultForModel } from './tool-result-framing.js'
 import type { WebToolDeps } from './web-tools.js'
@@ -287,7 +288,7 @@ function historyForModel(rows: ChatMessageRow[], withImages: boolean, workspace?
   return out
 }
 
-export function systemPromptFor(agent: ChatAgent, ctx: { username: string; now: Date; connectors: string[]; workspace?: string; userId?: number; fullAccess?: string }): string {
+export function systemPromptFor(agent: ChatAgent, ctx: { username: string; now: Date; connectors: string[]; workspace?: string; userId?: number; fullAccess?: string; openLoops?: string }): string {
   // obj 900797: person ∩ bot list, so the prompt never names a workspace the person cannot see.
   const allow = ctx.workspace === undefined ? undefined : ctx.userId === undefined ? null : botWorkspacesForPerson(ctx.userId, agent.slug)
   const parts = [
@@ -325,6 +326,8 @@ export function systemPromptFor(agent: ChatAgent, ctx: { username: string; now: 
     '- Never ask for or repeat passwords or API keys.',
     ctx.connectors.length ? `- Connected: ${ctx.connectors.join('; ')}.` : '',
     '- Keep answers short and use simple markdown (bullets, bold).',
+    // obj 901382: the bot's open-loops list and the rules for keeping it (only for a bot that tracks loops).
+    ctx.openLoops ?? '',
   ]
   return parts.filter(p => p !== '').join('\n')
 }
@@ -765,8 +768,11 @@ export async function runTurn(input: TurnInput): Promise<{ messages: ChatMessage
       return { messages: created }
     }
 
-    const system = systemPromptFor(withFullAccess({ ...ctx, agent: withResolvedKnowledgeFolders(agent, ctx.kbRoot, kbWorkspacesForChat(ctx.userId, agent.slug)) }).agent, {
+    const resolvedAgent = withResolvedKnowledgeFolders(agent, ctx.kbRoot, kbWorkspacesForChat(ctx.userId, agent.slug))
+    const system = systemPromptFor(withFullAccess({ ...ctx, agent: resolvedAgent }).agent, {
       fullAccess: fullAccessPromptLine(ctx),
+      // obj 901382: read with the same gates as the bot's own read_file, on every turn.
+      openLoops: openLoopsPromptBlock({ agent: resolvedAgent, kbRoot: ctx.kbRoot, userId, workspace: ctx.workspace, username: input.username }),
       username: input.username,
       now: now(),
       connectors: [connectors.mail?.label, connectors.calendar?.label].filter((x): x is string => !!x),
