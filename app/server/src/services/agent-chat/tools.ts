@@ -49,7 +49,8 @@ import type { ChatLane } from './threads.js'
 import { fullAccessActive, fullAccessAnywhere, protectedCardRefusal, refuseExclusion } from './bot-full-access.js'
 import { exclusionGate, type OutboundCall } from './full-access-exclusions.js'
 import { FULL_ACCESS_FNS, fullAccessToolSpecs, runFullAccessTool, withFullAccess, type FullAccessHost } from './full-access-tools.js'
-import { runCardWakeTool, type CardWakeScope } from './card-wake-tools.js'
+import { CARD_WAKE_FNS, runCardWakeTool, type CardWakeScope } from './card-wake-tools.js'
+import { beginSelfAction, endSelfAction, SELF_ACTION_TOOLS } from './card-wake-routing.js'
 import { CARD_SANDBOX_FNS, cardSandboxToolSpecs, runCardSandboxTool } from './card-sandbox-tools.js'
 import { GRANT_MERGE_FNS, grantMergeToolSpecs, runGrantMergeTool } from './grant-merge-tool.js'
 import { DEV_OPS_FNS, devOpsToolSpecs, runDevOpsTool } from './dev-ops-tools.js'
@@ -101,9 +102,10 @@ export interface ToolContext {
   fullAccessHost?: FullAccessHost
   /**
    * obj 901328: set when this turn is a needs_agent CARD WAKE (card-wakes.ts).
-   * The turn then has ONLY the own-card tools (card-wake-tools.ts): runChatTool
-   * refuses every other tool name, so a wake can never reach the board-wide or
-   * Full access tools, whatever the model asks for.
+   * With `toolScope: 'chat'` (obj 901394, the default) the turn has the own-card
+   * tools plus this bot's normal chat tools, with the permissions of a normal chat
+   * turn for this person and no more. Otherwise it has ONLY the own-card tools
+   * (card-wake-tools.ts) and runChatTool refuses every other tool name.
    */
   cardWake?: CardWakeScope
   /**
@@ -1135,13 +1137,36 @@ async function runMailCalendarTool(ctx: ToolContext, fnName: string, args: Recor
 export async function runChatTool(ctxIn: ToolContext, fnName: string, args: Record<string, unknown>): Promise<ToolOutcome> {
   // obj 900948: knowledge folders resolved for this KB's layout (workspaces/<ws>/…).
   // obj 901328: a card wake is confined to the own-card tools, before anything else.
+  // obj 901394: with the `chat` tool scope a card wake is a normal turn of this bot
+  // for this person, plus the own-card tools. Everything below applies unchanged.
   if (ctxIn.cardWake) {
-    // obj 901424: an operator tool asked for in a card wake is refused below; audit the attempt.
+    // obj 901424: an operator tool asked for in a card wake is refused, under either
+    // tool scope (a wake is never the person's browser session); audit the attempt.
     if (DEV_OPS_FNS.has(fnName)) {
       writeDevOpsAudit({ bot_slug: ctxIn.agent.slug, user_id: ctxIn.userId, username: ctxIn.username, action: fnName, outcome: 'refused', code: 'wake_turn', detail: 'asked for in a card wake' })
+      return runCardWakeTool(ctxIn, fnName, args)
     }
-    return runCardWakeTool(ctxIn, fnName, args)
+    if (ctxIn.cardWake.toolScope !== 'chat' || CARD_WAKE_FNS.has(fnName)) return withSelfAction(ctxIn, fnName, args, () => runCardWakeTool(ctxIn, fnName, args))
   }
+  return withSelfAction(ctxIn, fnName, args, () => runChatToolInner(ctxIn, fnName, args))
+}
+
+/**
+ * obj 901394: bracket a tool call that changes a card, so the objective_events it
+ * writes are known to be the bot's own doing and never wake the bot for them.
+ */
+async function withSelfAction(ctx: ToolContext, fnName: string, args: Record<string, unknown>, run: () => Promise<ToolOutcome>): Promise<ToolOutcome> {
+  const cardId = Number(args.id ?? args.objective_id ?? args.card_id)
+  if (!SELF_ACTION_TOOLS.has(fnName) || !Number.isInteger(cardId) || cardId <= 0) return run()
+  const action = beginSelfAction(getDb(), { slug: ctx.agent.slug, objectiveId: cardId, tool: fnName }, ctx.now?.() ?? new Date())
+  try {
+    return await run()
+  } finally {
+    endSelfAction(getDb(), action)
+  }
+}
+
+async function runChatToolInner(ctxIn: ToolContext, fnName: string, args: Record<string, unknown>): Promise<ToolOutcome> {
   const ctx = withKbFolders(ctxIn)
   // obj 900972: the Full access tool family. Checked again inside, on every call.
   if (FULL_ACCESS_FNS.has(fnName)) return runFullAccessTool(ctx, fnName, args)

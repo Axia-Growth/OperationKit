@@ -33,7 +33,10 @@ describe('notification grouping', () => {
     expect(dayGroup(at(new Date(2026, 10, 11, 9)), now)).toBe('Today')
     expect(dayGroup(at(new Date(2026, 10, 10, 23)), now)).toBe('Yesterday')
     expect(dayGroup(at(new Date(2026, 10, 2)), now)).toBe('Earlier')
-    const groups = groupByDay([mk(1, 0), mk(2, 24 * 9), mk(3, 0.5)], now)
+    // Build the alerts from the pinned `now`, never the real clock: mk() ages from Date.now(),
+    // so "9 days ago" landed on Nov 10 ('Yesterday') once the real date reached Nov 19.
+    const ago = (id: number, h: number) => mk(id, 0, { created_at: at(new Date(now.getTime() - h * 3_600_000)) })
+    const groups = groupByDay([ago(1, 0), ago(2, 24 * 9), ago(3, 0.5)], now)
     expect(groups.map(g => g.label)).toEqual(['Today', 'Earlier'])
   })
 })

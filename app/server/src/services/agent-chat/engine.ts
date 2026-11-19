@@ -16,7 +16,7 @@ import { DEMO_AGENT_SLUG, DEMO_DIR, demoEnabled, loadChatAgents, type ChatAgent,
 import { resolveConnectors } from './connectors.js'
 import { allBotConfigs, applyBotConfig } from './bot-config.js'
 import { botWorkspaceAllowlist } from './bot-workspaces.js'
-import { chooseProviderId, createProvider, imageDataUrl, ProviderError, ProviderUnavailableError, type ChatMessage, type ChatProvider, type ProviderDeps } from './providers.js'
+import { chooseProviderId, createProvider, imageDataUrl, ProviderError, ProviderUnavailableError, seatMoveLine, type ChatMessage, type ChatProvider, type ProviderDeps } from './providers.js'
 import {
   deleteAttachmentsForChat,
   imageDataForMessage,
@@ -32,7 +32,7 @@ import { mcpToolSetFor, runMcpTool, type McpToolSet } from './mcp-tools.js'
 import { botReplyForModel, earlierActionForModel, toolResultForModel } from './tool-result-framing.js'
 import type { WebToolDeps } from './web-tools.js'
 import { notifyBotMessage } from './sidebar-live.js'
-import { laneKey, lanePredicate, laneThreadId, MAIN_LANE, touchThread, type ChatLane } from './threads.js'
+import { deleteThread, laneKey, lanePredicate, laneThreadId, MAIN_LANE, replyParentOf, replyThreadIdsForLane, touchThread, type ChatLane, type ReplyParentRow } from './threads.js'
 
 export const MAX_STEPS = 8
 const HISTORY_LIMIT = 40
@@ -90,6 +90,12 @@ export interface ChatMessageRow {
     /** obj 901328: the card wake this row belongs to ("Card wakes" thread). */
     card_wake_id?: number
     need?: string
+    /** obj 901394: a card wake's answer posted in the main chat (`kind: card_wake_reply`): every card it covered, and the thread the turn ran in. */
+    objective_ids?: number[]
+    thread_id?: number
+    /** obj 901395 (kind 'seat_moved'): seat labels only — the account that answered and the ones left behind. */
+    seat_to?: string
+    seat_from?: string[]
   } | null
   /** Images attached to this message (obj 900157). Metadata only — never bytes. */
   images: StoredImage[]
@@ -224,6 +230,12 @@ export function listMessages(
   return withImages(rows.map(mapRow))
 }
 
+/** One stored message of this person's chat with this bot, whatever its lane (obj 901373: a reply thread's parent). */
+export function getMessage(userId: number, slug: string, id: number): ChatMessageRow | null {
+  const r = getDb().prepare('SELECT * FROM agent_chat_messages WHERE id = ? AND user_id = ? AND agent_slug = ?').get(id, userId, slug) as Record<string, unknown> | undefined
+  return r ? withImages([mapRow(r)])[0] : null
+}
+
 /** Store one row in a lane. Exported for the card-wake drain (obj 901328), which writes into its own lane. */
 export function addMessage(
   userId: number,
@@ -253,6 +265,13 @@ export function addMessage(
 export function clearChat(userId: number, slug: string, lane: ChatLane = MAIN_LANE): number {
   // The images belong to the messages: "Clear chat" must take them too, or the
   // bytes outlive the conversation the person just deleted.
+  // obj 901373: reply threads hang off this lane's messages, so they go with
+  // them — rows, messages and images. Reply threads never nest (a thread cannot
+  // hang off a message inside a thread), so this recursion is one level deep.
+  for (const id of replyThreadIdsForLane(userId, slug, lane)) {
+    clearChat(userId, slug, { kind: 'thread', id })
+    deleteThread(userId, slug, id)
+  }
   deleteAttachmentsForChat(userId, slug, lane)
   const { sql, params } = lanePredicate(lane)
   return getDb()
@@ -286,6 +305,30 @@ function historyForModel(rows: ChatMessageRow[], withImages: boolean, workspace?
     else if (r.role === 'tool') out.push({ role: 'assistant', content: earlierActionForModel(r.tool_name, r.content) })
   }
   return out
+}
+
+/** Longest parent message quoted to the model in a reply thread; the rest is cut with a note. */
+const REPLY_PARENT_MAX_CHARS = 6000
+
+/**
+ * obj 901373: what the model is told at the top of a reply thread — the ONE
+ * message the thread hangs off. It goes in as a user-role turn, not into the
+ * system prompt: the quoted text may be another bot's relayed words or pasted
+ * content, and must carry no more authority than any other message. The
+ * thread's earlier replies follow it as ordinary history.
+ */
+export function replyThreadContextForModel(parent: ReplyParentRow, workspace?: string | null): string {
+  const who = parent.role === 'assistant' ? 'you (the bot) wrote' : 'I wrote'
+  const where = parent.thread_id === null ? 'our main conversation' : 'a side thread of our conversation'
+  const raw = parent.role === 'assistant' && parent.meta?.kind === 'bot_reply' ? botReplyForModel(parent.content, workspace) : parent.content
+  const body = raw.length > REPLY_PARENT_MAX_CHARS ? `${raw.slice(0, REPLY_PARENT_MAX_CHARS)}\n[…message cut here]` : raw
+  return [
+    `[Thread context, not a new request] I am replying in a thread on one earlier message that ${who} in ${where} (sent ${parent.created_at} UTC).`,
+    'Everything I say in this thread is about that message. Answer here, in this thread. The message:',
+    '<<<',
+    body || '(no text — an image or a card)',
+    '>>>',
+  ].join('\n')
 }
 
 export function systemPromptFor(agent: ChatAgent, ctx: { username: string; now: Date; connectors: string[]; workspace?: string; userId?: number; fullAccess?: string; openLoops?: string }): string {
@@ -376,6 +419,19 @@ export async function runModelLoop(p: {
       const msg = err instanceof ProviderError ? err.message : `The AI provider failed: ${err instanceof Error ? err.message : String(err)}`
       record({ role: 'error', content: msg.slice(0, 500), provider: provider.id, model: provider.model, tool_name: null, meta: { provider_label: provider.label } })
       return { kind: 'failed', message: msg.slice(0, 500), step }
+    }
+    // obj 901395: this model call was answered by another account than the one
+    // first tried. One quiet line says so. It is an `error`-role row with a
+    // kind (like 'stopped'), so it is shown but never replayed to the model.
+    if (out.seatMove) {
+      record({
+        role: 'error',
+        content: seatMoveLine(out.seatMove),
+        provider: provider.id,
+        model: provider.model,
+        tool_name: null,
+        meta: { kind: 'seat_moved', provider_label: provider.label, seat_to: out.seatMove.to, seat_from: out.seatMove.from.map(f => f.label) },
+      })
     }
 
     if (out.toolCalls.length === 0) {
@@ -807,7 +863,11 @@ export async function runTurn(input: TurnInput): Promise<{ messages: ChatMessage
       }))
       return { messages: created }
     }
+    // obj 901373: in a reply thread the model first sees the message the thread
+    // hangs off, then the thread's earlier replies, then what just arrived.
+    const replyParent = replyParentOf(userId, agent.slug, lane)
     const convo: ChatMessage[] = [
+      ...(replyParent ? [{ role: 'user' as const, content: replyThreadContextForModel(replyParent, ctx.workspace) }] : []),
       ...historyForModel(prior, provider.supportsImages, ctx.workspace),
       // Several queued messages reach the model as consecutive user turns, in the order they were sent.
       ...incoming.map(r => ({ role: 'user' as const, content: userContentForModel(r, provider.supportsImages) })),

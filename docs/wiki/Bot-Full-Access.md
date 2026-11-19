@@ -145,6 +145,17 @@ which read `delegation_grants` ("Approve on my behalf") and nothing else. A
 comment a bot posts with Full access reaches the card as an unverified relay
 and says in its first line that it is not an approval.
 
+**Standing merge (obj 901388).** A merge grant can carry one more switch,
+**Merge without asking me each time** (`delegation_grants.standing_merge`, off by
+default, set only when the grant is issued, merge grants only). With it on, the
+server merges the bot's OWN cards that reach review with AI review `pass` and a PR
+(`services/standing-merge.ts`), through the same `runGrantApprovedMerge` →
+`mergeUnderGrant` path and guards as a chat merge, and posts one line in the bot's
+chat ("merged, not live until you deploy"). Full access plays no part in it: the
+switch lives on the grant, and Full access neither turns it on nor stands in for it.
+Deploys, production migrations, secrets, keys, DNS and Cloudflare Access, billing and
+protected PRs stay out of reach either way.
+
 ## Who can change it
 
 Only an **admin signed in to the browser** (the httpOnly cookie). An agent API

@@ -45,6 +45,10 @@ interface FakePr {
   rollup: unknown[]
   required: string[] | 'unreadable'
   mergeError?: string
+  /** obj 901412: update-branch fails with this message when set. */
+  updateError?: string
+  /** obj 901412: the head GitHub moves the branch to after an update-branch. */
+  updatedHeadSha?: string
 }
 const fake: { pr: FakePr; calls: string[][]; statusAtMerge: string | null } = {
   pr: { state: 'OPEN', mergeStateStatus: 'CLEAN', headSha: 'abc1234', rollup: [], required: [] },
@@ -58,6 +62,14 @@ async function fakeExec(file: string, args: string[]): Promise<string> {
   fake.calls.push([file, ...args])
   if (file !== 'gh') throw new Error(`unexpected exec ${file}`)
   const p = fake.pr
+  if (args[0] === 'api' && args.some(a => String(a).endsWith('/update-branch'))) {
+    if (p.updateError) throw new Error(p.updateError)
+    // GitHub merges the base into the branch: a new head, CI not run on it yet.
+    p.headSha = p.updatedHeadSha ?? 'def5678'
+    p.rollup = [{ name: 'gate', status: 'QUEUED', conclusion: '' }]
+    p.mergeStateStatus = 'BLOCKED'
+    return JSON.stringify({ message: 'Updating pull request branch.', url: 'https://github.com/acme/app/pull/1' })
+  }
   if (args[0] === 'api') {
     if (p.required === 'unreadable') throw new Error('HTTP 500 boom')
     if (String(args[1]).endsWith('/protection')) throw new Error('HTTP 404 Not Found')
@@ -152,6 +164,7 @@ function card(spec: { title?: string; status?: string; verdict?: string | null; 
 
 const statusOf = (id: number) => (getDb().prepare('SELECT status FROM objectives WHERE id = ?').get(id) as { status: string }).status
 const merges = () => fake.calls.filter(c => c[1] === 'pr' && c[2] === 'merge')
+const updates = () => fake.calls.filter(c => c[1] === 'api' && c.some(a => a.endsWith('/update-branch')))
 const lastAudit = (id: number) => getDb().prepare('SELECT * FROM delegation_audit WHERE objective_id = ? ORDER BY id DESC').get(id) as Loose
 
 function grant(actions: string[] = ['merge'], workspace = 'growth') {
@@ -372,12 +385,14 @@ describe('6. money-path, project and unsafe PRs are not merged', () => {
     await expectRefused(card({ type: 'project' }), 409, 'project_card')
   })
 
-  for (const state of ['BEHIND', 'DIRTY', 'BLOCKED', 'UNKNOWN']) {
+  // BEHIND is no longer refused outright: obj 901412 updates the branch (see below).
+  for (const state of ['DIRTY', 'BLOCKED', 'UNKNOWN']) {
     it(`PR mergeStateStatus ${state}`, async () => {
       grant()
       fake.pr.mergeStateStatus = state
       const r = await expectRefused(card(), 409, 'pr_not_mergeable')
       expect(r.json.error).toContain(state)
+      expect(updates()).toHaveLength(0) // obj 901412: only BEHIND updates the branch
     })
   }
 
@@ -499,5 +514,94 @@ describe('pure pieces', () => {
     expect(precheckGrantMerge(base)).toBeNull()
     expect(precheckGrantMerge({ ...base, is_strategy: 1 })?.code).toBe('strategy')
     expect(precheckGrantMerge({ ...base, pr_number: null })?.code).toBe('no_pr')
+  })
+})
+
+describe('7. BEHIND: the tool updates the branch itself, then merges only a green, CLEAN new head (obj 901412)', () => {
+  it('calls GitHub update-branch pinned to the head it read, never merges the old head, and returns branch_updated_ci_pending', async () => {
+    const g = grant()
+    fake.pr.mergeStateStatus = 'BEHIND'
+    fake.pr.headSha = 'abc1234'
+    const id = card()
+    const r = await approve(id)
+    expect(r.status).toBe(202)
+    expect(r.json.code).toBe('branch_updated_ci_pending')
+    expect(r.json.merged).toBe(false)
+    expect(r.json.error).toContain('was behind main')
+    expect(r.json.error).toContain('Nothing was merged')
+
+    expect(updates()).toHaveLength(1)
+    const u = updates()[0]
+    expect(u).toEqual(expect.arrayContaining(['--method', 'PUT', `repos/acme/app/pulls/${100 + seq}/update-branch`, '-f', 'expected_head_sha=abc1234']))
+    expect(u.join(' ')).not.toMatch(/rebase|force/)
+    expect(merges()).toHaveLength(0) // the old head is never merged
+    expect(statusOf(id)).toBe('review') // card not closed
+    expect(sendFollowUpMock).not.toHaveBeenCalled()
+
+    // The same audit trail the merge uses: delegation_audit + a card line.
+    expect(lastAudit(id)).toMatchObject({ event: 'approval_used', grant_id: g.id, action: 'merge', reason: 'grant_merge:branch_updated_ci_pending' })
+    const line = getDb().prepare("SELECT * FROM activity_log WHERE objective_id = ? AND json_extract(metadata, '$.kind') = 'grant_merge_branch_update'").get(id) as Loose
+    expect(line.title).toContain(`Updated PR #${100 + seq}`)
+    expect(JSON.parse(line.metadata)).toMatchObject({ repo: 'acme/app', previous_head_sha: 'abc1234', base_ref: 'main' })
+  })
+
+  it('a second approval while CI runs on the new head merges nothing; once green and CLEAN it merges pinned to the NEW head', async () => {
+    grant()
+    fake.pr.mergeStateStatus = 'BEHIND'
+    fake.pr.headSha = 'abc1234'
+    fake.pr.updatedHeadSha = 'fedcba987654'
+    const id = card()
+    expect((await approve(id)).status).toBe(202)
+    expect(fake.pr.headSha).toBe('fedcba987654')
+
+    // CI on the new head has not passed yet → refused, no merge, no second update.
+    const pending = await approve(id)
+    expect(pending.status).toBe(409)
+    expect(pending.json.code).toBe('ci_not_green')
+    expect(merges()).toHaveLength(0)
+    expect(updates()).toHaveLength(1)
+    expect(statusOf(id)).toBe('review')
+
+    // CI green on the new head and GitHub says CLEAN → merge, pinned to it.
+    fake.pr.rollup = GREEN
+    fake.pr.mergeStateStatus = 'CLEAN'
+    const ok = await approve(id)
+    expect(ok.status).toBe(200)
+    expect(ok.json.merged).toBe(true)
+    expect(merges()).toHaveLength(1)
+    const m = merges()[0]
+    expect(m[m.indexOf('--match-head-commit') + 1]).toBe('fedcba987654')
+    expect(m).not.toContain('abc1234')
+    expect(statusOf(id)).toBe('done')
+  })
+
+  it('BEHIND with CI red on the current head is refused as ci_not_green, with no update', async () => {
+    grant()
+    fake.pr.mergeStateStatus = 'BEHIND'
+    fake.pr.rollup = [{ name: 'gate', status: 'COMPLETED', conclusion: 'FAILURE' }]
+    await expectRefused(card(), 409, 'ci_not_green')
+    expect(updates()).toHaveLength(0)
+  })
+
+  it('a failed update-branch call is refused with a clear reason, nothing merged, card not moved', async () => {
+    grant()
+    fake.pr.mergeStateStatus = 'BEHIND'
+    fake.pr.updateError = 'HTTP 422: expected head sha didn’t match current head ref.'
+    const id = card()
+    const r = await expectRefused(id, 502, 'branch_update_failed')
+    expect(r.json.error).toContain('GitHub refused to update the branch')
+    expect(r.json.error).toContain('expected head sha')
+    expect(updates()).toHaveLength(1)
+    expect(statusOf(id)).toBe('review')
+    expect(lastAudit(id)).toMatchObject({ event: 'approval_denied', reason: 'grant_merge:branch_update_failed' })
+    expect(getDb().prepare("SELECT COUNT(*) AS n FROM activity_log WHERE objective_id = ? AND json_extract(metadata, '$.kind') = 'grant_merge_branch_update'").get(id)).toMatchObject({ n: 0 })
+  })
+
+  it('BEHIND with an unreadable head SHA never sends the update unpinned', async () => {
+    grant()
+    fake.pr.mergeStateStatus = 'BEHIND'
+    fake.pr.headSha = ''
+    await expectRefused(card(), 502, 'head_sha_unreadable')
+    expect(updates()).toHaveLength(0)
   })
 })

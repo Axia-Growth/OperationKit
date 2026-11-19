@@ -290,6 +290,26 @@ export interface ThreadResponse {
   turn?: LaneTurn
   /** obj 900949: set on a POST answered 202 — the message was queued, not run. */
   queued?: boolean
+  /**
+   * obj 901373: the reply threads on this lane's messages, keyed by the parent
+   * message's id — only threads that hold at least one reply. Absent on an older server.
+   */
+  reply_threads?: Record<string, ReplyThreadSummary>
+}
+
+/** obj 901373: "N replies" under a message that has a thread. */
+export interface ReplyThreadSummary {
+  thread_id: number
+  reply_count: number
+  last_reply_at: string | null
+}
+
+/** obj 901373: POST /agents/:slug/messages/:id/thread — the thread on one message, created on first use. */
+export interface ReplyThreadOpenResponse {
+  thread: ChatThread
+  parent: ChatMessage
+  drafts?: ChatDraft[]
+  cards?: ChatCard[]
 }
 
 /** obj 900949: what the composer needs to know about one lane. */
@@ -312,6 +332,8 @@ export interface ChatThread {
   created_at: string
   updated_at: string
   message_count: number
+  /** obj 901373: set on a reply thread — the message it hangs off. Never set on a thread in the lane strip. */
+  parent_message_id?: number | null
 }
 
 export interface ThreadsResponse {

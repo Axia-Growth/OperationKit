@@ -52,7 +52,7 @@ export function AgentAvatar({
   )
 }
 
-function time(iso: string): string {
+export function time(iso: string): string {
   const d = new Date(iso.includes('T') ? iso : `${iso.replace(' ', 'T')}Z`)
   return Number.isNaN(d.getTime()) ? '' : d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })
 }
@@ -209,6 +209,16 @@ export function ErrorLine({ m }: { m: ChatMessage }) {
     return (
       <p className="mx-auto max-w-[90%] text-center text-sm text-fg-2" data-testid="stopped-line">
         {m.content || 'Stopped.'}
+      </p>
+    )
+  }
+  // obj 901395: the reply was moved to another Claude account. Not a failure:
+  // one small, quiet line with the seat labels (never an email or a credential).
+  if (m.meta?.kind === 'seat_moved') {
+    return (
+      <p className="mx-auto max-w-[90%] text-center text-xs text-fg-2" data-testid="seat-moved-line">
+        <span aria-hidden="true">↻ </span>
+        {m.content}
       </p>
     )
   }

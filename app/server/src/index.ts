@@ -41,6 +41,7 @@ import internalVaultRouter from './routes/internal-vault.js'
 import alertsRouter from './routes/alerts.js'
 import internalRoutinesRouter from './routes/internal-routines.js'
 import internalSupervisorRouter from './routes/internal-supervisor.js'
+import internalAiReviewRouter from './routes/internal-ai-review.js'
 import internalPostHogHotOwnerRouter from './routes/internal-posthog-hot-owner.js'
 import starterPacksRouter, { internalStarterPacksRouter } from './routes/starter-packs.js'
 import internalInstallRouter from './routes/internal-install.js'
@@ -110,6 +111,7 @@ import { startBotMessageDelivery } from './services/agent-chat/bot-wake.js'
 import { startCardWakeDelivery } from './services/agent-chat/card-wakes.js'
 import { startDevOpsTicks } from './services/dev-ops/tick.js'
 import { startOpenLoopsDigestHook } from './services/agent-chat/open-loops-hook.js'
+import { startStandingMergeSweeper } from './services/standing-merge.js'
 import { startHighAgencySupervisor } from './services/high-agency-supervisor-scheduler.js'
 import { seedExistingBotsOnce } from './services/agent-chat/bot-workspaces.js'
 import { listAgents } from './services/agent-chat/engine.js'
@@ -298,6 +300,7 @@ app.use('/api/internal', internalRouter)  // /api/internal/deploy, /restart, /ob
 app.use('/api/internal', internalVaultRouter)  // /api/internal/vault/*, /contactbook/history — telegram-contactbook sibling (localhost)
 app.use('/api/alerts', alertsRouter)  // ingest (bearer) + list/ack (JWT) — AlertBell + notify-failure.sh
 app.use('/api/internal/routines', internalRoutinesRouter)  // routines CRUD + run-now (localhost-only)
+app.use('/api/internal/ai-review', internalAiReviewRouter)  // request an AI review for a card stuck in review with a PR and no verdict (obj 901381)
 app.use('/api/internal/supervisor', internalSupervisorRouter)  // High Agency supervisor: status, routed flags, preview, run-now (obj 900795)
 app.use('/api/internal/posthog-hot-owner-sync', internalPostHogHotOwnerRouter)  // status + run-now + enabled flag (localhost-only; obj 900091)
 app.use('/api/internal/install', internalInstallRouter)  // installer: reload caches after bootstrap, seat status for verify.sh (localhost + secret; obj 720210)
@@ -542,6 +545,11 @@ if (scratchVerdict.scratch) {
   // loops ends, post its waiting-on-owner list into the bot's chat thread. Host
   // only. Off: settings.open_loops_bots = '0'.
   startOpenLoopsDigestHook()
+  // Standing merge (obj 901388): a bot's own passed PR is merged under the owner's
+  // merge grant without being asked, ONLY when that grant has "Merge without asking
+  // me each time" on. Same path and guards as a chat merge; 60s sweep + a kick from
+  // the reviewer-pass branch. Host only. Nothing happens without such a grant.
+  startStandingMergeSweeper()
   // Workflow engine (obj 900638, docs/design/WORKFLOWS.md §4). Arms its 2s tick here
   // (never on a scratch instance — startFlowEngine re-checks); every tick is a
   // heartbeat-only no-op until settings.flows_enabled = '1' (default '0' until B4).

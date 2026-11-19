@@ -286,3 +286,81 @@ describe('the per-bot ceiling is enforced at the boundary', () => {
     }
   })
 })
+
+// ── reply in thread (obj 901373) ──
+describe('reply in thread', () => {
+  const openOn = (as: number, messageId: number, slug = SLUG) => call('POST', `/agents/${slug}/messages/${messageId}/thread`, { as })
+  const botMessage = async (as: number) => {
+    await say(as, 'hello there')
+    const r = await read(as)
+    return (r.json.messages as Loose[]).find(m => m.role === 'assistant')
+  }
+
+  it('opens a thread on a bot message (201), finds it again (200), and keeps it out of the lane strip', async () => {
+    const parent = await botMessage(OWNER)
+    const a = await openOn(OWNER, parent.id)
+    expect(a.status).toBe(201)
+    expect(a.json.thread.parent_message_id).toBe(parent.id)
+    expect(a.json.parent.id).toBe(parent.id)
+    expect(a.json.parent.content).toBe(parent.content)
+    const b = await openOn(OWNER, parent.id)
+    expect(b.status).toBe(200)
+    expect(b.json.thread.id).toBe(a.json.thread.id)
+    const strip = await call('GET', `/agents/${SLUG}/threads?archived=1`, { as: OWNER })
+    expect(strip.json.threads).toEqual([])
+  })
+
+  it('a reply lands in the thread with the bot’s answer; main is unchanged and the parent reports its replies', async () => {
+    const parent = await botMessage(OWNER)
+    const before = contentsOf(await read(OWNER))
+    const t = (await openOn(OWNER, parent.id)).json.thread
+    expect((await read(OWNER)).json.reply_threads).toEqual({})
+
+    const sent = await say(OWNER, 'about that message', t.id)
+    expect(sent.status).toBe(200)
+    expect((sent.json.messages as Loose[]).map(m => m.role)).toEqual(['user', 'assistant'])
+
+    const inThread = await read(OWNER, t.id)
+    expect(contentsOf(inThread)[0]).toBe('about that message')
+    expect((inThread.json.messages as Loose[]).map(m => m.role)).toEqual(['user', 'assistant'])
+
+    const mainNow = await read(OWNER)
+    expect(contentsOf(mainNow)).toEqual(before)
+    const summary = mainNow.json.reply_threads[parent.id]
+    expect(summary.thread_id).toBe(t.id)
+    expect(summary.reply_count).toBe(2)
+    expect(typeof summary.last_reply_at).toBe('string')
+  })
+
+  it('refuses another person, another bot, a missing message and a message inside a thread', async () => {
+    const parent = await botMessage(OWNER)
+    expect((await openOn(OTHER, parent.id)).status).toBe(404)
+    expect((await openOn(OWNER, parent.id, 'second-bot')).status).toBe(404)
+    expect((await openOn(OWNER, 987654)).status).toBe(404)
+    expect((await openOn(OWNER, Number.NaN)).status).toBe(404)
+    const t = (await openOn(OWNER, parent.id)).json.thread
+    await say(OWNER, 'in the thread', t.id)
+    const inner = (await read(OWNER, t.id)).json.messages[0]
+    expect((await openOn(OWNER, inner.id)).status).toBe(400)
+    // Another person cannot read or post into the thread either.
+    expect((await read(OTHER, t.id)).status).toBe(404)
+    expect((await say(OTHER, 'sneak', t.id)).status).toBe(404)
+  })
+
+  it('a reply thread cannot be renamed or archived through the side-thread route', async () => {
+    const parent = await botMessage(OWNER)
+    const t = (await openOn(OWNER, parent.id)).json.thread
+    expect((await call('PATCH', `/agents/${SLUG}/threads/${t.id}`, { as: OWNER, body: { archived: true } })).status).toBe(404)
+  })
+
+  it('Clear conversation clears that chat’s threads too', async () => {
+    const parent = await botMessage(OWNER)
+    const t = (await openOn(OWNER, parent.id)).json.thread
+    await say(OWNER, 'a reply', t.id)
+    const cleared = await call('DELETE', `/agents/${SLUG}/messages`, { as: OWNER })
+    expect(cleared.status).toBe(200)
+    expect(contentsOf(await read(OWNER))).toEqual([])
+    expect((await read(OWNER, t.id)).status).toBe(404)
+    expect(getDb().prepare('SELECT COUNT(*) AS n FROM agent_chat_messages').get()).toEqual({ n: 0 })
+  })
+})

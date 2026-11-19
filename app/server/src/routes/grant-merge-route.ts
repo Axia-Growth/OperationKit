@@ -55,12 +55,12 @@ export async function runGrantApprovedMerge(
   const merged = await mergeUnderGrant(card, { auth: { grantorUserId: req.user?.id ?? null, agent: via?.agent ?? null } })
   if (!merged.ok) {
     try {
-      writeDelegationAudit(db, { ...base, event: 'approval_denied', grant_id: d.grantId, reason: `grant_merge:${merged.code}` })
+      writeDelegationAudit(db, { ...base, event: merged.code === 'branch_updated_ci_pending' ? 'approval_used' : 'approval_denied', grant_id: d.grantId, reason: `grant_merge:${merged.code}` })
     } catch (err) {
       console.warn('[grant-merge] audit write failed:', (err as Error).message)
     }
     console.warn(`[grant-merge] card #${card.id} refused (${merged.code}): ${merged.error}`)
-    return { status: merged.status, body: { error: merged.error, code: merged.code, merged: false } }
+    return { status: merged.status, body: { error: merged.error, code: merged.code, merged: false, ...(merged.pending ? { pending: true } : {}) } }
   }
 
   const mergeLine = `Squash-merged PR #${merged.prNumber} (${merged.repo}) — approved by ${d.bot} on behalf of ${d.onBehalfOf} under grant #${d.grantId} (merge)`
