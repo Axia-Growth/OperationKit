@@ -66,3 +66,39 @@ describe('buildReviewerPrompt — rubric fetch is clobber-safe', () => {
     expect(locked).toMatch(/Only\s*\n?emit `<verdict>blocked<\/verdict>` when the endpoint is reachable/)
   })
 })
+
+// obj 901460 — "first pass" means NO rubric locked, on any iteration. #901330 (PR 871)
+// reached iteration 2+ with nothing locked, was told to LOAD it, read `criteria: null`
+// three times and stopped with no usable verdict.
+describe('buildReviewerPrompt — no locked rubric on iteration 2+ (obj 901460)', () => {
+  const noLockIter2 = buildReviewerPrompt(
+    makeObjective({ ai_review_iteration: 2, acceptance_criteria: null } as unknown as Partial<Objective>),
+    ['app/server/src/foo.ts'],
+    null,
+  )
+  const emptyLockIter3 = buildReviewerPrompt(
+    makeObjective({ ai_review_iteration: 3, acceptance_criteria: '[]' } as unknown as Partial<Objective>),
+    ['app/server/src/foo.ts'],
+    null,
+  )
+
+  it('tells the reviewer to GENERATE and lock a rubric, not to load a missing one', () => {
+    for (const p of [noLockIter2, emptyLockIter3]) {
+      expect(p).toContain('Generate and lock the acceptance criteria')
+      expect(p).not.toContain('Load the locked acceptance criteria')
+      expect(p).toMatch(/no rubric is locked for this objective yet/)
+    }
+  })
+
+  it('names the server fallback and the stated-reason exit, never a silent stop', () => {
+    for (const p of [noLockIter2, emptyLockIter3, firstPass, locked]) {
+      expect(p).toContain('"rubric_source": "derived"')
+      expect(p).toContain('NO-RUBRIC: <that reason>')
+      expect(p).toContain('Never end a review without a verdict.')
+    }
+  })
+
+  it('a real lock on iteration 2 still loads it', () => {
+    expect(locked).toContain('Load the locked acceptance criteria (iteration 2)')
+  })
+})

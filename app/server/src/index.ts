@@ -109,6 +109,7 @@ import { startRoutineScheduler } from './services/routine-scheduler.js'
 import { resyncHighAgencyRoutines, startHighAgencyCronRefresh } from './services/agent-chat/high-agency.js'
 import { startBotMessageDelivery } from './services/agent-chat/bot-wake.js'
 import { startCardWakeDelivery } from './services/agent-chat/card-wakes.js'
+import { startFollowupDelivery } from './services/agent-chat/followup-wake.js'
 import { startDevOpsTicks } from './services/dev-ops/tick.js'
 import { startOpenLoopsDigestHook } from './services/agent-chat/open-loops-hook.js'
 import { startStandingMergeSweeper } from './services/standing-merge.js'
@@ -538,6 +539,11 @@ if (scratchVerdict.scratch) {
   // wakes that bot in its "Card wakes" thread instead of a webhook. Host only.
   // Kill switch: settings.bot_card_wakes_enabled = '0'; per bot: its settings panel.
   startCardWakeDelivery()
+  // One-off follow-up wakes a chat bot sets for itself (obj 901392): when one is
+  // due the bot runs an ordinary turn in the chat it was set in. Host only. A
+  // follow-up that came due while the server was down fires once on this first
+  // drain. Kill switch: settings.bot_followups_enabled = '0'.
+  startFollowupDelivery()
   // Operation Kit Dev operator tools (obj 901424): merge updated branches once CI is
   // green, and settle update.sh deploys after the restart they cause. Host only.
   startDevOpsTicks()

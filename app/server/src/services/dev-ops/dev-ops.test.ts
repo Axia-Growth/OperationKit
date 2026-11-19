@@ -510,6 +510,52 @@ describe('6. deploy: the standard update.sh flow', () => {
     expect(allAuditText()).not.toContain(FAKE_CF_TOKEN)
   })
 
+  it.each([
+    ['unchanged', 'the runner said unchanged'],
+    ['deployed', 'an older runner said deployed with the same commit twice'],
+  ])('same commit before and after settles as unchanged, not deployed (%s: %s)', async (state) => {
+    const r = (await call('dev_deploy', {})).result as Loose
+    fs.writeFileSync(path.join(DATA_DIR, 'dev-ops', `deploy-${r.deploy_id}.json`), JSON.stringify({
+      id: r.deploy_id, state, step: 'done', message: 'verify.sh passed and the health URL answers',
+      from_sha: '0e7efcbc7b5e', to_sha: '0e7efcbc7b5e', backup_dir: '/opt/operationkit/backups/pre-update-x', log_tail: '',
+    }))
+    const out = await call('dev_deploy_status', {})
+    const d = (out.result as Loose).deploys[0]
+    expect(d).toMatchObject({ id: r.deploy_id, status: 'unchanged', new_code_live: false, from_sha: '0e7efcbc7b5e', to_sha: '0e7efcbc7b5e' })
+    expect(d.message).toContain('Sync from upstream')
+    expect(out.summary).toContain('nothing new to deploy')
+    expect(out.summary).not.toMatch(/: deployed/)
+    const settled = getDb().prepare("SELECT * FROM dev_ops_audit WHERE action = 'deploy_settled' ORDER BY id DESC LIMIT 1").get() as Loose
+    expect(settled).toMatchObject({ outcome: 'no_change', code: 'unchanged' })
+  })
+
+  it('a real deploy (commit moved) says new code is live', async () => {
+    const r = (await call('dev_deploy', {})).result as Loose
+    fs.writeFileSync(path.join(DATA_DIR, 'dev-ops', `deploy-${r.deploy_id}.json`), JSON.stringify({ id: r.deploy_id, state: 'deployed', step: 'done', message: 'deployed', from_sha: 'old', to_sha: 'new' }))
+    expect(((await call('dev_deploy_status', {})).result as Loose).deploys[0]).toMatchObject({ status: 'deployed', new_code_live: true })
+  })
+
+  it('a deploys table made before the unchanged status existed is widened once, rows kept', async () => {
+    const db = getDb()
+    db.exec(`
+      DROP TABLE dev_ops_deploys;
+      CREATE TABLE dev_ops_deploys (
+        id INTEGER PRIMARY KEY AUTOINCREMENT, bot_slug TEXT NOT NULL, user_id INTEGER, username TEXT,
+        status TEXT NOT NULL DEFAULT 'started' CHECK (status IN ('started', 'deployed', 'rolled_back', 'rollback_failed', 'failed')),
+        step TEXT, from_sha TEXT, to_sha TEXT, backup_dir TEXT, detail TEXT,
+        created_at TEXT NOT NULL DEFAULT (datetime('now')), finished_at TEXT
+      );
+      INSERT INTO dev_ops_deploys (id, bot_slug, status, from_sha, to_sha) VALUES (41, 'operation-kit-dev', 'deployed', 'a', 'a');
+    `)
+    expect(() => db.prepare("UPDATE dev_ops_deploys SET status = 'unchanged' WHERE id = 41").run()).toThrow()
+    const { initDevOpsSchema } = await import('../../db/schema/dev-ops.js')
+    initDevOpsSchema(db)
+    initDevOpsSchema(db)
+    expect(db.prepare('SELECT id, status, from_sha FROM dev_ops_deploys').all()).toEqual([{ id: 41, status: 'deployed', from_sha: 'a' }])
+    db.prepare("UPDATE dev_ops_deploys SET status = 'unchanged' WHERE id = 41").run()
+    expect(Number(db.prepare("INSERT INTO dev_ops_deploys (bot_slug) VALUES ('operation-kit-dev')").run().lastInsertRowid)).toBe(42)
+  })
+
   it('a host that cannot start the run is a failed deploy, audited', async () => {
     host.reply = () => ({ code: 125, stdout: '', stderr: 'docker: Cannot connect to the Docker daemon' })
     const r = (await call('dev_deploy', {})).result as Loose

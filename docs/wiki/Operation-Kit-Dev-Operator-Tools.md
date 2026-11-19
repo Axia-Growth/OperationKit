@@ -51,7 +51,13 @@ server shipped with, never a file the update is rewriting. The deploy:
    --yes` (only a COMPLETE backup folder of this run counts), `docker compose … up -d`,
    then health again → `rolled_back` (or
    `rollback_failed`, which needs a person);
-4. writes `<data>/dev-ops/deploy-<id>.json`; the full log stays on the host in
+4. when the commit is the same before and after (update.sh found nothing newer at
+   `origin main` of the code folder), the outcome is **`unchanged`** ("nothing new to
+   deploy"), never `deployed`. `dev_deploy_status` also carries `new_code_live`. The
+   server pulls from its own code source: on an install that follows a synced copy of
+   the repo, a merged pull request is deployable only after the open "Sync from
+   upstream" pull request on that copy is merged (obj 901479);
+5. writes `<data>/dev-ops/deploy-<id>.json`; the full log stays on the host in
    `<INSTALL_DIR>/dev-ops/deploy-<id>.log`.
 
 The tick settles that file into `dev_ops_deploys` + an audit row after the restart.

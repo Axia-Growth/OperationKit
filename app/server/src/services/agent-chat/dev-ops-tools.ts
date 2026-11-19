@@ -59,9 +59,9 @@ const SPECS: ToolSpec[] = [
     'Close a card without the admin sign-off prompt: done when its PR is merged on GitHub (e.g. the owner merged it by hand), or done / cancelled for one of your own cards. Never a Strategy or a reserved PR.',
     { id: ID, status: { type: 'string', enum: ['done', 'cancelled'] }, note: NOTE }, ['id', 'status']),
   fn('dev_deploy',
-    'Deploy the latest main to this live server with the standard update flow (update.sh: backup first, then verify.sh and a public health check; automatic rollback to the backup if either fails). The app restarts, so chat drops briefly. Only when the person asks to deploy.',
+    'Deploy the newest commit of the code source this server pulls from (main of the origin of its code folder, which can be a synced copy that lags the repo where pull requests merge) to this live server with the standard update flow (update.sh: backup first, then verify.sh and a public health check; automatic rollback to the backup if either fails). The app restarts, so chat drops briefly. Only when the person asks to deploy.',
     { note: NOTE }),
-  fn('dev_deploy_status', 'How the latest deploys ended (deployed, rolled back, failed) and what step a running one is on.', {}),
+  fn('dev_deploy_status', 'How the latest deploys ended (deployed, unchanged = nothing new at the code source so NO new code went live, rolled back, failed) and what step a running one is on.', {}),
   fn('cloudflare_access',
     'Cloudflare Access allow list of this install: list it, add ONE exact email, or remove ONE email. A domain / wildcard / everyone allow is never added; protected owner addresses are never removed.',
     { action: { type: 'string', enum: ['list', 'add', 'remove'] }, email: { type: 'string', description: 'One exact email address (add / remove).' } }, ['action']),
@@ -174,7 +174,7 @@ async function runAllowed(
       const rows = deployStatus(3)
       writeDevOpsAudit({ bot_slug: actor.botSlug, user_id: actor.userId, username: actor.username, action: 'deploy_status', outcome: 'allowed', code: 'read' })
       const last = rows[0]
-      return { result: { deploys: rows }, summary: last ? `Deploy #${last.id}: ${last.status}${last.step ? ` (${last.step})` : ''}` : 'No deploys from chat yet' }
+      return { result: { deploys: rows }, summary: last ? `Deploy #${last.id}: ${last.status === 'unchanged' ? 'nothing new to deploy (same commit, no new code live)' : last.status}${last.step && last.status !== 'unchanged' ? ` (${last.step})` : ''}` : 'No deploys from chat yet' }
     }
     case 'cloudflare_access': {
       const action = (['list', 'add', 'remove'] as const).find(a => a === args.action) as AccessAction | undefined

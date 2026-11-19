@@ -20,6 +20,7 @@
 import type Database from 'better-sqlite3'
 import type { Objective } from '@operationkit/shared'
 import { hasLinkedPr } from './poller-decisions.js'
+import { captureReviewHeadSha } from './review-head.js'
 
 /** Columns the eligibility check reads. */
 type Row = Pick<
@@ -94,11 +95,13 @@ export interface RequestReviewDeps {
   prState?: (objective: Objective) => Promise<string | null>
   /** Stops a reviewer that lost the race (the card moved while it spawned). */
   stopSession?: (sessionId: string) => Promise<void>
+  /** `gh` runner for recording the reviewed head commit (obj 901455); defaults to the server's gh. */
+  headExec?: import('./ci-green-gate-decide.js').ExecFn
 }
 
 export type RequestReviewResult =
   | { id: number; ok: true; dry_run: boolean; reviewer_session_id: string | null; iteration: number }
-  | { id: number; ok: false; code: ReviewRefusal | 'spawn_failed' | 'raced'; detail?: string }
+  | { id: number; ok: false; code: ReviewRefusal | 'iteration_cap' | 'spawn_failed' | 'raced'; detail?: string }
 
 /**
  * Request one AI review. Never starts or resumes the worker. `dryRun` checks
@@ -108,11 +111,17 @@ export async function requestAiReview(
   db: Database.Database,
   id: number,
   deps: RequestReviewDeps,
-  opts: { dryRun?: boolean; requestedBy?: string } = {},
+  opts: { dryRun?: boolean; requestedBy?: string; maxIteration?: number } = {},
 ): Promise<RequestReviewResult> {
   const full = db.prepare('SELECT * FROM objectives WHERE id = ?').get(id) as (Objective & Row) | undefined
   const refusal = reviewRequestRefusal(full)
   if (refusal || !full) return { id, ok: false, code: refusal ?? 'not_found' }
+  // obj 901457: a bot asking for its own review must not buy a review round the
+  // poller's bounce cap (AI_REVIEW_ITERATION_CAP) would not give the card. The
+  // operator backfill route passes no cap, exactly as before.
+  if (opts.maxIteration != null && (full.ai_review_iteration || 0) >= opts.maxIteration) {
+    return { id, ok: false, code: 'iteration_cap', detail: `${full.ai_review_iteration || 0} of ${opts.maxIteration} review rounds used` }
+  }
 
   if (deps.prState) {
     let state: string | null = null
@@ -145,6 +154,7 @@ export async function requestAiReview(
          ai_review_verdict = NULL,
          ai_review_findings = NULL,
          ai_review_iteration = ?,
+         ai_review_head_sha = NULL,
          updated_at = datetime('now')
        WHERE id = ? AND status = 'review' AND (ai_review_verdict IS NULL OR ai_review_verdict = '')`,
     )
@@ -153,6 +163,8 @@ export async function requestAiReview(
     if (deps.stopSession) await deps.stopSession(reviewerSessionId).catch(() => {})
     return { id, ok: false, code: 'raced' }
   }
+  // obj 901455: record the PR commit this reviewer reads (best-effort, async).
+  void captureReviewHeadSha(db, full, reviewerSessionId, deps.headExec)
 
   try {
     db.prepare(

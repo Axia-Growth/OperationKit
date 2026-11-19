@@ -46,6 +46,7 @@ import {
   type BotActivityItemKind,
   type BotActivityResponse,
   type BotActivityRun,
+  type BotFollowupLogItem,
   type BotStatusEntry,
   type BotStatusResponse,
   type BotWorkCard,
@@ -62,6 +63,7 @@ import { resolveEffectiveCostCeiling } from '../spend-guard.js'
 import { listWorkspaces } from '../workspaces.js'
 import { narrowToBot } from './bot-workspaces.js'
 import { isAgentChatRunning } from './engine.js'
+import { followupLog } from './followups.js'
 import { getHighAgency, highAgencyView, routineNameFor } from './high-agency.js'
 
 /** The bot a view is for: its chat slug + display name. */
@@ -871,6 +873,27 @@ export function buildBotActivity(db: Database, bot: BotRef, opts: BotActivityOpt
     },
     entries,
     items,
+    followups: viewerFollowups(bot.slug, opts.viewer.id),
+  }
+}
+
+/** obj 901392: the viewer's OWN follow-ups with this bot (a chat is private to its person). */
+function viewerFollowups(slug: string, viewerId: number): BotFollowupLogItem[] {
+  try {
+    return followupLog(viewerId, slug, 20).map(f => ({
+      id: f.id,
+      status: f.status,
+      note: f.note,
+      card_id: f.card_id,
+      due_at: f.due_at,
+      fired_at: f.fired_at,
+      finished_at: f.finished_at,
+      fire_reason: f.fire_reason,
+      end_reason: f.end_reason,
+      hop: f.hop,
+    }))
+  } catch {
+    return [] // table absent
   }
 }
 

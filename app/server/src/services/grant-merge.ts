@@ -39,6 +39,10 @@
  *    card cannot edit it, and the seed cannot be removed by configuration.
  *  - An empty or unreadable head SHA refuses: the merge is never sent without
  *    `--match-head-commit`.
+ *  - The pass must be for the code being merged (obj 901455). The reviewer's
+ *    commit (`ai_review_head_sha`, services/review-head.ts) must be the PR head,
+ *    or only GitHub update-branch merges from the base may follow it. Otherwise
+ *    `review_stale`: the pass is cleared and a fresh AI review is requested.
  *
  * Every refusal returns a code + a sentence and writes an `approval_denied`
  * delegation audit row; nothing is merged and the card does not move.
@@ -67,6 +71,7 @@ import {
   type MergeGithubAuthQuery,
 } from './grant-merge-github-auth.js'
 import { getDb } from '../db/index.js'
+import { classifyHeadMove, isSha, requestReReviewForStalePass } from './review-head.js'
 
 export type GrantMergeRefusal =
   | 'no_pr'
@@ -86,11 +91,12 @@ export type GrantMergeRefusal =
   | 'github_credential_rejected'
   | 'branch_updated_ci_pending'
   | 'branch_update_failed'
+  | 'review_stale'
 
 export type GrantMergeCard = Pick<
   Objective,
   'id' | 'title' | 'description' | 'status' | 'type' | 'workspace' | 'project' | 'pr_url' | 'pr_number' | 'is_strategy'
-> & { ai_review_verdict?: string | null }
+> & { ai_review_verdict?: string | null; ai_review_head_sha?: string | null }
 
 /** True when this card's `approval: merge` goes down the server-side merge path. */
 export function cardHasPr(card: Pick<Objective, 'pr_url' | 'pr_number'>): boolean {
@@ -188,6 +194,11 @@ export function reservedPrMatch(card: Pick<Objective, 'pr_url' | 'pr_number'>, r
   return null
 }
 
+async function defaultOnStaleReview(card: GrantMergeCard, info: { reviewedSha: string; headSha: string }): Promise<{ reviewerSessionId: string | null }> {
+  const r = await requestReReviewForStalePass(getDb(), card, info)
+  return { reviewerSessionId: r.reviewerSessionId }
+}
+
 const refuse = (status: number, code: GrantMergeRefusal, error: string): Refusal => ({ ok: false, status, code, error })
 
 /**
@@ -264,6 +275,11 @@ export interface GrantMergeOk {
   prUrl: string
   headSha: string
   ci: string
+  /**
+   * obj 901454: the PR was already merged on GitHub (by hand) when the approval
+   * arrived. Nothing was merged here; the caller still closes the card.
+   */
+  alreadyMerged?: boolean
 }
 
 export interface GrantMergeDeps {
@@ -275,6 +291,12 @@ export interface GrantMergeDeps {
   resolveAuth?: (q: MergeGithubAuthQuery) => MergeGithubAuth | null
   /** Reserved PRs; defaults to `loadReservedPrs()` (seed + server-side setting/env). */
   reserved?: readonly ReservedPr[]
+  /**
+   * obj 901455 — the pass read an older commit and the PR changed since by more
+   * than a GitHub update-branch merge. Defaults to clearing the pass and
+   * requesting a fresh AI review (`requestReReviewForStalePass`).
+   */
+  onStaleReview?: (card: GrantMergeCard, info: { reviewedSha: string; headSha: string; reason: string }) => Promise<{ reviewerSessionId: string | null }>
 }
 
 /**
@@ -329,8 +351,37 @@ export async function mergeUnderGrant(card: GrantMergeCard, deps: GrantMergeDeps
     return refuse(502, 'pr_state_unreadable', `Could not read PR #${prNumber} on ${repo} from GitHub (${(err as Error).message}). Nothing was merged and the card was not closed.`)
   }
 
+  // obj 901454: merged by hand on GitHub. The merge — the irreversible part — has
+  // already happened, so there is nothing to check or merge; the card just closes.
+  if (prState === 'MERGED') {
+    return { ok: true, repo, prNumber, prUrl, headSha, ci: 'PR was already merged on GitHub', alreadyMerged: true }
+  }
   if (prState && prState !== 'OPEN') {
     return refuse(409, 'pr_not_open', `PR #${prNumber} on ${repo} is ${prState.toLowerCase()}, not open. Nothing was merged and the card was not closed.`)
+  }
+
+  // obj 901455: the pass must be for the code being merged. The reviewer's commit
+  // is the PR head, or only GitHub update-branch merges from the base came after it
+  // (PR 896's update-branch writes those). Otherwise refuse and review again.
+  // A pass with no recorded commit predates this check and is merged as before.
+  const reviewedSha = (card.ai_review_head_sha ?? '').trim()
+  if (isSha(reviewedSha) && isSha(headSha)) {
+    let move: Awaited<ReturnType<typeof classifyHeadMove>>
+    try {
+      move = await classifyHeadMove({ repo, reviewedSha, headSha, baseRef, exec })
+    } catch (err) {
+      move = { kind: 'moved', reason: (err as Error).message }
+    }
+    if (move.kind === 'moved') {
+      let rereview = 'A fresh AI review could not be started; request one before merging.'
+      try {
+        const r = await (deps.onStaleReview ?? defaultOnStaleReview)(card, { reviewedSha, headSha, reason: move.reason })
+        if (r.reviewerSessionId) rereview = 'A fresh AI review of the new head has been started; approve the merge again once it passes.'
+      } catch (err) {
+        console.warn(`[grant-merge] card #${card.id}: re-review request failed:`, (err as Error).message)
+      }
+      return refuse(409, 'review_stale', `The AI review passed commit ${reviewedSha.slice(0, 12)}, but PR #${prNumber} is now at ${headSha.slice(0, 12)} (${move.reason}). ${rereview} Nothing was merged and the card was not closed.`)
+    }
   }
   if (!ci.green) {
     const r = refuse(409, 'ci_not_green', `CI is not green on PR #${prNumber}: ${ci.reason}. Nothing was merged and the card was not closed.`)

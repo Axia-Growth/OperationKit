@@ -6,10 +6,13 @@ import { actionErrorMessage } from '../../lib/format'
 import { useAuth } from '../../context/AuthContext'
 import { useFileDrop, filesFromClipboard } from '../../hooks/useFileDrop'
 import { useMediaQuery } from '../../hooks/useMediaQuery'
+import { useOnScreenKeyboard } from '../../hooks/useOnScreenKeyboard'
+import { composerEnterKeyHint, enterSends } from '../../lib/composerKeys'
+import { fitComposerHeight } from '../../lib/composerFit'
 import { Alert, Button, EmptyState, IconButton, Skeleton, SkeletonText, cn, useConfirm } from '../ui'
 import { ThinkingIndicator } from '../design/primitives'
 import { Tabs } from '../ui/Tabs'
-import { AgentAvatar, AssistantBubble, BotThreadLink, CardChip, DraftCard, ErrorLine, ToolLine, UserBubble, time } from './ChatItems'
+import { AgentAvatar, AssistantBubble, BotThreadLink, CardChip, DraftCard, ErrorLine, FollowupLine, ToolLine, UserBubble, time } from './ChatItems'
 import { ReplyThreadPanel } from './ReplyThreadPanel'
 import { mergeThread, newClientMsgId } from './thread-merge'
 import { FullAccessBadge } from './FullAccessBadge'
@@ -47,6 +50,7 @@ import {
   type ChatAgentInfo,
   type ChatCard,
   type ChatDraft,
+  type ChatFollowup,
   type ChatMessage,
   type ChatThread,
   type LaneTurn,
@@ -261,6 +265,17 @@ function Conversation({
   // settings, so High Agency sat behind a small inner scroll. The chat stays
   // mounted (draft, scroll position) and comes back when settings close.
   const settingsFull = narrow && settingsOpen && !!meta?.tool_catalog
+  // obj 901376: typing on a phone. With the keyboard up there are ~400px left,
+  // and the header detail, action row and two tab rows took most of it. While
+  // the keyboard is open on a phone-width screen they fold into one slim row
+  // (back, avatar, name, lane) so the conversation keeps the room; they come
+  // back when the keyboard closes. Never true on a desktop.
+  const keyboard = useOnScreenKeyboard()
+  const compact = narrow && keyboard.open && view === 'chat' && !settingsFull
+  // Phone: 6 lines, or 5 when the keyboard leaves under 400px, then the box scrolls inside.
+  const composerMax = !(keyboard.touch && narrow)
+    ? COMPOSER_MAX_PX
+    : composerPhoneMax(keyboard.height !== null && keyboard.height < 400 ? 5 : 6)
   const [images, setImages] = useState<PendingImage[]>([])
   // The message whose turn this tab is waiting on (its POST runs the turn).
   // `id` is the message's client_msg_id (obj 900977): once the server's own row
@@ -289,10 +304,28 @@ function Conversation({
   useLayoutEffect(() => {
     const el = input.current
     if (!el) return
+    // The list is pinned to the composer: when the box grows a line the
+    // newest message must stay in view, not slide under it (obj 901376).
+    const list = scroller.current
+    const atEnd = !!list && list.scrollHeight - list.scrollTop - list.clientHeight < STICK_TO_END_PX
+    // Measuring resets the box's own scroll. Put it back, or at the end when
+    // the caret is on the last line, so the line being typed stays in view.
+    const boxTop = el.scrollTop
+    const caretAtEnd = el.selectionStart === el.value.length
     el.style.height = 'auto'
-    el.style.height = `${Math.min(el.scrollHeight, COMPOSER_MAX_PX)}px`
-    el.style.overflowY = el.scrollHeight > COMPOSER_MAX_PX ? 'auto' : 'hidden'
-  }, [text])
+    let height = Math.min(el.scrollHeight, composerMax)
+    el.style.height = `${height}px`
+    // Keyboard open on a phone: the conversation keeps at least half of the
+    // visible area. Past that the box stops growing and scrolls inside.
+    if (compact && keyboard.height !== null && list) {
+      height = fitComposerHeight(height, list.clientHeight, keyboard.height)
+      el.style.height = `${height}px`
+    }
+    const scrolls = el.scrollHeight > height
+    el.style.overflowY = scrolls ? 'auto' : 'hidden'
+    el.scrollTop = !scrolls ? 0 : caretAtEnd ? el.scrollHeight : boxTop
+    if (list && atEnd) list.scrollTop = list.scrollHeight
+  }, [text, composerMax, compact, keyboard.height, images.length])
   const filePicker = useRef<HTMLInputElement>(null)
   const { confirm, confirmDialog } = useConfirm()
   const slug = agent.slug
@@ -459,6 +492,15 @@ function Conversation({
     return () => clearInterval(t)
   }, [openCards, load])
 
+  // obj 901392: a follow-up the bot set for itself is waiting (or running): keep
+  // re-reading the lane so its answer shows up without the person typing anything.
+  const followupWaiting = thread?.followups?.some(f => f.status === 'pending' || f.status === 'running') ?? false
+  useEffect(() => {
+    if (!followupWaiting) return
+    const t = setInterval(() => void load(), FOLLOWUP_POLL_MS)
+    return () => clearInterval(t)
+  }, [followupWaiting, load])
+
   // obj 900859: a message to another bot whose reply has not landed in this lane
   // yet — re-read the lane every few seconds until it does (bounded).
   const awaitingBotReply = useMemo(() => {
@@ -507,6 +549,19 @@ function Conversation({
     const el = scroller.current
     if (!settingsFull && el) el.scrollTop = el.scrollHeight
   }, [settingsFull])
+
+  // obj 901376: the keyboard opening (or closing) and the attachment row
+  // appearing resize the list. A list that was at the newest message stays
+  // there; one the person scrolled up to read is left alone.
+  const wasAtEnd = useRef(true)
+  const onListScroll = () => {
+    const el = scroller.current
+    if (el) wasAtEnd.current = el.scrollHeight - el.scrollTop - el.clientHeight < STICK_TO_END_PX
+  }
+  useLayoutEffect(() => {
+    const el = scroller.current
+    if (el && wasAtEnd.current) el.scrollTop = el.scrollHeight
+  }, [compact, keyboard.height, images.length])
 
   // obj 900798: what is on screen has been read. Fires when the newest message
   // in view changes (a lane loaded, a reply landed), not on every 15s refresh,
@@ -615,11 +670,16 @@ function Conversation({
   }
 
   const onKey = (e: KeyboardEvent<HTMLTextAreaElement>) => {
-    if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
+    // Desktop: Enter sends. Phone: Return is a new line, Send is the button (obj 901376).
+    if (enterSends(e, keyboard.touch)) {
       e.preventDefault()
       void send(text)
     }
   }
+
+  // On a phone, tapping Attach / Stop / Send must not take focus from the box:
+  // that would drop the keyboard and move the button mid-tap (obj 901376).
+  const keepKeyboard = (e: { preventDefault: () => void }) => { if (keyboard.touch) e.preventDefault() }
 
   const draftAction = async (path: string, body?: unknown, method: 'post' | 'put' = 'post', key: string = msgKey) => {
     setSendError(null)
@@ -656,6 +716,19 @@ function Conversation({
     void loadThreads()
   }
 
+  /** obj 901392: the person's Cancel on a waiting follow-up. */
+  const cancelFollowup = async (f: ChatFollowup) => {
+    const key = msgKey
+    setSendError(null)
+    try {
+      const r = await api.del<{ followup: ChatFollowup }>(`${base}/followups/${f.id}`)
+      updateThread(key, t => ({ ...t, followups: (t.followups ?? []).map(x => (x.id === r.followup.id ? r.followup : x)) }))
+    } catch (e) {
+      setSendError(actionErrorMessage(e, 'That follow-up could not be cancelled'))
+      void load()
+    }
+  }
+  const followups = useMemo(() => new Map((thread?.followups ?? []).map(f => [f.id, f])), [thread?.followups])
   const drafts = useMemo(() => new Map((thread?.drafts ?? []).map(d => [d.id, d])), [thread?.drafts])
   const cards = useMemo(() => new Map((thread?.cards ?? []).map(c => [c.id, c])), [thread?.cards])
   /** One stored message, drawn the same way in the conversation and in the thread panel. */
@@ -664,12 +737,16 @@ function Conversation({
     const own = t === thread
     const draft = m.meta?.draft_id ? (own ? drafts.get(m.meta.draft_id) : t?.drafts.find(d => d.id === m.meta?.draft_id)) : undefined
     const card = m.tool_name === 'create_objective' && m.meta?.objective_id ? (own ? cards.get(m.meta.objective_id) : t?.cards.find(c => c.id === m.meta?.objective_id)) : undefined
+    // obj 901392: the Cancel control belongs to the lane the follow-up was set in (this conversation).
+    const followup = own && m.tool_name === 'schedule_followup' && m.meta?.ok !== false && m.meta?.followup_id ? followups.get(m.meta.followup_id) : undefined
     return (
       <MessageRow
         m={m}
         agent={agent}
         draft={draft}
         card={card}
+        followup={followup}
+        onCancelFollowup={cancelFollowup}
         onSend={d => draftAction(`/agent-chat/drafts/${d.id}/send`, undefined, 'post', key)}
         onDiscard={d => draftAction(`/agent-chat/drafts/${d.id}/discard`, undefined, 'post', key)}
         onSave={(d, patch) => draftAction(`/agent-chat/drafts/${d.id}`, patch, 'put', key)}
@@ -681,28 +758,33 @@ function Conversation({
 
   return (
     <section aria-label={`Conversation with ${agent.name}`} className="flex h-full min-h-0 min-w-0 flex-col">
-      <header className="flex flex-wrap items-center gap-x-2 gap-y-1 border-b border-line bg-surface-1 px-2 py-2 sm:flex-nowrap sm:px-4">
+      <header
+        data-compact={compact ? 'true' : undefined}
+        className={cn('flex flex-wrap items-center gap-x-2 gap-y-1 border-b border-line bg-surface-1 px-2 sm:flex-nowrap sm:px-4', compact ? 'py-0.5' : 'py-2')}
+      >
         <IconButton label="All bots" onClick={onBack} className="md:hidden">
           <ChevronLeft aria-hidden="true" className="h-5 w-5" />
         </IconButton>
-        <AgentAvatar agent={agent} />
+        <AgentAvatar agent={agent} size={compact ? 'sm' : undefined} />
         <div className="min-w-[9rem] flex-1">
           <div className="flex min-w-0 items-center gap-2">
-            <h2 className="min-w-0 truncate font-display text-lg font-semibold tracking-tight text-fg-0">{agent.name}</h2>
+            <h2 className={cn('min-w-0 truncate font-display font-semibold tracking-tight text-fg-0', compact ? 'text-base' : 'text-lg')}>{agent.name}</h2>
             {/* obj 900972: Full access, with the workspace and the expiry when one is set. */}
-            <FullAccessBadge access={agent.full_access} variant="full" />
+            {!compact && <FullAccessBadge access={agent.full_access} variant="full" />}
+            {/* Folded header: the lane tabs are hidden, so name the side thread here. */}
+            {compact && activeThread && <span className="min-w-0 truncate text-xs text-fg-2">· {activeThread.title}</span>}
           </div>
-          <p className="truncate text-xs text-fg-2">
+          <p className={cn('truncate text-xs text-fg-2', compact && 'hidden')}>
             Answers with <span className="text-fg-1" title={agent.answered_by.model ?? undefined}>{answeredBy}</span>
             {agent.version && <span> · v{agent.version}</span>}
             {/* Named only in a side thread: the main conversation is the unlabelled default. */}
             {activeThread && <span> · side thread <span className="text-fg-1">{activeThread.title}</span></span>}
           </p>
-          {live && <BotLiveLine entry={live} className="mt-0.5" />}
+          {live && !compact && <BotLiveLine entry={live} className="mt-0.5" />}
         </div>
         {/* Actions travel as one group: on a phone they wrap under the bot name
             instead of squeezing it to a single letter (obj 900750). */}
-        <div className="ml-auto flex shrink-0 flex-wrap items-center justify-end gap-1">
+        <div className={cn('ml-auto flex shrink-0 flex-wrap items-center justify-end gap-1', compact && renameTo === null && 'hidden')} data-testid="bot-header-actions">
         {activeThread && renameTo !== null && (
           <form
             className="flex items-center gap-1"
@@ -826,7 +908,7 @@ function Conversation({
       {/* `contents` keeps this wrapper out of the flex layout; `hidden` steps the
           whole chat aside while settings fill a phone screen (obj 901203). */}
       <div className={settingsFull ? 'hidden' : 'contents'}>
-      <div className="flex items-center gap-2 border-b border-line bg-surface-1 px-2 py-1.5 sm:px-4" data-testid="bot-view-tabs">
+      <div className={cn('items-center gap-2 border-b border-line bg-surface-1 px-2 py-1.5 sm:px-4', compact ? 'hidden' : 'flex')} data-testid="bot-view-tabs">
         <Tabs
           label={`${agent.name} views`}
           value={view}
@@ -852,7 +934,9 @@ function Conversation({
       {view === 'activity' && <div className="relative min-h-0 flex-1 overflow-y-auto"><BotActivityFeed agent={agent} /></div>}
 
       {view === 'chat' && (<>
-      <LaneStrip threads={threads} lane={lane} maxOpen={maxOpen} busy={laneBusy} onPick={setLane} onOpen={() => void openLane()} />
+      <div className={compact ? 'hidden' : 'contents'} data-testid="lane-strip">
+        <LaneStrip threads={threads} lane={lane} maxOpen={maxOpen} busy={laneBusy} onPick={setLane} onOpen={() => void openLane()} />
+      </div>
 
       {/* obj 901373: the conversation, with the thread panel beside it on a wide
           screen and over it on a narrow one (the conversation stays mounted
@@ -866,6 +950,7 @@ function Conversation({
           Closing settings brings it back at the same (bottom) scroll position. */}
       <div
         ref={scroller}
+        onScroll={onListScroll}
         data-testid="chat-message-list"
         className={cn('relative min-h-0 flex-1 overflow-y-auto overflow-x-clip px-3 sm:px-6', settingsOpen && meta?.tool_catalog ? 'py-0' : 'py-4')}
         aria-live="polite"
@@ -963,7 +1048,8 @@ function Conversation({
 
       <form
         className={cn(
-          'border-t border-line bg-surface-1 px-3 pb-[max(env(safe-area-inset-bottom),12px)] pt-3 transition-colors duration-fast sm:px-6',
+          'shrink-0 border-t border-line bg-surface-1 px-3 transition-colors duration-fast sm:px-6',
+          compact ? 'pb-2 pt-2' : 'pb-[max(env(safe-area-inset-bottom),12px)] pt-3',
           isDragging && 'bg-accent/5 ring-1 ring-inset ring-accent/40',
         )}
         onSubmit={e => { e.preventDefault(); void send(text) }}
@@ -973,10 +1059,14 @@ function Conversation({
           {sendError && <p role="alert" className="mb-2 text-sm text-danger">{sendError}</p>}
           {isDragging && <p className="mb-2 text-sm text-accent">Drop the image to attach it</p>}
           {images.length > 0 && (
-            <ul aria-label="Attached images" className="mb-2 flex flex-wrap gap-2">
+            // Phone (obj 901376): one row of small thumbnails that scrolls sideways,
+            // so attachments never push the box off screen. The padding keeps each
+            // remove button inside the scroll box. From sm up: unchanged.
+            // Keyboard open: smaller still, so the conversation keeps half the screen.
+            <ul aria-label="Attached images" className={cn('flex gap-2 overflow-x-auto pr-2 pt-1.5 [scrollbar-width:none] sm:flex-wrap sm:overflow-visible sm:p-0 [&::-webkit-scrollbar]:hidden', compact ? 'mb-1.5' : 'mb-2')}>
               {images.map(i => (
-                <li key={i.key} className="relative">
-                  <img src={i.dataUrl} alt={i.name} title={`${i.name} · ${humanSize(i.size)}`} className="h-16 w-16 rounded-md border border-line object-cover" />
+                <li key={i.key} className="relative shrink-0">
+                  <img src={i.dataUrl} alt={i.name} title={`${i.name} · ${humanSize(i.size)}`} className={cn('rounded-md border border-line object-cover sm:h-16 sm:w-16', compact ? 'h-8 w-8' : 'h-12 w-12')} />
                   <button
                     type="button"
                     aria-label={`Remove ${i.name}`}
@@ -1003,7 +1093,7 @@ function Conversation({
                 e.target.value = ''
               }}
             />
-            <IconButton type="button" label="Attach an image" onClick={() => filePicker.current?.click()}>
+            <IconButton type="button" label="Attach an image" onMouseDown={keepKeyboard} onClick={() => filePicker.current?.click()}>
               <Paperclip aria-hidden="true" className="h-5 w-5" />
             </IconButton>
             <label htmlFor="agent-chat-input" className="sr-only">Message {agent.name}</label>
@@ -1015,8 +1105,9 @@ function Conversation({
               onChange={e => setText(e.target.value)}
               onKeyDown={onKey}
               onPaste={onPaste}
+              enterKeyHint={composerEnterKeyHint(keyboard.touch)}
               placeholder={narrow ? 'Write a message…' : activeThread ? `Write a message in "${activeThread.title}"` : 'Write a message, or paste a screenshot'}
-              className="max-h-60 min-h-[44px] flex-1 resize-none rounded-lg border border-line bg-surface-0 px-3.5 py-2.5 text-lg text-fg-0 placeholder:text-fg-3 transition-colors duration-fast hover:border-line-strong focus:border-accent focus:outline-none focus:ring-2 focus:ring-accent/30 disabled:opacity-60 sm:text-base"
+              className="max-h-60 min-h-[44px] min-w-0 flex-1 resize-none rounded-lg border border-line bg-surface-0 px-3.5 py-2.5 text-lg text-fg-0 placeholder:text-fg-3 transition-colors duration-fast hover:border-line-strong focus:border-accent focus:outline-none focus:ring-2 focus:ring-accent/30 disabled:opacity-60 sm:text-base"
             />
             {/* obj 900949: Stop is its own small control, shown only while the
                 bot works. Send below never turns into a spinner or locks. */}
@@ -1024,6 +1115,7 @@ function Conversation({
               <Button
                 type="button"
                 variant="secondary"
+                onMouseDown={keepKeyboard}
                 onClick={() => void stop()}
                 loading={stopping}
                 aria-label={queuedCount > 0 ? `Stop ${agent.name}'s reply (your queued messages are kept)` : `Stop ${agent.name}'s reply`}
@@ -1033,7 +1125,7 @@ function Conversation({
                 Stop
               </Button>
             )}
-            <Button type="submit" variant="primary" disabled={!text.trim() && images.length === 0} className="min-h-[44px] sm:min-h-[44px]">
+            <Button type="submit" variant="primary" onMouseDown={keepKeyboard} disabled={!text.trim() && images.length === 0} className="min-h-[44px] sm:min-h-[44px]">
               Send
             </Button>
           </div>
@@ -1108,10 +1200,16 @@ function ConversationSkeleton() {
 
 /** Tallest the chat composer grows before it scrolls inside (matches `max-h-60`). */
 const COMPOSER_MAX_PX = 240
+/** On a phone: N lines of 24px text plus the box's padding (20px) and border (2px) (obj 901376). */
+const composerPhoneMax = (lines: number) => lines * 24 + 22
+/** A list this close to its end counts as "at the newest message". */
+const STICK_TO_END_PX = 48
 /** While a bot-to-bot reply is awaited: re-read the lane this often, at most this many times (~5 min). */
 const BOT_REPLY_POLL_MS = 5000
 /** obj 900949: while the bot works through a lane on its own (a queue), re-read the lane this often. */
 const TURN_POLL_MS = 2000
+/** obj 901392: how often a lane with a follow-up waiting is re-read. */
+const FOLLOWUP_POLL_MS = 10_000
 const BOT_REPLY_MAX_POLLS = 60
 const BOT_REPLY_WINDOW_MS = 15 * 60_000
 
@@ -1219,6 +1317,8 @@ function MessageRow({
   agent,
   draft,
   card,
+  followup,
+  onCancelFollowup,
   onSend,
   onDiscard,
   onSave,
@@ -1228,6 +1328,8 @@ function MessageRow({
   agent: ChatAgentInfo
   draft?: ChatDraft
   card?: ChatCard
+  followup?: ChatFollowup
+  onCancelFollowup?: (f: ChatFollowup) => Promise<void>
   onSend: (d: ChatDraft) => Promise<void>
   onDiscard: (d: ChatDraft) => Promise<void>
   onSave: (d: ChatDraft, patch: Record<string, string>) => Promise<void>
@@ -1237,6 +1339,8 @@ function MessageRow({
   if (m.role === 'assistant') return <AssistantBubble m={m} agent={agent} onOpenBotThread={onOpenBotThread} />
   if (m.role === 'error') return <ErrorLine m={m} />
   const botThread = m.meta?.ok !== false ? m.meta?.bot_conversation_id : undefined
+  // obj 901392: a scheduled follow-up renders as its own live line (when it fires, the note, Cancel).
+  if (followup) return <FollowupLine followup={followup} onCancel={onCancelFollowup} />
   return (
     <>
       <ToolLine m={m} />

@@ -83,6 +83,7 @@ import sidebarRouter from './agent-chat-sidebar.js'
 import delegationsRouter from './agent-chat-delegations.js'
 import botMessagesRouter from './agent-chat-bot-messages.js'
 import botWorkRouter from './agent-chat-bot-work.js'
+import { cancelFollowup, followupInfo, followupLog, followupsByIds, followupsEnabled, type FollowupInfo } from '../services/agent-chat/followups.js'
 import { markFeedMessage } from '../services/agent-chat/bot-attention.js'
 import { resolveNeedsYouMessages } from '../services/decision-queue.js'
 import { isHighAgencyActivityCard } from '../services/agent-chat/high-agency-cards.js'
@@ -105,6 +106,8 @@ import { listDevOpsAudit, writeDevOpsAudit } from '../services/dev-ops/audit.js'
  *   POST   /agents/:slug/threads       open a new side thread (a concurrent task lane)
  *   PATCH  /agents/:slug/threads/:id   rename / pin / archive (= close) a side thread
  *   DELETE /agents/:slug/threads/:id   delete a side thread and its messages
+ *   GET    /agents/:slug/followups     the caller's follow-ups with this bot: waiting + the log (obj 901392)
+ *   DELETE /agents/:slug/followups/:id the person's Cancel on a waiting follow-up
  *   GET    /attachments/:id            one image the caller attached (owner only)
  *   PUT    /drafts/:id                 edit a draft before sending
  *   POST   /drafts/:id/send            the person's Send / Add to calendar click
@@ -307,7 +310,11 @@ function attachments(userId: number, slug: string, messages: ChatMessageRow[]) {
   const cardIds = [...new Set(messages.map(m => m.meta?.objective_id).filter((x): x is number => typeof x === 'number'))]
   const drafts = listDrafts(userId, slug).filter(d => draftIds.has(d.id))
   const cards = visibleCardStatuses(userId, cardIds, slug)
-  return { drafts, cards }
+  // obj 901392: the live state of each follow-up a line in view refers to (the "scheduled for HH:MM" line + Cancel).
+  const followupIds = messages.map(m => m.meta?.followup_id).filter((x): x is number => typeof x === 'number')
+  let followups: FollowupInfo[] = []
+  try { followups = followupsByIds(userId, slug, followupIds) } catch { /* table absent */ }
+  return { drafts, cards, followups }
 }
 
 function agentOr404(req: AuthRequest, res: Response): ChatAgent | null {
@@ -745,6 +752,37 @@ router.post('/agents/:slug/messages/:id/thread', (req: AuthRequest, res) => {
   } catch (err) {
     threadError(res, err)
   }
+})
+
+// ── follow-ups the bot set for itself (obj 901392) ──
+
+/** The caller's own follow-ups with this bot: what still waits, and the log of what fired / was cancelled / dropped. */
+router.get('/agents/:slug/followups', (req: AuthRequest, res) => {
+  if (req.authVia === 'agent_api_key') {
+    res.status(403).json({ error: 'Follow-ups belong to a person\'s chat with the bot.' })
+    return
+  }
+  const a = agentOr404(req, res)
+  if (!a) return
+  res.json({ followups: followupLog(req.user!.id, a.slug, Number(req.query.limit) || 30), enabled: followupsEnabled() })
+})
+
+/** The person's Cancel on a waiting follow-up. Only their own, only while it still waits. */
+router.delete('/agents/:slug/followups/:id', (req: AuthRequest, res) => {
+  if (req.authVia === 'agent_api_key') {
+    res.status(403).json({ error: 'Follow-ups are cancelled by the person in the Bots page.' })
+    return
+  }
+  const a = agentOr404(req, res)
+  if (!a) return
+  const id = Number(req.params.id)
+  const row = Number.isInteger(id) && id > 0 ? cancelFollowup({ userId: req.user!.id, slug: a.slug, id, by: 'person' }) : null
+  if (!row) {
+    // Someone else's, already fired, or never existed: one answer for all three.
+    res.status(404).json({ error: 'No waiting follow-up with that id' })
+    return
+  }
+  res.json({ followup: followupInfo(row) })
 })
 
 /**

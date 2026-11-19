@@ -2,6 +2,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, typ
 import { Paperclip, Square, X } from 'lucide-react'
 import { api, isRequestTimeout } from '../../lib/api'
 import { actionErrorMessage } from '../../lib/format'
+import { composerEnterKeyHint, enterSends } from '../../lib/composerKeys'
 import { useFileDrop, filesFromClipboard } from '../../hooks/useFileDrop'
 import { Alert, Button, IconButton, cn } from '../ui'
 import { ThinkingIndicator } from '../design/primitives'
@@ -210,7 +211,8 @@ export function ReplyThreadPanel({
   }
 
   const onKey = (e: KeyboardEvent<HTMLTextAreaElement>) => {
-    if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
+    // Same rule as every chat box (obj 901376): Enter sends on desktop, Return is a new line on a phone.
+    if (enterSends(e)) {
       e.preventDefault()
       void send(text)
     } else if (e.key === 'Escape' && !text && images.length === 0) {
@@ -312,6 +314,7 @@ export function ReplyThreadPanel({
             value={text}
             onChange={e => setText(e.target.value)}
             onKeyDown={onKey}
+            enterKeyHint={composerEnterKeyHint()}
             onPaste={onPaste}
             placeholder="Reply in thread…"
             className="max-h-40 min-h-[44px] min-w-0 flex-1 resize-none rounded-lg border border-line bg-surface-0 px-3 py-2.5 text-lg text-fg-0 placeholder:text-fg-3 transition-colors duration-fast hover:border-line-strong focus:border-accent focus:outline-none focus:ring-2 focus:ring-accent/30 sm:text-base"

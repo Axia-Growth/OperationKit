@@ -27,6 +27,10 @@
 //   - bots: read the settings and run history of the bots that work here;
 //   - a repo checkout: file a card on a project of this workspace, owned by the
 //     bot, and start it — the card session gets its own git worktree;
+//   - ask for an AI review of a card the bot OWNS (cardOwnerBot) that sits in
+//     review with a pull request and no verdict, through the same service the
+//     operator's /api/internal/ai-review/request route uses, inside the review
+//     bounce cap (obj 901457);
 //   - file and own cards: create_objective, with the bot's slug passing the
 //     workspace agent pool through the obj 900948 helper (`botGrantedWorkspace`
 //     inside `checkAgentInWorkspacePool`). There is no second bypass here.
@@ -49,17 +53,26 @@ import { broadcast } from '../../ws/index.js'
 import { workspaceKbRoot } from '../doc-ingest/kb-paths.js'
 import { userHasWorkspace } from '../../middleware/workspace.js'
 import type { ChatAgent } from './agent-defs.js'
-import { fullAccessActive, getFullAccess, listFullAccess, protectedCardRefusal, protectedPrInText, writeFullAccessAudit } from './bot-full-access.js'
+import { fullAccessActive, getFullAccess, listFullAccess, protectedCardRefusal, protectedPrTextRefusal, writeFullAccessAudit } from './bot-full-access.js'
 import { botGrantedWorkspace, botMayUseWorkspace, highAgencyRoutineSlug, personaOwnershipBlocked } from './bot-workspaces.js'
 import { chatCardModel, chatOwnerBotName, ToolUseError, type ToolContext, type ToolOutcome, type ToolSpec } from './tools.js'
 import { agentExists } from '../agent-registry.js'
 import { botForAgentSlug } from '../bots/bot-registry.js'
 import { publicCardUrl } from '../../lib/public-url.js'
+import { cardOwnerBot, ownerHasSlug } from '../bots/card-owner.js'
+import { requestAiReview, type RequestReviewResult } from '../ai-review-backfill.js'
+import { AI_REVIEW_ITERATION_CAP } from '../poller-decisions.js'
 
 /** Starts and messages a card. The host uses the same loopback routes the scheduler does; tests pass a stub. */
 export interface FullAccessHost {
   startCard(objectiveId: number, actor: string): Promise<{ ok: boolean; status?: string; reason?: string }>
   messageCard(objectiveId: number, message: string): Promise<{ ok: boolean; status?: string; reason?: string }>
+  /**
+   * Spawn an AI reviewer for a card in review (obj 901457). The host runs the
+   * same `requestAiReview` the operator route does, behind the session cap;
+   * tests pass a stub reviewer spawn. Optional only so older stubs still type.
+   */
+  requestReview?(objectiveId: number, opts: { requestedBy: string; maxIteration: number }): Promise<RequestReviewResult>
 }
 
 function port(): number {
@@ -106,6 +119,13 @@ export const hostFullAccessHost: FullAccessHost = {
     } catch (err) {
       return { ok: false, reason: `message request failed: ${err instanceof Error ? err.message : String(err)}` }
     }
+  },
+  async requestReview(objectiveId, opts) {
+    const db = getDb()
+    const { sessionCapReached, SESSION_CAP_ERROR } = await import('../../lib/session-cap.js')
+    if (sessionCapReached(db)) return { id: objectiveId, ok: false, code: 'spawn_failed', detail: SESSION_CAP_ERROR }
+    const { defaultAiReviewDeps } = await import('../../routes/internal-ai-review.js')
+    return requestAiReview(db, objectiveId, defaultAiReviewDeps(), opts)
   },
 }
 
@@ -214,6 +234,8 @@ const FULL_ACCESS_SPECS: ToolSpec[] = [
     obj({ id: { type: 'integer' }, message: { type: 'string', description: 'What the worker should know or do next.' } }, ['id', 'message'])),
   fn('card_restart', 'Full access: restart any card in the workspace (move it back to working, which starts its worker). The board\'s own rules still apply: a locked or human-closed card is not reopened.',
     obj({ id: { type: 'integer' }, message: { type: 'string', description: 'Optional instruction to restart it with.' } }, ['id'])),
+  fn('card_request_review', 'Full access: ask for an AI review of YOUR OWN card (one you own) when it sits in review with a pull request and no review verdict. It does not re-run the work. Refused for another bot\'s card, a protected card, a card that already has a verdict, and once the card has used its review rounds.',
+    obj({ id: { type: 'integer' }, note: { type: 'string', description: 'Why it needs a review now (kept in the log).' } }, ['id'])),
   fn('workflow_list', 'Full access: list the workspace\'s workflows (id, name, status, published and latest version).', obj({ workspace: WS_ARG })),
   fn('workflow_read', 'Full access: read one workflow: its details and the latest version\'s definition.', obj({ id: { type: 'integer' } }, ['id'])),
   fn('workflow_save_draft', 'Full access: save an edited workflow definition as a new DRAFT version. Read it first and send the FULL definition. A draft never runs: publishing is the owner\'s click in the app.',
@@ -245,7 +267,7 @@ export const FULL_ACCESS_FNS: ReadonlySet<string> = new Set(FULL_ACCESS_SPECS.ma
 
 /** Abilities that change something. Each successful use is one audit row. */
 const WRITE_ABILITIES: ReadonlySet<string> = new Set([
-  'card_take_over', 'card_reown', 'card_comment', 'card_restart', 'workflow_save_draft', 'routine_update', 'repo_session_start',
+  'card_take_over', 'card_reown', 'card_comment', 'card_restart', 'card_request_review', 'workflow_save_draft', 'routine_update', 'repo_session_start',
 ])
 
 /** The Full access tool specs, only while Full access counts for this turn. */
@@ -606,6 +628,46 @@ export async function runFullAccessTool(ctx: FaCtx & { username: string }, fnNam
       return { result: { id: c.id, restarted: true, status: r.status ?? 'working' }, summary: `Restarted card #${c.id}`, objective_id: c.id }
     }
 
+    case 'card_request_review': {
+      const c = requireCard(ctx, fnName, args.id)
+      // Own card only: the one ownership rule (obj 900956). Taking a card over
+      // first is a separate, logged act; this tool never reaches past it.
+      if (!ownerHasSlug(cardOwnerBot(c, db), ctx.agent.slug)) {
+        refuse(ctx, fnName, c.workspace, 'card is not owned by this bot',
+          `Card #${c.id} is not ${me}'s card, so ${me} cannot ask for its review. Its owner, or a person, can.`, c.id)
+      }
+      const iteration = Number((c as unknown as { ai_review_iteration?: number | null }).ai_review_iteration) || 0
+      if (iteration >= AI_REVIEW_ITERATION_CAP) {
+        refuse(ctx, fnName, c.workspace, `review cap reached (${iteration}/${AI_REVIEW_ITERATION_CAP})`,
+          `Card #${c.id} has used its ${AI_REVIEW_ITERATION_CAP} AI review rounds. Another review needs a person: raise a decision for the owner.`, c.id)
+      }
+      const doReview = host.requestReview ?? hostFullAccessHost.requestReview!
+      const r = await doReview(c.id, { requestedBy: `bot:${ctx.agent.slug}`, maxIteration: AI_REVIEW_ITERATION_CAP })
+      if (!r.ok) {
+        const why: Record<string, string> = {
+          not_in_review: `it is ${c.status}, not in review`,
+          has_verdict: `it already has a review verdict (${c.ai_review_verdict})`,
+          no_pr: 'it has no pull request linked',
+          pr_not_open: `its pull request is ${r.detail ?? 'not open'}`,
+          delegator: 'it is a delegator card', strategy: 'it is a Strategy', routine: 'it is a scheduled-task run',
+          skip_ai_review: 'AI review is switched off for it',
+          iteration_cap: `it has used its ${AI_REVIEW_ITERATION_CAP} AI review rounds`,
+          spawn_failed: `the reviewer did not start (${r.detail ?? 'unknown reason'})`,
+          raced: 'the card moved while the reviewer started',
+        }
+        const reason = why[r.code] ?? r.code
+        refuse(ctx, fnName, c.workspace, `review not requested: ${r.code}`, `No review was started for card #${c.id}: ${reason}.`, c.id)
+      }
+      broadcastCard(c.id)
+      const note = str(args, 'note')
+      used(ctx, fnName, c.workspace, `asked for an AI review of card #${c.id} (round ${r.iteration} of ${AI_REVIEW_ITERATION_CAP})${note ? ` — ${note.slice(0, 200)}` : ''}`, c.id)
+      return {
+        result: { id: c.id, status: 'ai_review', review_round: r.iteration, review_cap: AI_REVIEW_ITERATION_CAP, note: 'The AI reviewer is reading the pull request now. The verdict lands on the card; the work was not re-run.' },
+        summary: `Asked for an AI review of card #${c.id}`,
+        objective_id: c.id,
+      }
+    }
+
     case 'workflow_list': {
       const ws = requireWorkspace(ctx, fnName, args.workspace)
       const { latestFlowVersion } = await import('../flow-routines.js')
@@ -817,14 +879,9 @@ export async function runFullAccessTool(ctx: FaCtx & { username: string }, fnNam
       const poolError = botOwnershipRefusal(ctx.agent.slug, ws, project)
       if (poolError) refuse(ctx, fnName, ws, poolError, poolError)
       // A new session must not be pointed at a protected pull request either.
-      const protectedPr = protectedPrInText(`${title}\n${description}`)
-      if (protectedPr !== null) {
-        writeFullAccessAudit({
-          event: 'protected_refused', slug: ctx.agent.slug, workspace: ws, actor: `bot:${ctx.agent.slug}`, actor_user_id: ctx.userId,
-          ability: fnName, detail: `repo session brief names protected PR ${protectedPr}`,
-        })
-        throw new ToolUseError(`Refused: pull request ${protectedPr} is protected. Full access never starts a session to work on it. This refusal was logged.`)
-      }
+      // Same check, same message as create_objective (protectedPrTextRefusal).
+      const textRefusal = protectedPrTextRefusal({ slug: ctx.agent.slug, workspace: ws, ability: fnName, title, description, actorUserId: ctx.userId })
+      if (textRefusal) throw new ToolUseError(textRefusal)
       const body = [
         description,
         '',

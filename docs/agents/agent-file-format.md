@@ -53,6 +53,7 @@ agent's instructions.
 |---|---|
 | `search`, `list_folders`, `read_file`, `write_doc` | Search, browse, read and write the knowledge base — only inside `knowledge_folders`. |
 | `create_objective`, `get_objective`, `list_objectives`, `board_briefing` | Create board cards for the coding tools, check on them, and summarise what is waiting on the person. |
+| `followups` | Set itself a one-off follow-up in the chat it is in ("check back in 10 minutes") with `schedule_followup`, `list_followups` and `cancel_followup`. When it is due the bot runs an ordinary turn in that chat and posts its answer; the person sees a "Follow-up scheduled for HH:MM" line with **Cancel**. Any bot that lists `create_objective` gets it automatically. See `docs/wiki/Bot-Follow-Ups.md`. |
 | `email`, `calendar` | Read mail and calendar and prepare **drafts**. Nothing is sent until a person presses Send. |
 | `web_search`, `web_fetch` | Search the public web and read public pages. Search needs a search key on the install (see `docs/product/09-agent-chat.md`). |
 | `all` | Every built-in tool, including ones added in later releases. |

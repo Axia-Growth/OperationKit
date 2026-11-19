@@ -25,7 +25,7 @@ import { cardModelForBot } from './bot-card-model.js'
 import { CHILD_CAP_PER_PARENT, depthForParent, openChildCount } from '../../lib/objective-depth.js'
 import { checkAgentInWorkspacePool, defaultAgentForWorkspace } from '../../routes/objectives-helpers.js'
 import { broadcast } from '../../ws/index.js'
-import { getInitialStatus, validateOwnerBot, type Objective } from '@operationkit/shared'
+import { chatActionWordingErrors, getInitialStatus, validateOwnerBot, type Objective } from '@operationkit/shared'
 import { raiseDecision } from '../decisions.js'
 import type { ChatAgent } from './agent-defs.js'
 import { createDraft, type Connectors, type EmailDraft, type EventDraft } from './connectors.js'
@@ -46,13 +46,14 @@ import { containedIn, realpathOrNull, resolveVaultPath, workspaceScopeRoots } fr
 import { searchKnowledgeBase } from '../kb-semantic/search.js'
 import { noteKbWrite } from '../kb-semantic/service.js'
 import type { ChatLane } from './threads.js'
-import { fullAccessActive, fullAccessAnywhere, protectedCardRefusal, refuseExclusion } from './bot-full-access.js'
+import { fullAccessActive, fullAccessAnywhere, protectedCardRefusal, protectedPrTextRefusal, refuseExclusion } from './bot-full-access.js'
 import { exclusionGate, type OutboundCall } from './full-access-exclusions.js'
 import { FULL_ACCESS_FNS, fullAccessToolSpecs, runFullAccessTool, withFullAccess, type FullAccessHost } from './full-access-tools.js'
 import { CARD_WAKE_FNS, runCardWakeTool, type CardWakeScope } from './card-wake-tools.js'
 import { beginSelfAction, endSelfAction, SELF_ACTION_TOOLS } from './card-wake-routing.js'
 import { CARD_SANDBOX_FNS, cardSandboxToolSpecs, runCardSandboxTool } from './card-sandbox-tools.js'
 import { GRANT_MERGE_FNS, grantMergeToolSpecs, runGrantMergeTool } from './grant-merge-tool.js'
+import { FOLLOWUP_FNS, followupToolSpecs, runFollowupTool } from './followups.js'
 import { DEV_OPS_FNS, devOpsToolSpecs, runDevOpsTool } from './dev-ops-tools.js'
 import { writeDevOpsAudit } from '../dev-ops/audit.js'
 import { CARD_BROWSER_FNS, cardBrowserToolSpecs, runCardBrowserTool } from './card-browser-tools.js'
@@ -109,6 +110,14 @@ export interface ToolContext {
    */
   cardWake?: CardWakeScope
   /**
+   * obj 901392: set when this turn was started by one of the bot's own
+   * follow-ups (followup-wake.ts) rather than a typed message. It changes NO
+   * permission: the turn is an ordinary chat turn. It only carries the chain
+   * length, so schedule_followup can stop a runaway chain. `personSpoke` =
+   * a queued message from the person was delivered in this same turn.
+   */
+  followup?: { id: number; hop: number; personSpoke: boolean }
+  /**
    * obj 901424: this turn's message came from the person's signed-in browser
    * (cookie session), not an API key / bearer token / queued drain. Required by
    * the operator tools (dev-ops-tools.ts).
@@ -128,6 +137,8 @@ export interface ToolOutcome {
   bot_conversation_id?: number
   /** obj 901059: a decision this call raised — the chat renders its briefing, Q&A thread and Approve/Deny. */
   decision_id?: number
+  /** obj 901392: a follow-up this call scheduled or cancelled — the chat renders its live state and a Cancel control. */
+  followup_id?: number
   /** obj 901028: an image this tool call attaches to the reply — rendered inline, same as a pasted screenshot. */
   images?: IncomingImage[]
 }
@@ -183,7 +194,7 @@ const SPECS: Record<string, ToolSpec[]> = {
       workspace: { type: 'string', description: 'Workspace slug to file the card in. Omit for this chat\'s workspace. Only workspaces this bot is granted and the person belongs to are accepted.' },
       parent_id: { type: 'integer', description: 'File this card UNDER another card: that card\'s number. Use it whenever the work belongs to an existing card, instead of writing "Parent: #N" in the text. The parent must be a top-level card you can see; the new card lands in the parent\'s workspace.' },
     }, ['title', 'description']))],
-  raise_decision: [fn('raise_decision', 'Ask the person to DECIDE something on a board card, with a short briefing. It shows at the top of the card and in this chat with a Q&A thread and Approve/Deny; their choice is sent to the card. Use this instead of asking for a decision in prose. Under about 200 words in total. Refused if the question or options are missing.',
+  raise_decision: [fn('raise_decision', 'Ask the person to DECIDE something on a board card, with a short briefing. It shows at the top of the card and in this chat with a Q&A thread and Approve/Deny; their choice is sent to the card. Use this instead of asking for a decision in prose. Under about 200 words in total. Refused if the question or options are missing. A deploy or merge never runs from the answer: an option that deploys or merges must say in its next that the person types deploy / merge in this chat (e.g. "You type deploy in this chat and I run it.").',
     obj({
       card_id: { type: 'integer', description: 'The card the decision is about' },
       context: { type: 'string', description: '2-3 sentences: where we are, what the decision is for, where it fits in the system' },
@@ -285,7 +296,11 @@ const IMPLIED_TOOLS: Record<string, string[]> = {
   // raise_decision only ASKS (a briefing on the card); it never acts, so it is
   // the one "write" implied: without it the bot asks for decisions in prose,
   // which is exactly what left Operator unable to see what he was approving.
-  create_objective: ['raise_decision'],
+  // obj 901392: a bot that can file cards can also set itself a one-off
+  // follow-up to check back on them, instead of asking the person to say
+  // "check". A follow-up turn has exactly a normal turn's permissions, so this
+  // implies no new reach, only a timer (limits: followups.ts).
+  create_objective: ['raise_decision', 'followups'],
 }
 
 /**
@@ -327,6 +342,8 @@ export function toolSpecsForContext(ctx: ToolContext): ToolSpec[] {
   // obj 901347: merge one of the bot's own cards under the person's merge grant.
   // Offered by the grant, never by Full access or "all tools".
   out.push(...grantMergeToolSpecs(ctx))
+  // obj 901392: schedule / list / cancel the bot's own one-off follow-up wakes.
+  out.push(...followupToolSpecs(ctx))
   // obj 901424: Operation Kit Dev's operator tools, behind their one admin switch.
   out.push(...devOpsToolSpecs(ctx))
   return out
@@ -749,6 +766,9 @@ function cardParent(ctx: ToolContext, parentRaw: unknown, workspaceRaw: unknown)
 function createCard(ctx: ToolContext, title: string, description: string, workspaceRaw?: unknown, parentRaw?: unknown): { id: number; status: string; note?: string; workspace: string; parent_id?: number } {
   const db = getDb()
   const { parentId, workspace } = cardParent(ctx, parentRaw, workspaceRaw)
+  // The same protected pull request text check as repo_session_start, for every bot.
+  const textRefusal = protectedPrTextRefusal({ slug: ctx.agent.slug, workspace, ability: 'create_objective', title, description, actorUserId: ctx.userId })
+  if (textRefusal) throw new ToolUseError(textRefusal)
   const under = parentId != null ? { parent_id: parentId } : {}
   const worker = chatCardAgent(ctx.agent, workspace)
   const bot = botForAgentSlug(ctx.agent.slug, db)
@@ -1172,6 +1192,7 @@ async function runChatToolInner(ctxIn: ToolContext, fnName: string, args: Record
   if (FULL_ACCESS_FNS.has(fnName)) return runFullAccessTool(ctx, fnName, args)
   if (CARD_SANDBOX_FNS.has(fnName)) return runCardSandboxTool(ctx, fnName, args)
   if (GRANT_MERGE_FNS.has(fnName)) return runGrantMergeTool(ctx, fnName, args)
+  if (FOLLOWUP_FNS.has(fnName)) return runFollowupTool(ctx, fnName, args)
   if (DEV_OPS_FNS.has(fnName)) return runDevOpsTool(ctx, fnName, args)
   if (CARD_BROWSER_FNS.has(fnName)) return runCardBrowserTool(ctx, fnName, args)
   if (BOT_MESSAGE_FNS.has(fnName)) return runBotMessageTool(ctx, fnName, args)
@@ -1556,6 +1577,10 @@ export function runTool(ctxIn: ToolContext, fnName: string, args: Record<string,
       const id = Number(args.card_id)
       // Only a card this person (and this bot) can see — the same rule as get_objective.
       const card = getBoardCard(ctx, id)
+      // obj 901453: an option may not promise a deploy / merge the Approve click
+      // cannot run. Those tools run only from a message the person types here.
+      const wording = chatActionWordingErrors(Array.isArray(args.options) ? (args.options as Array<{ key?: string; label: string; next: string }>) : [])
+      if (wording.length) throw new ToolUseError(`The decision was not raised. Fix these and call raise_decision again: ${wording.join('; ')}`)
       const out = raiseDecision(getDb(), {
         objective_id: card.id,
         workspace: card.workspace ?? '',

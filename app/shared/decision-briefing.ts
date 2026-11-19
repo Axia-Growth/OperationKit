@@ -35,6 +35,7 @@ export const DECISION_OUTCOMES = [
   'reopened', //        the card was done; it was reopened and the choice sent
   'card_done', //       the card is done; the choice is recorded but NOT sent (offer Reopen and apply)
   'delivered', //       the card is done and a bot owns it: the choice went to the bot (its chat + next session), no reopen (obj 901151)
+  'to_chat', //         the option needs a chat-only tool (deploy / merge): the choice went to the bot's chat, where the person types the word to run it (obj 901453)
   'recorded', //        nothing to restart (no worker session) — the choice is recorded for the bot
   'failed', //          recorded, but the restart failed
 ] as const
@@ -259,8 +260,10 @@ export function decisionOutcomeText(p: {
   error?: string | null
   /** The person's own words, for OWN_ANSWER_CHOICE. */
   note?: string | null
-  /** For `delivered`: the bot's display name. */
+  /** For `delivered` / `to_chat`: the bot's display name. */
   bot?: string | null
+  /** For `to_chat`: the chat-only action the option names (deploy / merge). */
+  action?: string | null
 }): string {
   const card = `card #${p.objectiveId}`
   const opt = optionFor(p.briefing, p.chosen)
@@ -291,6 +294,11 @@ export function decisionOutcomeText(p: {
     case 'delivered': {
       const bot = p.bot?.trim() || 'the bot'
       return `${lead} ${cap(card)} is already finished, so your answer went straight to ${bot}: it is in ${bot}'s chat, and ${bot} acts on it in its next session (no reopen needed). ${next}`.trim()
+    }
+    case 'to_chat': {
+      const bot = p.bot?.trim() || 'the bot'
+      const act = p.action?.trim() || 'it'
+      return `${lead} A ${act} runs only from a message you type in ${bot}'s chat, so your answer went there and ${card} was not restarted. Type ${act} in ${bot}'s chat to run it. Nothing has run yet.`
     }
     case 'card_done':
       return `${lead} ${cap(card)} is already done, so nothing was sent yet. Press Reopen and apply to act on it.`

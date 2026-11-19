@@ -20,6 +20,7 @@ In the workspace where it is on, and nowhere else, the bot may:
 | Hand a card to another owner | `card_reown` (an agent or bot that may work there, and/or a person in the workspace) |
 | Comment on any card | `card_comment` (the worker is woken to read it) |
 | Restart any card | `card_restart` |
+| Ask for an AI review of its OWN card (obj 901457) | `card_request_review`: only a card the bot owns (`cardOwnerBot`), in review with a PR and no verdict, inside the review bounce cap (`AI_REVIEW_ITERATION_CAP`, 2 rounds). Same service as `POST /api/internal/ai-review/request` (`requestAiReview`); the work is not re-run |
 | Read and write the whole workspace knowledge base | the ordinary `search`, `list_folders`, `read_file`, `write_doc`, now over the workspace's whole folder, not just the bot's `knowledge_folders` |
 | Read and edit workflows | `workflow_list`, `workflow_read`, `workflow_save_draft` (a draft; publishing stays the owner's click) |
 | Read and edit scheduled tasks | `routine_list`, `routine_read`, `routine_update` (schedule, on/off, an AI task's title and brief) |
@@ -125,7 +126,7 @@ on the list, or whose PR link ends in that number, is refused with a
 `protected_refused` audit row in:
 
 - every Full access chat tool that takes a card (`card_read`, `card_take_over`,
-  `card_reown`, `card_comment`, `card_restart`), and `get_objective` for a bot
+  `card_reown`, `card_comment`, `card_restart`, `card_request_review`), and `get_objective` for a bot
   with Full access in the card's workspace;
 - `repo_session_start`, when the title or brief names the pull request
   (`PR 645`, `#645`, `pull/645`);

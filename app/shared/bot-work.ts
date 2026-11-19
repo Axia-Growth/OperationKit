@@ -365,6 +365,28 @@ export interface BotActivityItem {
   pr_url: string | null
 }
 
+/**
+ * obj 901392: one follow-up the bot set for itself in the VIEWER's own chat with
+ * it ("check back in 10 minutes"), as the run history shows it. Another
+ * person's follow-ups are never in the list: a chat is private to its person.
+ */
+export interface BotFollowupLogItem {
+  id: number
+  status: 'pending' | 'running' | 'fired' | 'failed' | 'cancelled' | 'dropped'
+  note: string
+  card_id: number | null
+  /** ISO 8601. */
+  due_at: string
+  fired_at: string | null
+  finished_at: string | null
+  /** 'due' | 'card_changed' once fired. */
+  fire_reason: string | null
+  /** Why it was dropped or failed; 'person' / 'bot' for a cancelled one. */
+  end_reason: string | null
+  /** Its position in a chain of follow-ups with no message from the person. */
+  hop: number
+}
+
 export interface BotActivityResponse {
   slug: string
   high_agency: boolean
@@ -373,6 +395,8 @@ export interface BotActivityResponse {
   entries: BotActivityEntry[]
   /** obj 901030: the unified feed — every action, wake rows included. */
   items: BotActivityItem[]
+  /** obj 901392: the viewer's own follow-ups with this bot, newest first. Older servers omit it. */
+  followups?: BotFollowupLogItem[]
 }
 
 /** meta.kind of a main-chat message a bot posts when it needs a person. */

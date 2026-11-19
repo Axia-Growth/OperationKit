@@ -28,6 +28,7 @@ import {
 import { agentHasTool, botWorkspacesForPerson, kbWorkspacesForChat, runChatTool, toolSpecsFor, toolSpecsForContext, ToolUseError, type ToolContext } from './tools.js'
 import { fullAccessPromptLine, withFullAccess } from './full-access-tools.js'
 import { openLoopsPromptBlock } from './open-loops.js'
+import { dropLaneFollowups, FOLLOWUP_PROMPT_LINE, FOLLOWUP_WAKE_TOOL_NAME, followupToolSpecs } from './followups.js'
 import { mcpToolSetFor, runMcpTool, type McpToolSet } from './mcp-tools.js'
 import { botReplyForModel, earlierActionForModel, toolResultForModel } from './tool-result-framing.js'
 import type { WebToolDeps } from './web-tools.js'
@@ -90,6 +91,8 @@ export interface ChatMessageRow {
     /** obj 901328: the card wake this row belongs to ("Card wakes" thread). */
     card_wake_id?: number
     need?: string
+    /** obj 901392: the follow-up this row scheduled, cancelled or was fired by (kind 'followup_fired'). */
+    followup_id?: number
     /** obj 901394: a card wake's answer posted in the main chat (`kind: card_wake_reply`): every card it covered, and the thread the turn ran in. */
     objective_ids?: number[]
     thread_id?: number
@@ -273,6 +276,9 @@ export function clearChat(userId: number, slug: string, lane: ChatLane = MAIN_LA
     deleteThread(userId, slug, id)
   }
   deleteAttachmentsForChat(userId, slug, lane)
+  // obj 901392: a follow-up waiting in a chat the person just cleared (or a side
+  // thread they deleted) is dropped, not fired into an empty lane.
+  try { dropLaneFollowups(userId, slug, lane, 'the chat it was set in was cleared or deleted') } catch { /* table absent on a very old DB */ }
   const { sql, params } = lanePredicate(lane)
   return getDb()
     .prepare(`DELETE FROM agent_chat_messages WHERE user_id = ? AND agent_slug = ? AND ${sql}`)
@@ -331,7 +337,7 @@ export function replyThreadContextForModel(parent: ReplyParentRow, workspace?: s
   ].join('\n')
 }
 
-export function systemPromptFor(agent: ChatAgent, ctx: { username: string; now: Date; connectors: string[]; workspace?: string; userId?: number; fullAccess?: string; openLoops?: string }): string {
+export function systemPromptFor(agent: ChatAgent, ctx: { username: string; now: Date; connectors: string[]; workspace?: string; userId?: number; fullAccess?: string; openLoops?: string; followups?: string }): string {
   // obj 900797: person ∩ bot list, so the prompt never names a workspace the person cannot see.
   const allow = ctx.workspace === undefined ? undefined : ctx.userId === undefined ? null : botWorkspacesForPerson(ctx.userId, agent.slug)
   const parts = [
@@ -366,6 +372,8 @@ export function systemPromptFor(agent: ChatAgent, ctx: { username: string; now: 
         : '- You have no workspace you may work in with this person yet (an admin grants workspaces on your settings panel), so board, knowledge-base and secrets tools will refuse. Say so plainly if asked.',
     // obj 900972: said only while Full access counts for this bot, this person and this workspace.
     ctx.fullAccess ?? '',
+    // obj 901392: only in a turn that really has the follow-up tools.
+    ctx.followups ?? '',
     '- Never ask for or repeat passwords or API keys.',
     ctx.connectors.length ? `- Connected: ${ctx.connectors.join('; ')}.` : '',
     '- Keep answers short and use simple markdown (bullets, bold).',
@@ -472,6 +480,7 @@ export async function runModelLoop(p: {
             ...(r.objective_id ? { objective_id: r.objective_id } : {}),
             ...(r.bot_conversation_id ? { bot_conversation_id: r.bot_conversation_id } : {}),
             ...(r.decision_id ? { decision_id: r.decision_id } : {}),
+            ...(r.followup_id ? { followup_id: r.followup_id } : {}),
           },
         }, r.images)
       } catch (err) {
@@ -562,6 +571,21 @@ export interface TurnInput {
    * neither inserts nor runs anything.
    */
   clientMsgId?: string
+  /**
+   * obj 901392: this turn is started by one of the bot's own follow-ups, not by
+   * a typed message (followup-wake.ts). It is otherwise the SAME turn: same
+   * lane, same person, same tools and gates. Instead of a user row the lane
+   * gets one tool-style line (`triggerLine`), and the model is handed `brief`
+   * (the bot's note, framed) as the message to act on. `rules` is appended to
+   * the system prompt.
+   */
+  followup?: {
+    id: number
+    hop: number
+    triggerLine: string
+    brief: (ctx: ToolContext) => string
+    rules: string
+  }
 }
 
 /** What a `client_msg_id` may look like: short and plain, so it is safe to store and to match on. */
@@ -796,7 +820,20 @@ export async function runTurn(input: TurnInput): Promise<{ messages: ChatMessage
     const delivered = deliverQueued(userId, agent.slug, lane)
     created.push(...delivered)
     let userRow: ChatMessageRow | null = null
-    if (!input.drainOnly) {
+    let triggerRow: ChatMessageRow | null = null
+    if (input.followup) {
+      // A tool-style row: the person sees why the bot spoke, and it is never
+      // replayed to a model as if the person had typed it.
+      triggerRow = add({
+        role: 'tool',
+        content: input.followup.triggerLine.slice(0, 1200),
+        provider: null,
+        model: null,
+        tool_name: FOLLOWUP_WAKE_TOOL_NAME,
+        meta: { kind: 'followup_fired', ok: true, followup_id: input.followup.id },
+      })
+      created.push(triggerRow)
+    } else if (!input.drainOnly) {
       userRow = add(
         { role: 'user', content: input.text, provider: null, model: null, tool_name: null, meta: input.clientMsgId ? { client_msg_id: input.clientMsgId } : null },
         images,
@@ -804,7 +841,7 @@ export async function runTurn(input: TurnInput): Promise<{ messages: ChatMessage
       created.push(userRow)
     }
     const incoming = userRow ? [...delivered, userRow] : delivered
-    if (incoming.length === 0) return { messages: created }
+    if (incoming.length === 0 && !input.followup) return { messages: created }
     touchThread(lane)
 
     // Demo switched on by env (AGENT_CHAT_DEMO=1) never went through the settings
@@ -819,6 +856,8 @@ export async function runTurn(input: TurnInput): Promise<{ messages: ChatMessage
     const chatWorkspace = workspaceFor(userId, agent.slug)
     const connectors = resolveConnectors({ agentSlug: agent.slug, userId, workspace: chatWorkspace, now })
     const ctx: ToolContext = { userId, username: input.username, workspace: chatWorkspace, agent, kbRoot: knowledgeRoot(env), connectors, now, web: { env, signal, ...input.webDeps }, lane, browserSession: !!input.browserSession && !input.drainOnly }
+    // obj 901392: carries only the chain length. No tool reads it to widen anything.
+    if (input.followup) ctx.followup = { id: input.followup.id, hop: input.followup.hop, personSpoke: delivered.length > 0 }
 
     let providerId: ChatProviderId | null = null
     let provider: ChatProvider
@@ -833,6 +872,7 @@ export async function runTurn(input: TurnInput): Promise<{ messages: ChatMessage
     const resolvedAgent = withResolvedKnowledgeFolders(agent, ctx.kbRoot, kbWorkspacesForChat(ctx.userId, agent.slug))
     const system = systemPromptFor(withFullAccess({ ...ctx, agent: resolvedAgent }).agent, {
       fullAccess: fullAccessPromptLine(ctx),
+      followups: followupToolSpecs(ctx).length ? FOLLOWUP_PROMPT_LINE : '',
       // obj 901382: read with the same gates as the bot's own read_file, on every turn.
       openLoops: openLoopsPromptBlock({ agent: resolvedAgent, kbRoot: ctx.kbRoot, userId, workspace: ctx.workspace, username: input.username }),
       username: input.username,
@@ -840,7 +880,7 @@ export async function runTurn(input: TurnInput): Promise<{ messages: ChatMessage
       connectors: [connectors.mail?.label, connectors.calendar?.label].filter((x): x is string => !!x),
       workspace: ctx.workspace,
       userId,
-    })
+    }) + (input.followup ? `\n${input.followup.rules}` : '')
     // obj 900620: the chat's workspace MCP servers, only if the agent lists `mcp`.
     let mcpTools: McpToolSet = { specs: [], targets: new Map() }
     // obj 900797: no granted workspace → no workspace MCP servers.
@@ -871,6 +911,8 @@ export async function runTurn(input: TurnInput): Promise<{ messages: ChatMessage
       ...historyForModel(prior, provider.supportsImages, ctx.workspace),
       // Several queued messages reach the model as consecutive user turns, in the order they were sent.
       ...incoming.map(r => ({ role: 'user' as const, content: userContentForModel(r, provider.supportsImages) })),
+      // obj 901392: the follow-up's note, last, so the model acts on it now.
+      ...(input.followup ? [{ role: 'user' as const, content: input.followup.brief(ctx) }] : []),
     ]
 
     const loop = await runModelLoop({
@@ -898,6 +940,11 @@ export async function runTurn(input: TurnInput): Promise<{ messages: ChatMessage
       // reaches anyone, so the message and the error stay in the thread.
       if (loop.step === 0 && userRow && delivered.length === 0 && !input.responseGone?.()) {
         deleteMessage(userRow.id)
+        created.length = 0
+      } else if (loop.step === 0 && triggerRow && delivered.length === 0) {
+        // obj 901392: a follow-up that could not start leaves no trace in the
+        // lane; the drain retries it and writes its line again then.
+        deleteMessage(triggerRow.id)
         created.length = 0
       } else {
         created.push(add({ role: 'error', content: err.message, provider: provider.id, model: provider.model, tool_name: null, meta: { provider_label: provider.label } }))
