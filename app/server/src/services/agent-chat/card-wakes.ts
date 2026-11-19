@@ -40,6 +40,7 @@ import { consumeDelivery } from '../decision-delivery.js'
 import { addMessage, findAgent, installDefaultProvider, knowledgeRoot, laneTurnState, runModelLoop, systemPromptFor, type LoopRecord } from './engine.js'
 import { withResolvedKnowledgeFolders } from './knowledge-folders.js'
 import { openLoopsPromptBlock } from './open-loops.js'
+import { botMemoryPromptBlock } from './bot-memory.js'
 import { mcpToolSetFor, type McpToolSet } from './mcp-tools.js'
 import { fullAccessPromptLine, withFullAccess } from './full-access-tools.js'
 import { kbWorkspacesForChat, toolSpecsForContext } from './tools.js'
@@ -477,6 +478,7 @@ async function runWake(rowsIn: CardWakeRow[], opts: CardWakeDrainOptions, env: N
       systemPromptFor(withFullAccess({ ...ctx, agent: resolved }).agent, {
         fullAccess: fullAccessPromptLine(ctx),
         openLoops: openLoopsPromptBlock({ agent: resolved, kbRoot: ctx.kbRoot, userId, workspace, username: person }),
+        botMemory: botMemoryPromptBlock({ agent: resolved, kbRoot: ctx.kbRoot, userId, workspace, username: person }),
         username: person,
         now: nowFn(),
         connectors: [connectors.mail?.label, connectors.calendar?.label].filter((x): x is string => !!x),

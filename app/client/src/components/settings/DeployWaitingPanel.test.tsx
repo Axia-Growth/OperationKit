@@ -5,7 +5,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { flushSync } from 'react-dom'
 import { createRoot, type Root } from 'react-dom/client'
-import { DeployWaitingPanel, type DeployStatusView } from './DeployWaitingPanel'
+import { DeployWaitingPanel, type ChatDeployView, type DeployStatusView } from './DeployWaitingPanel'
 
 async function flush() {
   for (let i = 0; i < 6; i++) {
@@ -22,10 +22,10 @@ const { store, apiMock, ApiErrorMock } = vi.hoisted(() => {
       super(message)
     }
   }
-  const store: { state: unknown } = { state: null }
+  const store: { state: unknown; chat: unknown } = { state: null, chat: null }
   const apiMock = {
-    get: vi.fn(() => Promise.resolve(structuredClone(store.state))),
-    put: vi.fn(),
+    get: vi.fn((p: string) => Promise.resolve(structuredClone(p === '/admin/chat-deploy' ? store.chat : store.state))),
+    put: vi.fn((_p: string, body: { enabled: boolean }) => Promise.resolve({ ...(structuredClone(store.chat) as object), enabled: body.enabled })),
     post: vi.fn(),
   }
   return { store, apiMock, ApiErrorMock }
@@ -63,8 +63,11 @@ const WAITING: DeployStatusView = {
   ],
 }
 
-async function render(state: unknown) {
+const CHAT_OFF: ChatDeployView = { enabled: false, can_manage: true, bots: ['operation-kit-dev'], last: null }
+
+async function render(state: unknown, chat: ChatDeployView = CHAT_OFF) {
   store.state = state
+  store.chat = chat
   flushSync(() => root.render(<DeployWaitingPanel />))
   await flush()
 }
@@ -92,7 +95,8 @@ describe('DeployWaitingPanel', () => {
 
   it('is read-only: no deploy or restart control, and no write calls', async () => {
     await render(WAITING)
-    const buttons = Array.from(host.querySelectorAll('button')).map(b => b.textContent?.trim())
+    // The one switch is the "deploy on your word" SETTING (obj 901393), not a deploy button.
+    const buttons = Array.from(host.querySelectorAll('button:not([role="switch"])')).map(b => b.textContent?.trim())
     expect(buttons).toEqual(['Refresh'])
     expect(buttons.some(b => /deploy|restart/i.test(b ?? ''))).toBe(false)
     expect(apiMock.put).not.toHaveBeenCalled()
@@ -110,5 +114,45 @@ describe('DeployWaitingPanel', () => {
   it('shows the reason when the checkout cannot be read', async () => {
     await render({ ok: false, disabled: true, error: 'This install runs from an image (DRIFT_GUARD=off): there is no live checkout to compare with main.', waiting: [] })
     expect(host.textContent).toContain('there is no live checkout')
+  })
+
+  it('deploy on your word: off by default, the owner switches it on, nothing deploys', async () => {
+    await render(WAITING)
+    expect(apiMock.get).toHaveBeenCalledWith('/admin/chat-deploy')
+    expect(host.textContent).toContain('Deploy on your word')
+    const sw = host.querySelector('[role="switch"]') as HTMLButtonElement
+    expect(sw).not.toBeNull()
+    expect(sw.getAttribute('aria-checked')).toBe('false')
+    flushSync(() => sw.click())
+    await flush()
+    expect(apiMock.put).toHaveBeenCalledWith('/admin/chat-deploy', { enabled: true })
+    expect(apiMock.post).not.toHaveBeenCalled()
+    expect((host.querySelector('[role="switch"]') as HTMLButtonElement).getAttribute('aria-checked')).toBe('true')
+  })
+
+  it('deploy on your word: a non-owner sees it disabled', async () => {
+    await render(WAITING, { ...CHAT_OFF, can_manage: false })
+    const sw = host.querySelector('[role="switch"]') as HTMLButtonElement
+    expect(sw.disabled || sw.getAttribute('aria-disabled') === 'true' || sw.hasAttribute('data-disabled')).toBe(true)
+    expect(host.textContent).toContain('Only the owner')
+  })
+
+  it('shows the last chat deploy and its outcome', async () => {
+    await render(WAITING, {
+      ...CHAT_OFF,
+      enabled: true,
+      last: {
+        id: 7, username: 'operator', agent_slug: 'operation-kit-dev', bot_name: 'Operation Kit Dev', mode: 'backend',
+        outcome: 'rolled_back', reason: null, detail: 'The server did not come back healthy, so it was rolled back to aaaaaaaa.',
+        prs: [{ pr_number: 101, title: 'Show the thing', card_id: 777, short_sha: 'dddddddd' }],
+        created_at: '2026-11-18T12:30:00Z', finished_at: '2026-11-18T12:32:00Z',
+      },
+    })
+    const last = host.querySelector('[aria-label="Last chat deploy"]')
+    expect(last?.textContent).toContain('Last chat deploy #7')
+    expect(last?.textContent).toContain('Rolled back')
+    expect(last?.textContent).toContain("Operation Kit Dev on operator's word")
+    expect(last?.textContent).toContain('PR #101')
+    expect(last?.textContent).toContain('rolled back to aaaaaaaa')
   })
 })

@@ -33,7 +33,11 @@ import { workspaceKbRoot } from '../doc-ingest/kb-paths.js'
 import { ingestEnabled } from '../doc-ingest/service.js'
 import { fileAnswer } from '../kb-wiki/answers.js'
 import { botForAgentSlug, resolveBot } from '../bots/bot-registry.js'
-import { createBotJob } from '../bots/bot-jobs.js'
+import { createBotJob, findJobByIdempotency } from '../bots/bot-jobs.js'
+import { isDuplicateGuardEnabled, recordDedupe } from '../../lib/objective-dedupe.js'
+import { explicitKey, findPossibleDuplicate, NEAR_DUPLICATE_THRESHOLD, parseFilingKey, possibleDuplicateResult, titleSimilarity, type PossibleDuplicate } from './card-filing-guard.js'
+import { composeCardBrief, normalizeDoneWhen } from '../../../../shared/card-brief.js'
+import { CARD_BRIEF_TOOL_HINT, DONE_WHEN_ARG, STOP_CONDITIONS_ARG } from './card-brief-args.js'
 import { buildAttention, oneLine, visibilityClause, type ControlUser } from '../../lib/agent-control.js'
 import { ALL_TOOLS_GRANT, EXPLICIT_ONLY_TOOLS, KNOWN_TOOL_NAMES, listsAllTools } from './tool-names.js'
 import { callerForChat, executeHttp, listForCaller, recordBrokerUse } from '../secrets-broker.js'
@@ -54,6 +58,7 @@ import { CARD_WAKE_FNS, runCardWakeTool, type CardWakeScope } from './card-wake-
 import { beginSelfAction, endSelfAction, SELF_ACTION_TOOLS } from './card-wake-routing.js'
 import { CARD_SANDBOX_FNS, cardSandboxToolSpecs, runCardSandboxTool } from './card-sandbox-tools.js'
 import { GRANT_MERGE_FNS, grantMergeToolSpecs, runGrantMergeTool } from './grant-merge-tool.js'
+import { CHAT_DEPLOY_FNS, chatDeployToolSpecs, runChatDeployTool } from './chat-deploy-tool.js'
 import { DEV_OPS_ALL_FNS, devOpsToolSpecs, runDevOpsTool } from './dev-ops-tools.js'
 import { FOLLOWUP_FNS, followupToolSpecs, runFollowupTool } from './followups.js'
 import { writeDevOpsAudit } from '../dev-ops/audit.js'
@@ -114,6 +119,13 @@ export interface ToolContext {
    * (card-wake-tools.ts) and runChatTool refuses every other tool name.
    */
   cardWake?: CardWakeScope
+  /**
+   * obj 901393: the ids of the person's messages THIS turn delivers (the typed
+   * message plus any queued ones). Set by runTurn only — a wake turn has none.
+   * The chat deploy tool requires the owner's ask to be one of these, so a
+   * say-so never carries over to a later turn.
+   */
+  turnMessageIds?: number[]
   /**
    * obj 901392: set when this turn was started by one of the bot's own
    * follow-ups (followup-wake.ts) rather than a typed message. It changes NO
@@ -196,12 +208,16 @@ const SPECS: Record<string, ToolSpec[]> = {
       media_type: { type: 'string', description: 'Optional declared type for "data" — checked against the real bytes, never trusted alone.' },
       alt_text: { type: 'string', description: 'Short description of the image, for accessibility and the caption shown under it.' },
     }, ['source']))],
-  create_objective: [fn('create_objective', 'Hand a bigger job to the team board as a card. Coding tools pick it up and do the work; you can check its status later with get_objective. Use for anything that takes more than a few minutes.',
+  create_objective: [fn('create_objective', 'Hand a bigger job to the team board as a card. Coding tools pick it up and do the work; you can check its status later with get_objective. Use for anything that takes more than a few minutes. Look at the board first (list_objectives) so you do not file work that is already there. A retry never means file again: the same request returns the card already filed, and an open card with a near-identical title comes back as "possible duplicate #N" with nothing filed. The result says whether the card will start by itself; a card that did not start still EXISTS, so start or follow that card, never re-create it. ' + CARD_BRIEF_TOOL_HINT,
     obj({
       title: { type: 'string', description: 'Short, specific title' },
-      description: { type: 'string', description: 'What to do, the context, and what "done" looks like' },
+      description: { type: 'string', description: 'What to do and the context. Put what "done" looks like in done_when and the stop cases in stop_conditions, not here.' },
+      done_when: DONE_WHEN_ARG,
+      stop_conditions: STOP_CONDITIONS_ARG,
       workspace: { type: 'string', description: 'Workspace slug to file the card in. Omit for this chat\'s workspace. Only workspaces this bot is granted and the person belongs to are accepted.' },
       parent_id: { type: 'integer', description: 'File this card UNDER another card: that card\'s number. Use it whenever the work belongs to an existing card, instead of writing "Parent: #N" in the text. The parent must be a top-level card you can see; the new card lands in the parent\'s workspace.' },
+      idempotency_key: { type: 'string', description: 'One key per card you intend to file (any short unique string, no spaces). Reuse it word for word if you call again for the SAME card: you get the card already filed, never a second one. Use a new key for a different card.' },
+      file_anyway: { type: 'boolean', description: 'Only after a result said "possible duplicate #N" and you checked that card is different work: true files the new card anyway.' },
     }, ['title', 'description']))],
   raise_decision: [fn('raise_decision', 'Ask the person to DECIDE something on a board card, with a short briefing. It shows at the top of the card and in this chat with a Q&A thread and Approve/Deny; their choice is sent to the card. Use this instead of asking for a decision in prose. Under about 200 words in total. Refused if the question or options are missing. A deploy or merge never runs from the answer: an option that deploys or merges must say in its next that the person types deploy / merge in this chat (e.g. "You type deploy in this chat and I run it.").',
     obj({
@@ -351,6 +367,8 @@ export function toolSpecsForContext(ctx: ToolContext): ToolSpec[] {
   // obj 901347: merge one of the bot's own cards under the person's merge grant.
   // Offered by the grant, never by Full access or "all tools".
   out.push(...grantMergeToolSpecs(ctx))
+  // obj 901393: deploy on the owner's word. Offered by its own switch, never by Full access or "all tools".
+  out.push(...chatDeployToolSpecs(ctx))
   // obj 901392: schedule / list / cancel the bot's own one-off follow-up wakes.
   out.push(...followupToolSpecs(ctx))
   // obj 901424: Operation Kit Dev's operator tools, behind their one admin switch.
@@ -772,8 +790,39 @@ function cardParent(ctx: ToolContext, parentRaw: unknown, workspaceRaw: unknown)
   return { parentId, workspace }
 }
 
-function createCard(ctx: ToolContext, title: string, description: string, workspaceRaw?: unknown, parentRaw?: unknown): { id: number; status: string; note?: string; workspace: string; parent_id?: number } {
+/** What create_objective did: filed a card (new or the one already filed), or held back on a possible duplicate. */
+export type CreateCardOutcome =
+  | { filed: true; id: number; status: string; reused: boolean; will_start: boolean; note: string; workspace: string; parent_id?: number }
+  | { filed: false; duplicate: Pick<PossibleDuplicate, 'id' | 'title' | 'status'>; workspace: string }
+
+/** How a bot follows an existing card instead of filing a second one, in the words of the tools it has. */
+function followUpHint(ctx: ToolContext, id: number): string {
+  const full = fullAccessToolSpecs(ctx).length > 0
+  return full
+    ? `read it with card_read ${id}, add to it with card_comment, or take it with card_take_over / card_reown.`
+    : `check it with get_objective ${id} and tell the person its number; they can add to it on the card.`
+}
+
+function createCard(
+  ctx: ToolContext,
+  title: string,
+  rawDescription: string,
+  workspaceRaw?: unknown,
+  parentRaw?: unknown,
+  opts: { idempotencyKey?: unknown; fileAnyway?: boolean; doneWhen?: unknown; stopConditions?: unknown } = {},
+): CreateCardOutcome {
   const db = getDb()
+  let given: string | null
+  try {
+    given = parseFilingKey(opts.idempotencyKey)
+  } catch (e) {
+    throw new ToolUseError((e as Error).message)
+  }
+  // obj 901496: the stop conditions become one fixed section of the card text
+  // and "done" goes in the board's existing completion goal. With neither
+  // given, the description and the idempotency key are exactly what they were.
+  const description = composeCardBrief(rawDescription, opts.stopConditions)
+  const doneWhen = normalizeDoneWhen(opts.doneWhen)
   const { parentId, workspace } = cardParent(ctx, parentRaw, workspaceRaw)
   // The same protected pull request text check as repo_session_start, for every bot.
   const textRefusal = protectedPrTextRefusal({ slug: ctx.agent.slug, workspace, ability: 'create_objective', title, description, actorUserId: ctx.userId })
@@ -781,6 +830,45 @@ function createCard(ctx: ToolContext, title: string, description: string, worksp
   const under = parentId != null ? { parent_id: parentId } : {}
   const worker = chatCardAgent(ctx.agent, workspace)
   const bot = botForAgentSlug(ctx.agent.slug, db)
+  // The same request under a different parent is a different job, not a replay.
+  const fingerprint = botJobIdempotencyKey(title, doneWhen ? `${description}\u0000${doneWhen}` : description) + (parentId != null ? `:p${parentId}` : '')
+
+  // (1) One key per card (obj 901498). The bot's own key wins; the content
+  // fingerprint still catches a retry that dropped the key. A key names ONE
+  // card: the same key with a different title is refused, never answered with
+  // the old card (that would lose the second filing without a word).
+  let key = given ? explicitKey(given) : fingerprint
+  if (given) {
+    const mine = findJobByIdempotency(db, ctx.userId, ctx.agent.slug, key)
+    if (mine) {
+      const prior = db.prepare('SELECT title FROM objectives WHERE id = ?').get(mine.objective_id) as { title: string } | undefined
+      if (prior && titleSimilarity(prior.title, title) < NEAR_DUPLICATE_THRESHOLD) {
+        throw new ToolUseError(`idempotency_key "${given}" already belongs to card #${mine.objective_id} ("${prior.title}"). Use a new key for a different card. The card was NOT filed.`)
+      }
+    } else if (findJobByIdempotency(db, ctx.userId, ctx.agent.slug, fingerprint)) {
+      key = fingerprint
+    }
+  }
+  const replay = !!findJobByIdempotency(db, ctx.userId, ctx.agent.slug, key)
+
+  // (2) Search first: an open card with a near-identical title is handed back
+  // as a possible duplicate and nothing is filed. Said out loud, with the way
+  // through (file_anyway), so it is never a silent block.
+  if (!replay && !opts.fileAnyway && isDuplicateGuardEnabled(db)) {
+    const dup = findPossibleDuplicate(db, {
+      title,
+      workspace,
+      excludeParentId: parentId,
+      visible: id => {
+        try { getBoardCard(ctx, id); return true } catch { return false }
+      },
+    })
+    if (dup) {
+      recordDedupe({ event: 'duplicate_refused', existingId: dup.id, title, workspace, source: 'chat create_objective (possible duplicate)' })
+      return { filed: false, duplicate: dup, workspace }
+    }
+  }
+
   // One guarded path for every bot (obj 900960). A bot in the registry owns the
   // card as itself. A bot outside it passes no owner bot: the card's owner_bot
   // is its name when it works the card itself (obj 900948: chatOwnerBotName
@@ -794,30 +882,38 @@ function createCard(ctx: ToolContext, title: string, description: string, worksp
     workspace,
     title,
     description,
-    // The same request under a different parent is a different job, not a replay.
-    idempotencyKey: botJobIdempotencyKey(title, description) + (parentId != null ? `:p${parentId}` : ''),
+    idempotencyKey: key,
+    completionGoal: doneWhen || null,
     parentId,
     agentContext: worker.agentContext,
     model: chatCardModel(ctx.agent),
+    force: !!opts.fileAnyway,
   })
-  if (!r.ok) throw new ToolUseError(r.error)
+  if (!r.ok) {
+    // The board's own same-title guard found a twin this person cannot be shown
+    // by title (the search above only names cards on their board).
+    if (r.code === 'duplicate' && r.existingId != null) {
+      const twin = db.prepare('SELECT id, status FROM objectives WHERE id = ?').get(r.existingId) as { id: number; status: string } | undefined
+      if (twin) return { filed: false, duplicate: { id: twin.id, title, status: twin.status }, workspace }
+    }
+    throw new ToolUseError(r.error)
+  }
   const row = db.prepare('SELECT * FROM objectives WHERE id = ?').get(r.objectiveId) as Objective
-  try {
-    broadcast({ type: 'objective_updated', payload: row })
-  } catch {
-    /* no WS server in tests */
+  if (!r.reused) {
+    try {
+      broadcast({ type: 'objective_updated', payload: row })
+    } catch {
+      /* no WS server in tests */
+    }
   }
-  return {
-    id: r.objectiveId,
-    status: r.status,
-    workspace,
-    ...under,
-    note: r.reused
-      ? 'This is the card you already filed for that request — not a new one.'
-      : r.start.allowed
-        ? 'Filed and cleared to start.'
-        : `Filed. It will NOT start by itself: ${r.start.reason}`,
-  }
+  const id = r.objectiveId
+  // (3) Filed is not started. Say which, so the bot never re-files to "start" it.
+  const note = r.reused
+    ? `This is card #${id}, which you already filed for this request. It is ${row.status}. NOTHING new was filed. Do not file it again; follow this card.`
+    : r.start.allowed
+      ? `Filed as card #${id} and cleared to start.`
+      : `Card #${id} EXISTS on the board. It will NOT start by itself: ${r.start.reason} Do not file it again. It starts when the person presses Start on the card or the queue picks it up; follow it with get_objective.`
+  return { filed: true, id, status: row.status, reused: r.reused, will_start: !r.reused && r.start.allowed, workspace, ...under, note }
 }
 
 export interface ChatCardStatus { id: number; title: string; status: string; summary: string | null; pr_url: string | null; updated_at: string; url: string }
@@ -1227,6 +1323,7 @@ async function runChatToolInner(ctxIn: ToolContext, fnName: string, args: Record
   if (FULL_ACCESS_FNS.has(fnName)) return runFullAccessTool(ctx, fnName, args)
   if (CARD_SANDBOX_FNS.has(fnName)) return runCardSandboxTool(ctx, fnName, args)
   if (GRANT_MERGE_FNS.has(fnName)) return runGrantMergeTool(ctx, fnName, args)
+  if (CHAT_DEPLOY_FNS.has(fnName)) return runChatDeployTool(ctx, fnName, args)
   if (FOLLOWUP_FNS.has(fnName)) return runFollowupTool(ctx, fnName, args)
   if (DEV_OPS_ALL_FNS.has(fnName)) return runDevOpsTool(ctx, fnName, args)
   if (CARD_BROWSER_FNS.has(fnName)) return runCardBrowserTool(ctx, fnName, args)
@@ -1617,8 +1714,23 @@ export function runTool(ctxIn: ToolContext, fnName: string, args: Record<string,
     }
     case 'create_objective': {
       const title = s(args, 'title', true)
-      const card = createCard(ctx, title, s(args, 'description'), args.workspace, args.parent_id)
-      return { result: { id: card.id, status: card.status, workspace: card.workspace, ...(card.parent_id ? { parent_id: card.parent_id } : {}), note: card.note ?? 'Card is on the board. Tell the person its number.' }, summary: `Created card #${card.id}: ${title}`, objective_id: card.id }
+      const card = createCard(ctx, title, s(args, 'description'), args.workspace, args.parent_id, {
+        idempotencyKey: args.idempotency_key,
+        fileAnyway: args.file_anyway === true,
+        doneWhen: args.done_when,
+        stopConditions: args.stop_conditions,
+      })
+      if (!card.filed) {
+        return {
+          result: possibleDuplicateResult(card.duplicate, { tool: 'create_objective', workspace: card.workspace, followUp: followUpHint(ctx, card.duplicate.id) }),
+          summary: `Possible duplicate of card #${card.duplicate.id}: nothing new was filed`,
+        }
+      }
+      return {
+        result: { filed: true, id: card.id, status: card.status, workspace: card.workspace, ...(card.parent_id ? { parent_id: card.parent_id } : {}), reused: card.reused, will_start: card.will_start, note: card.note },
+        summary: card.reused ? `Card #${card.id} was already filed for this request: ${title}` : `Created card #${card.id}: ${title}`,
+        objective_id: card.id,
+      }
     }
     case 'raise_decision': {
       const id = Number(args.card_id)

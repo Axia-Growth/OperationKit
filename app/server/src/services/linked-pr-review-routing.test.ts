@@ -152,7 +152,7 @@ describe('chat create_objective card (origin agent_chat, no criteria) that ends 
   })
 
   it('the SAME card without a PR keeps its old routing (human review, green lane)', () => {
-    const id = chatCreate('901381 chat card no PR')
+    const id = chatCreate('901381 plain card, nothing linked') // not a near-twin of the card above (obj 901498)
     getDb().prepare(`UPDATE objectives SET status = 'working', session_id = 'sess-nopr' WHERE id = ?`).run(id)
     const route = routeAtSessionEnd(id)
     expect(route.prLinked).toBe(false)

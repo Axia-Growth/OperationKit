@@ -59,6 +59,10 @@ import { chatCardModel, chatOwnerBotName, ToolUseError, type ToolContext, type T
 import { agentExists } from '../agent-registry.js'
 import { botForAgentSlug } from '../bots/bot-registry.js'
 import { publicCardUrl } from '../../lib/public-url.js'
+import { isDuplicateGuardEnabled, recordDedupe } from '../../lib/objective-dedupe.js'
+import { explicitKey, filingFingerprint, findFiledByKey, findPossibleDuplicate, NEAR_DUPLICATE_THRESHOLD, parseFilingKey, possibleDuplicateResult, recordFiledKeys, titleSimilarity } from './card-filing-guard.js'
+import { composeCardBrief, normalizeDoneWhen } from '../../../../shared/card-brief.js'
+import { CARD_BRIEF_TOOL_HINT, DONE_WHEN_ARG, STOP_CONDITIONS_ARG } from './card-brief-args.js'
 import { collectDeployStatus, type DeployStatus } from '../deploy-waiting.js'
 import { cardDecisionsForBot, cardOwnerAndGrants, cardThreadForBot, holdView } from './card-context.js'
 import { cardOwnerBot, ownerHasSlug } from '../bots/card-owner.js'
@@ -260,12 +264,16 @@ const FULL_ACCESS_SPECS: ToolSpec[] = [
   fn('bot_read', 'Full access: one bot\'s settings in full: instructions, model, tools, knowledge folders, High Agency.', obj({ slug: { type: 'string' }, workspace: WS_ARG }, ['slug'])),
   fn('bot_run_history', 'Full access: a bot\'s recent runs in this workspace: its High Agency wakes and the cards it worked.',
     obj({ slug: { type: 'string' }, workspace: WS_ARG, limit: { type: 'integer', minimum: 1, maximum: 50, description: 'Default 20' } }, ['slug'])),
-  fn('repo_session_start', 'Full access: get a repo checkout. Files a card on one of this workspace\'s projects (repos), owned by you, and starts it: the card\'s session runs in its own git worktree of that repo and reports back on the card. Use for code changes and anything that needs the files.',
+  fn('repo_session_start', 'Full access: get a repo checkout. Files a card on one of this workspace\'s projects (repos), owned by you, and starts it: the card\'s session runs in its own git worktree of that repo and reports back on the card. Use for code changes and anything that needs the files. Look at the board first so you do not start work that is already there. A retry never means file again: the same request returns the card already filed, and an open card with a near-identical title comes back as "possible duplicate #N" with nothing filed (comment on it or take it over instead). If the result says the card exists but did not start, start THAT card later with card_restart; never re-create it. ' + CARD_BRIEF_TOOL_HINT,
     obj({
       project: { type: 'string', description: 'The project (repo) name, as it appears on this workspace\'s cards.' },
       title: { type: 'string' },
-      description: { type: 'string', description: 'What to do in the repo, and what "done" looks like.' },
+      description: { type: 'string', description: 'What to do in the repo and why. Put what "done" looks like in done_when and the stop cases in stop_conditions, not here.' },
+      done_when: DONE_WHEN_ARG,
+      stop_conditions: STOP_CONDITIONS_ARG,
       workspace: WS_ARG,
+      idempotency_key: { type: 'string', description: 'One key per session you intend to start (any short unique string, no spaces). Reuse it word for word if you call again for the SAME work: you get the card already filed, never a second one.' },
+      file_anyway: { type: 'boolean', description: 'Only after a result said "possible duplicate #N" and you checked that card is different work: true files the new card anyway.' },
     }, ['project', 'title', 'description'])),
   // obj 901389. Named without "deploy" on purpose: no tool a bot is offered names
   // merge / deploy / approve / migrate (bot-full-access.test.ts pins that), and
@@ -915,7 +923,9 @@ export async function runFullAccessTool(ctx: FaCtx & { username: string }, fnNam
       const ws = requireWorkspace(ctx, fnName, args.workspace)
       const project = str(args, 'project', true)
       const title = str(args, 'title', true).slice(0, 200)
-      const description = str(args, 'description', true)
+      // obj 901496: same card brief as create_objective (one composer, one column).
+      const description = composeCardBrief(str(args, 'description', true), args.stop_conditions)
+      const doneWhen = normalizeDoneWhen(args.done_when)
       const known = (db
         .prepare("SELECT DISTINCT project FROM objectives WHERE workspace = ? AND project IS NOT NULL AND project != '' AND deleted_at IS NULL ORDER BY project")
         .all(ws) as { project: string }[]).map(r => r.project)
@@ -927,38 +937,96 @@ export async function runFullAccessTool(ctx: FaCtx & { username: string }, fnNam
       const poolError = botOwnershipRefusal(ctx.agent.slug, ws, project)
       if (poolError) refuse(ctx, fnName, ws, poolError, poolError)
       // A new session must not be pointed at a protected pull request either.
-      // Same check, same message as create_objective (protectedPrTextRefusal).
-      const textRefusal = protectedPrTextRefusal({ slug: ctx.agent.slug, workspace: ws, ability: fnName, title, description, actorUserId: ctx.userId })
+      // Same check, same message as create_objective (protectedPrTextRefusal);
+      // `doneWhen` is folded into the description text so it is covered too.
+      const textRefusal = protectedPrTextRefusal({ slug: ctx.agent.slug, workspace: ws, ability: fnName, title, description: `${description}\n${doneWhen}`, actorUserId: ctx.userId })
       if (textRefusal) throw new ToolUseError(textRefusal)
+      // One card per intended session (obj 901498). The bot's own key, else a
+      // fingerprint of the request; both are remembered, so a retry that drops
+      // or keeps the key lands on the same card.
+      let given: string | null
+      try {
+        given = parseFilingKey(args.idempotency_key)
+      } catch (e) {
+        throw new ToolUseError((e as Error).message)
+      }
+      const who = { userId: ctx.userId, agentSlug: ctx.agent.slug, tool: fnName, workspace: ws }
+      const fingerprint = filingFingerprint(project, title, description)
+      const byKey = given ? findFiledByKey(db, who, explicitKey(given)) : null
+      if (byKey && titleSimilarity(byKey.title, title) < NEAR_DUPLICATE_THRESHOLD) {
+        throw new ToolUseError(`idempotency_key "${given}" already belongs to card #${byKey.cardId} ("${byKey.title}"). Use a new key for a different session. Nothing was filed.`)
+      }
+      const filed = byKey ?? findFiledByKey(db, who, fingerprint)
+      if (filed) {
+        const running = filed.status !== 'queue'
+        return {
+          result: {
+            filed: true,
+            id: filed.cardId,
+            project,
+            workspace: ws,
+            status: filed.status,
+            reused: true,
+            started: running,
+            note: running
+              ? `This is card #${filed.cardId}, which you already filed for this request. It is ${filed.status}. NOTHING new was filed and nothing was started twice. Follow it with card_read.`
+              : `This is card #${filed.cardId}, which you already filed for this request. It EXISTS and has NOT started. NOTHING new was filed. Start it with card_restart ${filed.cardId}; never file it again.`,
+          },
+          summary: `Card #${filed.cardId} was already filed for this request`,
+          objective_id: filed.cardId,
+        }
+      }
+      // Search first: an open card with a near-identical title is handed back, not doubled.
+      if (args.file_anyway !== true && isDuplicateGuardEnabled(db)) {
+        const dup = findPossibleDuplicate(db, { title, workspace: ws })
+        if (dup) {
+          recordDedupe({ event: 'duplicate_refused', existingId: dup.id, title, workspace: ws, project, source: 'chat repo_session_start (possible duplicate)' })
+          return {
+            result: possibleDuplicateResult(dup, {
+              tool: fnName,
+              workspace: ws,
+              followUp: `read it with card_read ${dup.id}, add to it with card_comment, or take it with card_take_over / card_reown.`,
+            }),
+            summary: `Possible duplicate of card #${dup.id}: nothing new was filed`,
+          }
+        }
+      }
       const body = [
         description,
         '',
         `— Repo session started from chat by the bot "${me}" (Full access in ${ws}), acting for ${ctx.username}. It runs in its own git worktree and reports on this card.`,
       ].join('\n')
-      const info = db
-        .prepare(
-          `INSERT INTO objectives (title, description, agent_context, workspace, project, category, depth, assigned_user_id, created_by, type, status, origin, owner_bot, model)
-           VALUES (?, ?, ?, ?, ?, 'general', ?, ?, ?, 'task', ?, 'agent_chat', ?, ?)`,
-        )
-        .run(title, body, ctx.agent.slug, ws, project, depthForParent(db, null), ctx.userId, ctx.userId, getInitialStatus('task'), ownerBotName(ctx.agent), chatCardModel(ctx.agent))
-      const cardId = Number(info.lastInsertRowid)
-      db.prepare('INSERT INTO agent_chat_cards (objective_id, user_id, agent_slug) VALUES (?, ?, ?)').run(cardId, ctx.userId, ctx.agent.slug)
+      // The card and its key land together: no await between the lookups above and this.
+      const cardId = db.transaction((): number => {
+        const info = db
+          .prepare(
+            `INSERT INTO objectives (title, description, agent_context, workspace, project, category, depth, assigned_user_id, created_by, type, status, origin, owner_bot, model, completion_goal)
+             VALUES (?, ?, ?, ?, ?, 'general', ?, ?, ?, 'task', ?, 'agent_chat', ?, ?, ?)`,
+          )
+          .run(title, body, ctx.agent.slug, ws, project, depthForParent(db, null), ctx.userId, ctx.userId, getInitialStatus('task'), ownerBotName(ctx.agent), chatCardModel(ctx.agent), doneWhen || null)
+        const id = Number(info.lastInsertRowid)
+        db.prepare('INSERT INTO agent_chat_cards (objective_id, user_id, agent_slug) VALUES (?, ?, ?)').run(id, ctx.userId, ctx.agent.slug)
+        recordFiledKeys(db, who, [fingerprint, ...(given ? [explicitKey(given)] : [])], id, fingerprint)
+        return id
+      })()
       broadcastCard(cardId)
       const started = await host.startCard(cardId, `bot:${ctx.agent.slug}`)
       const row = broadcastCard(cardId)
-      used(ctx, fnName, ws, `started a repo session on ${project}: card #${cardId}`, cardId)
+      used(ctx, fnName, ws, `${started.ok ? 'started' : 'filed (not started)'} a repo session on ${project}: card #${cardId}`, cardId)
       return {
         result: {
+          filed: true,
           id: cardId,
           project,
           workspace: ws,
           status: row?.status ?? 'queue',
+          reused: false,
           started: started.ok,
           note: started.ok
             ? `Card #${cardId} is running in its own checkout of ${project}. Check it with card_read; steer it with card_comment.`
-            : `Card #${cardId} is filed but did not start: ${started.reason ?? 'unknown reason'}. It is yours; card_restart tries again.`,
+            : `Card #${cardId} EXISTS on the board and has NOT started: ${started.reason ?? 'unknown reason'}. It is yours. Do not file it again: start it later with card_restart ${cardId}.`,
         },
-        summary: `Started a repo session on ${project}: card #${cardId}`,
+        summary: started.ok ? `Started a repo session on ${project}: card #${cardId}` : `Filed card #${cardId} on ${project}; it has not started yet`,
         objective_id: cardId,
       }
     }

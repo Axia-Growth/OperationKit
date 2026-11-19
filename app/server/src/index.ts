@@ -114,6 +114,8 @@ import { recoverInterruptedTurns } from './services/agent-chat/long-turns.js'
 import { startFollowupDelivery } from './services/agent-chat/followup-wake.js'
 import { startDevOpsTicks } from './services/dev-ops/tick.js'
 import { startOpenLoopsDigestHook } from './services/agent-chat/open-loops-hook.js'
+import { startChatDeployReconciler } from './services/agent-chat/chat-deploy-report.js'
+
 import { startStandingMergeSweeper } from './services/standing-merge.js'
 import { startHighAgencySupervisor } from './services/high-agency-supervisor-scheduler.js'
 import { seedExistingBotsOnce } from './services/agent-chat/bot-workspaces.js'
@@ -563,6 +565,11 @@ if (scratchVerdict.scratch) {
   // loops ends, post its waiting-on-owner list into the bot's chat thread. Host
   // only. Off: settings.open_loops_bots = '0'.
   startOpenLoopsDigestHook()
+  // Deploy on your word (obj 901393): after a chat deploy restarts the server,
+  // settle it (live / rolled back / failed) and post the outcome into the same
+  // chat thread, plus a card line on each card it made live. Host only.
+  startChatDeployReconciler()
+
   // Standing merge (obj 901388): a bot's own passed PR is merged under the owner's
   // merge grant without being asked, ONLY when that grant has "Merge without asking
   // me each time" on. Same path and guards as a chat merge; 60s sweep + a kick from

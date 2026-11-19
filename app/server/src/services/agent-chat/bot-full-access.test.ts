@@ -385,6 +385,11 @@ const ABILITIES: { name: string; run: (c: ReturnType<typeof ctx>) => Promise<Loo
     expect(row).toEqual({ workspace: GROWTH, project: 'growth-site', agent_context: 'dev', owner_bot: 'Operation Kit Dev', origin: 'agent_chat' })
     expect(hostCalls).toEqual([{ kind: 'start', id: r.result.id }])
   } },
+  { name: 'start a repo session with a checkable done and stop conditions (obj 901496)', run: c => runChatTool(c, 'repo_session_start', { project: 'growth-site', title: 'Fix the header', description: 'Header overlaps the logo', done_when: 'One open PR, CI green.', stop_conditions: ['it needs a database migration', 'the fix is already merged'] }), check: r => {
+    const row = getDb().prepare('SELECT description, completion_goal FROM objectives WHERE id = ?').get(r.result.id) as Loose
+    expect(row.completion_goal).toBe('One open PR, CI green.')
+    expect(row.description).toContain('Header overlaps the logo\n\n## Stop and report if\n- it needs a database migration\n- the fix is already merged\n\n— Repo session started from chat')
+  } },
   { name: 'file and own a card past the workspace agent pool', run: c => runChatTool(c, 'create_objective', { title: 'Audit the funnel', description: 'find the leak' }), check: r => {
     const row = getDb().prepare('SELECT workspace, agent_context, owner_bot FROM objectives WHERE id = ?').get(r.result.id) as Loose
     expect(row).toEqual({ workspace: GROWTH, agent_context: 'dev', owner_bot: 'Operation Kit Dev' })

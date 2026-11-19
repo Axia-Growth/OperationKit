@@ -43,6 +43,7 @@ import { highAgencyWakeForCard } from '../../lib/high-agency-wake-scope.js'
 import type { ChatAgent } from './agent-defs.js'
 import { notifyBotMessage } from './sidebar-live.js'
 import { agentHasTool, kbWorkspacesForChat, resolveKnowledgePath } from './tools.js'
+import { closedLoopsGoToJournal } from './bot-memory.js'
 
 export const OPEN_LOOPS_SETTING = 'open_loops_bots'
 export const OPEN_LOOPS_DEFAULT_BOTS: readonly string[] = ['operation-kit-dev']
@@ -190,7 +191,7 @@ export function openLoopsPromptBlock(ctx: OpenLoopsChatContext): string {
         ? `- When this turn OPENS a loop (you filed a card, raised a decision, promised something such as "I'll report back", or something now waits on ${ctx.username}) or CLOSES or moves one, update the file in the SAME turn: write_doc the full new content to ${rel}, starting from ${truncated ? 'the WHOLE file (the copy below plus every later page from read_file; never write back the partial copy below, it would delete the end of the list)' : 'the copy below'}, then say in one line what you changed. Do not leave it for later.`
         : `- You cannot write files in this chat. When this turn opens, moves or closes a loop, say so in one line; your next High Agency wake reconciles the file against the board.`,
       `- One numbered line per loop: ${LOOP_FORMAT}`,
-      `- Sections are by who the loop waits on. The owner's section ("## Waiting on <owner's name>", keep the heading the file already uses) is always the FIRST section, most important first. A closed loop moves to "## Closed" with the date and the result in one line. Keep the "Last reconciled:" line current.`,
+      `- Sections are by who the loop waits on. The owner's section ("## Waiting on <owner's name>", keep the heading the file already uses) is always the FIRST section, most important first. ${closedLoopsGoToJournal(ctx.agent.slug) ? `A closed loop is taken OUT of this file and written as one line in ${OPEN_LOOPS_JOURNAL} in the same folder (the date and the result); this file holds only what is still open.` : 'A closed loop moves to "## Closed" with the date and the result in one line.'} Keep the "Last reconciled:" line current.`,
       `- A loop is closed only when ${ctx.username} can see the result, its card is done or cancelled, or they say drop it. Never drop a loop silently, never move or rename the file, and never write a password or key into it.`,
       frameUntrusted({
         source: 'knowledge-base',
@@ -243,7 +244,7 @@ export function openLoopsBriefSection(
     `   KB=$(curl -s http://localhost:3002/api/docs/tree ${H} | node -pe 'JSON.parse(require("fs").readFileSync(0,"utf8")).root')`,
     `   curl -sG http://localhost:3002/api/docs/file ${H} --data-urlencode "path=$KB/${dir}/${OPEN_LOOPS_FILE}" | node -pe 'JSON.parse(require("fs").readFileSync(0,"utf8")).content' > /tmp/open-loops.md`,
     '   ```',
-    `   - **Each loop with a card number:** read the card (\`curl -s http://localhost:3002/api/internal/objectives/<id> ${H}\`). Status \`done\` or \`cancelled\` → the loop is closed: move it to "## Closed" with today's date and the result in one line. A 403 means the card is not yours or sits in another workspace: leave that loop as it is.`,
+    `   - **Each loop with a card number:** read the card (\`curl -s http://localhost:3002/api/internal/objectives/<id> ${H}\`). Status \`done\` or \`cancelled\` → the loop is closed: ${closedLoopsGoToJournal(agent.slug) ? `take it out of the file and write it as one line in \`${OPEN_LOOPS_JOURNAL}\` (today's date, the card number, the result)` : `move it to "## Closed" with today's date and the result in one line`}. A 403 means the card is not yours or sits in another workspace: leave that loop as it is.`,
     `   - **No movement for more than ${STALE_AFTER_DAYS} days:** a loop whose card was last updated (\`updated_at\`) more than ${STALE_AFTER_DAYS} days ago, or a loop with no card that was opened or last changed more than ${STALE_AFTER_DAYS} days ago, gets \`STALE since YYYY-MM-DD\` at the start of its status. Take the flag off when it moves again.`,
     '   - **Missing cards:** every open card you own (the list from step 1) that is not in the file is added as a new loop.',
     `   - **Format:** one numbered line per loop: \`${LOOP_FORMAT}\` Sections are by who it waits on; the owner's section ("## Waiting on <owner's name>", keep the heading the file already uses) is always the FIRST section, most important first. Update the "Last reconciled:" line.`,

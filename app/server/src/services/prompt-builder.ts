@@ -46,6 +46,7 @@ import { resolveBrandName } from './branding-config.js'
 import { resolveOwnerName } from '../lib/install-defaults.js'
 import { buildDecisionRequestBlock, DECISION_EXAMPLE } from './decision-prompt.js'
 import { takePendingAnswersBlock } from './decision-delivery.js'
+import { buildStopConditionsBlock } from './card-brief-prompt.js'
 
 export {
   COMPACTION_SESSION_SENTINEL,
@@ -399,6 +400,11 @@ export function buildPrompt(objective: Objective): string {
       'Do NOT declare this objective done until every part of that request is delivered and verified. If you cannot deliver part of it, explain why in your final response.',
     )
   }
+
+  // obj 901496 — stop conditions the card was filed with. Its own section,
+  // right after the definition of done, so a worker cannot miss it in the
+  // middle of a long description. No section on a card with none.
+  parts.push(...buildStopConditionsBlock(objective.description, owner))
 
   // Acceptance criteria — the concrete, testable rubric a fresh-context adversarial
   // reviewer will grade this worker against before it can complete (QW1 / audit W4).

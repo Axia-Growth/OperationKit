@@ -29,6 +29,7 @@ import { agentHasTool, botWorkspacesForPerson, kbWorkspacesForChat, runChatTool,
 import { ownedCardsPromptBlock } from './card-context.js'
 import { fullAccessPromptLine, withFullAccess } from './full-access-tools.js'
 import { openLoopsPromptBlock } from './open-loops.js'
+import { botMemoryPromptBlock } from './bot-memory.js'
 import { dropLaneFollowups, FOLLOWUP_PROMPT_LINE, FOLLOWUP_WAKE_TOOL_NAME, followupToolSpecs } from './followups.js'
 import { mcpToolSetFor, runMcpTool, type McpToolSet } from './mcp-tools.js'
 import { botReplyForModel, earlierActionForModel, toolResultForModel } from './tool-result-framing.js'
@@ -113,6 +114,14 @@ export interface ChatMessageRow {
     /** obj 901328: the card wake this row belongs to ("Card wakes" thread). */
     card_wake_id?: number
     need?: string
+    /**
+     * obj 901393: SERVER-written from how the POST authenticated — true only when
+     * an admin typed this message in the browser (isOwnerBrowserSession). Never
+     * taken from the client. The chat deploy tool requires it on the owner's ask.
+     */
+    owner_browser?: boolean
+    /** obj 901393: the chat deploy this row reports on. */
+    chat_deploy_id?: number
     /** obj 901392: the follow-up this row scheduled, cancelled or was fired by (kind 'followup_fired'). */
     followup_id?: number
     /** obj 901394: a card wake's answer posted in the main chat (`kind: card_wake_reply`): every card it covered, and the thread the turn ran in. */
@@ -359,7 +368,7 @@ export function replyThreadContextForModel(parent: ReplyParentRow, workspace?: s
   ].join('\n')
 }
 
-export function systemPromptFor(agent: ChatAgent, ctx: { username: string; now: Date; connectors: string[]; workspace?: string; userId?: number; fullAccess?: string; openLoops?: string; followups?: string }): string {
+export function systemPromptFor(agent: ChatAgent, ctx: { username: string; now: Date; connectors: string[]; workspace?: string; userId?: number; fullAccess?: string; openLoops?: string; botMemory?: string; followups?: string }): string {
   // obj 900797: person ∩ bot list, so the prompt never names a workspace the person cannot see.
   const allow = ctx.workspace === undefined ? undefined : ctx.userId === undefined ? null : botWorkspacesForPerson(ctx.userId, agent.slug)
   const parts = [
@@ -403,6 +412,8 @@ export function systemPromptFor(agent: ChatAgent, ctx: { username: string; now: 
     '- Never ask for or repeat passwords or API keys.',
     ctx.connectors.length ? `- Connected: ${ctx.connectors.join('; ')}.` : '',
     '- Keep answers short and use simple markdown (bullets, bold).',
+    // obj 901500: the bot's profile (lasting rules) and journal (dated events), only for a bot with memory on.
+    ctx.botMemory ?? '',
     // obj 901382: the bot's open-loops list and the rules for keeping it (only for a bot that tracks loops).
     ctx.openLoops ?? '',
   ]
@@ -637,6 +648,12 @@ export interface TurnInput {
    */
   clientMsgId?: string
   /**
+   * obj 901393: the route sets this when the request is the owner signed in in
+   * the browser (admin + session cookie, no agent key). Stored on the user row as
+   * `meta.owner_browser`; nothing else may set it.
+   */
+  ownerBrowser?: boolean
+  /**
    * obj 901491: how long submitMessage waits for the turn before answering
    * "working on it" and leaving it to finish as a background job. Omitted =
    * the install setting (20 s). Tests pass a few milliseconds.
@@ -660,6 +677,14 @@ export interface TurnInput {
     brief: (ctx: ToolContext) => string
     rules: string
   }
+}
+
+/** Stored meta for a person's message: the client id and the server's owner-browser stamp. */
+function userRowMeta(clientMsgId: string | undefined, ownerBrowser: boolean | undefined, extra: Record<string, unknown> = {}): ChatMessageRow['meta'] {
+  const meta: Record<string, unknown> = { ...extra }
+  if (clientMsgId) meta.client_msg_id = clientMsgId
+  if (ownerBrowser === true) meta.owner_browser = true
+  return Object.keys(meta).length ? (meta as ChatMessageRow['meta']) : null
 }
 
 /** What a `client_msg_id` may look like: short and plain, so it is safe to store and to match on. */
@@ -755,7 +780,7 @@ function deliverQueued(userId: number, slug: string, lane: ChatLane): ChatMessag
         )
         // obj 900977: the client id travels with the message, so a late repeat
         // of the same POST still finds it and the client still recognises it.
-        .run(userId, slug, 'user', q.content, q.meta?.client_msg_id ? JSON.stringify({ client_msg_id: q.meta.client_msg_id }) : null, laneThreadId(lane), q.created_at)
+        .run(userId, slug, 'user', q.content, (() => { const m = userRowMeta(q.meta?.client_msg_id, q.meta?.owner_browser); return m ? JSON.stringify(m) : null })(), laneThreadId(lane), q.created_at)
       const id = Number(info.lastInsertRowid)
       db.prepare('UPDATE agent_chat_attachments SET message_id = ? WHERE message_id = ?').run(id, q.id)
       db.prepare('DELETE FROM agent_chat_messages WHERE id = ?').run(q.id)
@@ -852,7 +877,7 @@ export async function submitMessage(input: TurnInput): Promise<SubmitResult> {
   const row = addMessage(
     input.userId,
     input.agent.slug,
-    { role: 'user', content: input.text, provider: null, model: null, tool_name: null, meta: { queued: true, ...(input.clientMsgId ? { client_msg_id: input.clientMsgId } : {}) } },
+    { role: 'user', content: input.text, provider: null, model: null, tool_name: null, meta: userRowMeta(input.clientMsgId, input.ownerBrowser, { queued: true }) },
     input.images ?? [],
     lane,
   )
@@ -984,7 +1009,7 @@ export async function runTurn(input: TurnInput): Promise<{ messages: ChatMessage
       created.push(triggerRow)
     } else if (!input.drainOnly) {
       userRow = add(
-        { role: 'user', content: input.text, provider: null, model: null, tool_name: null, meta: input.clientMsgId ? { client_msg_id: input.clientMsgId } : null },
+        { role: 'user', content: input.text, provider: null, model: null, tool_name: null, meta: userRowMeta(input.clientMsgId, input.ownerBrowser) },
         images,
       )
       created.push(userRow)
@@ -1004,7 +1029,7 @@ export async function runTurn(input: TurnInput): Promise<{ messages: ChatMessage
     // switch (isDemoOn) only lists the demo assistant now.
     const chatWorkspace = workspaceFor(userId, agent.slug)
     const connectors = resolveConnectors({ agentSlug: agent.slug, userId, workspace: chatWorkspace, now })
-    const ctx: ToolContext = { userId, username: input.username, workspace: chatWorkspace, agent, kbRoot: knowledgeRoot(env), connectors, now, web: { env, signal, ...input.webDeps }, lane, browserSession: !!input.browserSession && !input.drainOnly }
+    const ctx: ToolContext = { userId, username: input.username, workspace: chatWorkspace, agent, kbRoot: knowledgeRoot(env), connectors, now, web: { env, signal, ...input.webDeps }, lane, turnMessageIds: incoming.map(r => r.id), browserSession: !!input.browserSession && !input.drainOnly }
     // obj 901392: carries only the chain length. No tool reads it to widen anything.
     if (input.followup) ctx.followup = { id: input.followup.id, hop: input.followup.hop, personSpoke: delivered.length > 0 }
 
@@ -1024,6 +1049,7 @@ export async function runTurn(input: TurnInput): Promise<{ messages: ChatMessage
       followups: followupToolSpecs(ctx).length ? FOLLOWUP_PROMPT_LINE : '',
       // obj 901382: read with the same gates as the bot's own read_file, on every turn.
       openLoops: openLoopsPromptBlock({ agent: resolvedAgent, kbRoot: ctx.kbRoot, userId, workspace: ctx.workspace, username: input.username }),
+      botMemory: botMemoryPromptBlock({ agent: resolvedAgent, kbRoot: ctx.kbRoot, userId, workspace: ctx.workspace, username: input.username }),
       username: input.username,
       now: now(),
       connectors: [connectors.mail?.label, connectors.calendar?.label].filter((x): x is string => !!x),

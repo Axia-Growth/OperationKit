@@ -49,6 +49,7 @@ import { initFlowSchema, enableFlowsOnce } from './schema/flow.js'
 import { initRoutineRunsSchema } from './schema/routine-runs.js'
 import { initKbEmbeddingsSchema } from './schema/kb-embeddings.js'
 import { initDelegationGrantsSchema } from './schema/delegation-grants.js'
+import { initChatDeploysSchema } from './schema/chat-deploys.js'
 import { initBotAttentionSchema } from './schema/bot-attention.js'
 import { initDecisionSchema } from './schema/decisions.js'
 import { initBoardTriageSchema } from './schema/board-triage.js'
@@ -1161,6 +1162,8 @@ export function initDb(): Database.Database {
   // Delegated approvals (obj 900839): owner-issued bot grants + their audit log.
   // Additive tables only; no rows = the approval gate is unchanged (default deny).
   initDelegationGrantsSchema(db)
+  // obj 901393: audit of the chat deploy tool ("deploy on your word").
+  initChatDeploysSchema(db)
   // Needs You bulk triage audit (obj 900869): one batch row + one row per card.
   initBoardTriageSchema(db)
   // Bot visibility (obj 900947): one row per (card, reason) a bot told a person
