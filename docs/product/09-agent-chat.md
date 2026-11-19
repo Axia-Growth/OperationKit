@@ -116,6 +116,15 @@ With no model set anywhere, each provider has a built-in default: `claude-sonnet
 
 Optional default models: `AGENT_CHAT_CLAUDE_MODEL`, `AGENT_CHAT_OPENAI_MODEL`, `AGENT_CHAT_XAI_MODEL`, … An administrator can pin the install default with `PUT /api/agent-chat/settings {"default_provider": "claude"}` (empty string = automatic).
 
+### Step limit, queued messages and repeated sends (obj 901488)
+
+- **Step limit.** One reply may take up to **8 steps**. A step is one call to the model; the model can ask for several tools in one step. To change it, set `AGENT_CHAT_MAX_STEPS` (1 to 40) on the server, or the `agent_chat_max_steps` setting, which wins. A reply that uses every step does not fail: one last call with no tools writes what was done, what was not, and the next step. The chat shows it as a normal answer with the note "Stopped at the step limit" and a **Continue** button, which resumes from there.
+- **Messages sent while the bot works** are stored at once and shown as **Queued**. They run as the next turn, in order, never in parallel with the running one. **Remove** takes a queued message back before the bot sees it.
+- **Stop** stops the running reply. Messages that were queued are kept but shown as **Waiting for you**; they go to the bot only when the person presses **Send it now**. A new message typed after a Stop runs by itself.
+- **Repeated sends never run twice, and the chat never asks about it.** Every send carries an id; a browser retry with the same id gets the stored message back. The same text sent again with a new id is treated as the same message when nothing else was sent in between and the first one is still queued, still running, or was answered less than 2 minutes ago (`AGENT_CHAT_DUPLICATE_WINDOW_MS`, `0` = off). After an answer only a message of 20 characters or more is matched, so a short reply such as "yes" to the bot's next question always runs. The chat shows "Already sent, still working." or "Already answered above." The same words after a failed or stopped reply, after another message, or after the window run as a new message.
+- **A request that times out on the way back** (for example a Cloudflare 524 on a long reply) is not "not sent": the page asks the server whether it has the message and, if so, keeps the box empty and follows the running reply.
+
+
 ## A bot's settings (model and tools)
 
 Open a bot and press **Settings** in its header. Everyone can see what the bot runs on and which tools it has; only an admin signed in to the app can change them (an API key never can, so a bot cannot give itself tools).

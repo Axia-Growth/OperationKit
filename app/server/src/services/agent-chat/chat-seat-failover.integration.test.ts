@@ -224,7 +224,8 @@ describe('agent chat on the seat pool while card sessions run (obj 900624)', () 
     expect(seatRouter.listSeatRecords().reduce((n, s) => n + s.activeSessions.length, 0)).toBe(CARD_SESSIONS.length)
 
     // Three bots, two rounds, all in flight at the same time.
-    const turns = await Promise.all(BOTS.flatMap(slug => [say(slug, 'status?'), say(slug, 'status?').catch(e => e)]))
+    // (obj 901488: the same text twice in a row is ONE message, so the second differs.)
+    const turns = await Promise.all(BOTS.flatMap(slug => [say(slug, 'status?'), say(slug, 'status now?').catch(e => e)]))
     const ok = turns.filter(t => t.status === 200)
     // A second message to the same bot while the first is running
     // is queued (202, obj 900949) — but nothing may come back "Not logged in".

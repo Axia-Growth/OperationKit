@@ -51,12 +51,55 @@ import { deleteThread, laneKey, lanePredicate, laneThreadId, MAIN_LANE, replyPar
 
 /**
  * The step cap of a loop that names no budget of its own: bot-to-bot wakes,
- * card wakes, and every chat turn while long turns are switched off. A chat
- * turn normally runs under the bot's own budget (obj 901491, long-turns.ts:
- * 60 steps / 30 minutes unless an admin set another).
+ * card wakes, and every chat turn while long turns are switched off. A "step"
+ * is ONE call to the model; the model may ask for several tools in one step,
+ * so a turn can run more tool calls than this number. A chat turn normally
+ * runs under the bot's own budget (obj 901491, long-turns.ts: 60 steps / 30
+ * minutes unless an admin set another).
  */
 export const MAX_STEPS = 8
+/** The most an install may raise the step limit to (obj 901488). */
+export const MAX_STEPS_CEILING = 40
 const HISTORY_LIMIT = 40
+
+/**
+ * obj 901488: the step limit in force. 8 unless the install says otherwise:
+ * the `agent_chat_max_steps` setting wins, then the AGENT_CHAT_MAX_STEPS env
+ * var. Anything that is not a whole number from 1 to MAX_STEPS_CEILING is
+ * ignored, so a typo can never switch the limit off.
+ */
+export function maxSteps(env: NodeJS.ProcessEnv = process.env): number {
+  let fromSetting: string | null = null
+  try { fromSetting = setting('agent_chat_max_steps') } catch { /* no settings table yet */ }
+  for (const raw of [fromSetting, env.AGENT_CHAT_MAX_STEPS]) {
+    const n = Number(raw)
+    if (raw !== null && raw !== undefined && String(raw).trim() !== '' && Number.isInteger(n) && n >= 1 && n <= MAX_STEPS_CEILING) return n
+  }
+  return MAX_STEPS
+}
+
+/**
+ * obj 901488: how long after an answer the SAME text, sent again with nothing
+ * in between, is treated as the same message rather than a new one. 0 turns
+ * the check off. AGENT_CHAT_DUPLICATE_WINDOW_MS overrides the 2 minutes.
+ */
+export const DUPLICATE_WINDOW_MS = 120_000
+export function duplicateWindowMs(env: NodeJS.ProcessEnv = process.env): number {
+  const raw = env.AGENT_CHAT_DUPLICATE_WINDOW_MS
+  const n = Number(raw)
+  return raw !== undefined && raw.trim() !== '' && Number.isFinite(n) && n >= 0 ? n : DUPLICATE_WINDOW_MS
+}
+
+/**
+ * obj 901488: after an ANSWER, only a message at least this long is matched by
+ * text. A short reply ("yes", "go ahead", "do it") is often the honest answer
+ * to the bot's next question, and must run. While the first one is still queued
+ * or running there is no such limit: nothing has been answered yet.
+ */
+export const DUPLICATE_MIN_CHARS_AFTER_ANSWER = 20
+
+/** What the person's row says when they press Continue on a step-limit answer (obj 901488). */
+export const CONTINUE_TEXT = 'Continue from where you stopped.'
 
 export type ChatRole = 'user' | 'assistant' | 'tool' | 'error'
 
@@ -130,6 +173,14 @@ export interface ChatMessageRow {
     /** obj 901395 (kind 'seat_moved'): seat labels only — the account that answered and the ones left behind. */
     seat_to?: string
     seat_from?: string[]
+    /** obj 901488 (kind 'step_limit', an assistant row): the turn used every step; this is its written summary. `steps` = the limit it hit. */
+    steps?: number
+    /** obj 901488 (kind 'step_limit'): 'model' = the model wrote it; 'list' = the model could not, so it is the plain list of tool lines. */
+    summary_by?: 'model' | 'list'
+    /** obj 901488 (kind 'continue', a user row): the step-limit answer this Continue press resumes. One Continue per answer. */
+    continue_from?: number
+    /** obj 901488: a queued message that was waiting when the person pressed Stop. It is not delivered until they confirm. */
+    held?: boolean
   } | null
   /** Images attached to this message (obj 900157). Metadata only — never bytes. */
   images: StoredImage[]
@@ -426,7 +477,8 @@ export function systemPromptFor(agent: ChatAgent, ctx: { username: string; now: 
 export type LoopRecord = Omit<ChatMessageRow, 'id' | 'created_at' | 'images'>
 
 export type LoopResult =
-  | { kind: 'answered'; text: string; step: number }
+  /** `stepLimit` (obj 901488): the answer is the summary written when the turn ran out of steps. */
+  | { kind: 'answered'; text: string; step: number; stepLimit?: boolean }
   | { kind: 'failed'; message: string; step: number }
   /** No AI seat could take the call. NOTHING was recorded for it — the caller decides. */
   | { kind: 'unavailable'; error: ProviderUnavailableError; step: number }
@@ -457,7 +509,7 @@ export async function runModelLoop(p: {
   signal?: AbortSignal
   /** obj 901028: a tool's attach_image call hands its image(s) through with the row they belong to. */
   record: (m: LoopRecord, images?: IncomingImage[]) => void
-  /** obj 901491: model rounds this loop may take. Omitted = MAX_STEPS (8). */
+  /** obj 901488 / 901491: the step limit for this run. Omitted = the install's limit (maxSteps()). */
   maxSteps?: number
   /** obj 901491: stop at this time (ms, on `nowMs`'s clock). Omitted = no time budget. */
   deadlineAt?: number
@@ -468,7 +520,7 @@ export async function runModelLoop(p: {
   onStep?: (step: number) => void
 }): Promise<LoopResult> {
   const { provider, convo, ctx, mcpTools, record } = p
-  const maxSteps = p.maxSteps ?? MAX_STEPS
+  const limit = p.maxSteps ?? maxSteps()
   const nowMs = p.nowMs ?? Date.now
   const outOfTime = () => p.deadlineAt !== undefined && nowMs() >= p.deadlineAt
   const timeLimit = (step: number): LoopResult => {
@@ -477,7 +529,10 @@ export async function runModelLoop(p: {
     record({ role: 'error', content: message, provider: provider.id, model: provider.model, tool_name: null, meta: null })
     return { kind: 'failed', message, step }
   }
-  for (let step = 0; step < maxSteps; step++) {
+  // What this run did, for the summary written if it runs out of steps (obj 901488).
+  const before = convo.length
+  const done: { name: string; summary: string; ok: boolean }[] = []
+  for (let step = 0; step < limit; step++) {
     if (p.signal?.aborted) return { kind: 'stopped', step }
     if (outOfTime()) return timeLimit(step)
     p.onStep?.(step)
@@ -558,9 +613,11 @@ export async function runModelLoop(p: {
             ...(r.followup_id ? { followup_id: r.followup_id } : {}),
           },
         }, r.images)
+        done.push({ name: c.function.name, summary: r.summary, ok: true })
       } catch (err) {
         const msg = err instanceof ToolUseError ? err.message : `Tool failed: ${err instanceof Error ? err.message : String(err)}`
         resultForModel = { error: msg }
+        done.push({ name: c.function.name, summary: msg, ok: false })
         record({ role: 'tool', content: msg, provider: provider.id, model: provider.model, tool_name: c.function.name, meta: { ok: false } })
       }
       // obj 900910: third-party results (web, email, MCP, other bots, card text) reach
@@ -573,10 +630,96 @@ export async function runModelLoop(p: {
       })
     }
   }
-  if (p.reportLimit) return { kind: 'limit', reason: 'steps', step: maxSteps }
-  const message = `Stopped after ${maxSteps} steps without a final answer. Try a more specific request.`
-  record({ role: 'error', content: message, provider: provider.id, model: provider.model, tool_name: null, meta: null })
-  return { kind: 'failed', message, step: maxSteps }
+  // obj 901491: the caller (long-turns.ts) posts its own report when a budget
+  // runs out; nothing is recorded here, and the step-limit summary below is skipped.
+  if (p.reportLimit) return { kind: 'limit', reason: 'steps', step: limit }
+  // obj 901488: the step limit never ends silent. The turn did real work, so
+  // one last model call WITH NO TOOLS writes what was done, what was not, and
+  // the next step. It is stored as an ordinary answer marked `step_limit`; the
+  // UI adds a small note and a Continue button.
+  if (p.signal?.aborted) return { kind: 'stopped', step: limit }
+  let text = ''
+  let by: 'model' | 'list' = 'model'
+  try {
+    const out = await provider.complete({
+      system: p.system,
+      messages: [...convo.slice(0, before), { role: 'user', content: stepLimitPrompt(convo.slice(before), limit) }],
+      tools: [],
+      agent: p.agent,
+      signal: p.signal,
+    })
+    text = (out.content ?? '').trim()
+  } catch {
+    // A stop is still a stop. Any other failure falls through to the plain list
+    // below: the work already happened and the person must be told about it.
+    if (p.signal?.aborted) return { kind: 'stopped', step: limit }
+  }
+  if (!text) {
+    by = 'list'
+    text = stepLimitList(done)
+  }
+  record({
+    role: 'assistant',
+    content: text,
+    provider: provider.id,
+    model: provider.model,
+    tool_name: null,
+    meta: { provider_label: provider.label, kind: 'step_limit', steps: limit, summary_by: by },
+  })
+  return { kind: 'answered', text, step: limit, stepLimit: true }
+}
+
+/** Longest tool result quoted back to the model for the step-limit summary, and the cap on all of them together. */
+const STEP_LIMIT_RESULT_CHARS = 1500
+const STEP_LIMIT_DIGEST_CHARS = 24_000
+
+/**
+ * obj 901488: the one user-role message that asks for the step-limit summary.
+ * The turn's tool calls are replayed as PLAIN TEXT, not as tool_call/tool
+ * messages: the call carries no tools, and some providers refuse a transcript
+ * with tool blocks when no tools are defined. Tool results keep the untrusted
+ * frame toolResultForModel already put around them.
+ */
+export function stepLimitPrompt(turn: ChatMessage[], limit: number): string {
+  const lines: string[] = []
+  for (const m of turn) {
+    if (m.role === 'assistant') {
+      if (typeof m.content === 'string' && m.content.trim()) lines.push(`You said: ${m.content.trim().slice(0, STEP_LIMIT_RESULT_CHARS)}`)
+      for (const c of m.tool_calls ?? []) lines.push(`You called ${c.function.name} with ${(c.function.arguments || '{}').slice(0, 500)}`)
+    } else if (m.role === 'tool') {
+      const body = typeof m.content === 'string' ? m.content : JSON.stringify(m.content)
+      lines.push(`Result of ${m.name ?? 'the tool'}: ${body.length > STEP_LIMIT_RESULT_CHARS ? `${body.slice(0, STEP_LIMIT_RESULT_CHARS)} […cut]` : body}`)
+    }
+  }
+  let digest = lines.join('\n')
+  if (digest.length > STEP_LIMIT_DIGEST_CHARS) digest = `[…earlier steps cut]\n${digest.slice(-STEP_LIMIT_DIGEST_CHARS)}`
+  return [
+    `[Platform note, not from the person] You have used all ${limit} steps allowed for one reply, so you cannot call any more tools in this reply.`,
+    'Here is what you did in this reply, in order:',
+    '<<<',
+    digest || '(nothing was recorded)',
+    '>>>',
+    'Write your final answer to the person now, short and in plain language, in three parts:',
+    '1. **Done** – what you actually finished, from the results above only (card numbers, file names, PR numbers).',
+    '2. **Not done** – what they asked for that is still open.',
+    '3. **Next step** – the one thing you would do next. They can press Continue and you will pick up from here.',
+    'Do not say you did anything that is not in the results above. Do not ask them to repeat their request.',
+  ].join('\n')
+}
+
+/** The summary when the model could not write one: the turn's own tool lines, as they are shown in the chat. */
+export function stepLimitList(done: { name: string; summary: string; ok: boolean }[]): string {
+  const shown = done.slice(-20)
+  return [
+    'I ran out of steps before I could write a full answer. Here is what I did:',
+    '',
+    ...(shown.length
+      ? shown.map(d => `- ${d.ok ? '' : '(failed) '}**${d.name}**: ${d.summary.replace(/\s+/g, ' ').slice(0, 300)}`)
+      : ['- Nothing finished yet.']),
+    ...(done.length > shown.length ? [`- …and ${done.length - shown.length} earlier step${done.length - shown.length === 1 ? '' : 's'}, shown above.`] : []),
+    '',
+    'I did not get to check what is still left. Press **Continue** and I will pick up from here.',
+  ].join('\n')
 }
 
 // ── a turn ──
@@ -648,6 +791,18 @@ export interface TurnInput {
    */
   clientMsgId?: string
   /**
+   * obj 901488: the person pressed Continue on this step-limit answer (its
+   * message id). The turn's text is CONTINUE_TEXT. One Continue per answer: a
+   * second press for the same answer is a duplicate and runs nothing.
+   */
+  continueFrom?: number
+  /**
+   * obj 901488: the person was asked "This already went through. Send again?"
+   * and said yes. The same-text check is skipped for this one send; the
+   * client id check still applies (a retry of THIS send is still one message).
+   */
+  sendAgain?: boolean
+  /**
    * obj 901393: the route sets this when the request is the owner signed in in
    * the browser (admin + session cookie, no agent key). Stored on the user row as
    * `meta.owner_browser`; nothing else may set it.
@@ -679,14 +834,6 @@ export interface TurnInput {
   }
 }
 
-/** Stored meta for a person's message: the client id and the server's owner-browser stamp. */
-function userRowMeta(clientMsgId: string | undefined, ownerBrowser: boolean | undefined, extra: Record<string, unknown> = {}): ChatMessageRow['meta'] {
-  const meta: Record<string, unknown> = { ...extra }
-  if (clientMsgId) meta.client_msg_id = clientMsgId
-  if (ownerBrowser === true) meta.owner_browser = true
-  return Object.keys(meta).length ? (meta as ChatMessageRow['meta']) : null
-}
-
 /** What a `client_msg_id` may look like: short and plain, so it is safe to store and to match on. */
 export const CLIENT_MSG_ID_RE = /^[A-Za-z0-9_-]{8,64}$/
 
@@ -708,13 +855,17 @@ export function findByClientMsgId(userId: number, slug: string, lane: ChatLane, 
 /** What the composer needs to know about one lane: is a turn running, and how many messages wait. */
 export interface LaneTurnState {
   running: boolean
+  /** Every message waiting in the lane, held ones included. */
   queued: number
+  /** obj 901488: how many of those are held after a Stop, waiting for the person to confirm. */
+  held: number
 }
 
 /** obj 901491: the running turn's job — how far it is and the budget it runs under. */
 export interface LaneTurnJob { id: number; background: boolean; steps: number; tool_calls: number; max_steps: number; max_minutes: number; started_at: string }
 
-function queuedRows(userId: number, slug: string, lane: ChatLane): ChatMessageRow[] {
+/** `ready` = only the ones that may be delivered now, i.e. not held after a Stop (obj 901488). */
+function queuedRows(userId: number, slug: string, lane: ChatLane, which: 'all' | 'ready' = 'all'): ChatMessageRow[] {
   const { sql, params } = lanePredicate(lane)
   const rows = getDb()
     .prepare(
@@ -723,18 +874,20 @@ function queuedRows(userId: number, slug: string, lane: ChatLane): ChatMessageRo
         ORDER BY id`,
     )
     .all(userId, slug, ...params) as Record<string, unknown>[]
-  return withImages(rows.map(mapRow))
+  const all = rows.map(mapRow)
+  return withImages(which === 'ready' ? all.filter(r => !r.meta?.held) : all)
 }
 
 export function laneTurnState(userId: number, slug: string, lane: ChatLane = MAIN_LANE): LaneTurnState {
   const { sql, params } = lanePredicate(lane)
   const r = getDb()
     .prepare(
-      `SELECT COUNT(*) AS n FROM agent_chat_messages
+      `SELECT COUNT(*) AS n, COALESCE(SUM(CASE WHEN json_extract(meta, '$.held') = 1 THEN 1 ELSE 0 END), 0) AS held
+         FROM agent_chat_messages
         WHERE user_id = ? AND agent_slug = ? AND ${sql} AND role = 'user' AND json_extract(meta, '$.queued') = 1`,
     )
-    .get(userId, slug, ...params) as { n: number }
-  return { running: inFlight.has(turnKey(userId, slug, lane)), queued: Number(r.n) }
+    .get(userId, slug, ...params) as { n: number; held: number }
+  return { running: inFlight.has(turnKey(userId, slug, lane)), queued: Number(r.n), held: Number(r.held) }
 }
 
 /**
@@ -770,7 +923,8 @@ export function isAgentChatRunning(userId: number, slug: string): boolean {
  */
 function deliverQueued(userId: number, slug: string, lane: ChatLane): ChatMessageRow[] {
   const db = getDb()
-  const waiting = queuedRows(userId, slug, lane)
+  // obj 901488: a message held after a Stop stays where it is until the person confirms.
+  const waiting = queuedRows(userId, slug, lane, 'ready')
   if (waiting.length === 0) return []
   const ids = db.transaction(() =>
     waiting.map(q => {
@@ -780,7 +934,7 @@ function deliverQueued(userId: number, slug: string, lane: ChatLane): ChatMessag
         )
         // obj 900977: the client id travels with the message, so a late repeat
         // of the same POST still finds it and the client still recognises it.
-        .run(userId, slug, 'user', q.content, (() => { const m = userRowMeta(q.meta?.client_msg_id, q.meta?.owner_browser); return m ? JSON.stringify(m) : null })(), laneThreadId(lane), q.created_at)
+        .run(userId, slug, 'user', q.content, deliveredMeta(q.meta), laneThreadId(lane), q.created_at)
       const id = Number(info.lastInsertRowid)
       db.prepare('UPDATE agent_chat_attachments SET message_id = ? WHERE message_id = ?').run(id, q.id)
       db.prepare('DELETE FROM agent_chat_messages WHERE id = ?').run(q.id)
@@ -791,6 +945,16 @@ function deliverQueued(userId: number, slug: string, lane: ChatLane): ChatMessag
   return withImages(rows)
 }
 
+/** What a queued row keeps once delivered: its client id and, for a Continue press, what it continues (obj 901488). Never `queued` / `held`. */
+function deliveredMeta(meta: ChatMessageRow['meta']): string | null {
+  const keep = {
+    ...(meta?.client_msg_id ? { client_msg_id: meta.client_msg_id } : {}),
+    ...(meta?.owner_browser === true ? { owner_browser: true } : {}),
+    ...(meta?.kind === 'continue' && meta.continue_from ? { kind: 'continue', continue_from: meta.continue_from } : {}),
+  }
+  return Object.keys(keep).length ? JSON.stringify(keep) : null
+}
+
 /** Remove a lane's queued messages (and their images) — only on an explicit, confirmed request. */
 function discardQueued(userId: number, slug: string, lane: ChatLane): number {
   const waiting = queuedRows(userId, slug, lane)
@@ -798,34 +962,167 @@ function discardQueued(userId: number, slug: string, lane: ChatLane): number {
   return waiting.length
 }
 
+/**
+ * obj 901488: where a message that turned out to be a repeat stands.
+ * `queued` = waiting behind the running turn (or held after a Stop);
+ * `running` = the bot is working on it right now; `answered` = its answer is
+ * already in the lane (and comes back in `messages`).
+ */
+export type DuplicateState = 'queued' | 'running' | 'answered'
+
 export type SubmitResult =
-  /** `duplicate` (obj 900977): this client_msg_id was already stored — `messages` is that row, nothing was added or run. */
-  | { queued: false; messages: ChatMessageRow[]; duplicate?: boolean; background?: false }
-  | { queued: true; messages: ChatMessageRow[]; duplicate?: boolean; background?: false }
   /**
-   * obj 901491: the turn outlived the foreground wait and carries on as a
-   * background job. `messages` is what it had stored so far; the rest (tool
-   * lines, then the answer) lands in the lane as it happens.
+   * `duplicate` (obj 900977, obj 901488): this message was already accepted —
+   * the same client_msg_id, the same Continue press, or the same text again
+   * with nothing in between. `messages` is the stored row (plus what followed
+   * it, when answered). Nothing was added and nothing was run.
    */
-  | { queued: false; messages: ChatMessageRow[]; duplicate?: false; background: true }
+  | { queued: false; messages: ChatMessageRow[]; duplicate?: boolean; duplicateState?: DuplicateState; duplicateBy?: 'id' | 'text' | 'continue'; background?: boolean }
+  | { queued: true; messages: ChatMessageRow[]; duplicate?: boolean; duplicateState?: DuplicateState; duplicateBy?: 'id' | 'text' | 'continue'; background?: false }
+
+/** The person pressed Continue on something that cannot be continued (obj 901488). */
+export class ChatContinueError extends Error {
+  readonly status = 409
+}
+
+/** SQLite's UTC 'YYYY-MM-DD HH:MM:SS' → epoch ms (NaN when unreadable). */
+function storedAtMs(createdAt: string): number {
+  return Date.parse(/[zZ]|[+-]\d\d:?\d\d$/.test(createdAt) ? createdAt : `${createdAt.replace(' ', 'T')}Z`)
+}
+
+/** A row that ends a turn with an answer: the bot's own reply, its step-limit summary, or a long turn's limit report (obj 901491) — not a relayed line. */
+function isAnswerRow(r: ChatMessageRow): boolean {
+  return r.role === 'assistant' && (!r.meta?.kind || r.meta.kind === 'step_limit' || r.meta.kind === 'turn_limit')
+}
+
+/** The lane's rows after `id`, oldest first, not counting messages still queued. */
+function rowsAfter(userId: number, slug: string, lane: ChatLane, id: number): ChatMessageRow[] {
+  return listMessages(userId, slug, { afterId: id, lane, limit: 200 }).filter(r => !r.meta?.queued)
+}
+
+/** Where an already-stored message stands, and what to hand back for it. */
+function duplicateOf(userId: number, slug: string, lane: ChatLane, row: ChatMessageRow, by: 'id' | 'text' | 'continue'): SubmitResult {
+  if (row.meta?.queued) return { queued: true, messages: [row], duplicate: true, duplicateState: 'queued', duplicateBy: by }
+  const after = rowsAfter(userId, slug, lane, row.id)
+  const answered = after.some(isAnswerRow)
+  // Still being worked on: the browser gets the row now and follows the turn by re-reading the lane.
+  if (!answered && inFlight.has(turnKey(userId, slug, lane))) return { queued: false, messages: [row, ...after], duplicate: true, duplicateState: 'running', duplicateBy: by }
+  return { queued: false, messages: [row, ...after], duplicate: true, duplicateState: 'answered', duplicateBy: by }
+}
+
+/**
+ * obj 901488: is this text the message the lane ALREADY holds as its newest
+ * one from the person? That is what a re-send after a failed-looking request
+ * looks like (the browser showed "Request failed: 524", the server had the
+ * message all along). It counts as the same message when no other message from
+ * the person came between and:
+ *   - it is still queued, or
+ *   - its turn is still running, or
+ *   - its turn ANSWERED less than the duplicate window ago (and the text is
+ *     not a short reply, see DUPLICATE_MIN_CHARS_AFTER_ANSWER).
+ * A turn that failed or was stopped is not matched: sending the same words
+ * again is then an honest retry. Messages with images are never matched.
+ */
+function sameTextAlreadySent(input: TurnInput, lane: ChatLane): ChatMessageRow | null {
+  const windowMs = duplicateWindowMs(input.env ?? process.env)
+  if (windowMs <= 0 || (input.images?.length ?? 0) > 0 || !input.text) return null
+  const { sql, params } = lanePredicate(lane)
+  const r = getDb()
+    .prepare(`SELECT * FROM agent_chat_messages WHERE user_id = ? AND agent_slug = ? AND ${sql} AND role = 'user' ORDER BY id DESC LIMIT 1`)
+    .get(input.userId, input.agent.slug, ...params) as Record<string, unknown> | undefined
+  if (!r) return null
+  const last = withImages([mapRow(r)])[0]
+  if (last.content !== input.text || last.images.length > 0 || last.meta?.kind === 'continue') return null
+  if (last.meta?.queued) return last
+  const after = rowsAfter(input.userId, input.agent.slug, lane, last.id)
+  const end = after.at(-1)
+  if (inFlight.has(turnKey(input.userId, input.agent.slug, lane))) return after.some(isAnswerRow) ? null : last
+  if (!end || !isAnswerRow(end) || input.text.length < DUPLICATE_MIN_CHARS_AFTER_ANSWER) return null
+  const age = Date.now() - storedAtMs(end.created_at)
+  return Number.isFinite(age) && age <= windowMs ? last : null
+}
+
+/**
+ * obj 901488: the answer a Continue press may resume — the lane's newest
+ * step-limit summary or long-turn limit report (kind 'turn_limit', obj 901491:
+ * the turn ran out of its step or time budget), and only while the person has
+ * sent nothing after it.
+ */
+export function continuableAnswerId(userId: number, slug: string, lane: ChatLane = MAIN_LANE): number | null {
+  const { sql, params } = lanePredicate(lane)
+  const r = getDb()
+    .prepare(
+      `SELECT id FROM agent_chat_messages
+        WHERE user_id = ? AND agent_slug = ? AND ${sql} AND role = 'assistant' AND json_extract(meta, '$.kind') IN ('step_limit', 'turn_limit')
+        ORDER BY id DESC LIMIT 1`,
+    )
+    .get(userId, slug, ...params) as { id: number } | undefined
+  if (!r) return null
+  const later = getDb()
+    .prepare(`SELECT 1 FROM agent_chat_messages WHERE user_id = ? AND agent_slug = ? AND ${sql} AND role = 'user' AND id > ? LIMIT 1`)
+    .get(userId, slug, ...params, r.id)
+  return later ? null : Number(r.id)
+}
+
+function findContinueOf(userId: number, slug: string, lane: ChatLane, answerId: number): ChatMessageRow | null {
+  const { sql, params } = lanePredicate(lane)
+  const r = getDb()
+    .prepare(
+      `SELECT * FROM agent_chat_messages
+        WHERE user_id = ? AND agent_slug = ? AND ${sql} AND role = 'user' AND json_extract(meta, '$.continue_from') = ?
+        ORDER BY id DESC LIMIT 1`,
+    )
+    .get(userId, slug, ...params, answerId) as Record<string, unknown> | undefined
+  return r ? withImages([mapRow(r)])[0] : null
+}
+
+/** What a new user row carries: its client id and, for a Continue press, the answer it resumes. */
+function userRowMeta(input: Pick<TurnInput, 'clientMsgId' | 'continueFrom' | 'ownerBrowser'>, queued: boolean): ChatMessageRow['meta'] {
+  const meta = {
+    ...(queued ? { queued: true } : {}),
+    ...(input.clientMsgId ? { client_msg_id: input.clientMsgId } : {}),
+    // obj 901393: the server's owner-browser stamp, set only by the route.
+    ...(input.ownerBrowser === true ? { owner_browser: true } : {}),
+    ...(input.continueFrom ? { kind: 'continue', continue_from: input.continueFrom } : {}),
+  }
+  return Object.keys(meta).length ? meta : null
+}
 
 /**
  * The composer's entry point (obj 900949). An idle lane runs the turn now, as
  * before. A lane with a turn running does NOT refuse the message: it is stored
  * at once as a queued row (nothing typed is lost) and delivered, in the order
  * it was sent, by the turn that follows the running one.
+ *
+ * obj 901488: a message the lane already holds is never run a second time —
+ * the caller gets the stored row and where it stands (`duplicateState`). No
+ * await sits between these checks and the insert below / runTurn's own insert,
+ * so two repeats arriving together cannot both pass.
  */
 export async function submitMessage(input: TurnInput): Promise<SubmitResult> {
   const lane = input.lane ?? MAIN_LANE
-  // obj 900977: a repeat of a message this lane already holds (a client retry
-  // after a dropped response, a double submit) is answered with the stored row.
-  // No await sits between this check and the insert below / runTurn's own
-  // insert, so two repeats cannot both pass it.
+  const { userId } = input
+  const slug = input.agent.slug
+  // obj 900977: the same client id (a browser retry after a dropped response, a double submit).
   if (input.clientMsgId) {
-    const existing = findByClientMsgId(input.userId, input.agent.slug, lane, input.clientMsgId)
-    if (existing) return { queued: !!existing.meta?.queued, messages: [existing], duplicate: true }
+    const existing = findByClientMsgId(userId, slug, lane, input.clientMsgId)
+    if (existing) return duplicateOf(userId, slug, lane, existing, 'id')
   }
-  if (!inFlight.has(turnKey(input.userId, input.agent.slug, lane))) {
+  if (input.continueFrom) {
+    // One Continue per step-limit answer: a second press finds the first.
+    const pressed = findContinueOf(userId, slug, lane, input.continueFrom)
+    if (pressed) return duplicateOf(userId, slug, lane, pressed, 'continue')
+    if (continuableAnswerId(userId, slug, lane) !== input.continueFrom) throw new ChatContinueError('There is nothing to continue here any more. Send a new message instead.')
+    input = { ...input, text: CONTINUE_TEXT, images: [] }
+  } else if (!input.sendAgain) {
+    // The same words again with a NEW id and nothing in between (the box was
+    // handed back after a failed-looking send, or Send was pressed twice).
+    // Nothing runs: the page asks "This already went through. Send again?" and
+    // only a yes (sendAgain) gets past this check.
+    const same = sameTextAlreadySent(input, lane)
+    if (same) return duplicateOf(userId, slug, lane, same, 'text')
+  }
+  if (!inFlight.has(turnKey(userId, slug, lane))) {
     const budget = turnBudgetFor(input.agent.slug)
     if (!budget.enabled) {
       const r = await runTurn(input)
@@ -875,9 +1172,9 @@ export async function submitMessage(input: TurnInput): Promise<SubmitResult> {
     return { queued: false, background: true, messages: [...sink] }
   }
   const row = addMessage(
-    input.userId,
-    input.agent.slug,
-    { role: 'user', content: input.text, provider: null, model: null, tool_name: null, meta: userRowMeta(input.clientMsgId, input.ownerBrowser, { queued: true }) },
+    userId,
+    slug,
+    { role: 'user', content: input.text, provider: null, model: null, tool_name: null, meta: userRowMeta(input, true) },
     input.images ?? [],
     lane,
   )
@@ -886,22 +1183,65 @@ export async function submitMessage(input: TurnInput): Promise<SubmitResult> {
 }
 
 /**
- * Stop the turn running in a lane (obj 900949). Queued messages are KEPT and
- * delivered next unless `dropQueued` is set — the client only sets it after the
- * person confirmed discarding them.
+ * obj 901488: take ONE queued message back before the bot sees it. Only a row
+ * that is still queued can be removed; one the bot already picked up cannot.
+ */
+export function removeQueuedMessage(userId: number, slug: string, id: number): { removed: boolean; lane: ChatLane | null } {
+  const r = getDb()
+    .prepare(`SELECT id, thread_id FROM agent_chat_messages WHERE id = ? AND user_id = ? AND agent_slug = ? AND role = 'user' AND json_extract(meta, '$.queued') = 1`)
+    .get(id, userId, slug) as { id: number; thread_id: number | null } | undefined
+  if (!r) return { removed: false, lane: null }
+  deleteMessage(r.id)
+  return { removed: true, lane: r.thread_id === null ? MAIN_LANE : { kind: 'thread', id: Number(r.thread_id) } }
+}
+
+/**
+ * obj 901488: the person confirmed the messages held after a Stop. They go
+ * back to being ordinary queued messages; the caller starts the drain.
+ */
+export function releaseHeldMessages(userId: number, slug: string, lane: ChatLane = MAIN_LANE): number {
+  const { sql, params } = lanePredicate(lane)
+  return getDb()
+    .prepare(
+      `UPDATE agent_chat_messages SET meta = json_remove(meta, '$.held')
+        WHERE user_id = ? AND agent_slug = ? AND ${sql} AND role = 'user' AND json_extract(meta, '$.queued') = 1 AND json_extract(meta, '$.held') = 1`,
+    )
+    .run(userId, slug, ...params).changes
+}
+
+/** Hold every message queued in a lane (the turn they waited behind was stopped). */
+function holdQueued(userId: number, slug: string, lane: ChatLane): number {
+  const { sql, params } = lanePredicate(lane)
+  return getDb()
+    .prepare(
+      `UPDATE agent_chat_messages SET meta = json_set(meta, '$.held', json('true'))
+        WHERE user_id = ? AND agent_slug = ? AND ${sql} AND role = 'user' AND json_extract(meta, '$.queued') = 1`,
+    )
+    .run(userId, slug, ...params).changes
+}
+
+/**
+ * Stop the turn running in a lane (obj 900949). Queued messages are KEPT.
+ * obj 901488: they are no longer delivered straight after the stop — the
+ * person stopped the bot for a reason, so each one is HELD until they confirm
+ * it (releaseHeldMessages) or remove it. `dropQueued` discards them instead;
+ * the client only sets it after the person confirmed.
  */
 export function stopTurn(
   userId: number,
   slug: string,
   lane: ChatLane = MAIN_LANE,
   opts: { dropQueued?: boolean } = {},
-): { stopped: boolean; dropped: number } & LaneTurnState {
+): { stopped: boolean; dropped: number; held: number } & LaneTurnState {
   // Drop first, so the drain that follows the stopped turn finds nothing to send.
   const dropped = opts.dropQueued ? discardQueued(userId, slug, lane) : 0
   const running = inFlight.get(turnKey(userId, slug, lane))
   if (running) {
     // obj 901329: logged distinctly from a dropped connection (routes/agent-chat.ts).
     console.log(`[agent-chat] stop: the person pressed Stop (user=${userId} bot=${slug} lane=${lane.kind === 'main' ? 'main' : `thread:${lane.id}`}${dropped ? ` dropped_queued=${dropped}` : ''})`)
+    // Hold BEFORE the abort: the stopped turn's own `finally` starts the drain,
+    // and it must find nothing it is allowed to deliver.
+    holdQueued(userId, slug, lane)
     running.controller.abort()
   }
   return { stopped: !!running, dropped, ...laneTurnState(userId, slug, lane) }
@@ -926,11 +1266,13 @@ export async function whenLaneIdle(userId: number, slug: string, lane: ChatLane 
  * Called when a turn ends and when the lane is read (a queue left behind by a
  * restart is picked up the next time the person looks at it).
  */
-export function drainLaneQueue(input: Omit<TurnInput, 'text' | 'images' | 'signal' | 'drainOnly'>): void {
+export function drainLaneQueue(input: Omit<TurnInput, 'text' | 'images' | 'signal' | 'drainOnly' | 'continueFrom' | 'clientMsgId'>): void {
   const lane = input.lane ?? MAIN_LANE
   const key = turnKey(input.userId, input.agent.slug, lane)
   if (inFlight.has(key)) return
-  if (laneTurnState(input.userId, input.agent.slug, lane).queued === 0) return
+  // obj 901488: held messages (a Stop came first) do not start a turn by themselves.
+  const st = laneTurnState(input.userId, input.agent.slug, lane)
+  if (st.queued - st.held <= 0) return
   // runTurn claims the lane synchronously (before its first await), so no new
   // message can slip in between this check and the drain's turn starting.
   const p = runTurn({ ...input, lane, text: '', images: [], drainOnly: true, browserSession: false })
@@ -1009,7 +1351,7 @@ export async function runTurn(input: TurnInput): Promise<{ messages: ChatMessage
       created.push(triggerRow)
     } else if (!input.drainOnly) {
       userRow = add(
-        { role: 'user', content: input.text, provider: null, model: null, tool_name: null, meta: userRowMeta(input.clientMsgId, input.ownerBrowser) },
+        { role: 'user', content: input.text, provider: null, model: null, tool_name: null, meta: userRowMeta(input, false) },
         images,
       )
       created.push(userRow)
@@ -1116,7 +1458,7 @@ export async function runTurn(input: TurnInput): Promise<{ messages: ChatMessage
       signal,
       ...(budget.enabled
         ? { maxSteps: budget.maxSteps, deadlineAt: now().getTime() + budget.maxSeconds * 1000, nowMs: () => now().getTime(), reportLimit: true }
-        : {}),
+        : { maxSteps: maxSteps(env) }),
       onStep: step => { if (jobId !== null) noteTurnProgress(jobId, { steps: step, toolCalls }) },
       record: (m, images) => {
         created.push(add(m, images))

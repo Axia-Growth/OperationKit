@@ -41,6 +41,7 @@ import { CARD_BRIEF_TOOL_HINT, DONE_WHEN_ARG, STOP_CONDITIONS_ARG } from './card
 import { buildAttention, oneLine, visibilityClause, type ControlUser } from '../../lib/agent-control.js'
 import { ALL_TOOLS_GRANT, EXPLICIT_ONLY_TOOLS, KNOWN_TOOL_NAMES, listsAllTools } from './tool-names.js'
 import { callerForChat, executeHttp, listForCaller, recordBrokerUse } from '../secrets-broker.js'
+import { botSecretGrants } from './bot-secret-access.js'
 import { rateLimit } from '../file-access.js'
 import { userHasWorkspace } from '../../middleware/workspace.js'
 import { webFetch, webSearch, WebToolError, MAX_SEARCH_RESULTS, DEFAULT_SEARCH_RESULTS, type WebToolDeps } from './web-tools.js'
@@ -265,7 +266,7 @@ const SPECS: Record<string, ToolSpec[]> = {
     obj({ url: { type: 'string', description: 'The full page URL, e.g. https://example.com/pricing' } }, ['url']))],
   // obj 900749: use a named secret without seeing it (the secrets broker).
   secrets: [
-    fn('secrets_list', 'List the secrets you may USE in this workspace, by NAME, with the hosts each one may be sent to. You never see a value. usable=false means no host is allowed yet (an admin turns on bot access in Settings → Secrets).',
+    fn('secrets_list', 'List the secrets you may USE in this workspace, by NAME, with the hosts each one may be sent to. You never see a value. usable=false means no host is allowed yet (an admin gives this bot the secret under Secret access on the bot settings page).',
       obj({})),
     fn('secret_http', 'Call an HTTPS API with a named secret. Write {{secret:NAME}} where the key goes (a header value, the URL path/query, or a body string), e.g. headers {"Authorization": "Bearer {{secret:STRIPE_KEY}}"}. The server adds the real value only on the outgoing request, only to a host that secret allows, and gives you the reply with the value blanked out. NEVER ask the person to paste a key and never write one into a message.',
       obj({
@@ -1500,7 +1501,8 @@ async function runSecretTool(ctx: ToolContext, fnName: 'secrets_list' | 'secret_
   if (role !== 'admin' && !userHasWorkspace(ctx.userId, ctx.workspace)) {
     throw new ToolUseError(`You are not a member of workspace '${ctx.workspace}', so no secrets are available here.`)
   }
-  const caller = callerForChat(ctx.userId, ctx.workspace)
+  // obj 901484: this bot's own grants in this workspace add to the workspace-wide Bot access entries.
+  const caller = { ...callerForChat(ctx.userId, ctx.workspace), botGrants: botSecretGrants(ctx.agent.slug, ctx.workspace) }
   // obj 900972: a bot that has Full access in ANY workspace never reaches a
   // Shared (install-wide) secret, in any chat. Its file's own secrets tool keeps
   // working here for this workspace's secrets only.

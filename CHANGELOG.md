@@ -8,6 +8,24 @@ Notable operator-facing changes. Newest first.
 
 ## Unreleased
 
+### Bot chat: a reply that runs out of steps still answers; Stop holds queued messages; repeats never run twice (obj 901488)
+
+No database change. Three things an operator will notice on the Bots page:
+
+- A reply that reaches the step limit (8 model steps) now ends with a written
+  summary and a **Continue** button, not the red "Couldn't answer. Stopped after
+  8 steps" box. The limit is unchanged; set `AGENT_CHAT_MAX_STEPS` (1 to 40) or
+  the `agent_chat_max_steps` setting to change it.
+- **Behaviour change:** after **Stop**, messages that were queued are no longer
+  sent to the bot straight away. They show "Waiting for you" until the person
+  presses **Send it now** or **Remove**.
+- The same message sent twice (a retry after "Request failed: 524", a double
+  Send) runs once. When the same words are sent again with the first still
+  waiting, running or just answered, the chat asks "This already went through.
+  Send again?" and runs it a second time only on **Send again**.
+  `AGENT_CHAT_DUPLICATE_WINDOW_MS` (default 120000, `0` = off) sets how long
+  after an answer the same text still counts as the same message.
+
 ### Chat bots never file the same card twice (obj 901498)
 
 The two chat tools that file a card (`create_objective`, `repo_session_start`) now
