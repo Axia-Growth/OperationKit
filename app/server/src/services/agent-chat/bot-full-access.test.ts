@@ -699,6 +699,71 @@ describe('hard exclusions — secrets, keys and DNS are permanent; billing is on
   })
 })
 
+// ── release_status: what is merged but not live (obj 901389) ──
+
+describe('release_status — read-only "merged, waiting for deploy" for a Full access bot talking to an admin', () => {
+  const STATUS = {
+    ok: true, repo: 'acme/app', checked_at: NOW.toISOString(), head: 'a'.repeat(40), origin_main: 'b'.repeat(40),
+    checkout_at_origin_main: false, behind: 2, ahead: 0, dirty_served_files: [], migrations_waiting: 1,
+    last_merge_at: '2026-11-15T11:00:00Z', server_started_at: '2026-11-15T10:00:00Z', server_started_after_last_merge: false, live: false,
+    summary: '2 merged pull requests are waiting for a deploy (1 with a database migration).', note: 'Read-only.',
+    waiting: [
+      { sha: 'c'.repeat(40), short_sha: 'cccccccc', committed_at: '2026-11-15T11:00:00Z', pr_number: 102, pr_url: null, title: 'Add things table', card_id: 777, card_title: 'Things', merged_by: { kind: 'bot_grant', bot: 'Operation Kit Dev', grant_id: 4 }, merged_by_label: 'Operation Kit Dev (bot) under grant #4', migration: true, migration_paths: ['app/server/src/db/schema/things.ts'] },
+      { sha: 'd'.repeat(40), short_sha: 'dddddddd', committed_at: '2026-11-15T10:30:00Z', pr_number: 101, pr_url: null, title: 'Show the thing', card_id: null, card_title: null, merged_by: { kind: 'person', login: 'operator' }, merged_by_label: 'operator', migration: false, migration_paths: [] },
+    ],
+  } as Loose
+  let reads = 0
+  const withReader = (c: ReturnType<typeof ctx>) => ({ ...c, deployStatusReader: () => { reads++; return STATUS } })
+  beforeEach(() => { reads = 0 })
+
+  it('returns the waiting list and both "merged is not deployed" checks, and writes nothing', async () => {
+    fullAccessOn()
+    const before = audit().length
+    const r = await runChatTool(withReader(ctx(ADMIN, bot())), 'release_status', {})
+    expect(reads).toBe(1)
+    expect(r.result).toMatchObject({
+      ok: true, live: false, checkout_at_origin_main: false, server_started_after_last_merge: false, migrations_waiting: 1,
+      waiting_for_deploy: [
+        { pr: 102, title: 'Add things table', card: 777, merged_by: 'Operation Kit Dev (bot) under grant #4', migration: true, migration_paths: ['app/server/src/db/schema/things.ts'] },
+        { pr: 101, title: 'Show the thing', card: null, merged_by: 'operator', migration: false },
+      ],
+    })
+    expect(r.summary).toMatch(/2 merged pull requests are waiting/)
+    expect(audit().length).toBe(before) // a read, not a change: no ability_used row
+    expect(hostCalls).toHaveLength(0) // nothing started, messaged, deployed or restarted
+  })
+
+  it('is refused for a member, even when the bot has Full access', async () => {
+    fullAccessOn()
+    await refused(() => runChatTool(withReader(ctx(ALICE, bot())), 'release_status', {}), /only when it is working for an admin/)
+    expect(reads).toBe(0)
+    expect(audit().some(r => r.event === 'ability_refused' && r.ability === 'release_status')).toBe(true)
+  })
+
+  it('is refused for a bot without Full access (workspace granted, switch off), and once it expires', async () => {
+    grantBotWorkspace('dev', GROWTH, 'jordan')
+    await refused(() => runChatTool(withReader(ctx(ADMIN, bot())), 'release_status', {}), /no Full access/)
+    fullAccessOn('dev', GROWTH, { expires_at: IN_A_WEEK })
+    await refused(() => runChatTool(withReader(ctx(ADMIN, bot(), GROWTH, AFTER_EXPIRY)), 'release_status', {}), /it expired/)
+    expect(reads).toBe(0)
+  })
+
+  it('is refused in a workspace where Full access is not on', async () => {
+    fullAccessOn()
+    await refused(() => runChatTool(withReader(ctx(ADMIN, bot())), 'release_status', { workspace: OTHER }), /no Full access in "other-co"/)
+    expect(reads).toBe(0)
+  })
+
+  it('is offered only with Full access, and only to an admin', () => {
+    grantBotWorkspace('dev', GROWTH, 'jordan')
+    const names = (c: ReturnType<typeof ctx>) => toolSpecsForContext(c).map(s => s.function.name)
+    expect(names(ctx(ADMIN, bot()))).not.toContain('release_status')
+    fullAccessOn()
+    expect(names(ctx(ADMIN, bot()))).toContain('release_status')
+    expect(names(ctx(ALICE, bot()))).not.toContain('release_status')
+  })
+})
+
 // ── merge and deploy ──
 
 describe('merge and deploy approvals', () => {

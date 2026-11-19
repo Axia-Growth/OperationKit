@@ -94,6 +94,8 @@ import {
   getCardWakeSwitch, setCardWakeSwitch,
 } from '../services/agent-chat/card-wake-routing.js'
 import { getDevOpsSwitch, setDevOpsSwitch } from '../services/dev-ops/switch.js'
+import { listRepoGrants, setRepoGrant } from '../services/dev-ops/repo-grant.js'
+import { REPO_RIGHTS_SECRET_NAME } from '../services/dev-ops/repo-merge.js'
 import { listDevOpsAudit, writeDevOpsAudit } from '../services/dev-ops/audit.js'
 
 /**
@@ -627,6 +629,76 @@ function devOpsPayload(req: AuthRequest, slug: string) {
   }
   return { dev_ops: sw, recent }
 }
+
+// ── GitHub repo rights (obj 901492): per-repo grant for merge-by-number and CI refresh. OFF by default. ──
+
+function repoRightsPayload(slug: string) {
+  const sw = getDevOpsSwitch(slug)
+  let credentialStored = false
+  try {
+    credentialStored = !!(getDb().prepare('SELECT 1 FROM secrets WHERE key = ? LIMIT 1').get(REPO_RIGHTS_SECRET_NAME))
+  } catch { credentialStored = false }
+  return {
+    repo_rights: {
+      slug,
+      eligible: sw.eligible,
+      operator_tools_on: sw.enabled,
+      repos: sw.eligible ? listRepoGrants(slug) : [],
+      // The NAME of the optional dedicated credential, and whether one is stored. Never a value.
+      credential_name: REPO_RIGHTS_SECRET_NAME,
+      credential_stored: credentialStored,
+    },
+  }
+}
+
+router.get('/agents/:slug/repo-rights', (req: AuthRequest, res) => {
+  const a = agentOr404(req, res)
+  if (!a) return
+  res.json(repoRightsPayload(a.slug))
+})
+
+router.put('/agents/:slug/repo-rights', (req: AuthRequest, res) => {
+  if (!adminSessionOr403(req, res)) return
+  // Stricter than the other bot settings: the browser cookie itself must be there.
+  // An admin's Bearer JWT (a script holding a token) may not hand the bot a repo.
+  if (!signedInBrowser(req)) {
+    res.status(403).json({ error: 'Only an admin signed in to the app in the browser can change GitHub repo rights.', code: 'admin_only' })
+    return
+  }
+  const a = agentOr404(req, res)
+  if (!a) return
+  const body = (req.body ?? {}) as { repo?: unknown; enabled?: unknown }
+  if (typeof body.enabled !== 'boolean') {
+    res.status(400).json({ error: 'enabled must be true or false' })
+    return
+  }
+  const r = setRepoGrant(a.slug, body.repo, body.enabled, { id: req.user!.id, username: req.user!.username })
+  const refused = r.change === 'bot_not_eligible' || r.change === 'bad_repo'
+  writeDevOpsAudit({
+    bot_slug: a.slug, user_id: req.user!.id, username: req.user!.username, action: 'repo_grant',
+    target: r.repo ?? (typeof body.repo === 'string' ? body.repo.slice(0, 200) : null),
+    outcome: refused ? 'refused' : 'done', code: r.change,
+  })
+  if (r.change === 'bot_not_eligible') {
+    res.status(400).json({ error: 'Only the built-in Dev bot can be given GitHub repo rights.', code: r.change })
+    return
+  }
+  if (r.change === 'bad_repo') {
+    res.status(400).json({ error: 'Name one GitHub repo as owner/name (for example acme/website).', code: r.change })
+    return
+  }
+  if (r.change !== 'unchanged') {
+    try {
+      logActivity({
+        project: 'operationkit',
+        event_type: 'decision',
+        title: `${a.name}: GitHub repo rights ${r.change === 'granted' ? 'switched on' : 'switched off'} for ${r.repo} by ${req.user!.username}`,
+        metadata: { kind: 'dev_ops_repo_grant', slug: a.slug, repo: r.repo, enabled: body.enabled },
+      })
+    } catch { /* the feed never decides the change */ }
+  }
+  res.json(repoRightsPayload(a.slug))
+})
 
 router.get('/agents/:slug/dev-ops', (req: AuthRequest, res) => {
   const a = agentOr404(req, res)

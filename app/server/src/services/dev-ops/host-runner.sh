@@ -10,6 +10,7 @@
 # shipped with, never a file a deploy is rewriting mid-run.
 #
 #   host-runner.sh deploy <SRC> <CONF> <ID> <HEALTH_URL> <HOST_DATA_DIR>
+#   host-runner.sh src-info <SRC> <CONF>         (read-only, obj 901495)
 #   host-runner.sh <cf-op> <SRC> <CONF>          (request JSON on stdin)
 #        cf-op: access-list | access-add | access-remove
 #               dns-list | dns-upsert | dns-delete | cf-run
@@ -25,6 +26,11 @@
 # /app/data/dev-ops/…). The full log stays on the host in
 # <INSTALL_DIR>/dev-ops/deploy-<ID>.log (outside the data folder a restore
 # moves aside).
+#
+# src-info is READ-ONLY: the source folder's HEAD, the `owner/repo` its origin
+# points at (never the URL itself, which could hold a credential) and the head
+# of origin's main (`git ls-remote`, nothing is fetched or changed). It is how
+# the app tells "deployed" from "merged, not deployed" (services/dev-ops/end-state.ts).
 #
 # Cloudflare ops read the installer's token from <INSTALL_DIR>/secrets/
 # cloudflare-api-token and hand it to curl on STDIN (`curl -K -`), so it is
@@ -157,7 +163,7 @@ if [ "$ACTION" = deploy ]; then
       status unchanged done "nothing new to deploy: main at ${SOURCE:-the code source} is still $NEW_SHA, the commit this server was already on. No new code went live. The install was re-run on the same commit; verify.sh passed and $HEALTH answers"
       exit 0
     fi
-    status deployed done "deployed $NEW_SHA; verify.sh passed and $HEALTH answers"
+    status deployed done "deployed $NEW_SHA (was $OLD_SHA); verify.sh passed and $HEALTH answers"
     exit 0
   fi
 
@@ -193,6 +199,28 @@ if [ "$ACTION" = deploy ]; then
   fi
   status rollback_failed "$FAILED_STEP" "$FAILED_STEP failed and the rollback did not bring $HEALTH back — the site needs a person (log: $LOG)"
   exit 1
+fi
+
+# ── src-info (read-only) ─────────────────────────────────────────────────────
+if [ "$ACTION" = src-info ]; then
+  # git as the owner of the code folder, like update.sh does.
+  G=(git -c safe.directory='*' -C "$SRC")
+  SRC_OWNER=$(stat -c %U "$SRC" 2>/dev/null || echo root)
+  if [ "$SRC_OWNER" != root ] && [ "$(id -u)" -eq 0 ] && command -v sudo >/dev/null 2>&1; then
+    G=(sudo -u "$SRC_OWNER" -H "${G[@]}")
+  fi
+  SI_HEAD=$("${G[@]}" rev-parse HEAD 2>/dev/null </dev/null || true)
+  SI_URL=$("${G[@]}" remote get-url origin 2>/dev/null </dev/null || true)
+  SI_REPO=""
+  # Only owner/repo leaves the host: a token in the URL never does.
+  if [[ "$SI_URL" =~ github\.com[:/]+([A-Za-z0-9_.-]+)/([A-Za-z0-9_.-]+)/?$ ]]; then
+    SI_REPO="${BASH_REMATCH[1]}/${BASH_REMATCH[2]%.git}"
+  fi
+  SI_MAIN=$(timeout 25 "${G[@]}" ls-remote origin refs/heads/main 2>/dev/null </dev/null | awk 'NR==1{print $1}' || true)
+  [[ "$SI_HEAD" =~ ^[0-9a-f]{7,64}$ ]] || SI_HEAD=""
+  [[ "$SI_MAIN" =~ ^[0-9a-f]{7,64}$ ]] || SI_MAIN=""
+  jq -nc --arg h "$SI_HEAD" --arg r "$SI_REPO" --arg m "$SI_MAIN" '{ok:true, code:"ok", head:$h, origin_repo:$r, origin_main:$m}'
+  exit 0
 fi
 
 # ── Cloudflare ───────────────────────────────────────────────────────────────

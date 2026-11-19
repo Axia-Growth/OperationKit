@@ -17,6 +17,19 @@ import { logActivity } from './feed.js'
 type Allowed = Extract<DelegationDecision, { kind: 'allowed' }>
 
 /**
+ * obj 901389: a grant merge is never a deploy. The card line and the bot's chat
+ * line (the chat tool returns this same line) say so, and name a schema /
+ * migration change when the PR carries one.
+ */
+export function notLiveSentence(migrationPaths: string[] | null): string {
+  const base = 'Merged, not live until deployed: the owner deploys.'
+  if (migrationPaths == null) return `${base} (Could not read the PR's files to check for a database migration.)`
+  if (migrationPaths.length === 0) return base
+  const shown = migrationPaths.slice(0, 3).join(', ') + (migrationPaths.length > 3 ? `, +${migrationPaths.length - 3} more` : '')
+  return `${base} ⚠ Database migration: this PR changes ${shown}.`
+}
+
+/**
  * Which door the approval came through, for the audit row and the card line.
  * The card-message path omits it (the request's agent key is used); a chat
  * turn (obj 901347, services/agent-chat/grant-merge-tool.ts) has no agent key
@@ -52,7 +65,7 @@ export async function runGrantApprovedMerge(
 
   // The grantor is the person this request acts for (grantDecision keys the grant
   // on req.user), so theirs is the GitHub connection a merge may fall back to.
-  const merged = await mergeUnderGrant(card, { auth: { grantorUserId: req.user?.id ?? null, agent: via?.agent ?? null } })
+  const merged = await mergeUnderGrant(card, { grantId: d.grantId, auth: { grantorUserId: req.user?.id ?? null, agent: via?.agent ?? null } })
   if (!merged.ok) {
     try {
       writeDelegationAudit(db, { ...base, event: merged.code === 'branch_updated_ci_pending' ? 'approval_used' : 'approval_denied', grant_id: d.grantId, reason: `grant_merge:${merged.code}` })
@@ -65,7 +78,8 @@ export async function runGrantApprovedMerge(
 
   const mergeLine = merged.alreadyMerged
     ? `PR #${merged.prNumber} (${merged.repo}) was already merged on GitHub — card closed on the approval of ${d.bot} on behalf of ${d.onBehalfOf} under grant #${d.grantId} (merge)`
-    : `Squash-merged PR #${merged.prNumber} (${merged.repo}) — approved by ${d.bot} on behalf of ${d.onBehalfOf} under grant #${d.grantId} (merge)`
+    : `Squash-merged PR #${merged.prNumber} (${merged.repo}) — approved by ${d.bot} on behalf of ${d.onBehalfOf} under grant #${d.grantId} (merge). ` +
+      notLiveSentence(merged.migrationPaths)
   try {
     writeDelegationAudit(db, {
       ...base,
@@ -90,6 +104,8 @@ export async function runGrantApprovedMerge(
         repo: merged.repo,
         pr_number: merged.prNumber,
         head_sha: merged.headSha,
+        live: false,
+        migration_paths: merged.migrationPaths,
         agent_key_id: key.id,
         agent_key_label: key.label,
         already_merged: merged.alreadyMerged === true,

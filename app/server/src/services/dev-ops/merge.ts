@@ -66,6 +66,7 @@ import {
 import { ciGreenForMerge, loadReservedPrs, reservedPrMatch, type CiGreenResult, type ReservedPr } from '../grant-merge.js'
 import { isMoneyPath } from '../merge-lane.js'
 import { writeDevOpsAudit } from './audit.js'
+import { mergeShaAfterMerge } from './end-state.js'
 import { DEV_OPS_BOT_SLUG, getDevOpsSwitch } from './switch.js'
 
 export type DevMergeCode =
@@ -105,6 +106,8 @@ export interface DevMergeResult {
   pr_number?: number
   pr_url?: string
   head_sha?: string
+  /** The merge commit GitHub reports after the merge (obj 901495). Absent when GitHub did not return one. */
+  merge_sha?: string
   /** The card moved to done after the merge (or was already done). */
   card_done?: boolean
   pending_id?: number
@@ -199,6 +202,9 @@ export async function readPr(exec: ExecFn, repo: string, prNumber: number): Prom
 }
 
 const SHA_RE = /^[0-9a-f]{7,64}$/i
+
+/** Said after every merge: merged is not deployed (obj 901495). */
+export const NOT_LIVE_YET = 'Merged, not deployed: it is not live until a deploy brings it to the server.'
 
 function ghFailure(err: unknown, repo: string): DevMergeResult | null {
   const m = (err as Error)?.message ?? ''
@@ -323,7 +329,8 @@ export async function devMerge(card: DevMergeCard, actor: DevActor, deps: DevMer
 
   if (pr.state === 'MERGED') {
     const done = await closeCardDone(card.id, actor, 'dev-ops:merge')
-    return audit({ ok: true, code: 'already_merged', message: `PR #${prNumber} on ${repo} is already merged.${done.ok ? ` Card #${card.id} is done.` : ` The card could not be marked done: ${done.error}.`}`, card_done: done.ok, ...withPr })
+    const mergedSha = await mergeShaAfterMerge(exec, repo, prNumber)
+    return audit({ ok: true, code: 'already_merged', ...(mergedSha ? { merge_sha: mergedSha } : {}), message: `PR #${prNumber} on ${repo} is already merged${mergedSha ? ` as ${mergedSha.slice(0, 12)}` : ''}. ${NOT_LIVE_YET}${done.ok ? ` Card #${card.id} is done.` : ` The card could not be marked done: ${done.error}.`}`, card_done: done.ok, ...withPr })
   }
   if (pr.state && pr.state !== 'OPEN') return audit(no('pr_not_open', `PR #${prNumber} on ${repo} is ${pr.state.toLowerCase()}, not open. Nothing was merged.`, withPr))
   if (!SHA_RE.test(pr.headSha)) {
@@ -395,9 +402,11 @@ export async function devMerge(card: DevMergeCard, actor: DevActor, deps: DevMer
     kind: 'dev_ops_merge', repo, pr_number: prNumber, head_sha: pr.headSha,
   })
   const done = await closeCardDone(card.id, actor, 'dev-ops:merge')
+  // GitHub's own answer, read back after the merge: the merge commit on the base.
+  const mergeSha = await mergeShaAfterMerge(exec, repo, prNumber)
   return audit({
-    ok: true, code: 'merged', head_sha: pr.headSha, card_done: done.ok,
-    message: `Squash-merged PR #${prNumber} on ${repo} (${pr.ci.reason}).${done.ok ? ` Card #${card.id} is done.` : ` The card could not be marked done: ${done.error}.`}`,
+    ok: true, code: 'merged', head_sha: pr.headSha, ...(mergeSha ? { merge_sha: mergeSha } : {}), card_done: done.ok,
+    message: `Squash-merged PR #${prNumber} on ${repo}${mergeSha ? ` as ${mergeSha.slice(0, 12)}` : ''} (${pr.ci.reason}). ${NOT_LIVE_YET}${done.ok ? ` Card #${card.id} is done.` : ` The card could not be marked done: ${done.error}.`}`,
     ...withPr,
   })
 }
@@ -658,6 +667,7 @@ async function processHead(
       kind: 'dev_ops_merge', repo: row.repo, pr_number: row.pr_number, head_sha: pr.headSha, pending_id: row.id,
     })
     const done = await closeCardDone(card.id, actor, 'dev-ops:merge-on-green')
-    return finish('merged', `Squash-merged PR #${row.pr_number} at ${pr.headSha.slice(0, 12)} (${pr.ci.reason})${done.ok ? '; card done' : `; card not marked done: ${done.error}`}.`, 'merged')
+    const mergeSha = await mergeShaAfterMerge(exec, row.repo, row.pr_number)
+    return finish('merged', `Squash-merged PR #${row.pr_number} at ${pr.headSha.slice(0, 12)}${mergeSha ? ` as ${mergeSha.slice(0, 12)}` : ''} (${pr.ci.reason})${done.ok ? '; card done' : `; card not marked done: ${done.error}`}. ${NOT_LIVE_YET}`, 'merged')
   }
 }

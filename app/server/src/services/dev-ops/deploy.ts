@@ -172,6 +172,10 @@ export function settleDeploys(now: () => number = Date.now): number[] {
 export interface DeployStatusView {
   id: number
   status: string
+  /** Did the code move? false = the deploy ran and nothing changed. null = not known (running, or no shas). */
+  changed: boolean | null
+  /** The real outcome in plain words (obj 901495). */
+  outcome: string
   step: string | null
   from_sha: string | null
   to_sha: string | null
@@ -183,11 +187,43 @@ export interface DeployStatusView {
   finished_at: string | null
 }
 
+const USABLE_SHA = /^[0-9a-f]{7,64}$/i
+
+/**
+ * What a deploy row really means (obj 901495). A deploy that ends `deployed`
+ * with the same commit before and after did NOT ship anything: update.sh ran
+ * clean, but the repo it pulls from had nothing new. That is said in words, so
+ * "the deploy succeeded" is never read as "the change is live".
+ */
+export function deployOutcome(r: Pick<DeployRow, 'status' | 'from_sha' | 'to_sha'>): { changed: boolean | null; outcome: string } {
+  const from = (r.from_sha || '').trim()
+  const to = (r.to_sha || '').trim()
+  const known = USABLE_SHA.test(from) && USABLE_SHA.test(to)
+  const s = (sha: string) => sha.slice(0, 12)
+  switch (r.status) {
+    case 'started':
+      return { changed: null, outcome: 'Deploy still running; nothing is confirmed yet.' }
+    case 'deployed':
+      if (!known) return { changed: null, outcome: 'Deploy ran and the checks passed, but the commit before and after was not recorded: compare the live commit yourself.' }
+      return from === to
+        ? { changed: false, outcome: `Deploy ran, nothing changed: commit ${s(to)} before and after. The repo this server updates from had nothing new.` }
+        : { changed: true, outcome: `Deployed: the code moved from ${s(from)} to ${s(to)}. Confirm the live commit matches ${s(to)}.` }
+    case 'unchanged':
+      return { changed: false, outcome: `Nothing new to deploy: commit ${known ? s(to) : to} before and after. The code source had nothing new.` }
+    case 'rolled_back':
+      return { changed: false, outcome: `Deploy failed and was rolled back${USABLE_SHA.test(from) ? ` to ${s(from)}` : ''}: nothing new is live.` }
+    case 'rollback_failed':
+      return { changed: null, outcome: 'Deploy failed and the rollback did not bring the site back: it needs a person.' }
+    default:
+      return { changed: known ? from !== to : null, outcome: 'Deploy failed: nothing new is confirmed live.' }
+  }
+}
+
 export function deployStatus(limit = 3, now: () => number = Date.now): DeployStatusView[] {
   settleDeploys(now)
   const rows = getDb().prepare('SELECT * FROM dev_ops_deploys ORDER BY id DESC LIMIT ?').all(Math.max(1, Math.min(10, limit))) as DeployRow[]
   return rows.map(r => ({
-    id: r.id, status: r.status, step: r.step, from_sha: r.from_sha, to_sha: r.to_sha, backup_dir: r.backup_dir,
+    id: r.id, status: r.status, ...deployOutcome(r), step: r.step, from_sha: r.from_sha, to_sha: r.to_sha, backup_dir: r.backup_dir,
     message: r.detail ? r.detail.slice(0, 1500) : null,
     new_code_live: r.status === 'deployed' && !!r.to_sha && r.from_sha !== r.to_sha, started_at: r.created_at, finished_at: r.finished_at,
   }))

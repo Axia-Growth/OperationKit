@@ -28,11 +28,78 @@ admin switch** and every call is audit-logged.
 | — merge queue (obj 901463) | The `waiting` rows of one repo are an ordered queue (lowest id = the order asked). Only the **head** has its branch updated and CI awaited. A PR asked for while another is waiting gets `queued_behind` with its position and is not touched (no update-branch, no CI run, no GitHub read) until it reaches the head; then it is updated once and merges on green. A head that merges ends the pass for that repo (the next one starts on the next 30 s pass); a head that fails, expires or is skipped hands over in the same pass | waiting never counts toward the update cap or the 90 min; a conflicted head (GitHub `DIRTY`) is `conflict_skipped` and does not block the rest; a commit pushed while queued is `head_changed_while_queued`; every guard in the row above is re-checked when a PR reaches the head; a PR that could merge right now still joins the back of a non-empty queue; asking twice is `already_queued` |
 | `dev_close_card {id, status}` | done / cancelled without the admin sign-off prompt | done on a PR card only when GitHub says `MERGED`; done without a PR and cancelled only for Dev's own cards; never a Strategy or a reserved-PR card; runs the real status handler (`pathway dev-ops:close-*`, not a human terminal) |
 | `dev_deploy` | `sudo bash /opt/operationkit-src/install/update.sh --config /opt/operationkit-src/client.conf` on the host, detached | one at a time, 2 min cool-down; update.sh takes the backup; never `--skip-cloudflare`, `--skip-backup` or a force flag (asserted by tests) |
-| `dev_deploy_status` | outcome of the latest deploys | — |
+| `dev_deploy_status {id?}` | **read-only**: outcome of the latest deploys (each with `changed` + `outcome` words), `end_state` (live commit, public main, private main, sync PR, plain-words `summary`), and with a card `id` that card's PR on GitHub (merged?, merge sha, checks). See "Verify before done" below | reads only: `git rev-parse` / `git ls-remote` on the host, `gh` reads; no secret, no origin URL in the result |
 | `cloudflare_access {action, email}` | list the "Allowed people" policy, add ONE exact email, remove ONE email | no domain / wildcard / `everyone` / list allow, ever; protected addresses never removed; a write may change only that one entry, carries every other policy setting (approvals, purpose justification, isolation, MFA, session) unchanged, and the runner re-reads the policy to prove every other entry of every kind and every setting survived |
 | `cloudflare_dns {action, …}` | list / upsert / delete a record in the install's zone | A, AAAA, CNAME, TXT, MX only; inside `ZONE`; never the install's own `DOMAIN` record; a change or delete must match exactly one record |
 | `cloudflare_run {command}` | `install/cloudflare.sh status | api-bypass | api-bic` | never `down`, `up --replace-dns` or `agent-pass add` |
 | `dev_ops_audit {limit}` | the latest audit rows | — |
+
+## Verify before done (obj 901495)
+
+On 2026-11-18/19 Dev ran two deploys that changed nothing: the merged code sat in an
+unmerged sync pull request, so the repo the server updates from had nothing new. Dev now
+reads the end state itself and reports it in fixed words. The bot file
+(`builtin/operation-kit-dev/agent.md` → "Verify before done") requires it; the tools
+make it one call (`services/dev-ops/end-state.ts`).
+
+**After a merge** Dev calls `dev_deploy_status {id}` and checks:
+
+- GitHub says the PR is `MERGED` (not the card's status, not a worker's note);
+- the merge commit (`pr.merge_sha`) and when it merged;
+- the checks on the PR (`pr.checks`: passed / failed / still running).
+
+`dev_merge_pr` itself now returns `merge_sha` (read back from GitHub after the merge) and
+its message ends "Merged, not deployed".
+
+**After a deploy** Dev calls `dev_deploy_status` and checks:
+
+- the deploy row: `changed` and `outcome` ("Deploy ran, nothing changed: commit X before
+  and after" when `from_sha == to_sha`; the host runner's own message says the same);
+- `end_state.live_commit`: what this process runs, the same value `GET /api/health`
+  reports (`lib/build-info.ts`, pinned at boot);
+- `end_state.public_main`: head of the repo the server updates from. It comes from the
+  host (`host-runner.sh src-info`: the source folder's `origin`, reduced to `owner/repo`,
+  and `git ls-remote origin refs/heads/main`), so no repo name is configured and no
+  GitHub credential is needed for it;
+- `end_state.private_main`: head of the repo Dev's cards merge into (the repo of this
+  bot's newest card PR; `gh api`, the credential the merge tool already uses);
+- `end_state.sync_pr`: the newest pull request from `sync/from-upstream` on the public
+  repo (an open one first): number, state, merged time;
+- `end_state.source_checkout`: the host folder's own HEAD (pulled but app not restarted
+  shows up here).
+
+The two repos have separate histories, so a private sha is never compared with a public
+one. "Is private main in what the server pulls?" is `private_waiting_on_sync`: true while
+a sync PR is open, or when private main is newer than the last merged sync PR and none is
+open.
+
+| `end_state.state` | When | Dev says |
+|---|---|---|
+| `deployed` | live commit = public main head, nothing waiting on the sync | "deployed, commit X live" |
+| `merged_not_deployed` | live ≠ public main head, **or** live = public main head but merged code still waits on the sync PR | "merged, not deployed" + why |
+| `unknown` | public main head could not be read | says which fact is missing (`notes`) |
+
+`dev_deploy` reads the same state BEFORE it starts and returns `expect_change`
+(`false` = the live commit is already the head of the repo the server updates from) with
+a heads-up in the message. It still starts the deploy the admin asked for.
+
+Overrides, read at point of use (none needed on a standard install): env
+`CC_DEV_OPS_PUBLIC_REPO` / `CC_DEV_OPS_PRIVATE_REPO` / `CC_DEV_OPS_SYNC_BRANCH`, or
+settings `dev_ops_public_repo` / `dev_ops_private_repo` / `dev_ops_sync_branch`.
+
+No new credential and no wider GitHub scope: reading a public repo and the private repo
+uses the credential `dev_merge_pr` already resolves (`grant-merge-github-auth.ts`).
+Anything that could not be read is listed in `end_state.notes`; the tool never throws and
+never guesses.
+
+Note: an install that keeps its OWN copy of the bot file
+(`<agents dir>/operation-kit-dev/agent.md`) overrides the built-in one, so the "Verify
+before done" section has to be added to that copy too.
+
+**Merge by repo and number (obj 901492).** `dev_merge_repo_pr` and `dev_refresh_pr_ci` exist only
+while an admin has switched on **GitHub repo rights** for at least one repo (off by default, listed
+per repo). They merge a PR no card links, the public sync PR included, and update a branch so CI
+really starts. Grant, walls and the optional credential: [Dev-Bot-GitHub-Repo-Rights.md](./Dev-Bot-GitHub-Repo-Rights.md).
 
 ## Deploy flow (host)
 

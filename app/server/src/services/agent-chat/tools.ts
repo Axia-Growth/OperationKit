@@ -48,13 +48,14 @@ import { noteKbChanged } from '../kb-semantic/service.js'
 import type { ChatLane } from './threads.js'
 import { fullAccessActive, fullAccessAnywhere, protectedCardRefusal, protectedPrTextRefusal, refuseExclusion } from './bot-full-access.js'
 import { exclusionGate, type OutboundCall } from './full-access-exclusions.js'
+import type { DeployStatus } from '../deploy-waiting.js'
 import { FULL_ACCESS_FNS, fullAccessToolSpecs, runFullAccessTool, withFullAccess, type FullAccessHost } from './full-access-tools.js'
 import { CARD_WAKE_FNS, runCardWakeTool, type CardWakeScope } from './card-wake-tools.js'
 import { beginSelfAction, endSelfAction, SELF_ACTION_TOOLS } from './card-wake-routing.js'
 import { CARD_SANDBOX_FNS, cardSandboxToolSpecs, runCardSandboxTool } from './card-sandbox-tools.js'
 import { GRANT_MERGE_FNS, grantMergeToolSpecs, runGrantMergeTool } from './grant-merge-tool.js'
+import { DEV_OPS_ALL_FNS, devOpsToolSpecs, runDevOpsTool } from './dev-ops-tools.js'
 import { FOLLOWUP_FNS, followupToolSpecs, runFollowupTool } from './followups.js'
-import { DEV_OPS_FNS, devOpsToolSpecs, runDevOpsTool } from './dev-ops-tools.js'
 import { writeDevOpsAudit } from '../dev-ops/audit.js'
 import { CARD_BROWSER_FNS, cardBrowserToolSpecs, runCardBrowserTool } from './card-browser-tools.js'
 import {
@@ -69,6 +70,7 @@ import {
 import { ArtifactError, readArtifactImage } from '../live-artifacts.js'
 import { ImageRejected, MAX_IMAGE_BYTES, parseIncomingImages, validateImageBytes, type IncomingImage } from './attachments.js'
 import { publicCardUrl } from '../../lib/public-url.js'
+import { offsetArg, pageNote, pageText } from './text-page.js'
 import { cardDecisionsForBot, cardOwnerAndGrants, cardThreadForBot, holdView, type BotCardOwner, type BotDecisionView, type BotThreadEntry } from './card-context.js'
 
 export interface ToolSpec {
@@ -102,6 +104,8 @@ export interface ToolContext {
   botWake?: { conversationId: number; depth: number }
   /** obj 900972: how a Full access tool starts or messages a card. Tests pass a stub; the host default uses the internal routes. */
   fullAccessHost?: FullAccessHost
+  /** obj 901389: reads the "merged, waiting for deploy" picture for `release_status`; tests pass a stub. */
+  deployStatusReader?: () => DeployStatus
   /**
    * obj 901328: set when this turn is a needs_agent CARD WAKE (card-wakes.ts).
    * With `toolScope: 'chat'` (obj 901394, the default) the turn has the own-card
@@ -155,7 +159,8 @@ const OPEN_STATUSES = ['planning', 'queue', 'working', 'ai_review', 'review']
 
 const TEXT_EXT = new Set(['.md', '.txt', '.csv', '.json', '.yaml', '.yml'])
 const WRITE_EXT = new Set(['.md', '.txt', '.csv'])
-const MAX_READ_CHARS = 20_000
+/** One read_file page. A longer file is read page by page (text-page.ts). */
+export const MAX_READ_CHARS = 20_000
 const MAX_WRITE_BYTES = 200_000
 
 function obj(props: Record<string, unknown>, required: string[] = []): Record<string, unknown> {
@@ -173,8 +178,11 @@ const SPECS: Record<string, ToolSpec[]> = {
     }, ['q']))],
   list_folders: [fn('list_folders', 'List the files and folders inside one of your knowledge folders. Omit path to see your top-level folders.',
     obj({ path: { type: 'string', description: 'Folder path relative to the knowledge base, e.g. "notes/clients"' } }))],
-  read_file: [fn('read_file', 'Read one text file from your knowledge folders.',
-    obj({ path: { type: 'string', description: 'File path relative to the knowledge base' } }, ['path']))],
+  read_file: [fn('read_file', `Read one text file from your knowledge folders. A long file comes back one page at a time (about ${MAX_READ_CHARS} characters): when the result has "truncated": true, call again with "offset" set to the "next_offset" it returned, until next_offset is null.`,
+    obj({
+      path: { type: 'string', description: 'File path relative to the knowledge base' },
+      offset: { type: 'integer', minimum: 0, description: 'Character position to start from. Omit for the start of the file; for the next page pass the next_offset of the previous result.' },
+    }, ['path']))],
   write_doc: [fn('write_doc', 'Create or replace one .md/.txt/.csv file in your knowledge folders. Send the FULL new content; read the file first when editing.',
     obj({ path: { type: 'string' }, content: { type: 'string' } }, ['path', 'content']))],
   file_answer: [fn('file_answer', 'Save a good answer into the workspace knowledge base as a wiki page, linked from the pages it used, so later questions can build on it. Only save answers the person found useful.',
@@ -1189,7 +1197,7 @@ export async function runChatTool(ctxIn: ToolContext, fnName: string, args: Reco
   if (ctxIn.cardWake) {
     // obj 901424: an operator tool asked for in a card wake is refused, under either
     // tool scope (a wake is never the person's browser session); audit the attempt.
-    if (DEV_OPS_FNS.has(fnName)) {
+    if (DEV_OPS_ALL_FNS.has(fnName)) {
       writeDevOpsAudit({ bot_slug: ctxIn.agent.slug, user_id: ctxIn.userId, username: ctxIn.username, action: fnName, outcome: 'refused', code: 'wake_turn', detail: 'asked for in a card wake' })
       return runCardWakeTool(ctxIn, fnName, args)
     }
@@ -1220,7 +1228,7 @@ async function runChatToolInner(ctxIn: ToolContext, fnName: string, args: Record
   if (CARD_SANDBOX_FNS.has(fnName)) return runCardSandboxTool(ctx, fnName, args)
   if (GRANT_MERGE_FNS.has(fnName)) return runGrantMergeTool(ctx, fnName, args)
   if (FOLLOWUP_FNS.has(fnName)) return runFollowupTool(ctx, fnName, args)
-  if (DEV_OPS_FNS.has(fnName)) return runDevOpsTool(ctx, fnName, args)
+  if (DEV_OPS_ALL_FNS.has(fnName)) return runDevOpsTool(ctx, fnName, args)
   if (CARD_BROWSER_FNS.has(fnName)) return runCardBrowserTool(ctx, fnName, args)
   if (BOT_MESSAGE_FNS.has(fnName)) return runBotMessageTool(ctx, fnName, args)
   if (fnName === 'secrets_list' || fnName === 'secret_http') return runSecretTool(ctx, fnName, args)
@@ -1536,8 +1544,20 @@ export function runTool(ctxIn: ToolContext, fnName: string, args: Record<string,
       } catch {
         throw missingPathError(ctx, 'File', rel)
       }
-      const clipped = text.length > MAX_READ_CHARS
-      return { result: { path: rel, content: clipped ? text.slice(0, MAX_READ_CHARS) : text, truncated: clipped }, summary: `Read ${rel}` }
+      // obj 901494: a long file is paged, never silently cut. The result says
+      // where the next page starts, so a bot can read to the end before it writes.
+      const page = pageText(text, offsetArg(args.offset), MAX_READ_CHARS)
+      const note = pageNote(page, rel)
+      const paged = page.truncated || page.offset > 0
+      return {
+        result: {
+          path: rel,
+          content: page.content,
+          truncated: page.truncated,
+          ...(paged ? { offset: page.offset, next_offset: page.next_offset, total_chars: page.total_chars, note } : {}),
+        },
+        summary: paged ? `Read ${rel} (characters ${page.offset} to ${page.offset + page.content.length} of ${page.total_chars})` : `Read ${rel}`,
+      }
     }
     case 'write_doc': {
       const { abs, rel } = resolveKnowledgePath(ctx, s(args, 'path', true))

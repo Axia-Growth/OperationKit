@@ -108,3 +108,30 @@ describe('POST /api/internal/pr-created (obj 901228)', () => {
     expect((await prCreated({ pr_url: `https://github.com/${REPO}/pull/1` })).status).toBe(400)
   })
 })
+
+// obj 901542 — branch_name is attacker-influenced (any worker session can call this
+// route for its own card) and is later put into shell/argv git commands. The route
+// must refuse and store nothing for a value that could break out of a shell string.
+describe('POST /api/internal/pr-created rejects unsafe branch_name (obj 901542)', () => {
+  it.each([
+    'cc/obj-1-$(whoami)',
+    'cc/obj-1-`id`',
+    'cc/obj-1-"quoted"',
+    'cc/obj-1-;rm -rf /',
+    'cc/obj-1 with space',
+    'cc/obj-1-with\nnewline',
+  ])('rejects %j with 400 and stores nothing', async (branch_name) => {
+    const before = getDb().prepare('SELECT branch_name, pr_url FROM objectives WHERE id = ?').get(parent)
+    const r = await prCreated({ objective_id: parent, branch_name, pr_url: `https://github.com/${REPO}/pull/9001` })
+    expect(r.status).toBe(400)
+    const after = getDb().prepare('SELECT branch_name, pr_url FROM objectives WHERE id = ?').get(parent)
+    expect(after).toEqual(before)
+  })
+
+  it('accepts a normal worker/<id>-slug branch name', async () => {
+    const r = await prCreated({ objective_id: parent, branch_name: 'worker/901541-some-slug', pr_url: `https://github.com/${REPO}/pull/9002` })
+    expect(r.status).toBe(200)
+    const row = getDb().prepare('SELECT branch_name FROM objectives WHERE id = ?').get(parent) as { branch_name: string }
+    expect(row.branch_name).toBe('worker/901541-some-slug')
+  })
+})

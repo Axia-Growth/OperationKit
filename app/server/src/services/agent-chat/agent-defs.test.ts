@@ -103,6 +103,25 @@ describe('agent files', () => {
     }
   })
 
+  it('the built-in Dev bot carries the "Verify before done" rule (obj 901495)', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'agent-defs-okdev-verify-'))
+    try {
+      const dev = loadChatAgents({ env: { AGENT_FILES_DIR: dir }, includeBuiltins: true }).agents.find(a => a.slug === 'operation-kit-dev')!
+      const p = dev.system_prompt
+      expect(p).toContain('## Verify before done')
+      // The tool that reads the end state, used after a merge and after a deploy.
+      expect(p).toMatch(/\*\*After a merge\*\*[^\n]*`dev_deploy_status` with the card number[^\n]*merge commit/)
+      expect(p).toMatch(/\*\*After a deploy:\*\*[^\n]*live commit[^\n]*repo this server updates from[^\n]*sync pull request/)
+      // The three states, in the owner's words.
+      for (const words of ['"merged, not deployed"', '"deployed, commit X live"', '"deploy ran, nothing changed"']) expect(p).toContain(words)
+      // Never from a note alone.
+      expect(p).toMatch(/Never say "done"[^\n]*from a note alone: not a worker's summary/)
+      expect(p).toMatch(/Do not fill the gap with a guess/)
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
   it('ships the built-in Operation Kit Dev bot with an info panel and scoped tools (obj 900672)', () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'agent-defs-okdev-'))
     try {
