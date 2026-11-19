@@ -351,10 +351,21 @@ describe('3. failed / missing review, red or pending CI → refused', () => {
     await expectRefused(card(), 'ci_not_green')
   })
 
-  it('a PR that is behind / dirty is not merged', async () => {
+  it('a PR that is dirty (conflict) is not merged', async () => {
+    grant()
+    fake.pr.mergeStateStatus = 'DIRTY'
+    await expectRefused(card(), 'pr_not_mergeable')
+  })
+
+  // obj 901412: BEHIND is updated from main (GitHub update-branch), not merged.
+  it('a PR that is behind: the branch is updated, nothing is merged, the card stays in review', async () => {
     grant()
     fake.pr.mergeStateStatus = 'BEHIND'
-    await expectRefused(card(), 'pr_not_mergeable')
+    const id = card()
+    const r = await expectRefused(id, 'branch_updated_ci_pending')
+    expect(r.error).toContain('CI is now running on the new head')
+    expect(fake.calls.filter(c => c[1] === 'api' && c.some(a => a.endsWith('/update-branch')))).toHaveLength(1)
+    expect(lastAudit(id)).toMatchObject({ event: 'approval_used', reason: 'grant_merge:branch_updated_ci_pending' })
   })
 })
 

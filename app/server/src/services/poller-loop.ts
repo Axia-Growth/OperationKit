@@ -24,6 +24,7 @@ import { sweepOrphanJailHomesThrottled } from './jail-home.js'
 import { activeSessions } from './session-registry.js'
 import { detectStartupFailure, describeStartupFailure, type StartupFailure } from './session-startup-failure.js'
 import { authParkReason, isAuthFailureMessage, recordAuthFailure } from './account-router.js'
+import { restSeatAfterNoOpSpawn } from './noop-seat-rest.js'
 import {
   isFloorActiveForProject,
   getFloorConfig,
@@ -67,7 +68,7 @@ import { queueExtraction } from './session-intel-pipeline.js'
 import { hasArenaCohort } from './arena-lifecycle.js'
 import { broadcast } from '../ws/index.js'
 import { mustRouteToHumanReview } from '../lib/human-tracked.js'
-import { classifyMergeLane, isRedLaneText, GREEN_LANE_FINDINGS, type MergeLane } from './merge-lane.js'
+import { isRedLaneText, GREEN_LANE_FINDINGS, type MergeLane } from './merge-lane.js'
 import { isBackendOnlyChange } from './design-context.js'
 import { resolveFilesTouched } from './files-touched.js'
 import { skipMachineStatusWrite, runMachineStatusUpdate } from '../lib/status-lock.js'
@@ -82,7 +83,7 @@ import {
   type NoOpDecision,
   decideDeadSessionRepark,
   classifyNoOpSpawn,
-  resolveWorkerEndStatus,
+  decideWorkerEndRoute,
   watchdogDecision,
   planReviewSessionSweep,
 } from './poller-decisions.js'
@@ -1028,6 +1029,12 @@ export async function pollActiveSessions(): Promise<void> {
           // No-op spawn re-queued — NOT a deliverable, do NOT spawn a reviewer.
           noopRespawnCounts.set(objective.id, decision.attempt!)
           bumpAttempt(db, objective.id, 'noop_respawn') // durable twin of the line above (obj 900322)
+          // obj 901395: a spawn that produced nothing is the card-session twin of
+          // chat's empty turn. Rest the seat it ran on for the short empty-turn
+          // window so the respawn below is picked onto ANOTHER seat (before, the
+          // respawn could land on the same seat and reproduce the no-op).
+          const restedSeat = restSeatAfterNoOpSpawn(db, objective.session_id)
+          if (restedSeat) console.warn(`[state-poller] No-op spawn for objective ${objective.id}: seat ${restedSeat} rests briefly so the respawn moves to another seat.`)
           console.warn(
             `[state-poller] No-op spawn detected for objective ${objective.id} (0 tool calls / 0 file changes, attempt ${decision.attempt}/${MAX_NOOP_RESPAWNS}) — re-spawning worker, no reviewer.`
           )
@@ -1121,7 +1128,6 @@ export async function pollActiveSessions(): Promise<void> {
       let resolvedStatus: ObjectiveStatus = newStatus
       let mergeLane: MergeLane | undefined
       if (newStatus === 'review' && objective.status === 'working') {
-        const skipAi = !!(objective as Objective & { skip_ai_review?: boolean | number }).skip_ai_review
         let filesKnown = false
         let uiTouched = false
         if (objective.create_pr) {
@@ -1133,27 +1139,21 @@ export async function pollActiveSessions(): Promise<void> {
             console.warn(`[state-poller] merge-lane file list failed for obj ${objective.id}:`, (err as Error).message)
           }
         }
-        mergeLane = classifyMergeLane({
-          type: objective.type,
-          createPr: !!objective.create_pr,
-          delegateMode: !!objective.delegate_mode,
+        // obj 901381 — one routing decision from the row (poller-decisions.ts
+        // decideWorkerEndRoute): a linked PR counts as a PR even when the card
+        // was filed with create_pr = 0, so it reaches the AI reviewer.
+        const route = decideWorkerEndRoute(objective as Objective & { skip_ai_review?: boolean | number }, {
           redPath: isRedLaneText(objective),
           filesKnown,
           uiTouched,
-        })
-        resolvedStatus = resolveWorkerEndStatus({
-          type: objective.type,
-          delegateMode: !!objective.delegate_mode,
-          createPr: !!objective.create_pr,
-          skipAi,
           hasDelegatorParent: delegatorParentOf(objective) != null,
-          isRoutine: objective.routine_id != null,
-          lane: mergeLane,
           // obj 900322 — a routine card whose session refused (or produced
           // nothing) must not auto-complete to `done`. `decision` is the
           // no-op classifier already computed above for this same session.
           producedNothing: decisionProducedNothing,
         })
+        mergeLane = route.lane
+        resolvedStatus = route.status
         if (mergeLane === 'green') {
           console.log(`[state-poller] Green lane obj ${objective.id} (${objective.type}) — skip LLM reviewer → ${resolvedStatus}`)
         }

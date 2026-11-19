@@ -272,6 +272,10 @@ Fan-out creates the children through `POST /api/internal/objectives` (every dele
 ```
 
 Ordered most-urgent first: `failed_review` → `blocked` → `review` → `stuck` (working with no activity ≥ `stale_min`).
+A card in the review stage is listed only when it waits on a person (obj 901387): its AI review passed, its AI review
+failed or was blocked and nobody is on the card, no AI review applies (no pull request, or `skip_ai_review`), or it
+carries an open decision. A review card that has a pull request and no AI review verdict yet, or one with an agent
+still on it, is left out. This is the same rule as the Bots page "Needs you" count (`reviewStageOf` in `shared/bot-work.ts`).
 Titles ≤70 chars, `why` one line ≤140 chars. `counts` are complete even when `items` is truncated. Without `?workspace=`,
 each item carries `ws`. Needs `board:read`; a pinned key's items and counts cover only its workspaces. A typical
 workspace is about 1–4 KB, against tens to hundreds of KB for `/api/briefing/briefing` + `/api/objectives`.

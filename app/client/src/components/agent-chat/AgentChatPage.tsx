@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ClipboardEvent, type KeyboardEvent } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ClipboardEvent, type KeyboardEvent, type ReactNode } from 'react'
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
-import { ChevronLeft, Info, Paperclip, Pin, Square, X } from 'lucide-react'
+import { ChevronLeft, Info, MessageSquareReply, Paperclip, Pin, Square, X } from 'lucide-react'
 import { api, isRequestTimeout } from '../../lib/api'
 import { actionErrorMessage } from '../../lib/format'
 import { useAuth } from '../../context/AuthContext'
@@ -9,7 +9,9 @@ import { useMediaQuery } from '../../hooks/useMediaQuery'
 import { Alert, Button, EmptyState, IconButton, Skeleton, SkeletonText, cn, useConfirm } from '../ui'
 import { ThinkingIndicator } from '../design/primitives'
 import { Tabs } from '../ui/Tabs'
-import { AgentAvatar, AssistantBubble, BotThreadLink, CardChip, DraftCard, ErrorLine, ToolLine, UserBubble } from './ChatItems'
+import { AgentAvatar, AssistantBubble, BotThreadLink, CardChip, DraftCard, ErrorLine, ToolLine, UserBubble, time } from './ChatItems'
+import { ReplyThreadPanel } from './ReplyThreadPanel'
+import { mergeThread, newClientMsgId } from './thread-merge'
 import { FullAccessBadge } from './FullAccessBadge'
 import { BotMessagesPanel } from './BotMessagesPanel'
 import { AgentInfoPanel } from './AgentInfoPanel'
@@ -48,6 +50,8 @@ import {
   type ChatMessage,
   type ChatThread,
   type LaneTurn,
+  type ReplyThreadOpenResponse,
+  type ReplyThreadSummary,
   type ThreadResponse,
   type ThreadsResponse,
 } from './types'
@@ -70,6 +74,11 @@ import {
        history, its own context, and it runs CONCURRENTLY — you can set one off
        and keep talking in the main conversation while it works. Closing a side
        thread archives that lane and leaves the main conversation untouched.
+     - a THREAD (obj 901373, "Reply in thread") hangs off ONE message of the
+       main conversation or of a side thread. It opens in a panel beside the
+       conversation; the bot answers a reply there, with that message and the
+       thread's earlier replies as its context, and nothing is posted to the
+       conversation the message sits in.
    The Bots sidebar's "New bot" button (obj 900866) does not create a bot here
    either: it opens the existing create flow (ask the Dev bot, a template, or
    paste a bot file), which writes the agent file on the server. The
@@ -268,6 +277,10 @@ function Conversation({
   const [laneBusy, setLaneBusy] = useState(false)
   // null = not renaming; a string = the name being edited in the header.
   const [renameTo, setRenameTo] = useState<string | null>(null)
+  // obj 901373: the reply thread open in the panel — its lane id and the message it hangs off.
+  const [replyThread, setReplyThread] = useState<{ threadId: number; parent: ChatMessage } | null>(null)
+  // Phones have no hover: the action sits under each message there (and on long-press).
+  const noHover = useMediaQuery('(hover: none)')
   const scroller = useRef<HTMLDivElement>(null)
   const input = useRef<HTMLTextAreaElement>(null)
   // Autosize the composer: grow with its content (typed, pasted or prefilled)
@@ -394,8 +407,29 @@ function Conversation({
     }
   }
 
-  // Leaving a lane abandons a half-typed rename rather than carrying it over.
-  useEffect(() => { setRenameTo(null) }, [lane])
+  // Leaving a lane abandons a half-typed rename rather than carrying it over,
+  // and closes the thread panel: its parent message is no longer on screen.
+  useEffect(() => { setRenameTo(null); setReplyThread(null) }, [lane])
+
+  /**
+   * obj 901373: open the thread on one message. The server finds the message's
+   * thread or creates it (one per message); a message that already shows
+   * "N replies" opens straight from its known thread id while that is confirmed.
+   */
+  const openReplyThread = async (m: ChatMessage, known?: ReplyThreadSummary) => {
+    setSendError(null)
+    setBotPanel(null)
+    setInfoOpen(false)
+    setSettingsOpen(false)
+    if (known) setReplyThread({ threadId: known.thread_id, parent: m })
+    try {
+      const r = await api.post<ReplyThreadOpenResponse>(`${base}/messages/${m.id}/thread`, {})
+      setReplyThread({ threadId: r.thread.id, parent: m })
+    } catch (e) {
+      setReplyThread(null)
+      setSendError(actionErrorMessage(e, 'Could not open the thread'))
+    }
+  }
 
   // Paste / drop / attach all end up here (obj 900157).
   const addFiles = useCallback(async (files: ArrayLike<File>) => {
@@ -587,8 +621,7 @@ function Conversation({
     }
   }
 
-  const draftAction = async (path: string, body?: unknown, method: 'post' | 'put' = 'post') => {
-    const key = msgKey
+  const draftAction = async (path: string, body?: unknown, method: 'post' | 'put' = 'post', key: string = msgKey) => {
     setSendError(null)
     try {
       const r = method === 'put' ? await api.put<{ draft: ChatDraft }>(path, body) : await api.post<{ draft: ChatDraft }>(path, body)
@@ -608,7 +641,7 @@ function Conversation({
         // side thread never touches the main conversation.
         message: activeThread
           ? `Only this side thread's messages are deleted. Your main conversation with ${agent.name} is not changed.`
-          : `The messages are deleted from this server. ${agent.name} itself is not deleted — only this conversation is emptied. Side threads, board cards and saved notes stay.`,
+          : `The messages are deleted from this server, with the threads replied under them. ${agent.name} itself is not deleted — only this conversation is emptied. Side threads, board cards and saved notes stay.`,
         confirmLabel: activeThread ? 'Clear side thread' : 'Clear conversation',
         danger: true,
       }))
@@ -616,13 +649,34 @@ function Conversation({
       return
     const key = msgKey
     await api.del(`${base}/messages${laneQuery}`)
-    updateThread(key, t => ({ ...t, messages: [] }))
+    // The threads replied under these messages are cleared with them (obj 901373).
+    setReplyThread(null)
+    updateThread(key, t => ({ ...t, messages: [], reply_threads: {} }))
     await load()
     void loadThreads()
   }
 
   const drafts = useMemo(() => new Map((thread?.drafts ?? []).map(d => [d.id, d])), [thread?.drafts])
   const cards = useMemo(() => new Map((thread?.cards ?? []).map(c => [c.id, c])), [thread?.cards])
+  /** One stored message, drawn the same way in the conversation and in the thread panel. */
+  const renderMessage = (m: ChatMessage, t: ThreadResponse | null, key: string): ReactNode => {
+    if (isNeedsYouMessage(m)) return <NeedsYouMessage m={m} agent={agent} />
+    const own = t === thread
+    const draft = m.meta?.draft_id ? (own ? drafts.get(m.meta.draft_id) : t?.drafts.find(d => d.id === m.meta?.draft_id)) : undefined
+    const card = m.tool_name === 'create_objective' && m.meta?.objective_id ? (own ? cards.get(m.meta.objective_id) : t?.cards.find(c => c.id === m.meta?.objective_id)) : undefined
+    return (
+      <MessageRow
+        m={m}
+        agent={agent}
+        draft={draft}
+        card={card}
+        onSend={d => draftAction(`/agent-chat/drafts/${d.id}/send`, undefined, 'post', key)}
+        onDiscard={d => draftAction(`/agent-chat/drafts/${d.id}/discard`, undefined, 'post', key)}
+        onSave={(d, patch) => draftAction(`/agent-chat/drafts/${d.id}`, patch, 'put', key)}
+        onOpenBotThread={openBotThread}
+      />
+    )
+  }
   const answeredBy = `${PROVIDER_LABELS[agent.answered_by.id]}${agent.answered_by.model ? ` · ${friendlyModelName(agent.answered_by.model)}` : ''}`
 
   return (
@@ -800,6 +854,12 @@ function Conversation({
       {view === 'chat' && (<>
       <LaneStrip threads={threads} lane={lane} maxOpen={maxOpen} busy={laneBusy} onPick={setLane} onOpen={() => void openLane()} />
 
+      {/* obj 901373: the conversation, with the thread panel beside it on a wide
+          screen and over it on a narrow one (the conversation stays mounted
+          underneath: its draft and scroll position are there when the panel closes). */}
+      <div className="relative flex min-h-0 flex-1" data-testid="chat-with-thread">
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+
       {/* While Bot settings is open the panel takes the pane and scrolls itself
           (obj 900864); the message list keeps its place but drops its padding so
           no 32px sliver of half-cut chat shows between the lanes and the composer.
@@ -854,19 +914,20 @@ function Conversation({
               return <FoldedActivity key={item.key} messages={item.messages} agent={agent} onOpenActivity={() => onView?.('activity')} />
             }
             const m = item.m
-            if (isNeedsYouMessage(m)) return <NeedsYouMessage key={m.id} m={m} agent={agent} />
+            // obj 901373: the person's and the bot's messages can be replied to in a thread.
+            if (m.role !== 'user' && m.role !== 'assistant') return <div key={m.id} className="contents">{renderMessage(m, thread, msgKey)}</div>
+            const summary = thread?.reply_threads?.[String(m.id)]
             return (
-              <MessageRow
+              <ThreadableMessage
                 key={m.id}
                 m={m}
-                agent={agent}
-                draft={m.meta?.draft_id ? drafts.get(m.meta.draft_id) : undefined}
-                card={m.tool_name === 'create_objective' && m.meta?.objective_id ? cards.get(m.meta.objective_id) : undefined}
-                onSend={d => draftAction(`/agent-chat/drafts/${d.id}/send`)}
-                onDiscard={d => draftAction(`/agent-chat/drafts/${d.id}/discard`)}
-                onSave={(d, patch) => draftAction(`/agent-chat/drafts/${d.id}`, patch, 'put')}
-                onOpenBotThread={openBotThread}
-              />
+                summary={summary}
+                open={replyThread?.parent.id === m.id}
+                alwaysShowAction={noHover}
+                onReply={() => void openReplyThread(m, summary)}
+              >
+                {renderMessage(m, thread, msgKey)}
+              </ThreadableMessage>
             )
           })}
           {pendingBubble && (
@@ -991,6 +1052,21 @@ function Conversation({
           <p className="mt-1.5 hidden text-xs text-fg-2 sm:block">Enter to send · Shift+Enter for a new line · paste, drop or attach a screenshot · Email and calendar are always drafts until you press Send.</p>
         </div>
       </form>
+      </div>
+      {replyThread && (
+        <ReplyThreadPanel
+          key={replyThread.threadId}
+          agent={agent}
+          threadId={replyThread.threadId}
+          parent={replyThread.parent}
+          renderMessage={renderMessage}
+          onClose={() => setReplyThread(null)}
+          onChanged={() => void load()}
+          onActivity={onActivity}
+          className="absolute inset-0 z-10 xl:static xl:z-auto xl:w-[400px] xl:shrink-0 xl:border-l xl:border-line"
+        />
+      )}
+      </div>
       </>)}
       </div>
       {confirmDialog}
@@ -1045,25 +1121,98 @@ function sentAt(iso: string): number {
   return Number.isNaN(t) ? 0 : t
 }
 
-/** A fresh client_msg_id: 8-64 of [A-Za-z0-9_-], the shape the server accepts. */
-function newClientMsgId(): string {
-  const c = globalThis.crypto
-  if (c && typeof c.randomUUID === 'function') return c.randomUUID()
-  return `m-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 12)}`
+export { mergeThread }
+
+/**
+ * obj 901373: one message of the conversation plus its thread affordances — the
+ * "Reply in thread" action (on hover or keyboard focus; always shown, and on
+ * long-press, where there is no hover) and, once the message has replies, the
+ * "N replies" link with the last reply's time.
+ */
+export function ThreadableMessage({
+  m,
+  summary,
+  open,
+  alwaysShowAction,
+  onReply,
+  children,
+}: {
+  m: ChatMessage
+  summary?: ReplyThreadSummary
+  /** This message's thread is the one open in the panel. */
+  open: boolean
+  alwaysShowAction: boolean
+  onReply: () => void
+  children: ReactNode
+}) {
+  const mine = m.role === 'user'
+  const press = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const cancelPress = () => {
+    if (press.current) clearTimeout(press.current)
+    press.current = null
+  }
+  useEffect(() => cancelPress, [])
+  const n = summary?.reply_count ?? 0
+  const last = summary?.last_reply_at ? time(summary.last_reply_at) : ''
+  return (
+    <div
+      data-testid="threadable-message"
+      data-message-id={m.id}
+      className={cn('group/msg relative flex flex-col gap-1 rounded-lg', open && 'bg-accent/5 outline outline-1 outline-offset-4 outline-accent/40')}
+      onTouchStart={() => { cancelPress(); press.current = setTimeout(onReply, LONG_PRESS_MS) }}
+      onTouchEnd={cancelPress}
+      onTouchMove={cancelPress}
+      onTouchCancel={cancelPress}
+    >
+      {children}
+      {(n > 0 || alwaysShowAction) && (
+        <div className={cn('flex flex-wrap items-center gap-x-3 gap-y-1 text-xs', mine ? 'justify-end' : 'ml-9')}>
+          {n > 0 && (
+            <button
+              type="button"
+              data-testid="thread-replies-link"
+              onClick={onReply}
+              aria-label={`${n} ${n === 1 ? 'reply' : 'replies'} in thread${last ? `, last reply ${last}` : ''}. Open thread`}
+              className="inline-flex min-h-[28px] items-center gap-1.5 rounded-md px-1.5 font-medium text-accent-hover underline-offset-2 hover:bg-surface-2 hover:text-accent hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/50"
+            >
+              <MessageSquareReply aria-hidden="true" className="h-3.5 w-3.5" />
+              <span>{n} {n === 1 ? 'reply' : 'replies'}</span>
+              {last && <span className="font-normal text-fg-2">· last reply {last}</span>}
+            </button>
+          )}
+          {alwaysShowAction && n === 0 && (
+            <button
+              type="button"
+              onClick={onReply}
+              className="inline-flex min-h-[28px] items-center gap-1.5 rounded-md px-1.5 text-fg-2 hover:text-fg-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/50"
+            >
+              <MessageSquareReply aria-hidden="true" className="h-3.5 w-3.5" />
+              Reply in thread
+            </button>
+          )}
+        </div>
+      )}
+      {!alwaysShowAction && (
+        <button
+          type="button"
+          onClick={onReply}
+          title="Reply in thread"
+          className={cn(
+            'absolute -top-3 z-[1] inline-flex min-h-[28px] items-center gap-1.5 rounded-md border border-line bg-surface-1 px-2 text-xs text-fg-1 opacity-0 shadow-sm transition-opacity duration-fast',
+            'hover:border-line-strong hover:text-fg-0 focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/50 group-hover/msg:opacity-100',
+            'right-2',
+          )}
+        >
+          <MessageSquareReply aria-hidden="true" className="h-3.5 w-3.5" />
+          Reply in thread
+        </button>
+      )}
+    </div>
+  )
 }
 
-export function mergeThread(t: ThreadResponse | null, r: ThreadResponse): ThreadResponse {
-  const prev = t ?? { messages: [], drafts: [], cards: [] }
-  const byId = <T extends { id: number }>(a: T[], b: T[]) => [...new Map([...a, ...b].map(x => [x.id, x])).values()]
-  // obj 900977: a queued message is re-filed under a NEW row id when the bot
-  // picks it up. A POST answer that lands after a re-read already showed the
-  // delivered row must not add the old queued row back beside it.
-  const delivered = new Set(prev.messages.filter(m => m.meta?.client_msg_id && !m.meta.queued).map(m => m.meta!.client_msg_id!))
-  const incoming = r.messages.filter(m => !(m.meta?.queued && m.meta.client_msg_id && delivered.has(m.meta.client_msg_id)))
-  r = { ...r, messages: incoming }
-  // obj 900949: the newest answer carries the lane's turn state (running, queued count).
-  return { messages: byId(prev.messages, r.messages), drafts: byId(prev.drafts ?? [], r.drafts ?? []), cards: byId(prev.cards ?? [], r.cards ?? []), turn: r.turn ?? prev.turn }
-}
+/** How long a touch is held on a message before its thread opens. */
+const LONG_PRESS_MS = 550
 
 function MessageRow({
   m,

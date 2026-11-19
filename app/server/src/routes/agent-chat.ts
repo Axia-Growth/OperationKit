@@ -11,6 +11,7 @@ import {
   listAgents,
   listMessages,
   drainLaneQueue,
+  getMessage,
   laneTurnState,
   stopTurn,
   submitMessage,
@@ -70,6 +71,8 @@ import {
   deleteThread,
   listThreads,
   maxThreadsPerBot,
+  openReplyThread,
+  replyThreadsForLane,
   resolveLane,
   ThreadRejected,
   updateThread,
@@ -83,7 +86,10 @@ import botWorkRouter from './agent-chat-bot-work.js'
 import { markFeedMessage } from '../services/agent-chat/bot-attention.js'
 import { resolveNeedsYouMessages } from '../services/decision-queue.js'
 import { isHighAgencyActivityCard } from '../services/agent-chat/high-agency-cards.js'
-import { CARD_WAKES_THREAD_TITLE, cardWakesGloballyEnabled, getCardWakeSwitch, setCardWakeSwitch } from '../services/agent-chat/card-wake-routing.js'
+import {
+  CARD_WAKES_THREAD_TITLE, cardWakeDebounceSeconds, cardWakeMaxPerHour, cardWakePostsToChat, cardWakesGloballyEnabled, cardWakeToolScope, cardWakeWindowMinutes,
+  getCardWakeSwitch, setCardWakeSwitch,
+} from '../services/agent-chat/card-wake-routing.js'
 import { getDevOpsSwitch, setDevOpsSwitch } from '../services/dev-ops/switch.js'
 import { listDevOpsAudit, writeDevOpsAudit } from '../services/dev-ops/audit.js'
 
@@ -510,7 +516,15 @@ function cardWakesPayload(req: AuthRequest, slug: string) {
       .filter(r => !mine || mine.has(String(r.workspace)))
       .slice(0, 20)
   } catch { recent = [] }
-  return { card_wakes: { ...sw, install_enabled: cardWakesGloballyEnabled(), thread_title: CARD_WAKES_THREAD_TITLE }, recent }
+  // obj 901394: the install-wide limits, read-only here (they are settings rows).
+  const limits = {
+    debounce_seconds: cardWakeDebounceSeconds(),
+    max_per_hour: cardWakeMaxPerHour(),
+    window_minutes: cardWakeWindowMinutes(),
+    tools: cardWakeToolScope(),
+    posts_to_chat: cardWakePostsToChat(),
+  }
+  return { card_wakes: { ...sw, install_enabled: cardWakesGloballyEnabled(), thread_title: CARD_WAKES_THREAD_TITLE, limits }, recent }
 }
 
 router.get('/agents/:slug/card-wakes', (req: AuthRequest, res) => {
@@ -702,7 +716,35 @@ router.get('/agents/:slug/messages', (req: AuthRequest, res) => {
   // time the person looks at the lane, so a queued message never waits forever.
   drainLaneQueue({ userId: req.user!.id, username: req.user!.username, agent: a, lane })
   const messages = markActivityMessages(listMessages(req.user!.id, a.slug, { afterId: after, lane }))
-  res.json({ messages, ...attachments(req.user!.id, a.slug, messages), turn: laneTurnState(req.user!.id, a.slug, lane) })
+  res.json({
+    messages,
+    ...attachments(req.user!.id, a.slug, messages),
+    turn: laneTurnState(req.user!.id, a.slug, lane),
+    // obj 901373: "N replies" under every message of this lane that has a thread.
+    reply_threads: replyThreadsForLane(req.user!.id, a.slug, lane),
+  })
+})
+
+/**
+ * Reply in thread (obj 901373): the thread on ONE message of this person's chat
+ * with this bot, created on first use. The thread is a lane like any side
+ * thread — read it with GET /messages?thread_id=<id> and post into it with
+ * POST /messages { thread_id } — it is just never listed in the lane strip.
+ */
+router.post('/agents/:slug/messages/:id/thread', (req: AuthRequest, res) => {
+  if (req.authVia === 'agent_api_key') {
+    res.status(403).json({ error: 'Chat history is private to the person' })
+    return
+  }
+  const a = agentOr404(req, res)
+  if (!a) return
+  try {
+    const r = openReplyThread(req.user!.id, a.slug, Number(req.params.id))
+    const parent = getMessage(req.user!.id, a.slug, r.parent.id)
+    res.status(r.created ? 201 : 200).json({ thread: r.thread, parent, ...attachments(req.user!.id, a.slug, parent ? [parent] : []) })
+  } catch (err) {
+    threadError(res, err)
+  }
 })
 
 /**
@@ -846,6 +888,7 @@ router.post('/agents/:slug/messages', async (req: AuthRequest, res) => {
       // obj 900977: true when this client_msg_id was already stored — nothing new was added or run.
       ...(r.duplicate ? { duplicate: true } : {}),
       turn: laneTurnState(req.user!.id, a.slug, lane),
+      reply_threads: replyThreadsForLane(req.user!.id, a.slug, lane),
     })
   } catch (err) {
     if (disconnectedAt !== null) {

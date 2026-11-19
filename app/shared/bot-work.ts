@@ -8,7 +8,8 @@
  *  - {@link workGroupOf}: which Work-tab group a card sits in.
  *  - {@link needsYouReasons}: the ONLY four reasons a bot needs a person —
  *    an approval beyond its grant, a card over its spend ceiling, a decision,
- *    or a blocker. Nothing else counts toward "Needs you".
+ *    or a blocker. Nothing else counts toward "Needs you". Being in the review
+ *    stage is not a reason by itself ({@link reviewStageOf}, obj 901387).
  *  - {@link chatRouteFor}: the chat-routing rule. Bot activity goes to the
  *    bot's Activity feed; the main chat only gets a message for one of those
  *    four reasons.
@@ -70,9 +71,70 @@ export function workGroupOf(status: string): WorkGroup | null {
   }
 }
 
-export interface NeedsYouInput {
+/**
+ * obj 901387: where a card in the review stage really stands. "In review" is a
+ * STAGE; only some of these stages wait on a person.
+ *
+ *  - not_review:          the card is not in the review stage at all.
+ *  - agent_running:       a session is live on the card (a worker acting on a
+ *                         bounce, a follow-up). The bot's, not the person's.
+ *  - awaiting_ai_review:  the AI reviewer has the card (`ai_review`), or the
+ *                         card has (or was meant to open) a pull request and
+ *                         no AI review verdict yet. Not the person's turn.
+ *  - sign_off:            AI review passed. Waiting for the person to accept
+ *                         or bounce it, or approve the merge / deploy.
+ *  - review_escalated:    AI review ended `fail` / `blocked` and the card is
+ *                         parked with nobody on it (a fail that went back to
+ *                         the worker is `working`, or has a live session).
+ *  - no_ai_review:        AI review does not apply (no pull request, or the
+ *                         card opted out with skip_ai_review), so the person
+ *                         is the only gate.
+ */
+export type ReviewStage = 'not_review' | 'agent_running' | 'awaiting_ai_review' | 'sign_off' | 'review_escalated' | 'no_ai_review'
+
+export const REVIEW_STAGE_LABELS: Record<Exclude<ReviewStage, 'not_review'>, string> = {
+  agent_running: 'Agent still working',
+  awaiting_ai_review: 'Waiting on AI review',
+  sign_off: 'Ready for your sign-off',
+  review_escalated: 'AI review needs your call',
+  no_ai_review: 'Ready for you to accept',
+}
+
+export interface ReviewStageInput {
   status: string
   session_id?: string | null
+  ai_review_verdict?: string | null
+  /** The card carries a pull request (pr_url or pr_number). */
+  has_pr?: boolean | number | null
+  /** The card was filed to open a pull request (objectives.create_pr). */
+  create_pr?: boolean | number | null
+  skip_ai_review?: boolean | number | null
+}
+
+const truthy = (v: boolean | number | null | undefined): boolean => v === true || Number(v) > 0
+
+export function reviewStageOf(c: ReviewStageInput): ReviewStage {
+  if (c.status === 'ai_review') return 'awaiting_ai_review'
+  if (c.status !== 'review') return 'not_review'
+  if (c.session_id != null && c.session_id !== '') return 'agent_running'
+  if (c.ai_review_verdict === 'pass') return 'sign_off'
+  if (c.ai_review_verdict === 'fail' || c.ai_review_verdict === 'blocked') return 'review_escalated'
+  if (truthy(c.skip_ai_review)) return 'no_ai_review'
+  if (truthy(c.has_pr) || truthy(c.create_pr)) return 'awaiting_ai_review'
+  return 'no_ai_review'
+}
+
+/** The review stages that wait on a person. The ONE rule every "needs you" count uses. */
+export function reviewStageNeedsPerson(stage: ReviewStage): boolean {
+  return stage === 'sign_off' || stage === 'review_escalated' || stage === 'no_ai_review'
+}
+
+/** A review card the person has to act on: accept / bounce it, or approve its merge. */
+export function reviewWaitsOnPerson(c: ReviewStageInput): boolean {
+  return reviewStageNeedsPerson(reviewStageOf(c))
+}
+
+export interface NeedsYouInput extends ReviewStageInput {
   has_blockers?: boolean | number | null
   /** Names the card is waiting on (objectives.needs_secret, parsed). */
   needs_secret_count?: number
@@ -97,8 +159,12 @@ const TERMINAL = new Set(['done', 'cancelled'])
  *    `approval_denied`), and no approval has been used on the card since.
  *  - over_ceiling: measured spend is at or over the card's effective ceiling
  *    (explicit, else the per-effort default `spend_ceiling_default_usd:<tier>`).
- *  - decision: the card sits in Needs You (review with no agent on it — the
- *    board's own rule), or a job finished with disposition `needs_review`.
+ *  - decision: an open (unanswered) decision briefing, a job that finished with
+ *    disposition `needs_review`, or a review card that waits on the person
+ *    ({@link reviewWaitsOnPerson}: AI review passed, AI review escalated, or no
+ *    AI review applies). obj 901387: a card that is merely IN review — still
+ *    waiting on its AI review, or with an agent on it — is NOT counted; it only
+ *    shows in the plain "N in review" stage count.
  *  - blocker: the card has a blocker, is waiting on a secret, or stalled.
  */
 export function needsYouReasons(c: NeedsYouInput): NeedsYouReason[] {
@@ -108,8 +174,7 @@ export function needsYouReasons(c: NeedsYouInput): NeedsYouReason[] {
   const out: NeedsYouReason[] = []
   if (c.approval_denied) out.push('approval_beyond_grant')
   if (c.ceiling_usd != null && Number.isFinite(c.ceiling_usd) && c.spent_usd >= c.ceiling_usd) out.push('over_ceiling')
-  const parked = c.status === 'review' && (c.session_id == null || c.session_id === '')
-  if (parked || c.job_disposition === 'needs_review' || c.open_decision) out.push('decision')
+  if (reviewWaitsOnPerson(c) || c.job_disposition === 'needs_review' || c.open_decision) out.push('decision')
   if (c.has_blockers === true || Number(c.has_blockers) > 0 || (c.needs_secret_count ?? 0) > 0 || c.stalled) out.push('blocker')
   return out
 }
@@ -148,6 +213,8 @@ export interface BotWorkCard {
   ceiling_source: string | null
   ceiling_is_default: boolean
   needs_you: NeedsYouReason[]
+  /** obj 901387: where a review card stands (why it does or does not need you). */
+  review_stage?: ReviewStage
   /** True for a High Agency wake card (it also has an Activity entry). */
   is_wake: boolean
   updated_at: string

@@ -51,7 +51,11 @@ const WORK = {
   workspaces: ['ops'],
   groups: {
     running: [wcard(40, 'Ship the importer', 'running', { spent_usd: 12.5, ceiling_usd: 10, needs_you: ['over_ceiling'] })],
-    review: [wcard(41, 'Pick a vendor', 'review', { needs_you: ['decision'], pr_url: 'https://github.com/acme/repo/pull/77' })],
+    review: [
+      wcard(41, 'Pick a vendor', 'review', { needs_you: ['decision'], pr_url: 'https://github.com/acme/repo/pull/77', review_stage: 'sign_off' }),
+      // obj 901387: in review, but not the person's turn — no "needs you" badge, a plain stage label instead.
+      wcard(43, 'Importer PR', 'review', { needs_you: [], pr_url: 'https://github.com/acme/repo/pull/78', review_stage: 'awaiting_ai_review' }),
+    ],
     queued: [],
     done: [wcard(39, 'Fix login', 'done', { pr_url: 'https://github.com/acme/repo/pull/70' })],
   },
@@ -193,7 +197,7 @@ describe('Work tab', () => {
     expect(tabEl).not.toBeNull()
     const ids = (g: string) => [...host.querySelectorAll(`[data-testid="work-group-${g}"] [data-testid="work-card"]`)].map(li => Number(li.getAttribute('data-card')))
     expect(ids('running')).toEqual([40])
-    expect(ids('review')).toEqual([41])
+    expect(ids('review')).toEqual([41, 43])
     expect(ids('queued')).toEqual([])
     expect(ids('done')).toEqual([39])
     expect(host.querySelector('[data-testid="work-group-queued"]')!.textContent).toContain('Nothing queued.')
@@ -205,6 +209,10 @@ describe('Work tab', () => {
     expect(review.querySelector('[data-testid="spend-meter"]')!.textContent).toContain('$1.00 of $10.00 · default for normal effort')
     expect((review.querySelector('[data-testid="work-card-pr"]') as HTMLAnchorElement).href).toBe('https://github.com/acme/repo/pull/77')
     expect(review.textContent).toContain('Needs a decision')
+    expect(review.querySelector('[data-testid="work-card-review-stage"]')).toBeNull()
+    const waiting = host.querySelector('[data-card="43"]')!
+    expect(waiting.textContent).not.toContain('Needs a decision')
+    expect(waiting.querySelector('[data-testid="work-card-review-stage"]')!.textContent).toBe('Waiting on AI review')
     expect((host.querySelector('[data-testid="work-open-board"]') as HTMLAnchorElement).getAttribute('href')).toBe('/?owner=bot%3AGrok%3A%20CTO')
   })
 

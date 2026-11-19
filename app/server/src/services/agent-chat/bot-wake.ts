@@ -326,6 +326,9 @@ async function wake(msg: BotMessage, conversation: BotConversation, opts: DrainO
         meta: m.meta ? { ok: m.meta.ok !== false, ...(m.meta.objective_id ? { objective_id: m.meta.objective_id } : {}), ...(m.meta.bot_conversation_id ? { bot_conversation_id: m.meta.bot_conversation_id } : {}) } : null,
       })
     } else if (m.role === 'error') {
+      // obj 901395: a reply moved to another account is not a failure, and a bot
+      // thread is not where a person watches seats: leave it out of the thread.
+      if (m.meta?.kind === 'seat_moved') return
       insertEntry({ conversation, kind: 'error', from_slug: recipient.slug, to_slug: null, body: m.content, in_reply_to: msg.id, depth: msg.depth, provider: m.provider, model: m.model })
     }
   }

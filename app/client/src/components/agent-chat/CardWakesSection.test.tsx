@@ -14,10 +14,11 @@ const AGENT = { slug: 'example-cto', name: 'Example CTO' } as unknown as ChatAge
 let host: HTMLDivElement
 let root: Root
 let enabled = true
+let limits: Record<string, unknown> | undefined
 let requests: { url: string; method: string; body: unknown }[] = []
 
 const payload = () => ({
-  card_wakes: { slug: 'example-cto', enabled, is_default: enabled, updated_at: null, install_enabled: true, thread_title: 'Card wakes' },
+  card_wakes: { slug: 'example-cto', enabled, is_default: enabled, updated_at: null, install_enabled: true, thread_title: 'Card wakes', ...(limits ? { limits } : {}) },
   recent: [{ id: 3, objective_id: 901, workspace: 'operationkit', need_kind: 'review', status: 'done', skip_reason: null, last_error: null, created_at: '' }],
 })
 
@@ -55,6 +56,20 @@ describe('CardWakesSection', () => {
     expect(sw().getAttribute('aria-checked')).toBe('true')
     expect(host.textContent).toContain('Card wakes')
     expect(host.textContent).toContain('Last: card #901, done')
+  })
+
+  it('shows the debounce and the hourly cap when the server sends them (obj 901394)', async () => {
+    limits = { debounce_seconds: 60, max_per_hour: 12, window_minutes: 10, tools: 'chat', posts_to_chat: true }
+    try {
+      await render(true)
+      const line = host.querySelector('[data-testid="card-wake-limits"]')!
+      expect(line.textContent).toContain('within 60 seconds')
+      expect(line.textContent).toContain('At most 12 wake turns an hour')
+      expect(host.textContent).toContain('A wake is never an approval')
+      expect(host.textContent).toContain('posted in your chat with it')
+    } finally {
+      limits = undefined
+    }
   })
 
   it('an admin turns it off with one PUT', async () => {

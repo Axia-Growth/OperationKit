@@ -11,6 +11,7 @@
 > | **A bot** | A durable identity — a name, a description, instructions, its own knowledge folders and tools. One file on the server. | By adding that file (see [Adding a bot](#adding-a-bot)). **Never from the Bots screen.** | By removing that file. |
 > | **The main conversation** | Your ongoing message history with one bot. There is exactly **one per bot** and it is always open. | Implicitly, by your first message. | **Clear** empties it — the bot stays. |
 > | **A side thread** | An extra, named conversation beside the main one. Its own history, its own context, and it runs **at the same time** as the others. | **+ Side thread** on the strip under the bot's name. | **Close** archives it (messages kept) — the main conversation is untouched. |
+> | **A thread** | Replies under **one message**. It opens in a panel beside the conversation; the bot answers there, knowing which message you mean. | **Reply in thread** on any message (hover it; on a phone it sits under the message). | **Close** (the ✕) hides the panel — the replies stay, and the message shows **N replies**. |
 >
 > That is why the Bots screen has no **New bot** button: it does not create bots. It *does* create side threads, because a side thread is a conversation, not a bot.
 
@@ -39,7 +40,18 @@ Under every reply you will see **"Answered by …"** — the AI service and mode
 
 Small grey lines between messages show what the bot did: "Checked inbox", "Read todo.md", "Created card #42".
 
-**Clear** (top right) deletes the messages of **the conversation you are looking at** from the server. In the main conversation that empties the main history and leaves your side threads alone; in a side thread it empties only that lane. **The bot itself is never deleted**, and board cards and saved notes stay.
+**Clear** (top right) deletes the messages of **the conversation you are looking at** from the server. In the main conversation that empties the main history and leaves your side threads alone; in a side thread it empties only that lane. **The bot itself is never deleted**, and board cards and saved notes stay. Clearing a conversation also clears the **threads** replied under its messages.
+
+### Reply in thread
+
+A bot often posts several separate things in a row — a decision, a status report, a finished card. To answer **one** of them without the bot guessing which:
+
+1. Hover the message (yours or the bot's) and press **Reply in thread**. On a phone the link sits under the message, and a long press opens it too.
+2. A **Thread** panel opens with that message at the top and its own box to type in. Enter sends; you can paste or attach a screenshot, as in the main box.
+3. The bot answers **in the thread**. It is given that message and the thread's earlier replies, and nothing is added to the main conversation.
+4. The message now shows **N replies** and the time of the last one. Press it to open the thread again.
+
+Threads work on messages in **Main** and in side threads such as **Card wakes**. A bot's unanswered reply in a thread counts toward its unread badge in the bot list, like any other reply. Messages inside a thread cannot start a thread of their own. Bot-to-bot conversations (**Bot messages**) are read-only for people and have no threads.
 
 ### Side threads, in a bit more detail
 
