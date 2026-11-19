@@ -916,7 +916,7 @@ export const MCP_TOOLS: McpTool[] = [
     name: 'get_progress',
     access: 'read',
     scope: 'board:read',
-    description: '"How is it going?" for a running card, cheaper than get_output: the worker\'s latest step/label/note, a transcript-derived fallback (last tool, last message, elapsed), a children roll-up for fan-outs, and who/what last (re)started it.',
+    description: '"How is it going?" for a running card, cheaper than get_output: the worker\'s latest step/label/note, a transcript-derived fallback (last tool, last message, elapsed), a children roll-up for fan-outs, `tree` (one status for the card and everything below it: check `tree.settled` before calling a parent finished), and who/what last (re)started it.',
     inputSchema: {
       type: 'object',
       required: ['id'],
@@ -934,6 +934,8 @@ export const MCP_TOOLS: McpTool[] = [
         events: (p.events ?? []).map((e: Record<string, unknown>) => compact(pick(e, ['step', 'total_steps', 'label', 'note', 'created_at']), 300)),
         transcript: p.transcript ? compact(p.transcript, 800) : null,
         children: p.children,
+        // obj 901519: the whole tree below the card in one status (settled / failed / needs_you).
+        tree: p.tree ?? null,
         session_starts: (p.session_starts ?? []).slice(0, 3),
         // obj 900625: who/what last started it ('queue_autostart' = the queue auto-starter).
         last_start_reason: p.last_start_reason ?? null,

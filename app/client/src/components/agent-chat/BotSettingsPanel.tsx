@@ -3,6 +3,7 @@ import { api } from '../../lib/api'
 import { Alert, Button, cn } from '../ui'
 import { HighAgencySection } from './HighAgencySection'
 import { CardWakesSection } from './CardWakesSection'
+import { LongRepliesSection } from './LongRepliesSection'
 import { DevOpsSection } from './DevOpsSection'
 import { WorkspaceAccessSection } from './WorkspaceAccessSection'
 import { FullAccessSection } from './FullAccessSection'
@@ -429,6 +430,8 @@ export function BotSettingsPanel({
         <HighAgencySection agent={agent} isAdmin={isAdmin} accessVersion={accessVersion} onAccessChanged={() => setGrantVersion(v => v + 1)} />
 
         <CardWakesSection agent={agent} isAdmin={isAdmin} />
+
+        <LongRepliesSection agent={agent} isAdmin={isAdmin} />
 
         <DevOpsSection agent={agent} isAdmin={isAdmin} />
       </div>

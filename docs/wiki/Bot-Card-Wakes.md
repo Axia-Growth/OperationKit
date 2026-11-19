@@ -12,8 +12,8 @@ that speaks, no self-wakes).
 A card wake is one normal model turn of the bot, run by the server:
 
 - **Who it acts for:** the person the card is assigned to, else who filed it, else the admin who
-  switched the bot's High Agency on, else the first admin. That person must share the card's
-  workspace with the bot.
+  switched the bot's High Agency on, else each admin in id order. The first of these who shares the
+  card's workspace with the bot is used (`personFor` in `card-wake-routing.ts`).
 - **Where it runs:** the bot's pinned **Card wakes** thread in that person's chat with the bot.
   The bot's final answer is also posted in the **main chat** (`meta.kind = card_wake_reply`), so the
   person sees it without opening the thread.

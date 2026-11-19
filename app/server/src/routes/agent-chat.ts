@@ -1,3 +1,4 @@
+import { getTurnLimits, installTurnDefaults, longTurnsEnabled, recentTurnJobs, setTurnLimits, TURN_MINUTES_RANGE, TURN_STEPS_RANGE, TurnLimitsError } from '../services/agent-chat/long-turns.js'
 import { Router, type Response } from 'express'
 import { requireAuth, type AuthRequest } from '../middleware/auth.js'
 import {
@@ -13,6 +14,7 @@ import {
   drainLaneQueue,
   getMessage,
   laneTurnState,
+  laneTurnJob,
   stopTurn,
   submitMessage,
   seedDemoKnowledge,
@@ -561,6 +563,60 @@ router.put('/agents/:slug/card-wakes', (req: AuthRequest, res) => {
   res.json(cardWakesPayload(req, a.slug))
 })
 
+// ── Long replies (obj 901491): the per-bot budget of a chat turn that runs as a background job ──
+
+function turnLimitsPayload(req: AuthRequest, slug: string) {
+  const own = getTurnLimits(slug)
+  const defaults = installTurnDefaults()
+  const enabled = longTurnsEnabled()
+  return {
+    turn_limits: {
+      slug,
+      install_enabled: enabled,
+      max_steps: own.max_steps,
+      max_minutes: own.max_minutes,
+      updated_at: own.updated_at,
+      effective: { max_steps: own.max_steps ?? defaults.max_steps, max_minutes: own.max_minutes ?? defaults.max_minutes },
+      defaults,
+      ranges: { steps: TURN_STEPS_RANGE, minutes: TURN_MINUTES_RANGE },
+    },
+    // The record of recent turns (no message text) is for admins only.
+    recent: req.user?.role === 'admin' ? recentTurnJobs(slug, 10) : [],
+  }
+}
+
+router.get('/agents/:slug/turn-limits', (req: AuthRequest, res) => {
+  const a = agentOr404(req, res)
+  if (!a) return
+  res.json(turnLimitsPayload(req, a.slug))
+})
+
+router.put('/agents/:slug/turn-limits', (req: AuthRequest, res) => {
+  if (!adminSessionOr403(req, res)) return
+  const a = agentOr404(req, res)
+  if (!a) return
+  const body = (req.body ?? {}) as { max_steps?: unknown; max_minutes?: unknown }
+  try {
+    setTurnLimits(a.slug, { max_steps: body.max_steps, max_minutes: body.max_minutes }, req.user!.id)
+  } catch (err) {
+    if (err instanceof TurnLimitsError) {
+      res.status(err.status).json({ error: err.message })
+      return
+    }
+    throw err
+  }
+  const now = getTurnLimits(a.slug)
+  try {
+    logActivity({
+      project: 'operationkit',
+      event_type: 'decision',
+      title: `${a.name}: long-reply limits set to ${now.max_steps ?? 'default'} steps / ${now.max_minutes ?? 'default'} minutes by ${req.user!.username}`,
+      metadata: { kind: 'bot_turn_limits_changed', slug: a.slug, max_steps: now.max_steps, max_minutes: now.max_minutes },
+    })
+  } catch { /* the feed never decides the change */ }
+  res.json(turnLimitsPayload(req, a.slug))
+})
+
 // ── Operator tools (obj 901424): Operation Kit Dev's merge / deploy / close / Cloudflare switch ──
 
 function devOpsPayload(req: AuthRequest, slug: string) {
@@ -727,6 +783,7 @@ router.get('/agents/:slug/messages', (req: AuthRequest, res) => {
     messages,
     ...attachments(req.user!.id, a.slug, messages),
     turn: laneTurnState(req.user!.id, a.slug, lane),
+    turn_job: laneTurnJob(req.user!.id, a.slug, lane),
     // obj 901373: "N replies" under every message of this lane that has a thread.
     reply_threads: replyThreadsForLane(req.user!.id, a.slug, lane),
   })
@@ -919,13 +976,18 @@ router.post('/agents/:slug/messages', async (req: AuthRequest, res) => {
       console.log(`[agent-chat] disconnect: turn finished ${Date.now() - disconnectedAt}ms after the response closed (${where}); ${r.messages.length} row(s) stored for the person to see on return`)
       return
     }
-    res.status(r.queued ? 202 : 200).json({
+    // obj 901491: 202 + `background` = the turn is still working and carries on
+    // server-side; this request does not wait for it (so no proxy ever times it
+    // out). Its tool lines and its answer land in the lane as they happen.
+    res.status(r.queued || r.background ? 202 : 200).json({
       messages: r.messages,
       ...attachments(req.user!.id, a.slug, r.messages),
       queued: r.queued,
+      ...(r.background ? { background: true } : {}),
       // obj 900977: true when this client_msg_id was already stored — nothing new was added or run.
       ...(r.duplicate ? { duplicate: true } : {}),
       turn: laneTurnState(req.user!.id, a.slug, lane),
+    turn_job: laneTurnJob(req.user!.id, a.slug, lane),
       reply_threads: replyThreadsForLane(req.user!.id, a.slug, lane),
     })
   } catch (err) {

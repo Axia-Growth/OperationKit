@@ -18,6 +18,7 @@ import type { Database } from 'better-sqlite3'
 import { initLiveProgressSchema } from '../db/schema/live-progress.js'
 import { redactLive, redactLiveText } from './live-redaction.js'
 import { TRANSCRIPT_DIR } from '../config.js'
+import { rollUpTree, type TreeNode, type TreeStatus } from '@operationkit/shared'
 
 export const MAX_LABEL = 200
 export const MAX_NOTE = 2000
@@ -354,4 +355,55 @@ export function summarizeChildren(
     })
   }
   return { total: items.length, by_status: byStatus, done: byStatus.done ?? 0, items }
+}
+
+// ── Whole-tree status (obj 901519) ────────────────────────────────────────
+
+/** Most descendants one roll-up reads. A bigger tree is reported as truncated. */
+export const MAX_TREE_NODES = 2000
+
+export interface TreeRollup extends TreeStatus {
+  /** The tree has more than MAX_TREE_NODES cards below this one; counts cover the first MAX_TREE_NODES. */
+  truncated: boolean
+}
+
+/**
+ * One status for a card and EVERYTHING below it, at any depth (children,
+ * grandchildren, ...). `summarizeChildren` above stops at direct children and
+ * only counts statuses; this answers "is the whole job finished, and did any
+ * part fail?" (rule: shared `rollUpTree`). Read-only and derived: no column,
+ * no gate. Cards the caller may not see are left out, exactly as in the
+ * children roll-up. Returns null for a card with nothing below it.
+ */
+export function summarizeTree(
+  db: Database,
+  self: TreeNode,
+  canSee: (node: { workspace: string; id: number }) => boolean = () => true,
+): TreeRollup | null {
+  // UNION (not UNION ALL) makes the walk cycle-safe: a parent loop cannot recurse forever.
+  const rows = db
+    .prepare(
+      `WITH RECURSIVE tree(id) AS (
+         SELECT id FROM objectives WHERE parent_id = ?
+         UNION
+         SELECT o.id FROM objectives o JOIN tree t ON o.parent_id = t.id
+       )
+       SELECT o.id, o.status, o.workspace, o.session_id, o.ai_review_verdict, o.needs_secret,
+              o.created_by, o.assigned_user_id
+         FROM objectives o JOIN tree t ON t.id = o.id
+        WHERE o.id != ? AND o.deleted_at IS NULL
+        ORDER BY o.id ASC LIMIT ?`,
+    )
+    .all(self.id, self.id, MAX_TREE_NODES + 1) as Array<TreeNode & { workspace: string }>
+  const truncated = rows.length > MAX_TREE_NODES
+  const visible = rows.slice(0, MAX_TREE_NODES).filter(r => canSee(r))
+  if (visible.length === 0) return null
+
+  let open = new Set<number>()
+  try {
+    open = new Set((db.prepare("SELECT DISTINCT objective_id FROM decisions WHERE state = 'open'").pluck().all() as number[]).map(Number))
+  } catch { /* an install that predates the decisions table has no open decisions */ }
+  const withDecision = (n: TreeNode): TreeNode => ({ ...n, open_decision: open.has(Number(n.id)) })
+
+  return { ...rollUpTree(withDecision(self), visible.map(withDecision)), truncated }
 }

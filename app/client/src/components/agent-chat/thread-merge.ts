@@ -19,7 +19,8 @@ export function mergeThread(t: ThreadResponse | null, r: ThreadResponse): Thread
   const incoming = r.messages.filter(m => !(m.meta?.queued && m.meta.client_msg_id && delivered.has(m.meta.client_msg_id)))
   r = { ...r, messages: incoming }
   // obj 900949: the newest answer carries the lane's turn state (running, queued count);
-  // obj 901373: and the lane's reply-thread counts.
+  // obj 901373: and the lane's reply-thread counts;
+  // obj 901491: and the running reply's job (null once the lane is idle).
   return {
     messages: byId(prev.messages, r.messages),
     drafts: byId(prev.drafts ?? [], r.drafts ?? []),
@@ -27,6 +28,7 @@ export function mergeThread(t: ThreadResponse | null, r: ThreadResponse): Thread
     // obj 901392: the newer answer's state of a follow-up replaces the older one.
     followups: byId(prev.followups ?? [], r.followups ?? []),
     turn: r.turn ?? prev.turn,
+    turn_job: r.turn_job !== undefined ? r.turn_job : prev.turn_job,
     reply_threads: r.reply_threads ?? prev.reply_threads,
   }
 }
