@@ -25,7 +25,7 @@
 //   - A card that carries a protected pull request (FULL_ACCESS_PROTECTED_PRS)
 //     is out of reach of every ability (`protectedCardRefusal`), logged.
 //   - Merge, prod-migration and deploy approvals are NOT here. They are decided
-//     only by services/delegated-approvals.ts and services/bot-approval.ts,
+//     only by services/delegated-approvals.ts and services/bot-close-eligibility.ts,
 //     which read `delegation_grants` and nothing in this file.
 //   - Only an admin's browser session may change a row (the route enforces
 //     that). No API key scope is widened: nothing here is reachable with a key.

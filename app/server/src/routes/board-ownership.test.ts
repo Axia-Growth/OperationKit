@@ -342,6 +342,63 @@ describe('Needs You bulk triage', () => {
     expect(detail.json.items).toHaveLength(4)
   })
 
+  it('dry run: lists exactly what approve / dismiss / reassign would touch and changes nothing', async () => {
+    const a = card()
+    const b = card()
+    const running = card({ session_id: 'cc-live-dry' })
+    const queued = card({ status: 'queue' })
+    const ids = [a, b, running, queued, 987654]
+    const batchesBefore = (getDb().prepare('SELECT COUNT(*) AS n FROM board_triage_batches').get() as Loose).n
+    const itemsBefore = (getDb().prepare('SELECT COUNT(*) AS n FROM board_triage_items').get() as Loose).n
+    const auditBefore = auditFor(a).length
+    const ownerBefore = getDb().prepare('SELECT owner_bot, assigned_user_id FROM objectives WHERE id = ?').get(a) as Loose
+
+    for (const action of ['approve', 'dismiss'] as const) {
+      const r = await asOwner('POST', '/api/board-triage/batches', { action, objective_ids: ids, dry_run: true })
+      expect(r.status).toBe(200)
+      expect(r.json).toMatchObject({ dry_run: true, action, requested: 5, would_change: 2, skipped: 2, failed: 1 })
+      expect(r.json.batch_id).toBeUndefined()
+      expect(r.json.note).toMatch(/Nothing was changed/)
+      const target = action === 'approve' ? 'done' : 'cancelled'
+      expect(r.json.items.map((i: Loose) => [i.objective_id, i.result, i.to_status])).toEqual([
+        [a, 'would_change', target], [b, 'would_change', target], [running, 'skipped', null], [queued, 'skipped', null], [987654, 'failed', null],
+      ])
+      expect(r.json.items[2].error).toMatch(/still running/)
+      expect(r.json.items[3].error).toMatch(/Not in Needs You/)
+      expect(r.json.items[4].error).toBe('Card not found')
+    }
+    const re = await asOwner('POST', '/api/board-triage/batches', { action: 'reassign', objective_ids: [a], owner_bot: 'General', assigned_user_ids: [MEMBER], dry_run: true })
+    expect(re.json).toMatchObject({ dry_run: true, would_change: 1 })
+    expect(re.json.items[0]).toMatchObject({ result: 'would_change', from_status: 'review', to_status: 'review' })
+    expect(re.json.items[0].change).toMatch(/^bot: .+ → .+; person: .+ → 2$/)
+
+    // Not one write: cards, owners, batch rows, item rows and card audit rows are as they were.
+    expect(statusOf(a)).toBe('review')
+    expect(statusOf(b)).toBe('review')
+    expect(getDb().prepare('SELECT owner_bot, assigned_user_id FROM objectives WHERE id = ?').get(a)).toEqual(ownerBefore)
+    expect((getDb().prepare('SELECT COUNT(*) AS n FROM board_triage_batches').get() as Loose).n).toBe(batchesBefore)
+    expect((getDb().prepare('SELECT COUNT(*) AS n FROM board_triage_items').get() as Loose).n).toBe(itemsBefore)
+    expect(auditFor(a).length).toBe(auditBefore)
+
+    // The preview and the real run agree card for card.
+    const real = await asOwner('POST', '/api/board-triage/batches', { action: 'approve', objective_ids: ids })
+    expect(real.json).toMatchObject({ ok: 2, skipped: 2, failed: 1 })
+    expect(real.json.items.map((i: Loose) => i.result)).toEqual(['ok', 'ok', 'skipped', 'skipped', 'failed'])
+  })
+
+  it('dry run keeps every rule of the real call: person only, own cards only, same validation', async () => {
+    const mine = card({ created_by: MEMBER })
+    const notMine = card({ workspace: 'other-ws' })
+    const m = await asMember('POST', '/api/board-triage/batches', { action: 'dismiss', objective_ids: [mine, notMine], dry_run: true })
+    expect(m.json).toMatchObject({ dry_run: true, would_change: 1, skipped: 1 })
+    expect(m.json.items[1].result).toBe('skipped')
+    const bot = await asBot('POST', '/api/board-triage/batches', { action: 'dismiss', objective_ids: [mine], dry_run: true })
+    expect(bot.status).toBe(403)
+    expect((await asOwner('POST', '/api/board-triage/batches', { action: 'dismiss', objective_ids: [mine], dry_run: 'yes' })).status).toBe(400)
+    expect((await asOwner('POST', '/api/board-triage/batches', { action: 'reassign', objective_ids: [mine], owner_bot: 'Nobody Bot', dry_run: true })).status).toBe(400)
+    expect(statusOf(mine)).toBe('review')
+  })
+
   it('dismiss: Needs You → cancelled', async () => {
     const a = card()
     const r = await asOwner('POST', '/api/board-triage/batches', { action: 'dismiss', objective_ids: [a] })

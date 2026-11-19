@@ -7,6 +7,7 @@ import fs from 'fs'
 import path from 'path'
 import type { Objective, ObjectiveStatus } from '@operationkit/shared'
 import { getDb } from '../db/index.js'
+import { captureLayout, isCapturePath, knowledgePathMarkers } from '../lib/vault-layout.js'
 import {
   getSessionState,
   autoResumeOnLimit,
@@ -42,7 +43,6 @@ export const knowledgeScanOffsets = new Map<string, number>()
 // obj 994 — per-session byte offset for the incremental scope-bleed scan.
 export const scopeScanOffsets = new Map<string, number>()
 const SCOPE_EDIT_TOOLS = new Set(['Edit', 'Write', 'MultiEdit', 'NotebookEdit'])
-const KNOWLEDGE_PATHS = ['second-brain/personal/decisions/', 'second-brain/workspaces/', 'second-brain/personal/insights/']
 const KNOWLEDGE_TOOLS = new Set(['Write', 'Edit', 'MultiEdit', 'NotebookEdit'])
 
 /**
@@ -69,6 +69,9 @@ export function scanForKnowledgeWrites(sessionId: string, objectiveId: number): 
   knowledgeScanOffsets.set(sessionId, stat.size)
 
   const db = getDb()
+  // Folder names come from the vault layout registry (obj 900967).
+  const layout = captureLayout(db)
+  const knowledgePaths = knowledgePathMarkers(layout)
   const newLines = buf.toString('utf-8').split('\n')
 
   for (const line of newLines) {
@@ -89,11 +92,11 @@ export function scanForKnowledgeWrites(sessionId: string, objectiveId: number): 
       if (!filePath) continue
 
       // Check if this write targets a knowledge path
-      const isKnowledge = KNOWLEDGE_PATHS.some(kp => filePath.includes(kp))
+      const isKnowledge = knowledgePaths.some(kp => filePath.includes(kp))
       if (!isKnowledge) continue
 
       // Determine event type from path
-      const isDecision = filePath.includes('/decisions/')
+      const isDecision = isCapturePath(filePath, layout)
       const isInsight = filePath.includes('/insights/')
       const eventType = isDecision ? 'decision' : isInsight ? 'milestone' : 'milestone'
       const fileName = path.basename(filePath)

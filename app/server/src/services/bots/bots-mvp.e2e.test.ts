@@ -13,6 +13,11 @@
  * `lib/kb-workspace-scope` and `services/connector-guard`, G12 drives
  * `services/job-accounting`. A failure in one of those shows up as a failure of
  * the gate that depends on it, which is the point.
+ *
+ * G10 (credential revocation) and the approval/block block were removed with
+ * their modules (`bot-credentials.ts`, `bot-approvals.ts`) in obj 900969: no
+ * production code ever called either, so those gates proved nothing about the
+ * running system.
  */
 import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from 'vitest'
 import fs from 'fs'
@@ -36,8 +41,6 @@ const { resolveBot, botForAgentSlug } = await import('./bot-registry.js')
 const { decideBotJobStart } = await import('./bot-job-start.js')
 const { enqueueBotThreadDeliveries, deliverBotThreadMessages, runBotThreadDeliveryTick, buildThreadBody, threadDeliveryId } =
   await import('./bot-thread-delivery.js')
-const { requestApproval, decideApproval, consumeApproval, actionFingerprint } = await import('./bot-approvals.js')
-const { assertCredentialLive, assertSecretReadable, revokeCredential, restoreCredential } = await import('./bot-credentials.js')
 const { setObjectiveCeiling, resolveConfiguredCeiling, recordSpend, evaluateCeiling } = await import('../job-accounting.js')
 const { isInWorkspaceScope } = await import('../../lib/kb-workspace-scope.js')
 const { canUseConnectorCredential } = await import('../connector-guard.js')
@@ -409,48 +412,6 @@ describe('G9 — a follow-up continues the SAME job', () => {
   })
 })
 
-describe('G10 — credential revocation is live and fails closed', () => {
-  it('the next authorized call after a controlled revocation fails', () => {
-    const db = getDb()
-    expect(assertCredentialLive(db, 'connector', 'synthetic-connector').allowed).toBe(true)
-    revokeCredential(db, 'connector', 'synthetic-connector', 'synthetic revocation test')
-    const after = assertCredentialLive(db, 'connector', 'synthetic-connector')
-    expect(after.allowed).toBe(false)
-    expect(after.code).toBe('revoked')
-    restoreCredential(db, 'connector', 'synthetic-connector')
-    expect(assertCredentialLive(db, 'connector', 'synthetic-connector').allowed).toBe(true)
-  })
-
-  it('a wildcard revocation covers every subject in its scope', () => {
-    const db = getDb()
-    revokeCredential(db, 'agent_key', '*', 'synthetic blanket revocation')
-    expect(assertCredentialLive(db, 'agent_key', 'any-key-at-all').allowed).toBe(false)
-    restoreCredential(db, 'agent_key', '*')
-  })
-
-  it('secrets are not blanket-readable, and only NAMES are ever returned', () => {
-    const db = getDb()
-    const policy = { allowed: ['SYNTHETIC_TEST_TOKEN'] }
-    const denied = assertSecretReadable(db, policy, 'SOME_OTHER_SECRET')
-    expect(denied.allowed).toBe(false)
-    expect(denied.code).toBe('not_permitted')
-    expect(assertSecretReadable(db, policy, 'SYNTHETIC_TEST_TOKEN').allowed).toBe(true)
-    // Revoking the NAME closes it, with no value anywhere in the verdict.
-    revokeCredential(db, 'secret', 'SYNTHETIC_TEST_TOKEN', 'synthetic')
-    const revoked = assertSecretReadable(db, policy, 'SYNTHETIC_TEST_TOKEN')
-    expect(revoked.allowed).toBe(false)
-    expect(JSON.stringify(revoked)).not.toMatch(/value/i)
-    restoreCredential(db, 'secret', 'SYNTHETIC_TEST_TOKEN')
-  })
-
-  it('an unreadable ledger is treated as NO permission, not as permission', () => {
-    const broken = { prepare() { throw new Error('ledger gone') } } as unknown as Parameters<typeof assertCredentialLive>[0]
-    const v = assertCredentialLive(broken, 'connector', 'synthetic-connector')
-    expect(v.allowed).toBe(false)
-    expect(v.code).toBe('ledger_unavailable')
-  })
-})
-
 describe('G11 — crash, cancel and resume leave exactly one worker', () => {
   it('a dead holder\'s lease is taken over by the resuming session', () => {
     const job = fileJob()
@@ -526,43 +487,6 @@ describe('G12 — the cost/time limit is durable, finite and honestly described'
     expect(c.source).toBe('none')
     expect(c.costUsd).toBeNull()
     expect(c.wallclockMs).toBeNull()
-  })
-})
-
-describe('approval / block — durable, fingerprinted, and never executed in the read-only MVP', () => {
-  it('a consequential action is RECORDED and refused, not performed', () => {
-    const r = requestApproval({
-      db: getDb(), objectiveId: null, threadUserId: PERSON, threadAgentSlug: AGENT,
-      kind: 'send_email', inputs: { to: 'dana@example.test', subject: 'hi' },
-    })
-    expect(r.executed).toBe(false)
-    expect(r.state).toBe('pending')
-    expect(consumeApproval(getDb(), 'send_email', { to: 'dana@example.test', subject: 'hi' }).ok).toBe(false)
-  })
-
-  it('an approval is bound to the exact inputs it was given', () => {
-    const inputs = { to: 'dana@example.test', amount: 10 }
-    const req = requestApproval({ db: getDb(), objectiveId: null, threadUserId: PERSON, threadAgentSlug: AGENT, kind: 'purchase', inputs })
-    decideApproval(getDb(), req.approvalId, 'approved', PERSON)
-    // Same kind, different inputs → different fingerprint → no approval at all.
-    expect(actionFingerprint('purchase', { to: 'dana@example.test', amount: 1000 })).not.toBe(req.fingerprint)
-    expect(consumeApproval(getDb(), 'purchase', { to: 'dana@example.test', amount: 1000 }).ok).toBe(false)
-    // Key ORDER must not change the fingerprint.
-    expect(actionFingerprint('purchase', { amount: 10, to: 'dana@example.test' })).toBe(req.fingerprint)
-    // Single use.
-    expect(consumeApproval(getDb(), 'purchase', inputs).ok).toBe(true)
-    expect(consumeApproval(getDb(), 'purchase', inputs).ok).toBe(false)
-  })
-
-  it('a block is durable and cannot be re-decided into an approval', () => {
-    const inputs = { path: '/synthetic/everything' }
-    const req = requestApproval({ db: getDb(), objectiveId: null, threadUserId: PERSON, threadAgentSlug: AGENT, kind: 'destructive_write', inputs })
-    expect(decideApproval(getDb(), req.approvalId, 'blocked', PERSON).ok).toBe(true)
-    const flip = decideApproval(getDb(), req.approvalId, 'approved', PERSON)
-    expect(flip.ok).toBe(false)
-    const again = requestApproval({ db: getDb(), objectiveId: null, threadUserId: PERSON, threadAgentSlug: AGENT, kind: 'destructive_write', inputs })
-    expect(again.state).toBe('blocked')
-    expect(consumeApproval(getDb(), 'destructive_write', inputs).ok).toBe(false)
   })
 })
 

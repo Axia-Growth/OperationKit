@@ -44,7 +44,7 @@ import { botMayUseWorkspace, botWorkspaceAllowlist, personaOwnershipBlocked } fr
 import { withResolvedKnowledgeFolders } from './knowledge-folders.js'
 import { containedIn, realpathOrNull, resolveVaultPath, workspaceScopeRoots } from '../../lib/kb-workspace-scope.js'
 import { searchKnowledgeBase } from '../kb-semantic/search.js'
-import { noteKbWrite } from '../kb-semantic/service.js'
+import { noteKbChanged } from '../kb-semantic/service.js'
 import type { ChatLane } from './threads.js'
 import { fullAccessActive, fullAccessAnywhere, protectedCardRefusal, protectedPrTextRefusal, refuseExclusion } from './bot-full-access.js'
 import { exclusionGate, type OutboundCall } from './full-access-exclusions.js'
@@ -1519,7 +1519,7 @@ export function runTool(ctxIn: ToolContext, fnName: string, args: Record<string,
       if (Buffer.byteLength(content) > MAX_WRITE_BYTES) throw new ToolUseError('That file is too large to write from chat.')
       fs.mkdirSync(path.dirname(abs), { recursive: true })
       fs.writeFileSync(abs, content)
-      noteKbWrite(abs) // obj 900816: semantic index
+      noteKbChanged(abs) // semantic index + link graph
       return { result: { saved: rel, bytes: Buffer.byteLength(content) }, summary: `Saved ${rel}` }
     }
     case 'file_answer': {

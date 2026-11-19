@@ -7,6 +7,7 @@
 import fs from 'fs'
 import path from 'path'
 import { getDb } from '../db/index.js'
+import { captureDocPattern, captureLayout, type CaptureLayout } from '../lib/vault-layout.js'
 import { broadcast } from '../ws/index.js'
 import { logActivity } from '../routes/feed.js'
 import { wakeDelegator } from './delegation.js'
@@ -29,7 +30,8 @@ let drainTimer: ReturnType<typeof setInterval> | null = null
 
 /**
  * Should this session be flagged as a vault capture gap? Pure, no I/O.
- * A gap = at least one extracted "decision" AND no second-brain/.../decisions/*.md
+ * A gap = at least one extracted "decision" AND no capture doc written in the
+ * vault (second-brain/.../decisions/*.md; the folder comes from lib/vault-layout.ts)
  * AND the objective is NOT a recurring scheduled job (`routine_id` set).
  * Recurring jobs over-extract their own task description into decisions[].
  */
@@ -37,10 +39,12 @@ export function isCaptureGap(
   decisionCount: number,
   routineId: number | null | undefined,
   filesTouched: string[],
+  layout?: CaptureLayout,
 ): boolean {
   if (decisionCount <= 0) return false
   if (routineId != null) return false
-  return !filesTouched.some(f => /(?:^|\/)second-brain\/.*\/decisions\/[^/]+\.md$/.test(f))
+  const captureDoc = captureDocPattern(layout ?? captureLayout())
+  return !filesTouched.some(f => captureDoc.test(f))
 }
 
 /**

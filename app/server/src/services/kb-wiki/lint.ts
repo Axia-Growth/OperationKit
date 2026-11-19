@@ -8,7 +8,7 @@ import {
   type LoadedPage, type RawLink, type WikiPage,
 } from './wiki.js'
 import { deriveGraph, isolatedPages } from './graph.js'
-import { noteKbWrite } from '../kb-semantic/service.js'
+import { noteKbChanged } from '../kb-semantic/service.js'
 
 /**
  * The wiki's cleanup pass (obj 720117). Safe, mechanical fixes are applied
@@ -63,7 +63,7 @@ function writePage(kbRoot: string, rel: string, text: string): void {
   const abs = path.join(kbRoot, rel)
   fs.mkdirSync(path.dirname(abs), { recursive: true })
   fs.writeFileSync(abs, text)
-  noteKbWrite(abs) // obj 900816: semantic index
+  noteKbChanged(abs) // semantic index + link graph
 }
 
 function stem(target: string): string {

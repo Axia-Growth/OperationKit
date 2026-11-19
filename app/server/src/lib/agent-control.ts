@@ -315,6 +315,8 @@ interface AttentionRow {
   skip_ai_review?: number | null
   /** The card has an open (unanswered) decision briefing. */
   open_decision?: number | null
+  /** The open decision's one question (obj 901519), when it has one. */
+  open_question?: string | null
   ai_review_findings: string | null
   last_session_summary: string | null
   last_note: string | null
@@ -359,6 +361,15 @@ function classify(row: AttentionRow, staleMin: number): { kind: AttentionKind; w
     return { kind: 'review', why: summary ? `${lead}: ${summary}` : lead }
   }
   if (row.status === 'working') {
+    // obj 901519: a worker parked on a question for the person is WAITING ON
+    // YOU, not stuck. It goes quiet on purpose, so the open decision has to
+    // win over every silence rule below (the stall flag and the idle-minute
+    // heuristic), which would otherwise report it as hung. Same kind and lead
+    // as a review-stage card that carries an open decision.
+    if (row.open_decision) {
+      const ask = oneLine(row.open_question, WHY_MAX)
+      return { kind: 'review', why: ask ? `Decision waiting on you: ${ask}` : 'Decision waiting on you' }
+    }
     // obj 900372: the watchdog's verdict beats the idle-minute heuristic below.
     if (row.stalled_at) {
       return { kind: 'stuck', why: `Stalled: ${oneLine(row.stall_reason, WHY_MAX) ?? 'no live session or no activity'}` }
@@ -427,12 +438,16 @@ export function buildAttention(
   const openDecisionSql = hasDecisions
     ? "EXISTS (SELECT 1 FROM decisions d WHERE d.objective_id = o.id AND d.state = 'open')"
     : '0'
+  const openQuestionSql = hasDecisions
+    ? "(SELECT substr(d.question, 1, 300) FROM decisions d WHERE d.objective_id = o.id AND d.state = 'open' ORDER BY d.id DESC LIMIT 1)"
+    : 'NULL'
   const rows = db
     .prepare(
       `SELECT o.id, o.title, o.status, o.workspace, o.has_blockers, o.ai_review_verdict, o.needs_secret,
               o.session_id, o.create_pr, o.skip_ai_review,
               (o.pr_number IS NOT NULL OR COALESCE(o.pr_url, '') != '') AS has_pr,
               ${openDecisionSql} AS open_decision,
+              ${openQuestionSql} AS open_question,
               substr(o.ai_review_findings, 1, 600) AS ai_review_findings,
               substr(o.last_session_summary, 1, 600) AS last_session_summary,
               o.stalled_at, o.stall_reason,

@@ -56,7 +56,7 @@ import { noteStartReason } from '../services/session-start-reasons.js'
 import { logObjectiveAudit } from '../services/objective-audit.js'
 import { broadcast } from '../ws/index.js'
 import { workspaceKbRoot } from '../services/doc-ingest/kb-paths.js'
-import { noteKbWrite } from '../services/kb-semantic/service.js'
+import { noteKbChanged } from '../services/kb-semantic/service.js'
 
 const router = Router()
 
@@ -114,7 +114,7 @@ function fail(res: Response, err: unknown): void {
 
 function refreshKbLog(workspace: string): void {
   setImmediate(() => {
-    writeDecisionLogToKb(getDb(), workspace, { kbRoot: ws => workspaceKbRoot(ws), noteWrite: abs => noteKbWrite(abs) })
+    writeDecisionLogToKb(getDb(), workspace, { kbRoot: ws => workspaceKbRoot(ws), noteWrite: abs => noteKbChanged(abs) })
   })
 }
 

@@ -26,6 +26,7 @@ const TMP_DB = path.join(os.tmpdir(), `cc-stall-wd-${process.pid}-${Date.now()}.
 process.env.DB_PATH = TMP_DB
 
 const { initDb, getDb } = await import('../db/index.js')
+const decisions = await import('./decisions.js')
 const wd = await import('./stall-watchdog.js')
 const reasons = await import('./session-start-reasons.js')
 const helpers = await import('../routes/objectives-helpers.js')
@@ -174,6 +175,61 @@ describe('stall watchdog — the four failure shapes', () => {
     const res = await wd.runStallWatchdogTick(deps)
     expect(res.restarted).toEqual([])
     expect(calls.start).toEqual([])
+  })
+})
+
+describe('stall watchdog — a worker parked on a question for the person is not stalled (obj 901519)', () => {
+  const BRIEFING = {
+    context: 'The batch is drafted and checked. Sending is the last step.',
+    question: 'Send the 40-lead batch today?',
+    options: [
+      { key: 'A', label: 'Send today', pros: ['Replies land sooner'], cons: ['No second look'], next: 'I send it.' },
+      { key: 'B', label: 'Hold', pros: ['Second look'], cons: ['A day later'], next: 'I wait.' },
+    ],
+    recommended: 'A',
+    recommended_why: 'It matches last month.',
+  }
+  const ask = (id: number) => {
+    const r = decisions.raiseDecision(getDb(), { objective_id: id, workspace: 'your-org', source: 'worker', briefing: BRIEFING })
+    if (!r.ok) throw new Error(r.errors.join('; '))
+    return r.decision.id
+  }
+
+  it('silent with an open decision: no restart, no stalled flag, no notification', async () => {
+    const id = seedWorking({ sessionId: 'cc-parked-1', startedMinAgo: 40 })
+    ask(id)
+    const { deps, calls } = harness({ alive: true, probe: silentProbe(17, 50) })
+
+    const res = await wd.runStallWatchdogTick(deps)
+
+    expect(res.restarted).toEqual([])
+    expect(res.flagged).toEqual([])
+    expect(calls.start).toEqual([])
+    expect(calls.stop).toEqual([])
+    expect(calls.notify).toEqual([])
+    expect(row(id).stalled_at).toBeNull()
+    expect(row(id).stall_restarts).toBe(0)
+    expect(stalledEvents(id)).toBe(0)
+  })
+
+  it('once the decision is answered the card is watched again like any other', async () => {
+    const id = seedWorking({ sessionId: 'cc-parked-2', startedMinAgo: 40 })
+    const decisionId = ask(id)
+    expect((await wd.runStallWatchdogTick(harness({ alive: true, probe: silentProbe(17, 50) }).deps)).restarted).toEqual([])
+
+    decisions.withdrawDecision(getDb(), decisionId, 'answered in test')
+    const res = await wd.runStallWatchdogTick(harness({ alive: true, probe: silentProbe(17, 50) }).deps)
+    expect(res.restarted).toEqual([id])
+  })
+
+  it('a card flagged as stalled before it asked has the flag cleared', async () => {
+    const id = seedWorking({ sessionId: 'cc-parked-3', startedMinAgo: 40 })
+    getDb().prepare("UPDATE objectives SET stalled_at = datetime('now'), stall_reason = 'hung_no_heartbeat: silent' WHERE id = ?").run(id)
+    ask(id)
+    const res = await wd.runStallWatchdogTick(harness({ alive: true, probe: silentProbe(17, 50) }).deps)
+    expect(res.cleared).toEqual([id])
+    expect(row(id).stalled_at).toBeNull()
+    expect(row(id).stall_reason).toBeNull()
   })
 })
 

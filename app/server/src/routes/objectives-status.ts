@@ -161,7 +161,7 @@ async function handleStatusPatch(req: StatusRequest, res: Response): Promise<voi
 
   // obj 900952: an agent key may close a PR card only on a passing AI review, or
   // with a stated reason that goes on the audit trail. The same pass rule the
-  // bot-approve route applies (services/bot-approval.ts); people are not gated.
+  // bot-approve route applies (services/bot-close-eligibility.ts); people are not gated.
   let closeOverrideReason: string | null = null
   if (viaAgentKey && status === 'done' && (existing.pr_url || existing.pr_number) && existing.ai_review_verdict !== 'pass') {
     closeOverrideReason = parseOverrideReason((req.body as { override_reason?: unknown }).override_reason)

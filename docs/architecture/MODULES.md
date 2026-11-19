@@ -102,7 +102,6 @@ Boot also calls `startContactbookSibling` after listen (no-ops unless Telegram e
 | `ci-green-gate.ts` | poller | completion-boundary CI |
 | `ci-feedback-bridge.ts` | `startCiFeedbackBridge` | vitest fail → objective (flag) |
 | `deterministic-floor.ts` | poller | tsc/build/test under LLM reviewer (flag) |
-| `uat-gate.ts` | poller | UAT gate (flag) |
 | `outcome-verification.ts` | poller | outcome checks (flag) |
 | `auto-merge.ts` | no | merge-on-green (flag, default off) |
 | `auto-deploy.ts` | webhook | self-deploy on main merge (flag) |
@@ -136,7 +135,6 @@ Boot also calls `startContactbookSibling` after listen (no-ops unless Telegram e
 | `mentor-context.ts` | no | Haiku summarizer + open-tasks block (shared helpers; the assistant chat that used them was removed) |
 | `workspaces.ts` | no | workspace table cache |
 | `notifier.ts` | no | alerts table + email/telegram |
-| `uptimerobot.ts` | no | monitor API cache |
 | `crypto.ts` | no | AES-GCM test credentials |
 | `knowledge-search.ts` | no | vault grep |
 | `resource-assignments.ts` | no | agent/skill scope |
