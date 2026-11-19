@@ -68,6 +68,7 @@ import {
 import { delegatorParentOf } from './poller-delegator.js'
 import { noteStartReason } from './session-start-reasons.js'
 import { resolveHarnessRepo } from '../lib/install-defaults.js'
+import { captureReviewHeadSha } from './review-head.js'
 
 /** A single parsed test-agent criterion result (PR-gated harness loop). */
 interface CriterionResult {
@@ -860,6 +861,12 @@ export async function pollAIReviewSessions(): Promise<void> {
     }
 
     if (verdict === 'pass') {
+      // obj 901455: a pass is tied to the commit the reviewer read. The spawn
+      // site records it; if that GitHub read failed, record the head now so the
+      // grant merge can still tell whether the PR moved after this review.
+      if (obj.pr_number || obj.pr_url) {
+        await captureReviewHeadSha(db, obj, obj.ai_review_session_id, undefined, { onlyIfEmpty: true })
+      }
       let nextStatus: ObjectiveStatus = obj.type === 'project' ? 'review' : 'done'
       if (mustRouteToHumanReview(obj, { verdict: 'pass' }) && nextStatus === 'done') nextStatus = 'review'
       if (await ciGateBlocks(nextStatus)) continue

@@ -74,7 +74,7 @@ export function initDevOpsSchema(db: Database.Database): void {
       bot_slug TEXT NOT NULL,
       user_id INTEGER,
       username TEXT,
-      status TEXT NOT NULL DEFAULT 'started' CHECK (status IN ('started', 'deployed', 'rolled_back', 'rollback_failed', 'failed')),
+      status TEXT NOT NULL DEFAULT 'started' CHECK (status IN ('started', 'deployed', 'unchanged', 'rolled_back', 'rollback_failed', 'failed')),
       step TEXT,
       from_sha TEXT,
       to_sha TEXT,
@@ -89,4 +89,37 @@ export function initDevOpsSchema(db: Database.Database): void {
   if (!cols.has('stage')) db.exec("ALTER TABLE dev_ops_pending_merges ADD COLUMN stage TEXT NOT NULL DEFAULT 'updated'")
   if (!cols.has('head_at')) db.exec('ALTER TABLE dev_ops_pending_merges ADD COLUMN head_at TEXT')
   db.exec('CREATE INDEX IF NOT EXISTS idx_dev_ops_pending_merges_repo ON dev_ops_pending_merges(repo, status)')
+  widenDeployStatus(db)
+}
+
+/**
+ * obj 901479: `unchanged` = the deploy ran but the code source had nothing newer
+ * (same commit before and after). SQLite cannot alter a CHECK, so a table made
+ * before this status existed is rebuilt once, rows and ids kept.
+ */
+function widenDeployStatus(db: Database.Database): void {
+  const sql = (db.prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'dev_ops_deploys'").get() as { sql: string } | undefined)?.sql ?? ''
+  if (!sql || sql.includes("'unchanged'")) return
+  db.transaction(() => {
+    db.exec(`
+      CREATE TABLE dev_ops_deploys_new (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        bot_slug TEXT NOT NULL,
+        user_id INTEGER,
+        username TEXT,
+        status TEXT NOT NULL DEFAULT 'started' CHECK (status IN ('started', 'deployed', 'unchanged', 'rolled_back', 'rollback_failed', 'failed')),
+        step TEXT,
+        from_sha TEXT,
+        to_sha TEXT,
+        backup_dir TEXT,
+        detail TEXT,
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        finished_at TEXT
+      );
+      INSERT INTO dev_ops_deploys_new (id, bot_slug, user_id, username, status, step, from_sha, to_sha, backup_dir, detail, created_at, finished_at)
+        SELECT id, bot_slug, user_id, username, status, step, from_sha, to_sha, backup_dir, detail, created_at, finished_at FROM dev_ops_deploys;
+      DROP TABLE dev_ops_deploys;
+      ALTER TABLE dev_ops_deploys_new RENAME TO dev_ops_deploys;
+    `)
+  })()
 }

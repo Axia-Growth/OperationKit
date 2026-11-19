@@ -10,7 +10,7 @@
 import { getDb } from '../../db/index.js'
 import { redactForStorage } from '../secret-redaction.js'
 
-export type DevOpsOutcome = 'allowed' | 'refused' | 'started' | 'done' | 'failed' | 'rolled_back' | 'waiting'
+export type DevOpsOutcome = 'allowed' | 'refused' | 'started' | 'done' | 'failed' | 'rolled_back' | 'waiting' | 'no_change'
 
 export interface DevOpsAuditEntry {
   bot_slug: string

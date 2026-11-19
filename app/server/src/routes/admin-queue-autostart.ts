@@ -1,5 +1,5 @@
 /**
- * Settings → Platform → Queue auto-start (obj 900625). Mounted under /api/admin,
+ * Workflows → Runs → Queue auto-start, /jobs#queue-auto-start (obj 900625; was Settings → Platform until obj 900686). Mounted under /api/admin,
  * so the admin.ts facade already applies requireAuth + requireAdmin (admin role
  * only; agent keys are rejected). No new scope or permission is introduced.
  *

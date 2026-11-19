@@ -2,8 +2,15 @@
 
 _obj 900625. Code: `app/server/src/services/queue-autostart.ts` (sweep, selection,
 gates), `app/server/src/db/schema/queue-autostart.ts` (columns + trigger),
-`app/server/src/routes/admin-queue-autostart.ts` (admin API), Settings → Platform
-(UI)._
+`app/server/src/routes/admin-queue-autostart.ts` (admin API),
+`app/client/src/components/settings/QueueAutostartPanel.tsx` (UI, on the Workflows page)._
+
+> **Where it is in the app.** There is no Settings → Platform tab any more (it was
+> removed in obj 900686). The card is on the **Workflows** page: click **Workflows**
+> in the top bar, then the **Runs** tab, then scroll down past *Scheduled tasks* and
+> *Host cron jobs* to **Queue auto-start**. Direct link: `/jobs#queue-auto-start`.
+> Only an admin sees it, and it is hidden while the Runs filter is set to
+> *Workflows* (use *All* or *Bot runs*).
 
 Queued **task** and **bug** cards in a workspace start on their own when a
 session slot and a seat are free. It is **off everywhere by default** and is
@@ -27,8 +34,8 @@ every workspace, client workspaces included.
    [Job Ceilings Rollout](./Job-Ceilings-Rollout)). The usual choice is a
    wall-clock ceiling, which the runner enforces.
 
-   **The easiest way (obj 901375):** Settings → Platform → *Queue auto-start* →
-   each workspace row has a **Job time limit (minutes)** field. Type a whole
+   **The easiest way (obj 901375):** Workflows → Runs → *Queue auto-start*
+   (`/jobs#queue-auto-start`) → each workspace row has a **Job time limit (minutes)** field. Type a whole
    number of minutes (1 to 1440) and press Save; cards bots start on their own
    in that workspace are stopped after that many minutes, counted across every
    attempt. Clearing the field removes the limit (falls back to the global
@@ -56,8 +63,8 @@ every workspace, client workspaces included.
    and observe. Only the global kill switch `job_ceiling_guard_enabled = '0'` (policy
    `off`) skips the check.
 
-2. **Switch the workspace on.** Settings → Platform → *Queue auto-start* → the
-   workspace's switch. Or through the admin API (admin session cookie):
+2. **Switch the workspace on.** Workflows → Runs → *Queue auto-start*
+   (`/jobs#queue-auto-start`) → the workspace's switch. Or through the admin API (admin session cookie):
 
    ```bash
    curl -X PUT https://<host>/api/admin/queue-autostart/<workspace> \
@@ -88,7 +95,7 @@ is an operator decision; this PR does not change any install's settings.
 | `settings.queue_autostart_max_concurrent` / `CC_QUEUE_AUTOSTART_MAX_CONCURRENT` | `4` (env wins) | Most auto-started cards running at once, across all workspaces. |
 | `CC_QUEUE_AUTOSTART_GRACE_MIN` | `1` | Minutes a new, un-requested card waits in queue before it is eligible (time to hold or cancel it). |
 | `settings.job_ceiling_policy:queue_autostart[:<ws>]` | `enforce` | Ceiling policy for this path: `enforce`, `observe` or `off`. |
-| `settings.job_wallclock_ceiling_ms:<ws>` | none | Per-workspace job time limit in ms, editable from Settings → Platform (see above) or `PUT /api/admin/queue-autostart/<ws>/time-limit`. Also honoured by cards a bot files from chat, not just auto-start. |
+| `settings.job_wallclock_ceiling_ms:<ws>` | none | Per-workspace job time limit in ms, editable from Workflows → Runs → Queue auto-start (see above) or `PUT /api/admin/queue-autostart/<ws>/time-limit`. Also honoured by cards a bot files from chat, not just auto-start. |
 
 ---
 

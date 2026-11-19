@@ -15,7 +15,9 @@
  *  3. if verify or health fails: rolls back to that backup — the old commit, the
  *     pre-update images, `install/backup.sh restore <backup> --yes`, stack up —
  *     and checks health again;
- *  4. writes the outcome to <data>/dev-ops/deploy-<id>.json.
+ *  4. writes the outcome to <data>/dev-ops/deploy-<id>.json. When the commit is
+ *     the same before and after (the code source had nothing newer) the outcome
+ *     is `unchanged`, never `deployed` (obj 901479).
  *
  * `settleDeploys` (the dev-ops tick, and every status call) turns that file into
  * the `dev_ops_deploys` row + an audit row. One deploy at a time; a started
@@ -30,14 +32,14 @@ import type { DevActor } from './merge.js'
 
 export const DEPLOY_TIMEOUT_MS = 75 * 60_000
 const COOLDOWN_MS = 2 * 60_000
-const TERMINAL = new Set(['deployed', 'rolled_back', 'rollback_failed', 'failed'])
+const TERMINAL = new Set(['deployed', 'unchanged', 'rolled_back', 'rollback_failed', 'failed'])
 
 export interface DeployRow {
   id: number
   bot_slug: string
   user_id: number | null
   username: string | null
-  status: 'started' | 'deployed' | 'rolled_back' | 'rollback_failed' | 'failed'
+  status: 'started' | 'deployed' | 'unchanged' | 'rolled_back' | 'rollback_failed' | 'failed'
   step: string | null
   from_sha: string | null
   to_sha: string | null
@@ -100,12 +102,16 @@ export async function startDevDeploy(actor: DevActor, note: string, now: () => n
   })
 }
 
+/** Why a merged PR can be missing: the server pulls from its own code source, not from where the PR merged. */
+export const NO_CHANGE_HINT = 'If a merged pull request was expected, it has not reached that source yet: an install that pulls from a synced copy of the repo gets it only after the open "Sync from upstream" pull request there is merged.'
+
 interface StatusFile {
   state?: string
   step?: string
   message?: string
   from_sha?: string
   to_sha?: string
+  source?: string
   backup_dir?: string
   log_tail?: string
 }
@@ -135,6 +141,13 @@ export function settleDeploys(now: () => number = Date.now): number[] {
     let detail = ''
     if (f && TERMINAL.has(String(f.state))) {
       status = f.state as DeployRow['status']
+      // Same commit before and after is never "deployed", whatever the runner called it.
+      const sameSha = !!f.from_sha && f.from_sha !== 'unknown' && f.from_sha === f.to_sha
+      if (status === 'deployed' && sameSha) {
+        status = 'unchanged'
+        f.message = `nothing new to deploy: the server was already on ${f.from_sha} and its code source has nothing newer. No new code went live. (${f.message ?? ''})`
+      }
+      if (status === 'unchanged') f.message = `${f.message ?? ''}. ${NO_CHANGE_HINT}`
       detail = `${f.message ?? ''}${f.log_tail ? `\n--- log tail ---\n${f.log_tail.slice(-2500)}` : ''}`
     } else if (now() - ms(row.created_at) > DEPLOY_TIMEOUT_MS) {
       status = 'failed'
@@ -148,7 +161,7 @@ export function settleDeploys(now: () => number = Date.now): number[] {
       .run(status, f?.step ?? row.step, f?.from_sha ?? null, f?.to_sha ?? null, f?.backup_dir ?? null, clean, row.id)
     writeDevOpsAudit({
       bot_slug: row.bot_slug, user_id: row.user_id, username: row.username, action: 'deploy_settled', target: `deploy #${row.id}`,
-      outcome: status === 'deployed' ? 'done' : status === 'rolled_back' ? 'rolled_back' : 'failed', code: status,
+      outcome: status === 'deployed' ? 'done' : status === 'unchanged' ? 'no_change' : status === 'rolled_back' ? 'rolled_back' : 'failed', code: status,
       detail: f?.message ?? clean,
     })
     settled.push(row.id)
@@ -164,6 +177,8 @@ export interface DeployStatusView {
   to_sha: string | null
   backup_dir: string | null
   message: string | null
+  /** True only when the commit really moved. */
+  new_code_live: boolean
   started_at: string
   finished_at: string | null
 }
@@ -173,6 +188,7 @@ export function deployStatus(limit = 3, now: () => number = Date.now): DeploySta
   const rows = getDb().prepare('SELECT * FROM dev_ops_deploys ORDER BY id DESC LIMIT ?').all(Math.max(1, Math.min(10, limit))) as DeployRow[]
   return rows.map(r => ({
     id: r.id, status: r.status, step: r.step, from_sha: r.from_sha, to_sha: r.to_sha, backup_dir: r.backup_dir,
-    message: r.detail ? r.detail.slice(0, 1500) : null, started_at: r.created_at, finished_at: r.finished_at,
+    message: r.detail ? r.detail.slice(0, 1500) : null,
+    new_code_live: r.status === 'deployed' && !!r.to_sha && r.from_sha !== r.to_sha, started_at: r.created_at, finished_at: r.finished_at,
   }))
 }

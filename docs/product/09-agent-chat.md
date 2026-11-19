@@ -72,6 +72,7 @@ What each bot may do is written in its agent file (below). The server enforces i
 | **Look at a screenshot you paste in** | The image is stored in this install's own database next to your message, and handed to the AI as a real image. Only you can open it. If the agent's AI service cannot read images, the chat says so plainly rather than quietly ignoring the picture. |
 | **Hand bigger jobs to the board** | Anything that takes more than a few minutes (building a page, a report, research) becomes a board card. The card shows up in the chat with its status — *Waiting to start → In progress → Ready for your review → Done* — and keeps updating while you watch. Tap it to open the card. |
 | **Prepare email replies and meeting invites** | As **drafts only**. A draft appears in the conversation with **Send** / **Add to calendar**, **Edit** and **Discard** buttons. Nothing is sent until *you* press Send. A bot or API key can never press it for you. |
+| **Check back on its own** | After it starts a card (or anything that takes a while) the bot can set itself a one-off follow-up: "check back in 10 minutes". You see a line **Follow-up scheduled for HH:MM: what it will check**, with **Cancel**. When the time comes the bot answers in the same conversation without you typing anything. It has exactly the permissions of a normal reply and is never your approval of a merge, a deploy or a decision. At most 5 can wait in one conversation, and a chain stops after 6 in a row without a message from you. See [Bot follow-ups](../wiki/Bot-Follow-Ups.md). |
 | **Hand bigger jobs to the board** | Anything that takes more than a few minutes (building a page, a report, research) becomes a board card. The card shows up in the conversation with its status — *Waiting to start → In progress → Ready for your review → Done* — and keeps updating while you watch. Tap it to open the card. |
 
 ## Where your conversation is stored
@@ -172,6 +173,7 @@ Tools a bot can be given:
 | `create_objective` | put a job on the board (always in the person's own workspace) |
 | `get_objective`, `list_objectives` | read the real board — every card the person could see on the board themselves, in every workspace they belong to (not just cards this bot filed). An empty answer means the board really is empty. |
 | `board_briefing` | "what is waiting on me?": cards in review, failed AI reviews, blockers, secrets a worker needs, stuck workers, plus counts per column. Any bot that lists `get_objective` or `list_objectives` gets it automatically. |
+| `followups` | set itself a one-off follow-up in this chat: `schedule_followup` (`in_minutes` 2 to 1440, `note`, optional `card_id` and `when_card_changes`), `list_followups`, `cancel_followup`. Any bot that lists `create_objective` gets it automatically. See [Bot follow-ups](../wiki/Bot-Follow-Ups.md). |
 | `web_search` | search the public web (needs a search key, see [Web search](#web-search-and-reading-pages)) |
 | `web_fetch` | open one public web page and read its text |
 | `all` | every tool above, including tools added later |
@@ -202,3 +204,18 @@ The code keeps its existing `agent` / `agent-chat` names — only the user-facin
 - Side threads / concurrent task lanes (obj 900370): `app/server/src/services/agent-chat/threads.ts`. A message's lane is `agent_chat_messages.thread_id` — `NULL` means the main conversation, which is why every row written before the feature existed is already in the right place. Every read and write of the message table is scoped by `lanePredicate()`, the single place a lane becomes SQL; there is deliberately no predicate that spans lanes. The in-flight slot in `engine.ts` is keyed per lane, which is what makes the lanes concurrent. Proofs: `services/agent-chat/side-threads.test.ts` (isolation, concurrency, ceiling) and `routes/agent-chat-threads.test.ts` (the HTTP boundary). The row shape follows this install's own `mentor_threads`, not a new threading model.
 - Page: `app/client/src/components/agent-chat/`, routed at `/chat` and `/chat/:slug`.
 - Plugging in a real mailbox or calendar: implement `MailConnector` / `CalendarConnector` in `connectors.ts` and return it from `resolveConnectors()`. Delivery happens only in `deliver()` / `add()`, which only the Send route calls.
+
+## Typing on a phone (obj 901376)
+
+While the on-screen keyboard is open on a phone-width screen, the bot chat folds its chrome: the header keeps only
+back, avatar, name (and the side thread's name), and the action row, the Chat / Work / Activity tabs and the lane tabs
+are hidden. The app shell (`Layout.tsx`) shrinks to the visible viewport (`window.visualViewport`), hides the bottom
+tab bar, and on a short screen (under 520px visible) the top bar too. Everything returns when the keyboard closes.
+The state comes from one store, `hooks/useOnScreenKeyboard.ts` (touch = `pointer: coarse`, never screen width).
+
+The composer grows upward to 6 lines (5 when under 400px is visible), then scrolls inside. While the keyboard is
+open the message list keeps at least half of the visible area: the box stops growing sooner when it would take
+more (`lib/composerFit.ts`), down to one line. Attached images are one
+row of small thumbnails that scrolls sideways. On a touch device Return adds a line and only the Send button sends;
+on a desktop Enter sends and Shift+Enter adds a line. That rule is `lib/composerKeys.ts` (`enterSends`), shared by
+the bot chat and the card chat composer: a new chat box must use it too.

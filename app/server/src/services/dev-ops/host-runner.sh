@@ -93,12 +93,14 @@ if [ "$ACTION" = deploy ]; then
   OLD_SHA=$(git -c safe.directory='*' -C "$SRC" rev-parse HEAD 2>/dev/null || echo unknown)
   START_TS=$(date -u +%Y%m%dT%H%M%SZ)
   BACKUP=""; NEW_SHA=""
+  # Where update.sh fetches from (origin of the code folder), without any login in the URL.
+  SOURCE=$(git -c safe.directory='*' -C "$SRC" remote get-url origin 2>/dev/null | sed -E 's#(://)[^/@]*@#\1#' || true)
   status() { # state step message
     local tail_txt; tail_txt=$(tail -c 6000 "$LOG" 2>/dev/null || true)
     install -d -m 755 "$STATUS_DIR"
     jq -nc --arg id "$ID" --arg s "$1" --arg step "$2" --arg m "$3" --arg from "$OLD_SHA" --arg to "$NEW_SHA" \
-      --arg b "$BACKUP" --arg t "$tail_txt" --arg at "$(date -u +%FT%TZ)" \
-      '{id:($id|tonumber), state:$s, step:$step, message:$m, from_sha:$from, to_sha:$to, backup_dir:$b, log_tail:$t, at:$at}' > "$STATUS.tmp" \
+      --arg b "$BACKUP" --arg t "$tail_txt" --arg at "$(date -u +%FT%TZ)" --arg src "$SOURCE" \
+      '{id:($id|tonumber), state:$s, step:$step, message:$m, from_sha:$from, to_sha:$to, source:$src, backup_dir:$b, log_tail:$t, at:$at}' > "$STATUS.tmp" \
       && mv -f "$STATUS.tmp" "$STATUS"
   }
   # Waits are tunable only so the runner's own test does not sleep for minutes.
@@ -149,6 +151,12 @@ if [ "$ACTION" = deploy ]; then
   fi
 
   if [ -z "$FAILED_STEP" ]; then
+    # Same commit before and after = update.sh found nothing newer at its source.
+    # Say so as its own outcome, so nobody reads it as "new code is live" (obj 901479).
+    if [ "$NEW_SHA" = "$OLD_SHA" ] && [ "$NEW_SHA" != unknown ]; then
+      status unchanged done "nothing new to deploy: main at ${SOURCE:-the code source} is still $NEW_SHA, the commit this server was already on. No new code went live. The install was re-run on the same commit; verify.sh passed and $HEALTH answers"
+      exit 0
+    fi
     status deployed done "deployed $NEW_SHA; verify.sh passed and $HEALTH answers"
     exit 0
   fi

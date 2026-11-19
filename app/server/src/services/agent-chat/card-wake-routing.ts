@@ -133,7 +133,7 @@ export function postCardWakeCapLine(db: Database.Database, p: { slug: string; us
 
 /** Tools through which a bot changes a card. Each call is bracketed as a self action. */
 export const SELF_ACTION_TOOLS: ReadonlySet<string> = new Set([
-  'my_card_set_status', 'my_card_message', 'card_take_over', 'card_reown', 'card_comment', 'card_restart', 'merge_approved_pr', 'raise_decision',
+  'my_card_set_status', 'my_card_message', 'card_take_over', 'card_reown', 'card_comment', 'card_restart', 'card_request_review', 'merge_approved_pr', 'raise_decision',
 ])
 /** A merge the bot made itself is confirmed later by GitHub; that echo is the bot's own doing too. */
 export const SELF_ECHO_MINUTES = 15

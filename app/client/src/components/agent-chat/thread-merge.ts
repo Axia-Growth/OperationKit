@@ -20,6 +20,14 @@ export function mergeThread(t: ThreadResponse | null, r: ThreadResponse): Thread
   r = { ...r, messages: incoming }
   // obj 900949: the newest answer carries the lane's turn state (running, queued count);
   // obj 901373: and the lane's reply-thread counts.
-  return { messages: byId(prev.messages, r.messages), drafts: byId(prev.drafts ?? [], r.drafts ?? []), cards: byId(prev.cards ?? [], r.cards ?? []), turn: r.turn ?? prev.turn, reply_threads: r.reply_threads ?? prev.reply_threads }
+  return {
+    messages: byId(prev.messages, r.messages),
+    drafts: byId(prev.drafts ?? [], r.drafts ?? []),
+    cards: byId(prev.cards ?? [], r.cards ?? []),
+    // obj 901392: the newer answer's state of a follow-up replaces the older one.
+    followups: byId(prev.followups ?? [], r.followups ?? []),
+    turn: r.turn ?? prev.turn,
+    reply_threads: r.reply_threads ?? prev.reply_threads,
+  }
 }
 

@@ -14,6 +14,7 @@ import { useWorkspaces } from '../../hooks/useWorkspaces'
 import { Alert, Badge, Button, Card, Input, Skeleton, cn } from '../ui'
 import { Switch } from '../ui/Switch'
 import { formatDateTime } from '../../lib/format'
+import { QUEUE_AUTOSTART_ANCHOR } from '../../lib/routes'
 
 export interface QueueAutostartWorkspace {
   workspace: string
@@ -132,7 +133,7 @@ export function QueueAutostartPanel() {
   }
 
   return (
-    <Card className="space-y-3" aria-labelledby="queue-autostart-title">
+    <Card id={QUEUE_AUTOSTART_ANCHOR} className="scroll-mt-4 space-y-3" aria-labelledby="queue-autostart-title">
       <div className="space-y-1">
         <h3 id="queue-autostart-title" className="font-display text-lg font-semibold tracking-tight text-fg-0">Queue auto-start</h3>
         <p className="text-sm text-fg-2">

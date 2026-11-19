@@ -12,6 +12,7 @@ import { enqueuePreviewDeploy, enqueuePreviewTeardown, kickHostDrain } from '../
 import { handleExternalCheckEvent } from '../services/external-remediation-act.js'
 import { autoLinkPullRequest } from '../services/external-remediation-resolve.js'
 import { recordPRTerminalState } from '../services/objective-prs.js'
+import { closeCardsForMergedPr } from '../services/merged-pr-close.js'
 import {
   parseDevRefs,
   resolveDevItemsFromBranch,
@@ -339,6 +340,18 @@ router.post('/', (req: Request, res: Response) => {
         }
       } catch (e) {
         console.error('[github-webhook] objective_prs state update failed:', (e as Error).message)
+      }
+
+      // obj 901454 — a merge done by hand on GitHub is the card's sign-off: move the
+      // card whose own PR this is from review to done. Async and best-effort; it
+      // never fails the delivery (closeCardsForMergedPr never throws).
+      if (pr.merged === true && prNumber > 0 && payload.repository?.full_name) {
+        const mergedRepo = payload.repository.full_name
+        void closeCardsForMergedPr({ repo: mergedRepo, prNumber }).then((results) => {
+          for (const r of results) {
+            console.log(`[github-webhook] ${mergedRepo}#${prNumber} merged → card #${r.objectiveId} ${r.outcome} (${r.reason})`)
+          }
+        })
       }
 
       // The dev_item_prs analogue of recordPRTerminalState above

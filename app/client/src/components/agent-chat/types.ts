@@ -248,6 +248,8 @@ export interface ChatMessage {
     queued?: boolean
     /** obj 900977: the id this client gave the message when it sent it; the server stores it and never stores the same id twice in a lane. */
     client_msg_id?: string
+    /** obj 901392: the follow-up this row scheduled or cancelled, or (kind 'followup_fired') was started by. */
+    followup_id?: number
   } | null
   images?: ChatImage[]
   created_at: string
@@ -279,10 +281,35 @@ export interface ChatCard {
   url: string
 }
 
+/**
+ * obj 901392: a one-off follow-up the bot set for itself in this chat ("check
+ * back in 10 minutes"). Times are ISO 8601. The person can cancel it while it
+ * is still `pending`.
+ */
+export interface ChatFollowup {
+  id: number
+  status: 'pending' | 'running' | 'fired' | 'failed' | 'cancelled' | 'dropped'
+  note: string
+  card_id: number | null
+  when_card_changes: boolean
+  due_at: string
+  hop: number
+  thread_id: number | null
+  /** 'due' | 'card_changed' once it fired. */
+  fire_reason: string | null
+  /** Why it was dropped or failed; 'person' / 'bot' for a cancelled one. */
+  end_reason: string | null
+  created_at: string
+  fired_at: string | null
+  finished_at: string | null
+}
+
 export interface ThreadResponse {
   messages: ChatMessage[]
   drafts: ChatDraft[]
   cards: ChatCard[]
+  /** obj 901392: live state of each follow-up a line in view points at. Absent on an older server. */
+  followups?: ChatFollowup[]
   /**
    * obj 900949: the lane's turn state — is the bot working, and how many of the
    * person's messages wait for it. Absent on an older server (treated as idle).

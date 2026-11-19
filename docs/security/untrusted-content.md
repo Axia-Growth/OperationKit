@@ -58,6 +58,7 @@ text is data, and an injection attempt can be read in the transcript.
 | 11 | Flow goal judge | the value being judged | `flow-engine.runJudge` | `flow-step` |
 | 12 | Decision Q&A answer | the card's title, description, latest summary and review note, given to the bot answering a person's question on a decision | `services/decision-answerer.ts` `answerPrompt` (obj 901059). The briefing and the question are server-stored and stay outside the frame | `card-summary` |
 | 13 | A bot's open-loops list in its chat system prompt | the bot's `…/bots/<slug>/open-loops.md` knowledge-base file, loaded on every chat turn for a bot that tracks loops (obj 901382). The rules around it are server-written and stay outside the frame | `services/agent-chat/open-loops.ts` `openLoopsPromptBlock` (test: `open-loops.test.ts`) | `knowledge-base` |
+| 14 | A follow-up a chat bot set for itself (obj 901392) | the bot's stored `note` (its own text from an earlier turn, which may have read hostile content), and the title and latest result of the card it waits on. The `[Follow-up #N]` header and the card status line are server-written and stay outside the frame | `services/agent-chat/followup-wake.ts` `followupBrief` (test: `followups.test.ts`) | `bot-followup`, `board-card` |
 
 Earlier tool calls in a chat's history are replayed as one line the server
 wrote (for example `Read "<page title>" (host)`). That line has frame markers

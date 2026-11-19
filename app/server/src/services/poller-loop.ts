@@ -140,6 +140,7 @@ import { runSpendProjectionGuard } from './spend-guard.js'
 import { computeLiveObjectiveSpend } from './session-usage.js'
 import { teardownObjectiveJob } from './job-teardown.js'
 import { releaseBranchLeasesForObjective } from './branch-lease.js'
+import { captureReviewHeadSha } from './review-head.js'
 
 /** obj 900372 — how long a still-running session keeps its session_id after its card
  *  is moved to review (it is finishing its turn), before the sweep clears it anyway. */
@@ -174,7 +175,7 @@ function workerTranscriptPath(sessionId: string): string {
 }
 
 /** obj 900547 — production wiring for the abnormal-end auto-retry. */
-function handleAbnormalEndProd(objective: Objective): boolean {
+export function handleAbnormalEndProd(objective: Objective): boolean {
   const db = getDb()
   try {
     return handleAbnormalEnd(objective, {
@@ -1530,12 +1531,15 @@ export async function pollActiveSessions(): Promise<void> {
                ai_review_verdict = NULL,
                ai_review_findings = NULL,
                ai_review_iteration = ?,
+               ai_review_head_sha = NULL,
                updated_at = datetime('now')
              WHERE id = ?`,
             reviewerSessionId,
             nextIteration,
             objective.id,
           )
+          // obj 901455: record the PR commit this reviewer reads (best-effort, async).
+          void captureReviewHeadSha(db, objective, reviewerSessionId)
           console.log(`[state-poller] Spawned reviewer ${reviewerSessionId} for objective ${objective.id} (${objective.type}) iteration ${nextIteration}`)
         } catch (err) {
           // If reviewer can't spawn (account exhausted etc.), leave in review for human triage.

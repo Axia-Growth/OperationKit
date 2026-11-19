@@ -63,13 +63,17 @@ export async function runGrantApprovedMerge(
     return { status: merged.status, body: { error: merged.error, code: merged.code, merged: false, ...(merged.pending ? { pending: true } : {}) } }
   }
 
-  const mergeLine = `Squash-merged PR #${merged.prNumber} (${merged.repo}) — approved by ${d.bot} on behalf of ${d.onBehalfOf} under grant #${d.grantId} (merge)`
+  const mergeLine = merged.alreadyMerged
+    ? `PR #${merged.prNumber} (${merged.repo}) was already merged on GitHub — card closed on the approval of ${d.bot} on behalf of ${d.onBehalfOf} under grant #${d.grantId} (merge)`
+    : `Squash-merged PR #${merged.prNumber} (${merged.repo}) — approved by ${d.bot} on behalf of ${d.onBehalfOf} under grant #${d.grantId} (merge)`
   try {
     writeDelegationAudit(db, {
       ...base,
       event: 'approval_used',
       grant_id: d.grantId,
-      reason: `grant_merge:squash-merged ${merged.repo}#${merged.prNumber} at ${merged.headSha || 'unknown sha'}; ${merged.ci}`,
+      reason: merged.alreadyMerged
+        ? `grant_merge:already_merged ${merged.repo}#${merged.prNumber}; card closed`
+        : `grant_merge:squash-merged ${merged.repo}#${merged.prNumber} at ${merged.headSha || 'unknown sha'}; ${merged.ci}`,
     })
     logActivity({
       project: card.project || 'operationkit',
@@ -88,6 +92,7 @@ export async function runGrantApprovedMerge(
         head_sha: merged.headSha,
         agent_key_id: key.id,
         agent_key_label: key.label,
+        already_merged: merged.alreadyMerged === true,
       },
     })
   } catch (err) {
@@ -100,7 +105,10 @@ export async function runGrantApprovedMerge(
     pathway: `grant-merge:#${d.grantId}`,
     humanTerminal: false,
   })
-  if (done.code !== 200) {
+  // A merged-PR webhook (services/merged-pr-close.ts) can close the card between
+  // the merge and this move; the card being done is the outcome we wanted.
+  const nowDone = done.code !== 200 && (db.prepare('SELECT status FROM objectives WHERE id = ?').get(card.id) as { status?: string } | undefined)?.status === 'done'
+  if (done.code !== 200 && !nowDone) {
     console.warn(`[grant-merge] card #${card.id}: PR #${merged.prNumber} merged but the done move was refused (${done.code})`)
     return {
       status: done.code,
@@ -115,6 +123,6 @@ export async function runGrantApprovedMerge(
   }
   return {
     status: 200,
-    body: { ...(done.body as object), merged: true, pr_url: merged.prUrl, merge_line: mergeLine },
+    body: { ...(nowDone ? {} : (done.body as object)), merged: true, already_merged: merged.alreadyMerged === true, pr_url: merged.prUrl, merge_line: mergeLine },
   }
 }

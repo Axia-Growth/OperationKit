@@ -45,7 +45,7 @@ function w(file: string, body: string, mode = 0o644) {
 }
 const read = (f: string) => (fs.existsSync(f) ? fs.readFileSync(f, 'utf8') : '')
 
-function setup(opts: { verifyFails?: boolean; healthFailsUntilRollback?: boolean; updateFailsBeforeBackup?: boolean; partialBackup?: boolean; policy?: unknown[] } = {}) {
+function setup(opts: { verifyFails?: boolean; healthFailsUntilRollback?: boolean; updateFailsBeforeBackup?: boolean; partialBackup?: boolean; nothingNew?: boolean; policy?: unknown[] } = {}) {
   T = fs.mkdtempSync(path.join(os.tmpdir(), 'cc-devops-runner-'))
   SRC = path.join(T, 'src')
   OPT = path.join(T, 'opt')
@@ -68,7 +68,7 @@ ${opts.partialBackup ? `mkdir -p "${OPT}/backups/pre-update-$(date -u +%Y%m%dT%H
 ${opts.updateFailsBeforeBackup ? 'exit 1' : ''}
 b="${OPT}/backups/pre-update-$(date -u +%Y%m%dT%H%M%SZ)"; mkdir -p "$b"; touch "$b/command-center.db" "$b/data.tar.gz"
 echo "pre-update-$(date -u +%Y%m%dT%H%M%SZ)" > "${LOGS}/image-tag"
-echo new1111111111111111111111111111111111111 > "${T}/head"
+${opts.nothingNew ? '' : `echo new1111111111111111111111111111111111111 > "${T}/head"`}
 exit 0
 `, 0o755)
   w(path.join(SRC, 'install/verify.sh'), `#!/usr/bin/env bash\necho "$@" >> "${LOGS}/verify.args"\nexit ${opts.verifyFails ? 1 : 0}\n`, 0o755)
@@ -84,6 +84,7 @@ exec "$@"
 echo "$@" >> "${LOGS}/git.args"
 for a in "$@"; do
   case "$a" in
+    get-url) echo "https://x-access-token:hunter2@github.example.test/acme/public-copy.git"; exit 0 ;;
     rev-parse) cat "${T}/head"; exit 0 ;;
     checkout) sha="\${@: -1}"; echo "$sha" > "${T}/head"; exit 0 ;;
   esac
@@ -159,6 +160,22 @@ describe.skipIf(!READY)('host-runner.sh deploy', () => {
     expect(r.status.from_sha).toMatch(/^old/)
     expect(r.status.to_sha).toMatch(/^new/)
     expect(r.status.backup_dir).toContain(`${OPT}/backups/pre-update-`)
+    expect(r.status.source).toBe('https://github.example.test/acme/public-copy.git')
+  })
+
+  it('same commit before and after → unchanged ("nothing new to deploy"), never deployed; no rollback (obj 901479)', () => {
+    setup({ nothingNew: true })
+    const r = deploy()
+    expect(r.code).toBe(0)
+    expect(r.status.state).toBe('unchanged')
+    expect(r.status.from_sha).toBe(r.status.to_sha)
+    expect(r.status.message).toMatch(/^nothing new to deploy: main at https:\/\/github\.example\.test\/acme\/public-copy\.git is still old0+/)
+    expect(r.status.message).toContain('No new code went live')
+    expect(JSON.stringify(r.status)).not.toContain('hunter2')
+    // update.sh, verify.sh and the health check still ran; nothing was restored.
+    expect(read(path.join(LOGS, 'update.args')).trim()).toBe(`--config ${CONF}`)
+    expect(read(path.join(LOGS, 'verify.args')).trim()).toBe(`--config ${CONF}`)
+    expect(read(path.join(LOGS, 'backup.args'))).toBe('')
   })
 })
 

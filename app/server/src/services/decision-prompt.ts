@@ -82,7 +82,7 @@ export function buildDecisionRequestBlock(p: { objectiveId: number; workspace: s
 
 /** One-paragraph version for bot system prompts / tool descriptions. */
 export function decisionBriefingSummary(): string {
-  return 'Raise a decision with raise_decision: context (2-3 sentences), ONE question, 2-4 options each with pros, cons and next, plus recommended + recommended_why. Under about 200 words. Never ask for a decision in prose only.'
+  return 'Raise a decision with raise_decision: context (2-3 sentences), ONE question, 2-4 options each with pros, cons and next, plus recommended + recommended_why. Under about 200 words. Never ask for a decision in prose only. Clicking an option never runs a deploy or merge: those run only when the person types the word in this chat, so a deploy / merge option says so in its next ("You type deploy in this chat and I run it."); one that promises "I deploy" is refused.'
 }
 
 export function decisionFeedbackForPrompt(workspace: string | null, owner: string): string[] {
