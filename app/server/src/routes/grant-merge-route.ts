@@ -65,7 +65,10 @@ export async function runGrantApprovedMerge(
 
   // The grantor is the person this request acts for (grantDecision keys the grant
   // on req.user), so theirs is the GitHub connection a merge may fall back to.
-  const merged = await mergeUnderGrant(card, { grantId: d.grantId, auth: { grantorUserId: req.user?.id ?? null, agent: via?.agent ?? null } })
+  const merged = await mergeUnderGrant(card, {
+    grantId: d.grantId,
+    auth: { grantorUserId: req.user?.id ?? null, agent: via?.agent ?? null },
+  })
   if (!merged.ok) {
     try {
       writeDelegationAudit(db, { ...base, event: merged.code === 'branch_updated_ci_pending' ? 'approval_used' : 'approval_denied', grant_id: d.grantId, reason: `grant_merge:${merged.code}` })
@@ -73,7 +76,7 @@ export async function runGrantApprovedMerge(
       console.warn('[grant-merge] audit write failed:', (err as Error).message)
     }
     console.warn(`[grant-merge] card #${card.id} refused (${merged.code}): ${merged.error}`)
-    return { status: merged.status, body: { error: merged.error, code: merged.code, merged: false, ...(merged.pending ? { pending: true } : {}) } }
+    return { status: merged.status, body: { error: merged.error, code: merged.code, merged: false } }
   }
 
   const mergeLine = merged.alreadyMerged

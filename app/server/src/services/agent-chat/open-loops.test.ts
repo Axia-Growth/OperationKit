@@ -358,7 +358,8 @@ describe('2. the High Agency wake brief reconciles the list against the board', 
     expect(text).toContain('## Open loops (part of step 2, on EVERY wake)')
     expect(text).toContain(REL)
     expect(text).toContain(`path=$KB/bots/${DEV}/open-loops.md`)
-    expect(text).toMatch(/Status `done` or `cancelled` → the loop is closed: move it to "## Closed"/)
+    // obj 901500: Dev has profile + journal memory on by default, so a closed loop leaves the file for the journal.
+    expect(text).toMatch(/Status `done` or `cancelled` → the loop is closed: take it out of the file and write it as one line in `journal.md`/)
     expect(STALE_AFTER_DAYS).toBe(3)
     expect(text).toContain('No movement for more than 3 days')
     expect(text).toContain('STALE since YYYY-MM-DD')

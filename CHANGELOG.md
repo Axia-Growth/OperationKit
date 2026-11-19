@@ -8,6 +8,15 @@ Notable operator-facing changes. Newest first.
 
 ## Unreleased
 
+### Chat bots never file the same card twice (obj 901498)
+
+The two chat tools that file a card (`create_objective`, `repo_session_start`) now
+return the card already filed when the same request is repeated, hold back a card
+whose title is near-identical to an open one in the workspace (the bot is told
+"possible duplicate #N" and can file anyway), and say plainly when a card exists
+but did not start. No database change. `settings.duplicate_guard_enabled = '0'`
+turns the title search off. Details: `docs/wiki/Chat-Card-Filing-Guard.md`.
+
 ### Backups: big homes go off-site as a folder, retention really prunes, hand-made jobs are named (obj 900861)
 
 Three changes to `install/backup.sh`, so a server with a large home can use the

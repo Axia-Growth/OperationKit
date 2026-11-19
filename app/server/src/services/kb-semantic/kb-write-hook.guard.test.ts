@@ -49,6 +49,7 @@ const KB_WRITE_MODULES: Record<string, number> = {
   'services/kb-setup/runs.ts': 3,
   'services/doc-ingest/notes.ts': 2,
   'routes/decisions.ts': 1, // decisions/decision-log.md, through the injected noteWrite
+  'services/agent-chat/bot-memory.ts': 2, // journal roll-over: archive month files, kept journal
 }
 
 /**

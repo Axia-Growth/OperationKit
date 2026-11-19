@@ -1,6 +1,7 @@
 import { getTurnLimits, installTurnDefaults, longTurnsEnabled, recentTurnJobs, setTurnLimits, TURN_MINUTES_RANGE, TURN_STEPS_RANGE, TurnLimitsError } from '../services/agent-chat/long-turns.js'
 import { Router, type Response } from 'express'
 import { requireAuth, type AuthRequest } from '../middleware/auth.js'
+import { isOwnerBrowserSession } from './agent-chat-delegations.js'
 import {
   ChatBusyError,
   ChatUnavailableError,
@@ -1043,7 +1044,10 @@ router.post('/agents/:slug/messages', async (req: AuthRequest, res) => {
   try {
     // obj 900949: a lane that is busy QUEUES the message (202) instead of
     // refusing it; the turn that follows the running one delivers it, in order.
-    const r = await submitMessage({ userId: req.user!.id, username: req.user!.username, agent: a, text, images, lane, clientMsgId, responseGone: () => disconnectedAt !== null, browserSession: signedInBrowser(req) })
+    // obj 901393: the server's own stamp of "the owner typed this in the browser",
+    // from how THIS request authenticated — never from the body.
+    const ownerBrowser = isOwnerBrowserSession(req)
+    const r = await submitMessage({ userId: req.user!.id, username: req.user!.username, agent: a, text, images, lane, clientMsgId, ownerBrowser, responseGone: () => disconnectedAt !== null, browserSession: signedInBrowser(req) })
     if (disconnectedAt !== null) {
       console.log(`[agent-chat] disconnect: turn finished ${Date.now() - disconnectedAt}ms after the response closed (${where}); ${r.messages.length} row(s) stored for the person to see on return`)
       return

@@ -12,6 +12,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { api, ApiError } from '../../lib/api'
 import { Alert, Badge, Button, Card, Skeleton } from '../ui'
 import { formatDateTime } from '../../lib/format'
+import { Switch } from '../ui/Switch'
 
 export interface DeployWaitingEntry {
   sha: string
@@ -48,6 +49,100 @@ export interface DeployStatusView {
 function errText(err: unknown): string {
   if (err instanceof ApiError || err instanceof Error) return err.message || 'Could not load what is waiting for a deploy.'
   return 'Could not load what is waiting for a deploy.'
+}
+
+export interface ChatDeployRowView {
+  id: number
+  username: string
+  agent_slug: string
+  bot_name: string
+  mode: 'frontend' | 'backend' | 'both' | null
+  outcome: 'refused' | 'started' | 'deployed' | 'rolled_back' | 'failed'
+  reason: string | null
+  detail: string | null
+  prs: { pr_number: number | null; title: string; card_id: number | null; short_sha: string }[]
+  created_at: string
+  finished_at: string | null
+}
+
+export interface ChatDeployView {
+  enabled: boolean
+  can_manage: boolean
+  bots: string[]
+  last: ChatDeployRowView | null
+}
+
+const OUTCOME_LABEL: Record<ChatDeployRowView['outcome'], string> = {
+  refused: 'Refused',
+  started: 'Deploying',
+  deployed: 'Live',
+  rolled_back: 'Rolled back',
+  failed: 'Failed',
+}
+
+function outcomeTone(o: ChatDeployRowView['outcome']): 'verify' | 'amber' | 'alarm' | 'neutral' | 'info' {
+  if (o === 'deployed') return 'verify'
+  if (o === 'rolled_back' || o === 'failed') return 'alarm'
+  if (o === 'started') return 'info'
+  return 'amber'
+}
+
+/** obj 901393: the owner's switch for "deploy on your word" and the last chat deploy. */
+export function ChatDeploySection() {
+  const [view, setView] = useState<ChatDeployView | null>(null)
+  const [error, setError] = useState('')
+  const [busy, setBusy] = useState(false)
+
+  useEffect(() => {
+    api.get<ChatDeployView>('/admin/chat-deploy').then(setView).catch(err => setError(errText(err)))
+  }, [])
+
+  const toggle = async (enabled: boolean) => {
+    setBusy(true)
+    setError('')
+    try {
+      setView(await api.put<ChatDeployView>('/admin/chat-deploy', { enabled }))
+    } catch (err) {
+      setError(errText(err))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const last = view?.last ?? null
+  return (
+    <section className="space-y-2 border-t border-line pt-3" aria-labelledby="chat-deploy-title">
+      <h4 id="chat-deploy-title" className="text-sm font-semibold text-fg-0">Deploy on your word</h4>
+      <p className="text-sm text-fg-2">
+        When on, {view?.bots?.length ? view.bots.join(', ') : 'the dev bot'} may hot-deploy main from chat, but only when you ask it to in that chat, each time.
+        It refuses a database migration, a rebuild, a dirty checkout, or a restart while cards are working. Off by default.
+      </p>
+      {error && <Alert tone="alarm">{error}</Alert>}
+      {view && (
+        <Switch
+          checked={view.enabled}
+          onChange={v => void toggle(v)}
+          busy={busy}
+          disabled={!view.can_manage}
+          label={view.enabled ? 'On: deploys only when you ask in chat' : 'Off'}
+        />
+      )}
+      {view && !view.can_manage && <p className="text-xs text-fg-3">Only the owner, signed in in the browser, can change this.</p>}
+      {last && (
+        <div className="flex flex-wrap items-center gap-2 text-xs text-fg-3" aria-label="Last chat deploy">
+          <span>Last chat deploy #{last.id}:</span>
+          <Badge tone={outcomeTone(last.outcome)}>{OUTCOME_LABEL[last.outcome]}</Badge>
+          <span>
+            {last.bot_name || last.agent_slug} on {last.username}'s word
+            {last.mode ? `, mode ${last.mode}` : ''}
+            {last.prs.length ? `, ${last.prs.map(p => (p.pr_number != null ? `PR #${p.pr_number}` : p.short_sha)).join(', ')}` : ''}
+          </span>
+          <span title={formatDateTime(last.created_at).title}>{formatDateTime(last.created_at).label}</span>
+          {last.detail && <span className="w-full text-fg-2">{last.detail}</span>}
+        </div>
+      )}
+    </section>
+  )
 }
 
 function Check({ ok, label }: { ok: boolean | null | undefined; label: string }) {
@@ -143,6 +238,7 @@ export function DeployWaitingPanel() {
           {state.note && <p className="text-xs text-fg-3">{state.note}</p>}
         </>
       ) : null}
+      <ChatDeploySection />
     </Card>
   )
 }

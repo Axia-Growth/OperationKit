@@ -194,6 +194,10 @@ a bot may merge its own passed pull request under a MERGE grant
   access bot talking to an admin reads the same list with `release_status`.
 - Nothing here changes who may deploy. `POST /api/internal/deploy` and
   `scripts/self-deploy.sh` stay behind the server secret.
+- **Deploy on your word (obj 901393)** is separate from Full access: Operation Kit Dev may
+  hot-deploy from chat only when the owner asks in that chat, each time, behind its own
+  owner switch (off by default). Full access never adds that tool and never stands in for
+  the owner's ask. See [Deploy on your word](Deploy-On-Your-Word.md).
 
 **Standing merge (obj 901388).** A merge grant can carry one more switch,
 **Merge without asking me each time** (`delegation_grants.standing_merge`, off by
