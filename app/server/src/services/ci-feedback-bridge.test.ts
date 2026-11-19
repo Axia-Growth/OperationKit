@@ -150,6 +150,12 @@ describe('buildNudgeMessage', () => {
     expect(msg).toContain('Do NOT')
     expect(msg).toContain('#355')
   })
+
+  it('tells the worker to fix every failure and push once (obj 901348)', () => {
+    const msg = buildNudgeMessage({ pr: 355, repo: REPO, headSha: 'f347a19', checkName: 'vitest (app suite)', link: 'http://x', summary: 'FAIL foo', attempt: 1, cap: 5 })
+    expect(msg).toContain('push ONCE')
+    expect(msg).toContain('do not push one fix at a time')
+  })
 })
 
 // ── orchestration (injected exec + postMessage + real DB) ────────────────────────

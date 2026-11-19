@@ -24,7 +24,8 @@ admin switch** and every call is audit-logged.
 | Tool | What it does | Guards |
 |---|---|---|
 | `dev_merge_pr {id}` | Squash-merge a Dev card's PR once CI is green, pinned with `--match-head-commit`, then mark the card done | filed from Dev's chat (`agent_chat_cards`), or Dev-owned (`cardOwnerBot`) AND created by an admin or the system (a member's card that just names Dev does not count); card in review / done / blocked / ai_review (not queue / planning / working / cancelled); AI review may be missing but not `fail`/`blocked`; reserved PRs (seed 645 in both repos + `grant_merge_reserved_prs` + `CC_GRANT_MERGE_RESERVED_PRS`) refused **before any GitHub call**; Strategy and money-path refused; strict CI green; only GitHub `CLEAN` / `HAS_HOOKS` |
-| — behind branch | `BEHIND` → GitHub update-branch pinned to the head it read (a merge from base; no rebase, no force push) → row in `dev_ops_pending_merges` → the 30 s tick merges it pinned to the **new** head once CI there is green | the new head must be GitHub's update commit (two parents, one the head we read) — a push made while waiting is never merged; red CI on the new head fails it; re-updates at most 3 times; expires after 90 min; the switch, the person's admin role, the card, its PR link and the reserved list (for the stored `repo#pr`) are re-checked on every pass |
+| — behind branch | `BEHIND` → GitHub update-branch pinned to the head it read (a merge from base; no rebase, no force push) → row in `dev_ops_pending_merges` → the 30 s tick merges it pinned to the **new** head once CI there is green | the new head must be GitHub's update commit (two parents, one the head we read) — a push made while waiting is never merged; red CI on the new head fails it; at most 3 branch updates per PR, all made while it is the head of the queue; expires 90 min after it reaches the head; the switch, the person's admin role, the card, its PR link and the reserved list (for the stored `repo#pr`) are re-checked on every pass |
+| — merge queue (obj 901463) | The `waiting` rows of one repo are an ordered queue (lowest id = the order asked). Only the **head** has its branch updated and CI awaited. A PR asked for while another is waiting gets `queued_behind` with its position and is not touched (no update-branch, no CI run, no GitHub read) until it reaches the head; then it is updated once and merges on green. A head that merges ends the pass for that repo (the next one starts on the next 30 s pass); a head that fails, expires or is skipped hands over in the same pass | waiting never counts toward the update cap or the 90 min; a conflicted head (GitHub `DIRTY`) is `conflict_skipped` and does not block the rest; a commit pushed while queued is `head_changed_while_queued`; every guard in the row above is re-checked when a PR reaches the head; a PR that could merge right now still joins the back of a non-empty queue; asking twice is `already_queued` |
 | `dev_close_card {id, status}` | done / cancelled without the admin sign-off prompt | done on a PR card only when GitHub says `MERGED`; done without a PR and cancelled only for Dev's own cards; never a Strategy or a reserved-PR card; runs the real status handler (`pathway dev-ops:close-*`, not a human terminal) |
 | `dev_deploy` | `sudo bash /opt/operationkit-src/install/update.sh --config /opt/operationkit-src/client.conf` on the host, detached | one at a time, 2 min cool-down; update.sh takes the backup; never `--skip-cloudflare`, `--skip-backup` or a force flag (asserted by tests) |
 | `dev_deploy_status` | outcome of the latest deploys | — |
@@ -93,7 +94,11 @@ left it (empty).
 
 `dev_ops_audit` (`services/dev-ops/audit.ts`): one row per tool call, allowed or
 refused, plus one per background step (`branch_update`, `merge_on_green`,
-`deploy_settled`) and per switch change. Columns: bot, person, action, target, card,
+`merge_queue`, `deploy_settled`) and per switch change. Merge-queue rows: action
+`merge`, code `queued_behind` / `already_queued` (the ask; detail gives the position
+and the PRs ahead); action `merge_queue`, code `queued_behind` (its position changed),
+`queue_next` (it is next) or `queue_head` (it is now first); action `merge_on_green`,
+code `conflict_skipped` or `head_changed_while_queued` (taken out of the queue). Columns: bot, person, action, target, card,
 outcome (`allowed` / `refused` / `started` / `waiting` / `done` / `failed` /
 `rolled_back`), code, redacted detail.
 
@@ -101,6 +106,9 @@ outcome (`allowed` / `refused` / `started` / `waiting` / `done` / `failed` /
 
 - `services/dev-ops/dev-ops.test.ts` — gate, merge relaxations, behind-branch update,
   PR 645, close, deploy start/settle, Cloudflare guards, secret non-exposure, audit.
+- `services/dev-ops/merge-queue.test.ts` — the merge queue against a fake GitHub with
+  several PRs and a moving base: order, one update each, conflict skip, the cap and the
+  90 min counted at the head only, every refusal at ask time and again at the head.
 - `services/dev-ops/host-runner.test.ts` — the runner under bash with stubbed host
   tools: exact update.sh call, rollback on verify / health failure, no rollback when
   update.sh fails before its backup, Access write guards, token only on curl's stdin.

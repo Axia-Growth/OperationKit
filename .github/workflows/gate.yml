@@ -13,8 +13,17 @@ name: gate
 # CONTRACT (do not weaken):
 #   * Every upstream job must SUCCEED. `skipped` and `cancelled` are FAILURES,
 #     not passes. A job that did not run produced no evidence about this diff.
-#   * Therefore NO path filters and NO `if:` conditions on the upstream jobs.
-#     Everything runs on every PR. The suite is ~50s; determinism is worth it.
+#   * Therefore NO path filters, and NO `if:` on the upstream jobs except ONE
+#     exact guard: `if: needs.changes.outputs.docs_only != 'true'`.
+#   * DOCS/VAULT-ONLY EXCEPTION (obj 901348, CI cost). The `changes` job runs on
+#     every PR and classifies the diff with scripts/ci-docs-only.py (fixture-
+#     tested in the same job). Only when EVERY changed path is documentation or
+#     vault evidence that no gated test reads, the guarded jobs are skipped, and
+#     the gate accepts `skipped` for exactly those jobs. The `gate` context still
+#     reports, and succeeds, so a docs-only PR stays mergeable. Workflow files,
+#     app code, scripts, install paths, fixtures and docs a test reads always run
+#     the full suite. If `changes` fails, the guarded jobs are skipped and the
+#     gate goes RED (fail closed); it never reads "no answer" as "docs-only".
 #   * The gate job derives its job list from `toJSON(needs)` at runtime and
 #     separately asserts that every job declared in this file is present in its
 #     `needs:`. A job added here but forgotten in `needs:` fails the gate loudly
@@ -22,6 +31,8 @@ name: gate
 #
 # Adding a job: add it below, add it to `gate.needs`. That is all — the assert
 # step and the result loop are both derived, so there is no third place to drift.
+# Give it the two-line docs-only guard (`needs: changes` + the `if:` above) only
+# if a docs/vault-only diff cannot possibly affect it.
 
 on:
   pull_request:
@@ -35,8 +46,39 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # Docs/vault-only classifier (obj 901348). Always runs, never skipped. Its
+  # output gates the heavy jobs below; see the CONTRACT at the top of this file.
+  changes:
+    name: changes (docs/vault-only?)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      docs_only: ${{ steps.classify.outputs.docs_only }}
+    steps:
+      # A pull_request checkout is the merge commit refs/pull/N/merge: parent 1 is
+      # the base tip, so HEAD^1..HEAD is exactly what this PR changes on main.
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+      # The rule runs against throwaway repos first, so a broken rule fails here
+      # instead of silently classifying code as docs.
+      - name: Fixture test for the docs-only rule
+        run: bash scripts/ci-docs-only-test.sh
+      # And the gate's own result logic (lifted from this file): a docs-only PR
+      # is green, every way of getting a skip without a docs-only verdict is red.
+      - name: Gate result logic on a docs-only diff
+        run: python3 scripts/gate-docs-only-test.py
+      - name: Classify this PR's diff
+        id: classify
+        run: |
+          set -euo pipefail
+          git rev-parse --verify --quiet HEAD^2 >/dev/null || { echo 'FATAL: expected a pull_request merge commit' >&2; exit 1; }
+          python3 scripts/ci-docs-only.py HEAD^1 HEAD | tee -a "$GITHUB_OUTPUT"
+
   typecheck:
     name: typecheck
+    needs: changes
+    if: needs.changes.outputs.docs_only != 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     defaults:
@@ -60,6 +102,8 @@ jobs:
 
   unit:
     name: unit (${{ matrix.workspace }})
+    needs: changes
+    if: needs.changes.outputs.docs_only != 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 12
     strategy:
@@ -81,6 +125,8 @@ jobs:
 
   build:
     name: build
+    needs: changes
+    if: needs.changes.outputs.docs_only != 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     defaults:
@@ -99,6 +145,8 @@ jobs:
 
   test-integrity:
     name: test-integrity
+    needs: changes
+    if: needs.changes.outputs.docs_only != 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -127,6 +175,8 @@ jobs:
   # ===========================================================================
   shellcheck:
     name: shellcheck (scripts/migrate)
+    needs: changes
+    if: needs.changes.outputs.docs_only != 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -140,6 +190,8 @@ jobs:
 
   gitleaks-config:
     name: gitleaks-config (OSS publish allowlist)
+    needs: changes
+    if: needs.changes.outputs.docs_only != 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     env:
@@ -166,6 +218,8 @@ jobs:
   # give a clear answer on hosts that are NOT supported, so its tests must pass there.
   setup-check:
     name: setup-check (${{ matrix.os }})
+    needs: changes
+    if: needs.changes.outputs.docs_only != 'true'
     runs-on: ${{ matrix.os }}
     timeout-minutes: 5
     strategy:
@@ -181,7 +235,7 @@ jobs:
 
   gate:
     if: always()
-    needs: [typecheck, unit, build, test-integrity, shellcheck, gitleaks-config, setup-check]
+    needs: [changes, typecheck, unit, build, test-integrity, shellcheck, gitleaks-config, setup-check]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -213,6 +267,22 @@ jobs:
           if extra:
               sys.exit(f'FATAL: needs names a job that does not exist: {extra}')
           print('OK: gate.needs covers every job in the workflow')
+          # obj 901348: the ONLY job-level `if:` allowed upstream of the gate is
+          # the exact docs-only guard, always paired with `needs: changes`.
+          guard = "    if: needs.changes.outputs.docs_only != 'true'"
+          blocks = dict(re.findall(r'^  ([A-Za-z0-9_-]+):$\n(.*?)(?=^  [A-Za-z0-9_-]+:$|\Z)', jobs_block, re.M | re.S))
+          for job, body in blocks.items():
+              ifs = re.findall(r'^    if: .*$', body, re.M)
+              if job == 'gate':
+                  continue
+              if job == 'changes' and ifs:
+                  sys.exit('FATAL: the changes job must never be skipped')
+              for line in ifs:
+                  if line != guard:
+                      sys.exit(f'FATAL: job {job} has a non-standard if: {line!r}')
+                  if not re.search(r'^    needs: changes$', body, re.M):
+                      sys.exit(f'FATAL: job {job} carries the docs-only guard without needs: changes')
+          print('OK: only the docs-only guard is used, always with needs: changes')
           PY
 
       - name: Assert every upstream job succeeded
@@ -222,15 +292,27 @@ jobs:
           set -euo pipefail
           printf '%s\n' "$RESULTS"
           python3 - <<'PY'
-          import json, os, sys
+          import json, os, re, sys
           results = json.loads(os.environ['RESULTS'])
           if not results:
               sys.exit('FATAL: needs context is empty - gate has no upstream to assert')
+          # obj 901348: a guarded job may be `skipped` ONLY when `changes`
+          # succeeded AND said docs_only=true. Guarded = carries the exact guard.
+          src = open('.github/workflows/gate.yml').read()
+          jobs_block = src.split('\njobs:\n', 1)[1]
+          blocks = dict(re.findall(r'^  ([A-Za-z0-9_-]+):$\n(.*?)(?=^  [A-Za-z0-9_-]+:$|\Z)', jobs_block, re.M | re.S))
+          guard = "    if: needs.changes.outputs.docs_only != 'true'"
+          guarded = {j for j, body in blocks.items() if guard in body.splitlines()}
+          ch = results.get('changes', {})
+          docs_only = ch.get('result') == 'success' and (ch.get('outputs') or {}).get('docs_only') == 'true'
+          print(f'docs/vault-only diff: {docs_only}; guarded jobs: {sorted(guarded)}')
           fail = 0
           for job in sorted(results):
               r = results[job]['result']
               if r == 'success':
                   print(f'ok        {job}={r}')
+              elif r == 'skipped' and docs_only and job in guarded:
+                  print(f'ok        {job}={r} (docs/vault-only diff, by design)')
               elif r == 'skipped':
                   # A skipped job produced NO evidence about this diff. Treating
                   # it as a pass is exactly the decorative-check failure mode

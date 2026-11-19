@@ -7,7 +7,8 @@
 // | tool               | does                                                             |
 // |--------------------|------------------------------------------------------------------|
 // | dev_merge_pr       | squash-merge a Dev card's PR once CI is green (done card / no    |
-// |                    | review OK; a behind branch is updated, then merged on green)     |
+// |                    | review OK; a behind branch is updated, then merged on green;     |
+// |                    | waiting merges on one repo are a queue, one at a time)           |
 // | dev_close_card     | mark done a card whose PR the owner merged by hand; cancel /     |
 // |                    | close Dev's own cards — no admin sign-off prompt                 |
 // | dev_deploy         | the standard update.sh deploy, backup → verify → health →        |
@@ -50,7 +51,9 @@ const NOTE = { type: 'string', description: 'One line on why (goes on the audit 
 const SPECS: ToolSpec[] = [
   fn('dev_merge_pr',
     'Squash-merge the PR of one of YOUR own cards once CI is green. Works when the card is already done or has no AI review yet; a failed review still refuses. ' +
-    'If the branch is behind main it is updated (a merge from main) and merged automatically once CI is green on the new head. Reserved PRs (645) are never merged. Then the card is marked done.',
+    'If the branch is behind main it is updated (a merge from main) and merged automatically once CI is green on the new head. ' +
+    'Merges on one repo are taken ONE AT A TIME in the order you ask: while one is waiting, the next ones are queued (`queued_behind`, with `queue_position`) and their branches are left alone until they reach the front, so ask for each PR once and do not ask again. ' +
+    'Reserved PRs (645) are never merged. Then the card is marked done.',
     { id: ID, note: NOTE }, ['id']),
   fn('dev_close_card',
     'Close a card without the admin sign-off prompt: done when its PR is merged on GitHub (e.g. the owner merged it by hand), or done / cancelled for one of your own cards. Never a Strategy or a reserved PR.',
