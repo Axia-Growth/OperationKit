@@ -81,6 +81,8 @@ beforeEach(() => {
     if (url.includes('/full-access')) return new Response(JSON.stringify({ slug: 'acme-cto', workspaces: [], workspace_options: [], can_manage: false, audit: [] }), { status: 200, headers: { 'content-type': 'application/json' } })
     // And the Card wakes section (obj 901328, CardWakesSection.test.tsx).
     if (url.includes('/card-wakes')) return new Response(JSON.stringify({ card_wakes: { slug: 'acme-cto', enabled: true, is_default: true, updated_at: null, install_enabled: true, thread_title: 'Card wakes' }, recent: [] }), { status: 200, headers: { 'content-type': 'application/json' } })
+    // And the Long replies section (obj 901491, LongRepliesSection.test.tsx).
+    if (url.includes('/turn-limits')) return new Response(JSON.stringify({ turn_limits: { slug: 'acme-cto', install_enabled: true, max_steps: null, max_minutes: null, updated_at: null, effective: { max_steps: 60, max_minutes: 30 }, defaults: { max_steps: 60, max_minutes: 30, foreground_seconds: 20 }, ranges: { steps: { min: 8, max: 200 }, minutes: { min: 2, max: 240 } } }, recent: [] }), { status: 200, headers: { 'content-type': 'application/json' } })
     // And the Approve on my behalf section (obj 900839, DelegationSection.test.tsx).
     if (url.includes('/delegations')) return new Response(JSON.stringify({ bot: null, workspace_options: [], grants: [], can_manage: false }), { status: 200, headers: { 'content-type': 'application/json' } })
     const body = init?.body ? JSON.parse(String(init.body)) : null

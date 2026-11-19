@@ -35,6 +35,7 @@ import { initAgentChatSchema } from './schema/agent-chat.js'
 import { initBotJobsSchema } from './schema/bot-jobs.js'
 import { initBotMessagesSchema } from './schema/bot-messages.js'
 import { initBotCardWakesSchema } from './schema/bot-card-wakes.js'
+import { initChatTurnJobsSchema } from './schema/chat-turn-jobs.js'
 import { initBotFollowupsSchema } from './schema/bot-followups.js'
 import { initDevOpsSchema } from './schema/dev-ops.js'
 import { initAgentWebhooksSchema } from './schema/agent-webhooks.js'
@@ -1119,6 +1120,8 @@ export function initDb(): Database.Database {
   initAgentWebhooksSchema(db)
   // needs_agent card wakes for in-product chat bots (obj 901328). Additive only.
   initBotCardWakesSchema(db)
+  // Long chat turns as background jobs (obj 901491): the turn record + per-bot budget. Additive only.
+  initChatTurnJobsSchema(db)
   // One-off follow-up wakes a chat bot sets for itself (obj 901392). Additive only.
   initBotFollowupsSchema(db)
   // Operation Kit Dev operator tools (obj 901424): switch, audit, pending merges, deploys.

@@ -21,6 +21,7 @@ data and walks it in four combinations: light and dark, each at desktop
 | `shell.spec.ts` | Workflows, notifications bell and panel, Jump to page (Ctrl+K and the button). |
 | `errors.spec.ts` | Page not found, card not found, not shared with you, server error, offline, signed out. |
 | `branding.spec.ts` | Narrow only: Settings → Branding logo rows keep each description at least 160px wide (card #901204). |
+| `decision-answers.spec.ts` | Card #901277: the seeded Full-access bot (E2E Dev) owns a card with an answered decision; asked "what did the owner choose on #N", its reply names the chosen option and label. The demo provider answers only from what `card_read` returned, so the test fails if the card read drops the decision. |
 | `white-label.spec.ts` | The server runs under the brand "Acme Ops"; no page may show a vendor name. Primary buttons share one accent colour. |
 
 ## Run it locally
@@ -62,7 +63,7 @@ Useful settings: `PW_NODE_PATH` (a `node_modules` that has `@playwright/test`),
 Two users (admin and member), two workspaces (the member is in one), a project,
 cards in every state (queue, working, AI review, needs-you with a passed, failed
 and blocked review, done, a parent with two sub-cards, one very long title), three
-notifications, one demo bot with a short history, one saved workflow and four
+notifications, one demo bot with a short history, a Full-access demo bot (E2E Dev) that owns a card with an answered decision, one saved workflow and four
 knowledge base pages. It uses the app's HTTP API where one exists. Review states
 and notifications are written with SQL because there is no safe API for them;
 the script says so where it does it. The specs read what was made from the
@@ -128,7 +129,12 @@ Scoping lives in `playwright.config.ts`:
 
 ## CI
 
-This suite is **not** wired into CI, on purpose. `CLAUDE.md` ("Testing: Vitest
+One spec runs in CI: `decision-answers.spec.ts` (card #901277, light-desktop
+only), in its own workflow `.github/workflows/e2e-decision-answers.yml`. That
+card asked for its Playwright check to run on the PR. It is a separate check, not
+part of `gate`. Screenshots and traces are uploaded as the run's artifact.
+
+The rest of this suite is **not** wired into CI, on purpose. `CLAUDE.md` ("Testing: Vitest
 via CLI; no Playwright MCP") says no Playwright suite is executed in CI, and
 `.github/workflows/test.yml` runs Vitest only. Changing that is the owner's call.
 If it is made, the job is small:

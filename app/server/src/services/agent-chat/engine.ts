@@ -1,7 +1,7 @@
 // ── One ongoing chat per (person, agent) (obj 719987) ──
 //
 // A turn: store the person's message → ask the provider → run any tool calls
-// it makes (up to MAX_STEPS rounds) → store the reply with the provider + model
+// it makes (up to the turn's step budget; see long-turns.ts) → store the reply with the provider + model
 // that produced it. Tool calls are stored too, as one-line "tool" rows the UI
 // shows inline (with a Send button for drafts and a live status chip for board
 // cards). Everything lives in this install's own SQLite database.
@@ -26,6 +26,7 @@ import {
   type StoredImage,
 } from './attachments.js'
 import { agentHasTool, botWorkspacesForPerson, kbWorkspacesForChat, runChatTool, toolSpecsFor, toolSpecsForContext, ToolUseError, type ToolContext } from './tools.js'
+import { ownedCardsPromptBlock } from './card-context.js'
 import { fullAccessPromptLine, withFullAccess } from './full-access-tools.js'
 import { openLoopsPromptBlock } from './open-loops.js'
 import { dropLaneFollowups, FOLLOWUP_PROMPT_LINE, FOLLOWUP_WAKE_TOOL_NAME, followupToolSpecs } from './followups.js'
@@ -33,8 +34,26 @@ import { mcpToolSetFor, runMcpTool, type McpToolSet } from './mcp-tools.js'
 import { botReplyForModel, earlierActionForModel, toolResultForModel } from './tool-result-framing.js'
 import type { WebToolDeps } from './web-tools.js'
 import { notifyBotMessage } from './sidebar-live.js'
+import {
+  doneLinesSince,
+  finishTurnJob,
+  markTurnBackground,
+  noteTurnProgress,
+  runningTurnJob,
+  startTurnJob,
+  turnBudgetFor,
+  turnStopReport,
+  type TurnJobStatus,
+  type TurnLimitReason,
+} from './long-turns.js'
 import { deleteThread, laneKey, lanePredicate, laneThreadId, MAIN_LANE, replyParentOf, replyThreadIdsForLane, touchThread, type ChatLane, type ReplyParentRow } from './threads.js'
 
+/**
+ * The step cap of a loop that names no budget of its own: bot-to-bot wakes,
+ * card wakes, and every chat turn while long turns are switched off. A chat
+ * turn normally runs under the bot's own budget (obj 901491, long-turns.ts:
+ * 60 steps / 30 minutes unless an admin set another).
+ */
 export const MAX_STEPS = 8
 const HISTORY_LIMIT = 40
 
@@ -75,6 +94,9 @@ export interface ChatMessageRow {
     bot_conversation_id?: number
     bot_message_id?: number
     kind?: string
+    /** obj 901491 (kind 'turn_limit' / 'turn_interrupted'): which budget ended the turn, and its job record. */
+    limit?: 'steps' | 'time'
+    turn_job_id?: number
     /**
      * obj 900949: a message the person sent while a turn was running in the
      * lane. It waits here, not yet seen by the model, until the lane's queue is
@@ -372,6 +394,10 @@ export function systemPromptFor(agent: ChatAgent, ctx: { username: string; now: 
         : '- You have no workspace you may work in with this person yet (an admin grants workspaces on your settings panel), so board, knowledge-base and secrets tools will refuse. Say so plainly if asked.',
     // obj 900972: said only while Full access counts for this bot, this person and this workspace.
     ctx.fullAccess ?? '',
+    // obj 901277: the cards this bot owns (in workspaces the person can see too),
+    // their holds, open decisions and recent answers — so it never has to be told
+    // twice what the owner chose. Ids and titles only, never descriptions.
+    ctx.userId === undefined ? '' : ownedCardsPromptBlock(getDb(), { slug: agent.slug, workspaces: kbWorkspacesForChat(ctx.userId, agent.slug), now: ctx.now }),
     // obj 901392: only in a turn that really has the follow-up tools.
     ctx.followups ?? '',
     '- Never ask for or repeat passwords or API keys.',
@@ -395,9 +421,16 @@ export type LoopResult =
   | { kind: 'unavailable'; error: ProviderUnavailableError; step: number }
   /** The caller's signal fired (the person pressed Stop, obj 900949). Nothing is recorded for it — the caller says so. */
   | { kind: 'stopped'; step: number }
+  /**
+   * obj 901491: the loop used up its step or time budget. Only returned to a
+   * caller that passed `reportLimit` — NOTHING is recorded for it, the caller
+   * posts the report. Every other caller gets the old 'failed' + error row.
+   */
+  | { kind: 'limit'; reason: TurnLimitReason; step: number }
 
 /**
- * Ask the provider, run the tool calls it makes (up to MAX_STEPS rounds), and
+ * Ask the provider, run the tool calls it makes (up to `maxSteps` rounds,
+ * default MAX_STEPS, and until `deadlineAt` when one is given), and
  * record each tool line and the final answer through `record`. Extracted from
  * runTurn unchanged so a chat turn and a bot-to-bot wake (bot-wake.ts) run the
  * SAME loop under the SAME tool gates — the wake is not a second, laxer path.
@@ -413,20 +446,50 @@ export async function runModelLoop(p: {
   signal?: AbortSignal
   /** obj 901028: a tool's attach_image call hands its image(s) through with the row they belong to. */
   record: (m: LoopRecord, images?: IncomingImage[]) => void
+  /** obj 901491: model rounds this loop may take. Omitted = MAX_STEPS (8). */
+  maxSteps?: number
+  /** obj 901491: stop at this time (ms, on `nowMs`'s clock). Omitted = no time budget. */
+  deadlineAt?: number
+  nowMs?: () => number
+  /** obj 901491: the caller posts its own report when a budget runs out (result kind 'limit'); nothing is recorded here. */
+  reportLimit?: boolean
+  /** obj 901491: called as each model round starts, with the rounds finished so far. */
+  onStep?: (step: number) => void
 }): Promise<LoopResult> {
   const { provider, convo, ctx, mcpTools, record } = p
-  for (let step = 0; step < MAX_STEPS; step++) {
+  const maxSteps = p.maxSteps ?? MAX_STEPS
+  const nowMs = p.nowMs ?? Date.now
+  const outOfTime = () => p.deadlineAt !== undefined && nowMs() >= p.deadlineAt
+  const timeLimit = (step: number): LoopResult => {
+    if (p.reportLimit) return { kind: 'limit', reason: 'time', step }
+    const message = 'Stopped at the time limit without a final answer.'
+    record({ role: 'error', content: message, provider: provider.id, model: provider.model, tool_name: null, meta: null })
+    return { kind: 'failed', message, step }
+  }
+  for (let step = 0; step < maxSteps; step++) {
     if (p.signal?.aborted) return { kind: 'stopped', step }
+    if (outOfTime()) return timeLimit(step)
+    p.onStep?.(step)
+    // A model call still in flight when the time budget ends is cancelled (a
+    // model call changes nothing). A tool call is never cut off part-way: the
+    // budget is checked before each one, not during it.
+    const timeUp = new AbortController()
+    const timer = p.deadlineAt === undefined ? null : setTimeout(() => timeUp.abort(), Math.max(0, p.deadlineAt - nowMs()))
+    timer?.unref?.()
+    const callSignal = p.signal ? AbortSignal.any([p.signal, timeUp.signal]) : timeUp.signal
     let out
     try {
-      out = await provider.complete({ system: p.system, messages: convo, tools: p.tools, agent: p.agent, signal: p.signal })
+      out = await provider.complete({ system: p.system, messages: convo, tools: p.tools, agent: p.agent, signal: callSignal })
     } catch (err) {
       // A stop is not a provider failure: the request was cancelled on purpose.
       if (p.signal?.aborted) return { kind: 'stopped', step }
+      if (timeUp.signal.aborted) return timeLimit(step)
       if (err instanceof ProviderUnavailableError) return { kind: 'unavailable', error: err, step }
       const msg = err instanceof ProviderError ? err.message : `The AI provider failed: ${err instanceof Error ? err.message : String(err)}`
       record({ role: 'error', content: msg.slice(0, 500), provider: provider.id, model: provider.model, tool_name: null, meta: { provider_label: provider.label } })
       return { kind: 'failed', message: msg.slice(0, 500), step }
+    } finally {
+      if (timer) clearTimeout(timer)
     }
     // obj 901395: this model call was answered by another account than the one
     // first tried. One quiet line says so. It is an `error`-role row with a
@@ -460,6 +523,7 @@ export async function runModelLoop(p: {
     convo.push({ role: 'assistant', content: out.content ?? null, tool_calls: out.toolCalls })
     for (const c of out.toolCalls) {
       if (p.signal?.aborted) return { kind: 'stopped', step }
+      if (outOfTime()) return timeLimit(step + 1)
       let args: Record<string, unknown> = {}
       try { args = JSON.parse(c.function.arguments || '{}') } catch { /* bad JSON → empty args, the tool reports what is missing */ }
       let resultForModel: unknown
@@ -498,9 +562,10 @@ export async function runModelLoop(p: {
       })
     }
   }
-  const message = `Stopped after ${MAX_STEPS} steps without a final answer. Try a more specific request.`
+  if (p.reportLimit) return { kind: 'limit', reason: 'steps', step: maxSteps }
+  const message = `Stopped after ${maxSteps} steps without a final answer. Try a more specific request.`
   record({ role: 'error', content: message, provider: provider.id, model: provider.model, tool_name: null, meta: null })
-  return { kind: 'failed', message, step: MAX_STEPS }
+  return { kind: 'failed', message, step: maxSteps }
 }
 
 // ── a turn ──
@@ -572,6 +637,15 @@ export interface TurnInput {
    */
   clientMsgId?: string
   /**
+   * obj 901491: how long submitMessage waits for the turn before answering
+   * "working on it" and leaving it to finish as a background job. Omitted =
+   * the install setting (20 s). Tests pass a few milliseconds.
+   */
+  foregroundMs?: number
+  /** obj 901491 (internal, set by submitMessage): each row the turn stores, and its job id, as they happen. */
+  onRow?: (row: ChatMessageRow) => void
+  onJob?: (jobId: number) => void
+  /**
    * obj 901392: this turn is started by one of the bot's own follow-ups, not by
    * a typed message (followup-wake.ts). It is otherwise the SAME turn: same
    * lane, same person, same tools and gates. Instead of a user row the lane
@@ -612,6 +686,9 @@ export interface LaneTurnState {
   queued: number
 }
 
+/** obj 901491: the running turn's job — how far it is and the budget it runs under. */
+export interface LaneTurnJob { id: number; background: boolean; steps: number; tool_calls: number; max_steps: number; max_minutes: number; started_at: string }
+
 function queuedRows(userId: number, slug: string, lane: ChatLane): ChatMessageRow[] {
   const { sql, params } = lanePredicate(lane)
   const rows = getDb()
@@ -633,6 +710,19 @@ export function laneTurnState(userId: number, slug: string, lane: ChatLane = MAI
     )
     .get(userId, slug, ...params) as { n: number }
   return { running: inFlight.has(turnKey(userId, slug, lane)), queued: Number(r.n) }
+}
+
+/**
+ * obj 901491: the job of the turn running in this lane, or null (idle lane, or
+ * long turns switched off). Sent beside the lane's turn state as `turn_job`, so
+ * the composer can say "step 12 of 60" and that it is safe to leave the page.
+ */
+export function laneTurnJob(userId: number, slug: string, lane: ChatLane = MAIN_LANE): LaneTurnJob | null {
+  if (!inFlight.has(turnKey(userId, slug, lane))) return null
+  const job = runningTurnJob(userId, slug, lane)
+  return job
+    ? { id: job.id, background: job.background, steps: job.steps, tool_calls: job.tool_calls, max_steps: job.max_steps, max_minutes: Math.round(job.max_seconds / 60), started_at: job.started_at }
+    : null
 }
 
 /**
@@ -685,8 +775,14 @@ function discardQueued(userId: number, slug: string, lane: ChatLane): number {
 
 export type SubmitResult =
   /** `duplicate` (obj 900977): this client_msg_id was already stored — `messages` is that row, nothing was added or run. */
-  | { queued: false; messages: ChatMessageRow[]; duplicate?: boolean }
-  | { queued: true; messages: ChatMessageRow[]; duplicate?: boolean }
+  | { queued: false; messages: ChatMessageRow[]; duplicate?: boolean; background?: false }
+  | { queued: true; messages: ChatMessageRow[]; duplicate?: boolean; background?: false }
+  /**
+   * obj 901491: the turn outlived the foreground wait and carries on as a
+   * background job. `messages` is what it had stored so far; the rest (tool
+   * lines, then the answer) lands in the lane as it happens.
+   */
+  | { queued: false; messages: ChatMessageRow[]; duplicate?: false; background: true }
 
 /**
  * The composer's entry point (obj 900949). An idle lane runs the turn now, as
@@ -705,8 +801,53 @@ export async function submitMessage(input: TurnInput): Promise<SubmitResult> {
     if (existing) return { queued: !!existing.meta?.queued, messages: [existing], duplicate: true }
   }
   if (!inFlight.has(turnKey(input.userId, input.agent.slug, lane))) {
-    const r = await runTurn(input)
-    return { queued: false, messages: r.messages }
+    const budget = turnBudgetFor(input.agent.slug)
+    if (!budget.enabled) {
+      const r = await runTurn(input)
+      return { queued: false, messages: r.messages }
+    }
+    // obj 901491: wait only a short while for the turn. A turn still running
+    // after that is NOT tied to this caller any more: it finishes server-side
+    // and its rows land in the lane, where the page (which re-reads a lane
+    // whose turn is running) shows each tool line and then the answer.
+    const sink: ChatMessageRow[] = []
+    let detached = false
+    let jobId: number | null = null
+    type Settled = { r: { messages: ChatMessageRow[] } } | { err: unknown }
+    const settled: Promise<Settled> = runTurn({
+      ...input,
+      // Once detached nobody is waiting on a response, so an "AI unavailable"
+      // failure is recorded in the lane instead of taking the message back.
+      responseGone: () => detached || !!input.responseGone?.(),
+      onRow: row => { sink.push(row); input.onRow?.(row) },
+      onJob: id => {
+        jobId = id
+        if (detached) markTurnBackground(id)
+        input.onJob?.(id)
+      },
+    }).then(r => ({ r }), err => ({ err }))
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const waited = new Promise<null>(resolve => { timer = setTimeout(() => resolve(null), Math.max(0, input.foregroundMs ?? budget.foregroundMs)) })
+    const first = await Promise.race([settled, waited])
+    if (timer) clearTimeout(timer)
+    if (first) {
+      if ('err' in first) throw first.err
+      return { queued: false, messages: first.r.messages }
+    }
+    detached = true
+    if (jobId !== null) markTurnBackground(jobId)
+    console.log(`[agent-chat] long turn: still working after the foreground wait; carrying on in the background (user=${input.userId} bot=${input.agent.slug}${jobId !== null ? ` job=${jobId}` : ''})`)
+    void settled.then(s => {
+      if (!('err' in s)) return
+      // ChatUnavailableError already left its line in the lane (responseGone was true).
+      if (s.err instanceof ChatUnavailableError || s.err instanceof ChatBusyError) return
+      console.error('[agent-chat] background turn failed:', s.err instanceof Error ? s.err.message : s.err)
+      // Never end silently: an unexpected crash still leaves a line where the person is waiting.
+      try {
+        addMessage(input.userId, input.agent.slug, { role: 'error', content: 'This reply failed part-way through. What it did before that is in the lines above. Send "continue" to pick it up.', provider: null, model: null, tool_name: null, meta: null }, [], lane)
+      } catch { /* the log line above is what is left */ }
+    })
+    return { queued: false, background: true, messages: [...sink] }
   }
   const row = addMessage(
     input.userId,
@@ -811,7 +952,14 @@ export async function runTurn(input: TurnInput): Promise<{ messages: ChatMessage
   const add = (
     m: Omit<ChatMessageRow, 'id' | 'created_at' | 'images'>,
     imgs: IncomingImage[] = [],
-  ) => addMessage(userId, agent.slug, m, imgs, lane)
+  ) => {
+    const row = addMessage(userId, agent.slug, m, imgs, lane)
+    input.onRow?.(row)
+    return row
+  }
+  // obj 901491: the turn's job record (null while long turns are off) and how it ended.
+  let jobId: number | null = null
+  let jobEnd: { status: Exclude<TurnJobStatus, 'running'>; limitReason?: TurnLimitReason; note?: string } = { status: 'failed', note: 'the turn ended on an unexpected error' }
   try {
     const images = input.images ?? []
     // Queued rows are not history yet: they are delivered below, in order.
@@ -819,6 +967,7 @@ export async function runTurn(input: TurnInput): Promise<{ messages: ChatMessage
     // Anything that queued up while the lane was busy goes first: it was sent first.
     const delivered = deliverQueued(userId, agent.slug, lane)
     created.push(...delivered)
+    for (const d of delivered) input.onRow?.(d)
     let userRow: ChatMessageRow | null = null
     let triggerRow: ChatMessageRow | null = null
     if (input.followup) {
@@ -915,6 +1064,21 @@ export async function runTurn(input: TurnInput): Promise<{ messages: ChatMessage
       ...(input.followup ? [{ role: 'user' as const, content: input.followup.brief(ctx) }] : []),
     ]
 
+    // obj 901491: the budget this turn runs under (per bot, read now), and its
+    // job record. The ToolContext above is untouched: a long turn has exactly
+    // the tools and gates of a short one.
+    const budget = turnBudgetFor(agent.slug)
+    if (budget.enabled) {
+      try {
+        jobId = startTurnJob({ userId, slug: agent.slug, lane, budget, browserSession: ctx.browserSession === true })
+        noteTurnProgress(jobId, { firstMessageId: incoming[0].id })
+        input.onJob?.(jobId)
+      } catch (err) {
+        // The record is bookkeeping: without it the turn still runs under its budget.
+        console.error('[agent-chat] long turn: could not open the job record:', err instanceof Error ? err.message : err)
+      }
+    }
+    let toolCalls = 0
     const loop = await runModelLoop({
       provider,
       system,
@@ -924,14 +1088,39 @@ export async function runTurn(input: TurnInput): Promise<{ messages: ChatMessage
       ctx,
       mcpTools,
       signal,
-      record: (m, images) => { created.push(add(m, images)) },
+      ...(budget.enabled
+        ? { maxSteps: budget.maxSteps, deadlineAt: now().getTime() + budget.maxSeconds * 1000, nowMs: () => now().getTime(), reportLimit: true }
+        : {}),
+      onStep: step => { if (jobId !== null) noteTurnProgress(jobId, { steps: step, toolCalls }) },
+      record: (m, images) => {
+        created.push(add(m, images))
+        if (m.role === 'tool') toolCalls++
+      },
     })
+    if (jobId !== null) noteTurnProgress(jobId, { steps: loop.kind === 'answered' ? loop.step + 1 : loop.step, toolCalls })
+    jobEnd = { status: loop.kind === 'answered' ? 'answered' : loop.kind === 'stopped' ? 'stopped' : 'failed', ...(loop.kind === 'failed' ? { note: loop.message } : {}) }
+    if (loop.kind === 'limit') {
+      // obj 901491: a turn that runs out of budget never ends silently. It
+      // says what it did, what it did not do and the next step, as a normal
+      // bot message (so it is also what the model reads on "continue").
+      jobEnd = { status: 'limit', limitReason: loop.reason }
+      created.push(add({
+        role: 'assistant',
+        content: turnStopReport({ why: loop.reason, budget, done: doneLinesSince(userId, agent.slug, laneThreadId(lane), incoming[0].id) }),
+        provider: provider.id,
+        model: provider.model,
+        tool_name: null,
+        meta: { kind: 'turn_limit', limit: loop.reason, provider_label: provider.label, ...(jobId !== null ? { turn_job_id: jobId } : {}) },
+      }))
+      return { messages: created }
+    }
     if (loop.kind === 'stopped') {
       // Say so in the lane; an error row is never replayed to the model as history.
       created.push(add({ role: 'error', content: 'You stopped this reply.', provider: provider.id, model: provider.model, tool_name: null, meta: { kind: 'stopped' } }))
       return { messages: created }
     }
     if (loop.kind === 'unavailable') {
+      jobEnd = { status: 'failed', note: loop.error.message }
       const err = loop.error
       // Nothing ran yet: take the message back so a retry is clean. After a
       // tool step, keep what happened so far and say so in the history. A
@@ -954,6 +1143,7 @@ export async function runTurn(input: TurnInput): Promise<{ messages: ChatMessage
     }
     return { messages: created }
   } finally {
+    if (jobId !== null) finishTurnJob(jobId, jobEnd.status, jobEnd)
     inFlight.delete(key)
     // obj 901025: push "Idle" back out the instant the turn ends — stopped,
     // errored, or finished with no final assistant row (e.g. drainOnly).

@@ -35,6 +35,7 @@
 import type Database from 'better-sqlite3'
 import {
   DENY_CHOICE,
+  chosenLabel,
   optionChatActions,
   optionFor,
   type ChatOnlyAction,
@@ -164,6 +165,7 @@ export function applyDecision(
     try {
       deps.recordInJsonl(sessionId, text, p.sender, true)
       deps.enqueue(db, fresh.id, sessionId, text, p.sender)
+      try { liftDecisionHold(db, fresh.id, decision, chosen) } catch { /* best effort */ }
       return finish('queued')
     } catch (err) {
       return finish('failed', err instanceof Error ? err.message : String(err))
@@ -177,6 +179,8 @@ export function applyDecision(
   } catch (err) {
     return finish('failed', err instanceof Error ? err.message : String(err))
   }
+  // obj 901277: the card was waiting for THIS answer; it has it now and is starting.
+  try { liftDecisionHold(db, fresh.id, decision, chosen) } catch { /* best effort: never block the restart */ }
   const working = loadObjective(db, fresh.id) as Objective
   deps.broadcast(working)
   const result = finish(reopened ? 'reopened' : 'sent')
@@ -197,4 +201,71 @@ export function applyDecision(
     }
   })
   return result
+}
+
+// ── the hold that waited for this answer (obj 901277) ──
+//
+// Card #901231 was filed "queued and held, do not start until Operator approves",
+// with queue_hold = "Waiting for Operator's decision. Do not start until Operator
+// approves …". Operator answered, the card started, and both lines stayed: the
+// owning bot then read a WORKING card that still said "held, do not start" and
+// told Operator it could not confirm anything. Answering the decision is the
+// approval those lines waited for, so here they stop reading as live:
+//   - queue_hold is cleared when it is a wait-for-the-decision / owner-approval
+//     hold; any other hold (a vendor key, another card, a date) is left alone;
+//   - a description that still says "queued and held" / "do not start until"
+//     gets ONE dated line on top saying the hold was lifted by this answer.
+// Both are recorded in activity_log so nothing disappears silently.
+
+/** Does this hold text wait on an owner decision / approval (and nothing else we can tell)? */
+export function isDecisionWaitHold(hold: string | null | undefined): boolean {
+  const h = (hold ?? '').trim()
+  if (!h) return false
+  return (
+    /\bdecision\b/i.test(h) ||
+    /\b(until|till|before)\b[^.\n]{0,60}\b(approv\w*|answer\w*|decid\w*|sign(s|ed)?[- ]off|go[- ]ahead|says? (yes|go))/i.test(h) ||
+    /\bwait(s|ing)?\s+(for|on)\s+(the\s+)?(owner|operator|operator|your?|human)('s)?\b[^.\n]{0,40}\b(approv\w*|answer|decision|ok|go[- ]ahead|sign[- ]off|choice)/i.test(h) ||
+    /\b(needs?|awaiting|pending)\s+(owner|operator|human|operator)('s)?\s+(approval|decision|answer|sign[- ]off)/i.test(h)
+  )
+}
+
+/** A brief that still tells the reader the card is held. */
+export function descriptionSaysHeld(description: string | null | undefined): boolean {
+  return /\b(queued\s+and\s+held|held\s+until|do\s+not\s+start\s+until|don'?t\s+start\s+until|on\s+hold\s+until)\b/i.test(description ?? '')
+}
+
+export const HOLD_LIFTED_MARK = '[hold lifted]'
+
+function liftDecisionHold(db: Database.Database, objectiveId: number, decision: DecisionView, chosen: string): void {
+  const row = db.prepare('SELECT id, workspace, project, description, queue_hold FROM objectives WHERE id = ?').get(objectiveId) as
+    | { id: number; workspace: string; project: string | null; description: string | null; queue_hold: string | null }
+    | undefined
+  if (!row) return
+  const answer = chosenLabel(decision.briefing, chosen, decision.decision_note) ?? chosen
+  const who = decision.decided_by ?? 'the owner'
+  const when = decision.decided_at ?? new Date().toISOString().slice(0, 19).replace('T', ' ')
+  const changes: string[] = []
+  if (isDecisionWaitHold(row.queue_hold)) {
+    db.prepare("UPDATE objectives SET queue_hold = NULL, updated_at = datetime('now') WHERE id = ? AND queue_hold = ?").run(row.id, row.queue_hold)
+    changes.push(`cleared queue_hold "${(row.queue_hold ?? '').slice(0, 200)}"`)
+  }
+  if (descriptionSaysHeld(row.description) && !(row.description ?? '').startsWith(HOLD_LIFTED_MARK)) {
+    const line = `${HOLD_LIFTED_MARK} ${when} UTC: ${who} answered decision #${decision.id} (${answer}) and the card was started with that answer. Any "queued and held / do not start until approved" line below no longer applies.`
+    db.prepare("UPDATE objectives SET description = ?, updated_at = datetime('now') WHERE id = ?").run(`${line}\n\n${row.description ?? ''}`, row.id)
+    changes.push('marked the "held" line in the description as lifted')
+  }
+  if (!changes.length) return
+  try {
+    db.prepare(
+      `INSERT INTO activity_log (project, workspace, objective_id, event_type, title, detail, metadata)
+       VALUES (?, ?, ?, 'decision', ?, ?, ?)`,
+    ).run(
+      row.project ?? '',
+      row.workspace,
+      row.id,
+      `Hold lifted by decision #${decision.id}`,
+      changes.join('; '),
+      JSON.stringify({ kind: 'decision_hold_lifted', decision_id: decision.id, previous_queue_hold: row.queue_hold }),
+    )
+  } catch { /* activity_log is a record, not a gate */ }
 }

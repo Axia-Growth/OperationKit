@@ -69,6 +69,7 @@ import {
 import { ArtifactError, readArtifactImage } from '../live-artifacts.js'
 import { ImageRejected, MAX_IMAGE_BYTES, parseIncomingImages, validateImageBytes, type IncomingImage } from './attachments.js'
 import { publicCardUrl } from '../../lib/public-url.js'
+import { cardDecisionsForBot, cardOwnerAndGrants, cardThreadForBot, holdView, type BotCardOwner, type BotDecisionView, type BotThreadEntry } from './card-context.js'
 
 export interface ToolSpec {
   type: 'function'
@@ -217,7 +218,7 @@ const SPECS: Record<string, ToolSpec[]> = {
       recommended: { type: 'string', description: 'The key of the option you recommend' },
       recommended_why: { type: 'string', description: 'One sentence: why' },
     }, ['card_id', 'context', 'question', 'options', 'recommended', 'recommended_why']))],
-  get_objective: [fn('get_objective', 'Read one board card by number: status, workspace, latest result, AI review verdict, PR link. Works for any card on a board the person can see, not only cards this chat filed.',
+  get_objective: [fn('get_objective', 'Read one board card by number: status, workspace, latest result, AI review verdict, PR link, hold (queue_hold / blocked_by), owner bot, its decisions with what the owner chose (who, when, result) and the recent card thread. Works for any card on a board the person can see, not only cards this chat filed.',
     obj({ id: { type: 'integer' } }, ['id']))],
   list_objectives: [fn('list_objectives', 'List the real board cards the person can see (every workspace they belong to, most recently updated first). Default: the open pipeline (planning, queue, working, ai_review, review — not done/cancelled). Pass workspace to narrow to one board, status for one column ("blocked" = a blocker is raised). counts covers ALL matching cards even when the list is cut short.',
     obj({
@@ -1015,7 +1016,7 @@ export function listBoardCards(
 export function getBoardCard(
   ctx: Pick<ToolContext, 'userId' | 'agent'>,
   id: number,
-): BoardCard & { summary: string | null; ai_review_findings: string | null } {
+): BoardCard & { summary: string | null; ai_review_findings: string | null } & CardContextExtras {
   const notFound = () => new ToolUseError(`Card #${id} is not on a board you can see.`)
   if (!Number.isInteger(id) || id <= 0) throw new ToolUseError('id must be a card number.')
   const user = boardUser(ctx)
@@ -1024,13 +1025,39 @@ export function getBoardCard(
   if (!vis) throw notFound()
   const row = getDb()
     .prepare(
-      `SELECT ${BOARD_ROW_SQL}, substr(o.last_session_summary, 1, 1500) AS summary, substr(o.ai_review_findings, 1, 800) AS ai_review_findings
+      `SELECT ${BOARD_ROW_SQL}, substr(o.last_session_summary, 1, 1500) AS summary, substr(o.ai_review_findings, 1, 800) AS ai_review_findings,
+              o.queue_hold, o.blocked_by, o.owner_bot, o.agent_context, o.session_id
          FROM objectives o WHERE o.id = ? AND o.deleted_at IS NULL AND ${vis.sql}`,
     )
-    .get(ctx.userId, ctx.agent.slug, id, ...vis.params) as (BoardRow & { summary: string | null; ai_review_findings: string | null }) | undefined
+    .get(ctx.userId, ctx.agent.slug, id, ...vis.params) as (BoardRow & CardExtraRow & { summary: string | null; ai_review_findings: string | null }) | undefined
   // A missing card and a card in someone else's workspace read the same.
   if (!row) throw notFound()
-  return { ...toBoardCard(row), summary: row.summary ?? null, ai_review_findings: row.ai_review_findings ?? null }
+  const db = getDb()
+  // obj 901277: enough for ANY bot to answer "what did the owner choose on #N",
+  // "is it still held" and "who owns it" — without Full access.
+  const { owner_bot, owner_grants } = cardOwnerAndGrants(db, { id: row.id, workspace: row.workspace, owner_bot: row.owner_bot, agent_context: row.agent_context })
+  return {
+    ...toBoardCard(row),
+    summary: row.summary ?? null,
+    ai_review_findings: row.ai_review_findings ?? null,
+    ...holdView(row.queue_hold, row.blocked_by),
+    owner_bot,
+    owner_grants,
+    decisions: cardDecisionsForBot(db, row.id, { full: false }),
+    recent_thread: cardThreadForBot(db, { id: row.id, session_id: row.session_id }, { limit: 5, maxChars: 400 }),
+  }
+}
+
+interface CardExtraRow { queue_hold: string | null; blocked_by: number | null; owner_bot: string | null; agent_context: string | null; session_id: string | null }
+
+/** What get_objective adds on top of the board row (obj 901277). */
+export interface CardContextExtras {
+  queue_hold: string | null
+  blocked_by: number | null
+  owner_bot: string | null
+  owner_grants: BotCardOwner['owner_grants']
+  decisions: BotDecisionView[]
+  recent_thread: BotThreadEntry[]
 }
 
 /** Card chips for chat messages: only cards the person can still see on the board, in a workspace the bot may still use. */

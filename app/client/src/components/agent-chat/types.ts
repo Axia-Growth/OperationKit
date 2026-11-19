@@ -318,6 +318,13 @@ export interface ThreadResponse {
   /** obj 900949: set on a POST answered 202 — the message was queued, not run. */
   queued?: boolean
   /**
+   * obj 901491: the job of the reply running in this lane (how far it is, the
+   * budget it runs under), or null when the lane is idle. Absent on an older server.
+   */
+  turn_job?: LaneTurnJob | null
+  /** obj 901491: set on a POST answered 202 — the reply is still working and carries on in the background. */
+  background?: boolean
+  /**
    * obj 901373: the reply threads on this lane's messages, keyed by the parent
    * message's id — only threads that hold at least one reply. Absent on an older server.
    */
@@ -343,6 +350,18 @@ export interface ReplyThreadOpenResponse {
 export interface LaneTurn {
   running: boolean
   queued: number
+}
+
+/** obj 901491: one long reply, as the server records it while it runs. */
+export interface LaneTurnJob {
+  id: number
+  /** true once the request that started it was answered "working on it". */
+  background: boolean
+  steps: number
+  tool_calls: number
+  max_steps: number
+  max_minutes: number
+  started_at: string
 }
 
 /**

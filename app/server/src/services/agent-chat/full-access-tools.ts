@@ -59,6 +59,7 @@ import { chatCardModel, chatOwnerBotName, ToolUseError, type ToolContext, type T
 import { agentExists } from '../agent-registry.js'
 import { botForAgentSlug } from '../bots/bot-registry.js'
 import { publicCardUrl } from '../../lib/public-url.js'
+import { cardDecisionsForBot, cardOwnerAndGrants, cardThreadForBot, holdView } from './card-context.js'
 import { cardOwnerBot, ownerHasSlug } from '../bots/card-owner.js'
 import { requestAiReview, type RequestReviewResult } from '../ai-review-backfill.js'
 import { AI_REVIEW_ITERATION_CAP } from '../poller-decisions.js'
@@ -225,7 +226,7 @@ const WS_ARG = { type: 'string', description: 'Workspace slug. Omit for this cha
 
 const FULL_ACCESS_SPECS: ToolSpec[] = [
   fn('full_access_status', 'Where you have Full access right now, when it expires, and whether an admin switched Billing on. Secret values, keys and DNS / Cloudflare Access are never part of Full access.', obj({})),
-  fn('card_read', 'Full access: read ANY card in the workspace in full, whoever owns it — description, success criteria, owner, worker, status, latest result, AI review, PR link.', obj({ id: { type: 'integer' } }, ['id'])),
+  fn('card_read', 'Full access: read ANY card in the workspace in full, whoever owns it — description, success criteria, owner, worker, status, latest result, AI review, PR link, holds (queue_hold / blocked_by), active approve-on-my-behalf grants of the owner bot, every decision with its briefing and what the owner chose (option, note, who, when, result), and the recent card thread.', obj({ id: { type: 'integer' } }, ['id'])),
   fn('card_take_over', 'Full access: take a card over — you become its worker and owner, whoever had it. It does not restart the card; use card_restart or card_comment for that.',
     obj({ id: { type: 'integer' }, note: { type: 'string', description: 'Why you are taking it (kept in the log).' } }, ['id'])),
   fn('card_reown', 'Full access: hand a card to another owner — an agent or bot that may work in this workspace (agent), and/or a person in this workspace (assign_to, a username).',
@@ -518,7 +519,6 @@ export async function runFullAccessTool(ctx: FaCtx & { username: string }, fnNam
           project: c.project ?? null,
           type: c.type,
           worker_agent: c.agent_context,
-          owner_bot: r.owner_bot ?? null,
           assigned_to: assignee,
           parent_id: c.parent_id ?? null,
           has_blockers: Number(c.has_blockers) > 0,
@@ -529,6 +529,15 @@ export async function runFullAccessTool(ctx: FaCtx & { username: string }, fnNam
           completion_goal: clip(r.completion_goal, 3000),
           acceptance_criteria: clip(typeof r.acceptance_criteria === 'string' ? r.acceptance_criteria : JSON.stringify(r.acceptance_criteria ?? null), 3000),
           latest_result: clip(c.last_session_summary, 6000),
+          // obj 901277: what the bot needs to say where the card REALLY stands —
+          // the holds, who owns it (and what that bot may approve here), every
+          // decision with the answer, and the recent thread incl. the follow-up
+          // that applied the answer. The description can be stale; these are not.
+          ...holdView(r.queue_hold, r.blocked_by),
+          ...cardOwnerAndGrants(db, { id: c.id, workspace: c.workspace, owner_bot: (r.owner_bot as string | null) ?? null, agent_context: c.agent_context }, now),
+          decisions: cardDecisionsForBot(db, c.id, { full: true }),
+          recent_thread: cardThreadForBot(db, { id: c.id, session_id: c.session_id ?? null }, { limit: 12, maxChars: 800 }),
+          note: 'decisions[].answer / chosen_label is what the owner chose; recent_thread shows what reached the worker. When they disagree with the description (e.g. "held until approved"), they are newer.',
           updated_at: c.updated_at,
           url: publicCardUrl(c.id),
         },

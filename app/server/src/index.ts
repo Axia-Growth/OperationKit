@@ -109,6 +109,8 @@ import { startRoutineScheduler } from './services/routine-scheduler.js'
 import { resyncHighAgencyRoutines, startHighAgencyCronRefresh } from './services/agent-chat/high-agency.js'
 import { startBotMessageDelivery } from './services/agent-chat/bot-wake.js'
 import { startCardWakeDelivery } from './services/agent-chat/card-wakes.js'
+import { notifyBotMessage } from './services/agent-chat/sidebar-live.js'
+import { recoverInterruptedTurns } from './services/agent-chat/long-turns.js'
 import { startFollowupDelivery } from './services/agent-chat/followup-wake.js'
 import { startDevOpsTicks } from './services/dev-ops/tick.js'
 import { startOpenLoopsDigestHook } from './services/agent-chat/open-loops-hook.js'
@@ -480,6 +482,16 @@ try {
   if (seeded) console.log(`[bot-workspaces] ${seeded} existing bot(s) keep today's workspace access until an admin restricts them`)
 } catch (err) {
   console.warn('[bot-workspaces] one-time seed failed (bots without a row stay fail-closed):', err instanceof Error ? err.message : err)
+}
+
+// obj 901491: a restart kills every chat turn in memory. Each one still marked
+// running in its job record is closed here with a report in its chat (what it
+// did, what it did not do, the next step), so no long reply ends silently.
+// A DB write on this instance's own DB, before any new turn can start.
+try {
+  recoverInterruptedTurns(notifyBotMessage)
+} catch (err) {
+  console.warn('[agent-chat] long turns: restart recovery failed:', err instanceof Error ? err.message : err)
 }
 
 // Host daemons run ONLY on the real host instance (obj 900547). A scratch / dev

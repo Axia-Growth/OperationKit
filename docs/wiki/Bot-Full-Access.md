@@ -15,6 +15,7 @@ In the workspace where it is on, and nowhere else, the bot may:
 
 | Ability | How the bot does it |
 |---|---|
+| See where it has Full access, the expiry and whether Billing is on | `full_access_status` |
 | Read any card in full, whoever owns it | `card_read` |
 | Take a card over (become its worker and owner) | `card_take_over` |
 | Hand a card to another owner | `card_reown` (an agent or bot that may work there, and/or a person in the workspace) |
@@ -113,6 +114,14 @@ What a call is aimed at is decided in one place,
 `services/agent-chat/full-access-exclusions.ts` (`classifyOutbound`). It errs
 toward refusing. A bot without Full access in that workspace is not touched.
 
+The gate (`exclusionGate`) is called from exactly those two doors today: the
+secrets tools in `services/agent-chat/tools.ts` and MCP calls in
+`services/agent-chat/mcp-tools.ts`. Other chat tools that reach outside (for
+example `email` / `calendar` drafts, or the Operation Kit Dev operator tools,
+which have their own rules) do not go through it. A new outward door that
+should honour these walls must call `exclusionGate` itself; nothing applies it
+automatically.
+
 Not covered by these walls, by design: a card session's own environment.
 Cards the bot files run like any other card, under the normal card-session
 secret rules (the D4 allowlist). Key minting inside Operation Kit itself (agent
@@ -122,12 +131,15 @@ keys in Settings) has no bot path at all: it stays a signed-in person's action.
 
 `FULL_ACCESS_PROTECTED_PRS` (`app/shared/full-access.ts`) lists pull requests no
 Full access ability may touch. It contains **645**. A card whose `pr_number` is
-on the list, or whose PR link ends in that number, is refused with a
-`protected_refused` audit row in:
+on the list, or whose PR link ends in that number, is refused by
+`protectedCardRefusal` with a `protected_refused` audit row in these places
+(and only these):
 
 - every Full access chat tool that takes a card (`card_read`, `card_take_over`,
   `card_reown`, `card_comment`, `card_restart`, `card_request_review`), and `get_objective` for a bot
   with Full access in the card's workspace;
+- the `card_sandbox` tools (`card-sandbox-tools.ts`), which also log it to their
+  own sandbox audit;
 - `repo_session_start`, when the title or brief names the pull request
   (`PR 645`, `#645`, `pull/645`);
 - `POST /api/internal/full-access/cards/:id/take-over` (`403`, `code:
@@ -135,6 +147,17 @@ on the list, or whose PR link ends in that number, is refused with a
 - the Full access branch of `POST /api/internal/objectives/:id/message` (`403`,
   same code). The ordinary one-hop relations (parent, child, sibling) are not
   changed by this.
+
+`repo_session_start` checks the title and brief text (`protectedPrInText`)
+rather than a card. This is not a check on every card path: `list_objectives`,
+`board_briefing`, `create_objective`, `get_objective` for a bot without Full
+access in that workspace, and one-hop `/message` do not consult the list.
+Separately, the card-wake own-card tools refuse a protected card
+(`isProtectedCard`, `card-wake-tools.ts`), and merging or closing (grant merge,
+`dev_merge_pr`, `dev_close_card`) refuses the grant-merge reserved list
+(`GRANT_MERGE_RESERVED_SEED` in `services/grant-merge.ts`: PR 645 in both
+`operationkit` and `operationkit`, plus the `grant_merge_reserved_prs`
+setting / `CC_GRANT_MERGE_RESERVED_PRS` env).
 
 Adding a pull request to the list is a code change.
 

@@ -267,6 +267,53 @@ describe('GET /:id/progress', () => {
     expect(d.result).toBe('Shipped the thing. token=[REDACTED:TEST_ROUTE_SECRET_TOKEN]')
   })
 
+  it('tree: one status for the card and everything below it, at any depth (obj 901519)', async () => {
+    const db = getDb()
+    // No parts below it: no tree.
+    expect((await call(`/${memberWsA}/progress`, asMember())).json.tree).toBeNull()
+
+    const top = insertCard({ title: 'tree top', workspace: 'ws-a', created_by: MEMBER, status: 'working' })
+    const a = insertCard({ title: 'tree a', workspace: 'ws-a', created_by: MEMBER, status: 'done', parent_id: top })
+    const b = insertCard({ title: 'tree b', workspace: 'ws-a', created_by: MEMBER, status: 'done', parent_id: top })
+    const grandchild = insertCard({ title: 'tree grandchild', workspace: 'ws-a', created_by: MEMBER, status: 'working', parent_id: a })
+    db.prepare("UPDATE objectives SET session_id = 'cc-tree-gc' WHERE id = ?").run(grandchild)
+    // A part in a workspace the member cannot see is left out, like in the children roll-up.
+    const foreign = insertCard({ title: 'tree foreign', workspace: 'ws-b', created_by: ADMIN, status: 'working', parent_id: top })
+    const ids = [top, a, b, grandchild, foreign]
+    try {
+      // Both direct children are done, but a grandchild is still running: not finished.
+      let t = (await call(`/${top}/progress`, asMember())).json.tree
+      expect(t).toMatchObject({ state: 'running', settled: false, descendants: 3, open: 1, done: 2, open_ids: [grandchild], truncated: false })
+
+      // The parent is closed over the running grandchild: still not settled, and it says so.
+      db.prepare("UPDATE objectives SET status = 'done' WHERE id = ?").run(top)
+      t = (await call(`/${top}/progress`, asMember())).json.tree
+      expect(t).toMatchObject({ state: 'running', settled: false, closed_early: true })
+      expect(t.reason).toContain(`This card is marked done, but 1 part below it is still open (#${grandchild})`)
+
+      // The grandchild fails its review and is parked: the whole tree reads failed.
+      db.prepare("UPDATE objectives SET status = 'review', session_id = NULL, ai_review_verdict = 'fail' WHERE id = ?").run(grandchild)
+      t = (await call(`/${top}/progress`, asMember())).json.tree
+      expect(t).toMatchObject({ state: 'failed', settled: false, failed: 1, failed_ids: [grandchild], needs_you: 1 })
+
+      // It is dismissed after failing: everything has ended, and the tree is still failed, not finished.
+      db.prepare("UPDATE objectives SET status = 'cancelled' WHERE id = ?").run(grandchild)
+      t = (await call(`/${top}/progress`, asMember())).json.tree
+      expect(t).toMatchObject({ state: 'failed', settled: true, cancelled: 1 })
+
+      // Fixed and finished: only now is the whole tree finished.
+      db.prepare("UPDATE objectives SET status = 'done', ai_review_verdict = 'pass' WHERE id = ?").run(grandchild)
+      t = (await call(`/${top}/progress`, asMember())).json.tree
+      expect(t).toMatchObject({ state: 'finished', settled: true, open: 0, done: 3 })
+
+      // The admin sees the part in the other workspace too: for them the tree is still open.
+      const admin = (await call(`/${top}/progress`, { Cookie: adminCookie })).json.tree
+      expect(admin).toMatchObject({ state: 'running', settled: false, descendants: 4, open_ids: [foreign] })
+    } finally {
+      db.prepare(`DELETE FROM objectives WHERE id IN (${ids.map(() => '?').join(',')})`).run(...ids)
+    }
+  })
+
   it('session_starts appear after logSessionStart, newest first', async () => {
     noteStartReason(memberWsA, 'agent', 'bot-1')
     logSessionStart(getDb(), { objectiveId: memberWsA, sessionId: 'cc-a-1', kind: 'spawn' })

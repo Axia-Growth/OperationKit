@@ -1026,6 +1026,14 @@ function Conversation({
               <ThinkingIndicator label={`${agent.name} is working…`} tone="fg-2" />
             </div>
           )}
+          {/* obj 901491: a long reply carries on server-side. Say so, so nobody
+              waits on the page or sends the same request again. */}
+          {working && thread?.turn_job?.background && (
+            <p className="ml-9 text-xs text-fg-2" data-testid="background-note">
+              Working in the background: step {Math.min(thread.turn_job.steps + 1, thread.turn_job.max_steps)} of up to {thread.turn_job.max_steps}, {thread.turn_job.max_minutes} minutes at most.
+              You can leave this page. Each action shows here as it happens and the answer is posted in this chat.
+            </p>
+          )}
           {/* obj 900949: messages sent while the bot works wait here, in the
               order they were sent, until the bot picks them up. */}
           {queuedRows.map(m => <UserBubble key={m.id} m={m} queued />)}
