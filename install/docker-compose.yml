@@ -66,6 +66,8 @@ services:
       NODE_ENV: production
       PORT: "3002"
       TZ: ${OK_TIMEZONE:-UTC}
+      # The app home mounted above (obj 901032): every default path lives under it.
+      USER_HOME: ${OK_APP_HOME}
       JWT_SECRET: ${CC_JWT_SECRET:?missing — run ./install.sh}
       INTERNAL_API_SECRET: ${INTERNAL_API_SECRET:?missing — run ./install.sh}
       # D2: the KEK comes from the read-only file above, NOT from an env var, so it

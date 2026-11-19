@@ -11,6 +11,7 @@ import {
   listAgents,
   listMessages,
   drainLaneQueue,
+  getMessage,
   laneTurnState,
   stopTurn,
   submitMessage,
@@ -42,7 +43,7 @@ import {
 import {
   getDraft,
   listDrafts,
-  resolveConnectors,
+  resolveDelivery,
   setDraftStatus,
   type DraftRow,
   type EmailDraft,
@@ -70,6 +71,8 @@ import {
   deleteThread,
   listThreads,
   maxThreadsPerBot,
+  openReplyThread,
+  replyThreadsForLane,
   resolveLane,
   ThreadRejected,
   updateThread,
@@ -80,9 +83,16 @@ import sidebarRouter from './agent-chat-sidebar.js'
 import delegationsRouter from './agent-chat-delegations.js'
 import botMessagesRouter from './agent-chat-bot-messages.js'
 import botWorkRouter from './agent-chat-bot-work.js'
+import { cancelFollowup, followupInfo, followupLog, followupsByIds, followupsEnabled, type FollowupInfo } from '../services/agent-chat/followups.js'
 import { markFeedMessage } from '../services/agent-chat/bot-attention.js'
 import { resolveNeedsYouMessages } from '../services/decision-queue.js'
 import { isHighAgencyActivityCard } from '../services/agent-chat/high-agency-cards.js'
+import {
+  CARD_WAKES_THREAD_TITLE, cardWakeDebounceSeconds, cardWakeMaxPerHour, cardWakePostsToChat, cardWakesGloballyEnabled, cardWakeToolScope, cardWakeWindowMinutes,
+  getCardWakeSwitch, setCardWakeSwitch,
+} from '../services/agent-chat/card-wake-routing.js'
+import { getDevOpsSwitch, setDevOpsSwitch } from '../services/dev-ops/switch.js'
+import { listDevOpsAudit, writeDevOpsAudit } from '../services/dev-ops/audit.js'
 
 /**
  * Built-in agent chat (obj 719987) — /api/agent-chat
@@ -96,6 +106,8 @@ import { isHighAgencyActivityCard } from '../services/agent-chat/high-agency-car
  *   POST   /agents/:slug/threads       open a new side thread (a concurrent task lane)
  *   PATCH  /agents/:slug/threads/:id   rename / pin / archive (= close) a side thread
  *   DELETE /agents/:slug/threads/:id   delete a side thread and its messages
+ *   GET    /agents/:slug/followups     the caller's follow-ups with this bot: waiting + the log (obj 901392)
+ *   DELETE /agents/:slug/followups/:id the person's Cancel on a waiting follow-up
  *   GET    /attachments/:id            one image the caller attached (owner only)
  *   PUT    /drafts/:id                 edit a draft before sending
  *   POST   /drafts/:id/send            the person's Send / Add to calendar click
@@ -106,6 +118,8 @@ import { isHighAgencyActivityCard } from '../services/agent-chat/high-agency-car
  *   GET    /agents/:slug/high-agency   this bot's High Agency setting, wake times and last wake (obj 900748)
  *   PUT    /agents/:slug/high-agency   admin: High Agency on/off, level 1-10 (obj 900794), workspace, permissions
  *   POST   /agents/:slug/high-agency/wake  admin: one wake now (works while off, to try it)
+ *   GET    /agents/:slug/card-wakes    needs_agent card wakes: on/off (default on) + recent wakes (obj 901328)
+ *   PUT    /agents/:slug/card-wakes    admin: {enabled} — turn this bot's card wakes off / back on
  *   GET    /agents/:slug/workspaces    the bot's workspace access list (obj 900797)
  *   PUT    /agents/:slug/workspaces    admin: set the whole list (restricts the bot)
  *   POST   /agents/:slug/workspaces    admin: grant one workspace
@@ -254,7 +268,7 @@ function enabledModelsOrEmpty() {
 /** Only a signed-in admin may change what a bot runs on — never an API key (a bot must not grant itself tools). */
 function adminSessionOr403(req: AuthRequest, res: Response): boolean {
   if (req.user?.role !== 'admin' || req.authVia !== 'session') {
-    res.status(403).json({ error: 'Only an admin signed in to Command Center can change a bot\'s settings (model, tools, workspace access, High Agency).' })
+    res.status(403).json({ error: 'Only an admin signed in to the app in the browser can change a bot\'s settings (model, tools, workspace access, High Agency).' })
     return false
   }
   return true
@@ -296,7 +310,11 @@ function attachments(userId: number, slug: string, messages: ChatMessageRow[]) {
   const cardIds = [...new Set(messages.map(m => m.meta?.objective_id).filter((x): x is number => typeof x === 'number'))]
   const drafts = listDrafts(userId, slug).filter(d => draftIds.has(d.id))
   const cards = visibleCardStatuses(userId, cardIds, slug)
-  return { drafts, cards }
+  // obj 901392: the live state of each follow-up a line in view refers to (the "scheduled for HH:MM" line + Cancel).
+  const followupIds = messages.map(m => m.meta?.followup_id).filter((x): x is number => typeof x === 'number')
+  let followups: FollowupInfo[] = []
+  try { followups = followupsByIds(userId, slug, followupIds) } catch { /* table absent */ }
+  return { drafts, cards, followups }
 }
 
 function agentOr404(req: AuthRequest, res: Response): ChatAgent | null {
@@ -404,7 +422,7 @@ router.delete('/agents/:slug/config', (req: AuthRequest, res) => {
  */
 router.delete('/agents/:slug', (req: AuthRequest, res) => {
   if (req.user?.role !== 'admin' || req.authVia !== 'session') {
-    res.status(403).json({ error: 'Only an admin signed in to Command Center can delete a bot.' })
+    res.status(403).json({ error: 'Only an admin signed in to the app in the browser can delete a bot.' })
     return
   }
   const a = agentOr404(req, res)
@@ -487,6 +505,106 @@ router.post('/agents/:slug/high-agency/wake', async (req: AuthRequest, res) => {
     console.error('[agent-chat] high agency wake failed:', err instanceof Error ? err.message : err)
     res.status(500).json({ error: 'The wake failed. Try again.' })
   }
+})
+
+// ── needs_agent card wakes (obj 901328): per-bot switch, default ON ──
+
+function cardWakesPayload(req: AuthRequest, slug: string) {
+  const sw = getCardWakeSwitch(slug)
+  const mine = req.user?.role === 'admin' ? null : callerWorkspaceFilter(req)
+  let recent: Array<Record<string, unknown>> = []
+  try {
+    recent = (getDb()
+      .prepare(
+        `SELECT id, objective_id, workspace, need_kind, status, skip_reason, last_error, thread_id, created_at, finished_at
+           FROM bot_card_wakes WHERE lower(slug) = lower(?) ORDER BY id DESC LIMIT 50`,
+      )
+      .all(slug) as Array<Record<string, unknown>>)
+      .filter(r => !mine || mine.has(String(r.workspace)))
+      .slice(0, 20)
+  } catch { recent = [] }
+  // obj 901394: the install-wide limits, read-only here (they are settings rows).
+  const limits = {
+    debounce_seconds: cardWakeDebounceSeconds(),
+    max_per_hour: cardWakeMaxPerHour(),
+    window_minutes: cardWakeWindowMinutes(),
+    tools: cardWakeToolScope(),
+    posts_to_chat: cardWakePostsToChat(),
+  }
+  return { card_wakes: { ...sw, install_enabled: cardWakesGloballyEnabled(), thread_title: CARD_WAKES_THREAD_TITLE, limits }, recent }
+}
+
+router.get('/agents/:slug/card-wakes', (req: AuthRequest, res) => {
+  const a = agentOr404(req, res)
+  if (!a) return
+  res.json(cardWakesPayload(req, a.slug))
+})
+
+router.put('/agents/:slug/card-wakes', (req: AuthRequest, res) => {
+  if (!adminSessionOr403(req, res)) return
+  const a = agentOr404(req, res)
+  if (!a) return
+  const enabled = (req.body as { enabled?: unknown } | undefined)?.enabled
+  if (typeof enabled !== 'boolean') {
+    res.status(400).json({ error: 'enabled must be true or false' })
+    return
+  }
+  setCardWakeSwitch(a.slug, enabled, req.user!.id)
+  try {
+    logActivity({
+      project: 'operationkit',
+      event_type: 'decision',
+      title: `${a.name}: card wakes turned ${enabled ? 'on' : 'off'} by ${req.user!.username}`,
+      metadata: { kind: 'bot_card_wakes_switched', slug: a.slug, enabled },
+    })
+  } catch { /* the feed never decides the change */ }
+  res.json(cardWakesPayload(req, a.slug))
+})
+
+// ── Operator tools (obj 901424): Operation Kit Dev's merge / deploy / close / Cloudflare switch ──
+
+function devOpsPayload(req: AuthRequest, slug: string) {
+  const sw = getDevOpsSwitch(slug)
+  let recent: unknown[] = []
+  if (sw.eligible && req.user?.role === 'admin') {
+    try { recent = listDevOpsAudit(20) } catch { recent = [] }
+  }
+  return { dev_ops: sw, recent }
+}
+
+router.get('/agents/:slug/dev-ops', (req: AuthRequest, res) => {
+  const a = agentOr404(req, res)
+  if (!a) return
+  res.json(devOpsPayload(req, a.slug))
+})
+
+router.put('/agents/:slug/dev-ops', (req: AuthRequest, res) => {
+  if (!adminSessionOr403(req, res)) return
+  const a = agentOr404(req, res)
+  if (!a) return
+  const enabled = (req.body as { enabled?: unknown } | undefined)?.enabled
+  if (typeof enabled !== 'boolean') {
+    res.status(400).json({ error: 'enabled must be true or false' })
+    return
+  }
+  const set = setDevOpsSwitch(a.slug, enabled, req.user!.id)
+  writeDevOpsAudit({
+    bot_slug: a.slug, user_id: req.user!.id, username: req.user!.username, action: 'switch',
+    outcome: set ? 'done' : 'refused', code: set ? (enabled ? 'on' : 'off') : 'bot_not_eligible',
+  })
+  if (!set) {
+    res.status(400).json({ error: 'Only the built-in Dev bot has operator tools.', code: 'bot_not_eligible' })
+    return
+  }
+  try {
+    logActivity({
+      project: 'operationkit',
+      event_type: 'decision',
+      title: `${a.name}: operator tools turned ${enabled ? 'on' : 'off'} by ${req.user!.username}`,
+      metadata: { kind: 'dev_ops_switched', slug: a.slug, enabled },
+    })
+  } catch { /* the feed never decides the change */ }
+  res.json(devOpsPayload(req, a.slug))
 })
 
 // ── Workspace access (obj 900797): which workspaces a global bot may work in ──
@@ -605,7 +723,66 @@ router.get('/agents/:slug/messages', (req: AuthRequest, res) => {
   // time the person looks at the lane, so a queued message never waits forever.
   drainLaneQueue({ userId: req.user!.id, username: req.user!.username, agent: a, lane })
   const messages = markActivityMessages(listMessages(req.user!.id, a.slug, { afterId: after, lane }))
-  res.json({ messages, ...attachments(req.user!.id, a.slug, messages), turn: laneTurnState(req.user!.id, a.slug, lane) })
+  res.json({
+    messages,
+    ...attachments(req.user!.id, a.slug, messages),
+    turn: laneTurnState(req.user!.id, a.slug, lane),
+    // obj 901373: "N replies" under every message of this lane that has a thread.
+    reply_threads: replyThreadsForLane(req.user!.id, a.slug, lane),
+  })
+})
+
+/**
+ * Reply in thread (obj 901373): the thread on ONE message of this person's chat
+ * with this bot, created on first use. The thread is a lane like any side
+ * thread — read it with GET /messages?thread_id=<id> and post into it with
+ * POST /messages { thread_id } — it is just never listed in the lane strip.
+ */
+router.post('/agents/:slug/messages/:id/thread', (req: AuthRequest, res) => {
+  if (req.authVia === 'agent_api_key') {
+    res.status(403).json({ error: 'Chat history is private to the person' })
+    return
+  }
+  const a = agentOr404(req, res)
+  if (!a) return
+  try {
+    const r = openReplyThread(req.user!.id, a.slug, Number(req.params.id))
+    const parent = getMessage(req.user!.id, a.slug, r.parent.id)
+    res.status(r.created ? 201 : 200).json({ thread: r.thread, parent, ...attachments(req.user!.id, a.slug, parent ? [parent] : []) })
+  } catch (err) {
+    threadError(res, err)
+  }
+})
+
+// ── follow-ups the bot set for itself (obj 901392) ──
+
+/** The caller's own follow-ups with this bot: what still waits, and the log of what fired / was cancelled / dropped. */
+router.get('/agents/:slug/followups', (req: AuthRequest, res) => {
+  if (req.authVia === 'agent_api_key') {
+    res.status(403).json({ error: 'Follow-ups belong to a person\'s chat with the bot.' })
+    return
+  }
+  const a = agentOr404(req, res)
+  if (!a) return
+  res.json({ followups: followupLog(req.user!.id, a.slug, Number(req.query.limit) || 30), enabled: followupsEnabled() })
+})
+
+/** The person's Cancel on a waiting follow-up. Only their own, only while it still waits. */
+router.delete('/agents/:slug/followups/:id', (req: AuthRequest, res) => {
+  if (req.authVia === 'agent_api_key') {
+    res.status(403).json({ error: 'Follow-ups are cancelled by the person in the Bots page.' })
+    return
+  }
+  const a = agentOr404(req, res)
+  if (!a) return
+  const id = Number(req.params.id)
+  const row = Number.isInteger(id) && id > 0 ? cancelFollowup({ userId: req.user!.id, slug: a.slug, id, by: 'person' }) : null
+  if (!row) {
+    // Someone else's, already fired, or never existed: one answer for all three.
+    res.status(404).json({ error: 'No waiting follow-up with that id' })
+    return
+  }
+  res.json({ followup: followupInfo(row) })
 })
 
 /**
@@ -721,12 +898,27 @@ router.post('/agents/:slug/messages', async (req: AuthRequest, res) => {
     return
   }
   const clientMsgId = typeof rawId === 'string' ? rawId : undefined
-  const ac = new AbortController()
-  res.on('close', () => { if (!res.writableEnded) ac.abort() })
+  // obj 901329: a response that closes before we answer (tab closed, page
+  // reloaded, network blip, the client's own 240s UI timeout, a proxy hanging
+  // up) is NOT the person pressing Stop. The turn is never bound to this
+  // request: it runs to the end and stores its answer, which the person sees
+  // when they come back. Only POST /agents/:slug/stop cancels a turn.
+  let disconnectedAt: number | null = null
+  const startedAt = Date.now()
+  const where = `user=${req.user!.id} bot=${a.slug} lane=${lane.kind === 'main' ? 'main' : `thread:${lane.id}`}`
+  res.on('close', () => {
+    if (res.writableEnded) return
+    disconnectedAt = Date.now()
+    console.warn(`[agent-chat] disconnect: response closed mid-turn after ${disconnectedAt - startedAt}ms (${where}) — not a Stop; the turn keeps running`)
+  })
   try {
     // obj 900949: a lane that is busy QUEUES the message (202) instead of
     // refusing it; the turn that follows the running one delivers it, in order.
-    const r = await submitMessage({ userId: req.user!.id, username: req.user!.username, agent: a, text, images, lane, signal: ac.signal, clientMsgId })
+    const r = await submitMessage({ userId: req.user!.id, username: req.user!.username, agent: a, text, images, lane, clientMsgId, responseGone: () => disconnectedAt !== null, browserSession: signedInBrowser(req) })
+    if (disconnectedAt !== null) {
+      console.log(`[agent-chat] disconnect: turn finished ${Date.now() - disconnectedAt}ms after the response closed (${where}); ${r.messages.length} row(s) stored for the person to see on return`)
+      return
+    }
     res.status(r.queued ? 202 : 200).json({
       messages: r.messages,
       ...attachments(req.user!.id, a.slug, r.messages),
@@ -734,8 +926,13 @@ router.post('/agents/:slug/messages', async (req: AuthRequest, res) => {
       // obj 900977: true when this client_msg_id was already stored — nothing new was added or run.
       ...(r.duplicate ? { duplicate: true } : {}),
       turn: laneTurnState(req.user!.id, a.slug, lane),
+      reply_threads: replyThreadsForLane(req.user!.id, a.slug, lane),
     })
   } catch (err) {
+    if (disconnectedAt !== null) {
+      console.warn(`[agent-chat] disconnect: turn ended with an error after the response closed (${where}):`, err instanceof Error ? err.message : err)
+      return
+    }
     if (err instanceof ChatBusyError) {
       res.status(409).json({ error: err.message })
       return
@@ -852,7 +1049,16 @@ router.put('/drafts/:id', (req: AuthRequest, res) => {
   res.json({ draft: getDraft(d.id) })
 })
 
-router.post('/drafts/:id/send', (req: AuthRequest, res) => {
+// A click in flight per draft: a double-click must not send twice.
+const draftsInFlight = new Set<number>()
+
+/**
+ * The person's Send / "Add to calendar" click (obj 901331): the ONLY path that
+ * delivers a draft. Signed-in browser of the draft's own person only; agent
+ * keys and tools can never reach it. A Google draft is sent from the clicking
+ * person's own account, and only if it is still the account it was made for.
+ */
+router.post('/drafts/:id/send', async (req: AuthRequest, res) => {
   if (!signedInBrowser(req)) {
     res.status(403).json({ error: 'Only the person, signed in to the app, can send a draft' })
     return
@@ -863,31 +1069,44 @@ router.post('/drafts/:id/send', (req: AuthRequest, res) => {
     res.status(409).json({ error: `This draft is already ${d.status}` })
     return
   }
-  const conns = resolveConnectors({ demo: isDemoOn() || d.connector === 'demo' })
-  if (d.kind === 'email') {
-    if (!conns.mail || conns.mail.id !== d.connector) {
-      res.status(409).json({ error: 'The email account this draft was made for is not connected any more' })
-      return
+  if (draftsInFlight.has(d.id)) {
+    res.status(409).json({ error: 'This draft is already being sent' })
+    return
+  }
+  const delivery = resolveDelivery(req.user!.id, d.connector)
+  if (!delivery) {
+    res.status(409).json({ error: d.kind === 'email' ? 'The email account this draft was made for is not connected any more' : 'The calendar this draft was made for is not connected any more' })
+    return
+  }
+  draftsInFlight.add(d.id)
+  try {
+    if (d.kind === 'email') {
+      await delivery.sendEmail(d.payload as EmailDraft)
+      setDraftStatus(d.id, 'sent')
+    } else {
+      await delivery.addEvent(d.payload as EventDraft)
+      setDraftStatus(d.id, 'added')
     }
-    conns.mail.deliver(d.payload as EmailDraft)
-    setDraftStatus(d.id, 'sent')
-  } else {
-    if (!conns.calendar || conns.calendar.id !== d.connector) {
-      res.status(409).json({ error: 'The calendar this draft was made for is not connected any more' })
-      return
-    }
-    conns.calendar.add(d.payload as EventDraft)
-    setDraftStatus(d.id, 'added')
+  } catch (err) {
+    res.status(502).json({ error: err instanceof Error ? err.message : String(err) })
+    return
+  } finally {
+    draftsInFlight.delete(d.id)
   }
   res.json({ draft: getDraft(d.id) })
 })
 
-router.post('/drafts/:id/discard', (req: AuthRequest, res) => {
+router.post('/drafts/:id/discard', async (req: AuthRequest, res) => {
   const d = ownDraft(req, res)
   if (!d) return
   if (d.status !== 'draft') {
     res.status(409).json({ error: `This draft is already ${d.status}` })
     return
+  }
+  // Also remove the copy in the Gmail Drafts folder. Best effort: the chat draft
+  // is discarded either way, and a leftover Gmail draft never sends by itself.
+  if (d.kind === 'email' && (d.payload as EmailDraft).remote_id && signedInBrowser(req)) {
+    try { await resolveDelivery(req.user!.id, d.connector)?.discardEmail(d.payload as EmailDraft) } catch { /* left in Gmail Drafts */ }
   }
   setDraftStatus(d.id, 'discarded')
   res.json({ draft: getDraft(d.id) })

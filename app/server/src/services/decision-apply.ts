@@ -19,6 +19,11 @@
  *              offers "Reopen and apply"
  *   reopened   "Reopen and apply": an EXPLICIT human reopen (terminal_by_human
  *              cleared, audited), then the same restart as `sent`
+ *   to_chat    obj 901453: a bot raised it from chat and the chosen option needs a
+ *              chat-only operator tool (deploy / merge). A card session has no such
+ *              tool, so the card is NOT restarted: the bot's chat gets "You chose
+ *              Deploy. Type deploy here to run it." The click itself runs nothing
+ *              and no gate is widened (deliverDecisionToChat in decision-delivery.ts)
  *   recorded   a deny on a finished card, or a card that no longer exists
  *   failed     the restart threw (spend ceiling, disk…): the choice is kept and
  *              the error is stated
@@ -30,6 +35,9 @@
 import type Database from 'better-sqlite3'
 import {
   DENY_CHOICE,
+  optionChatActions,
+  optionFor,
+  type ChatOnlyAction,
   decisionFollowUpText,
   decisionOutcomeText,
   type DecisionOutcome,
@@ -57,6 +65,12 @@ export interface ApplyDeps {
    * Returns the bot's display name, or null when no bot owns the card.
    */
   deliverToBot?: (db: Database.Database, decision: DecisionView, objective: Objective) => { name: string } | null
+  /**
+   * obj 901453: hand a choice that needs a chat-only operator tool (deploy /
+   * merge) to the chat of the bot that raised it. Returns the bot's display
+   * name, or null when it could not be posted (the caller falls back to the card).
+   */
+  deliverToChat?: (db: Database.Database, decision: DecisionView, action: ChatOnlyAction) => { name: string } | null
   /** obj 901151: a reopen applies a delivered answer itself, so the bot's copy is consumed. */
   consumeDelivery?: (db: Database.Database, decisionId: number, objectiveId: number) => void
 }
@@ -66,6 +80,18 @@ export interface ApplyResult {
   outcome_text: string
   decision: DecisionView
   objective: Objective | null
+}
+
+/**
+ * obj 901453: the chat-only operator action (deploy / merge) the chosen option
+ * names, when the decision was raised by a bot from chat. Null otherwise: a
+ * worker's decision, a deny, an own answer, or an option that only waits.
+ */
+export function chatOnlyActionFor(decision: DecisionView): ChatOnlyAction | null {
+  if (decision.source !== 'bot' || !decision.agent_slug?.trim()) return null
+  const acts = optionChatActions(optionFor(decision.briefing, decision.chosen))
+  // "Merge and deploy" asks for the merge first: it is the step that must run first.
+  return acts[0] ?? null
 }
 
 function loadObjective(db: Database.Database, id: number): Objective | null {
@@ -84,12 +110,25 @@ export function applyDecision(
 ): ApplyResult {
   const chosen = decision.chosen as string
   const objective = loadObjective(db, decision.objective_id)
-  const finish = (outcome: DecisionOutcome, error?: string | null, bot?: string | null): ApplyResult => {
-    const text = decisionOutcomeText({ objectiveId: decision.objective_id, briefing: decision.briefing, chosen, outcome, error, note: decision.decision_note, bot })
+  const finish = (outcome: DecisionOutcome, error?: string | null, bot?: string | null, action?: string | null): ApplyResult => {
+    const text = decisionOutcomeText({ objectiveId: decision.objective_id, briefing: decision.briefing, chosen, outcome, error, note: decision.decision_note, bot, action })
     const updated = setOutcome(db, decision.id, outcome, text)
     return { outcome, outcome_text: text, decision: updated, objective: objective ? loadObjective(db, objective.id) : null }
   }
   if (!objective) return finish('recorded')
+
+  // obj 901453: a deploy / merge option on a decision a bot raised from chat goes
+  // back to that chat. Only that chat can run it, and only when the person types it.
+  const action = chatOnlyActionFor(decision)
+  if (action && deps.deliverToChat && !p.reopen) {
+    let to: { name: string } | null = null
+    try {
+      to = deps.deliverToChat(db, decision, action)
+    } catch (err) {
+      console.warn(`[decisions] could not post decision ${decision.id} to its bot's chat:`, err instanceof Error ? err.message : String(err))
+    }
+    if (to) return finish('to_chat', null, to.name, action)
+  }
 
   const text = decisionFollowUpText({ decisionId: decision.id, briefing: decision.briefing, chosen, note: decision.decision_note })
   let reopened = false

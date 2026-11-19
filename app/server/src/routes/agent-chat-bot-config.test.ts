@@ -84,7 +84,7 @@ describe('GET /agents carries what the bot page needs', () => {
     expect(r.json.model_suggestions.claude).toContain('claude-sonnet-5')
     const cto = r.json.agents.find((a: Loose) => a.slug === 'cto')
     expect(cto.all_tools).toBe(false)
-    expect(cto.effective_tools).toEqual(['list_objectives', 'create_objective', 'board_briefing', 'raise_decision']) // obj 901059: raise_decision is implied by create_objective
+    expect(cto.effective_tools).toEqual(['list_objectives', 'create_objective', 'board_briefing', 'raise_decision', 'followups']) // obj 901059: raise_decision is implied by create_objective
     expect(cto.config).toBeNull()
     expect(cto.file_defaults).toEqual({ provider: null, model: null, tools: ['list_objectives', 'create_objective'] })
   })
@@ -141,6 +141,6 @@ describe('PUT /agents/:slug/config', () => {
     expect(r.json.agent.config).toBeNull()
     expect(r.json.agent.model).toBeNull()
     expect(r.json.agent.all_tools).toBe(false)
-    expect(r.json.agent.effective_tools).toEqual(['list_objectives', 'create_objective', 'board_briefing', 'raise_decision']) // obj 901059: raise_decision is implied by create_objective
+    expect(r.json.agent.effective_tools).toEqual(['list_objectives', 'create_objective', 'board_briefing', 'raise_decision', 'followups']) // obj 901059: raise_decision is implied by create_objective
   })
 })

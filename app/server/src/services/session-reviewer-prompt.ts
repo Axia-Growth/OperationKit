@@ -11,6 +11,7 @@ import { prLinkageRepo } from './pr-linkage.js'
 import { previewHostFor } from '../lib/preview-health.js'
 import { getEffectiveGateMode, buildVisionRubricBlock, isBackendOnlyChange, type UiGateMode } from './design-context.js'
 import { maskWorkerScratch, buildReviewerArtifactBlock } from './prompt-builder.js'
+import { hasLockedCriteria } from './review-rubric.js'
 import { resolveBrowserPolicy, type BrowserPolicy } from '../lib/browser-policy.js'
 import { buildPlaywrightMcpArgs, resolveChromiumBinary, writePlaywrightMcpConfig } from '../lib/card-browser.js'
 import { sharedBrowserEgressProxy } from './browser-egress-proxy.js'
@@ -38,7 +39,13 @@ export function buildReviewerPrompt(
   // A delegator pre-supplies its worker's acceptance_criteria at creation time, so
   // the rubric is already locked — the reviewer loads it instead of generating one,
   // even on iteration 1. Review is then graded against the delegator's intended scope.
-  const isFirstPass = iteration === 1 && !objective.acceptance_criteria
+  //
+  // obj 901460: "first pass" means NO RUBRIC IS LOCKED, on ANY iteration. It used to be
+  // `iteration === 1 && …`, so when iteration 1 never locked one (died, skipped the POST)
+  // iteration 2+ was told to LOAD a rubric that did not exist, read `criteria: null` and
+  // stopped with no usable verdict (#901330 / PR 871). An empty or unparseable stored
+  // value is not a lock either.
+  const isFirstPass = !hasLockedCriteria(objective.acceptance_criteria)
   const criteriaUrl = `http://localhost:3002/api/internal/reviews/${objective.id}/criteria`
 
   // ── Acceptance-criteria rubric flow ──────────────────────────────────────
@@ -51,7 +58,7 @@ export function buildReviewerPrompt(
     ? [
         '## Step 0 — Generate and lock the acceptance criteria (FIRST PASS ONLY)',
         '',
-        `This is iteration ${iteration}. Before running any verification you MUST:`,
+        `This is iteration ${iteration} and no rubric is locked for this objective yet. Before running any verification you MUST:`,
         '',
         '1. Read the plan / description / completion goal above.',
         '2. Draft 3-7 acceptance criteria — concrete, testable, with no overlap. Each criterion needs:',
@@ -85,6 +92,18 @@ export function buildReviewerPrompt(
         `   SIBLING objective's rubric. If you must persist it, use an id-scoped filename`,
         `   (\`/tmp/crit-${objective.id}.json\`) and use \`curl -fsS\` so a failed fetch exits non-zero.`,
         '4. Only then proceed to the verification steps below.',
+        '',
+        'If the card text is too thin for you to write even one testable criterion, do NOT stop silently. GET the',
+        'same endpoint instead:',
+        '',
+        '   ```bash',
+        `   curl -fsS ${criteriaUrl} -H "X-CC-Session-Token: $CC_SESSION_TOKEN"`,
+        '   ```',
+        '',
+        'With no rubric locked, the server derives a short rubric from the card title / description /',
+        'completion goal and LOCKS it (`"rubric_source": "derived"`) — grade against that. If it cannot, it',
+        'answers `{"criteria": null, "reason": "…"}`: emit `<verdict>blocked</verdict>` and start `<findings>`',
+        'with `NO-RUBRIC: <that reason>`. Never end a review without a verdict.',
       ].join('\n')
     : [
         `## Step 0 — Load the locked acceptance criteria (iteration ${iteration})`,
@@ -109,9 +128,13 @@ export function buildReviewerPrompt(
         'asked to review, you are holding a stale/foreign rubric.',
         '',
         '**A failed fetch or a stale/mismatched rubric is a RE-FETCH condition, NOT a block.** Wait a few',
-        'seconds and re-run the command (the server may be restarting); retry a handful of times. Only',
-        'emit `<verdict>blocked</verdict>` when the endpoint is reachable (curl exits 0) and it still',
-        'returns `criteria: null` for your objective — then explain the missing rubric in `<findings>`.',
+        'seconds and re-run the command (the server may be restarting); retry a handful of times.',
+        '',
+        'If no rubric was ever locked, this GET derives one from the card title / description / completion',
+        'goal and locks it (`"rubric_source": "derived"`) — grade against it like any locked rubric. Only',
+        'emit `<verdict>blocked</verdict>` when the endpoint is reachable (curl exits 0) and returns',
+        '`{"criteria": null, "reason": "…"}` for your objective — then start `<findings>` with',
+        '`NO-RUBRIC: <that reason>`. Never end a review without a verdict.',
       ].join('\n')
 
   // ── Test credentials (optional) ──────────────────────────────────────────

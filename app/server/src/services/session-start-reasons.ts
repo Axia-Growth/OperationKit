@@ -36,12 +36,13 @@ export const START_REASONS = [
   'stall_watchdog',      // obj 900372: the stall watchdog auto-restarted a card that sat in working doing nothing
   'abnormal_end_retry',  // obj 900547: one automatic resume after a session died mid-turn
   'runner_failure_retry', // obj 900652: one automatic fresh start for a card set to working that never got a worker
+  'boot_resume',         // obj 901459: the boot sweep resumed a card a restart cut off (shared stall budget)
   'fresh_seeded_after_cap', // obj 64: resume skipped (chain over token/round cap) — fresh session seeded from a DB summary
   'unattributed',
 ] as const
 
 /** Automatic restarts that SPEND the one shared stall budget and so must never re-arm it. */
-export const AUTO_RETRY_START_REASONS: ReadonlySet<string> = new Set(['stall_watchdog', 'abnormal_end_retry', 'runner_failure_retry'])
+export const AUTO_RETRY_START_REASONS: ReadonlySet<string> = new Set(['stall_watchdog', 'abnormal_end_retry', 'runner_failure_retry', 'boot_resume'])
 
 export type SessionStartKind = 'spawn' | 'resume' | 'attach' | 'rejected'
 

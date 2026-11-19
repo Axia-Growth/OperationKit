@@ -16,7 +16,7 @@ import { DEMO_AGENT_SLUG, DEMO_DIR, demoEnabled, loadChatAgents, type ChatAgent,
 import { resolveConnectors } from './connectors.js'
 import { allBotConfigs, applyBotConfig } from './bot-config.js'
 import { botWorkspaceAllowlist } from './bot-workspaces.js'
-import { chooseProviderId, createProvider, imageDataUrl, ProviderError, ProviderUnavailableError, type ChatMessage, type ChatProvider, type ProviderDeps } from './providers.js'
+import { chooseProviderId, createProvider, imageDataUrl, ProviderError, ProviderUnavailableError, seatMoveLine, type ChatMessage, type ChatProvider, type ProviderDeps } from './providers.js'
 import {
   deleteAttachmentsForChat,
   imageDataForMessage,
@@ -27,11 +27,13 @@ import {
 } from './attachments.js'
 import { agentHasTool, botWorkspacesForPerson, kbWorkspacesForChat, runChatTool, toolSpecsFor, toolSpecsForContext, ToolUseError, type ToolContext } from './tools.js'
 import { fullAccessPromptLine, withFullAccess } from './full-access-tools.js'
+import { openLoopsPromptBlock } from './open-loops.js'
+import { dropLaneFollowups, FOLLOWUP_PROMPT_LINE, FOLLOWUP_WAKE_TOOL_NAME, followupToolSpecs } from './followups.js'
 import { mcpToolSetFor, runMcpTool, type McpToolSet } from './mcp-tools.js'
 import { botReplyForModel, earlierActionForModel, toolResultForModel } from './tool-result-framing.js'
 import type { WebToolDeps } from './web-tools.js'
 import { notifyBotMessage } from './sidebar-live.js'
-import { laneKey, lanePredicate, laneThreadId, MAIN_LANE, touchThread, type ChatLane } from './threads.js'
+import { deleteThread, laneKey, lanePredicate, laneThreadId, MAIN_LANE, replyParentOf, replyThreadIdsForLane, touchThread, type ChatLane, type ReplyParentRow } from './threads.js'
 
 export const MAX_STEPS = 8
 const HISTORY_LIMIT = 40
@@ -86,6 +88,17 @@ export interface ChatMessageRow {
      * message when a reload returns it mid-turn.
      */
     client_msg_id?: string
+    /** obj 901328: the card wake this row belongs to ("Card wakes" thread). */
+    card_wake_id?: number
+    need?: string
+    /** obj 901392: the follow-up this row scheduled, cancelled or was fired by (kind 'followup_fired'). */
+    followup_id?: number
+    /** obj 901394: a card wake's answer posted in the main chat (`kind: card_wake_reply`): every card it covered, and the thread the turn ran in. */
+    objective_ids?: number[]
+    thread_id?: number
+    /** obj 901395 (kind 'seat_moved'): seat labels only — the account that answered and the ones left behind. */
+    seat_to?: string
+    seat_from?: string[]
   } | null
   /** Images attached to this message (obj 900157). Metadata only — never bytes. */
   images: StoredImage[]
@@ -220,7 +233,14 @@ export function listMessages(
   return withImages(rows.map(mapRow))
 }
 
-function addMessage(
+/** One stored message of this person's chat with this bot, whatever its lane (obj 901373: a reply thread's parent). */
+export function getMessage(userId: number, slug: string, id: number): ChatMessageRow | null {
+  const r = getDb().prepare('SELECT * FROM agent_chat_messages WHERE id = ? AND user_id = ? AND agent_slug = ?').get(id, userId, slug) as Record<string, unknown> | undefined
+  return r ? withImages([mapRow(r)])[0] : null
+}
+
+/** Store one row in a lane. Exported for the card-wake drain (obj 901328), which writes into its own lane. */
+export function addMessage(
   userId: number,
   slug: string,
   m: Omit<ChatMessageRow, 'id' | 'created_at' | 'images'>,
@@ -248,7 +268,17 @@ function addMessage(
 export function clearChat(userId: number, slug: string, lane: ChatLane = MAIN_LANE): number {
   // The images belong to the messages: "Clear chat" must take them too, or the
   // bytes outlive the conversation the person just deleted.
+  // obj 901373: reply threads hang off this lane's messages, so they go with
+  // them — rows, messages and images. Reply threads never nest (a thread cannot
+  // hang off a message inside a thread), so this recursion is one level deep.
+  for (const id of replyThreadIdsForLane(userId, slug, lane)) {
+    clearChat(userId, slug, { kind: 'thread', id })
+    deleteThread(userId, slug, id)
+  }
   deleteAttachmentsForChat(userId, slug, lane)
+  // obj 901392: a follow-up waiting in a chat the person just cleared (or a side
+  // thread they deleted) is dropped, not fired into an empty lane.
+  try { dropLaneFollowups(userId, slug, lane, 'the chat it was set in was cleared or deleted') } catch { /* table absent on a very old DB */ }
   const { sql, params } = lanePredicate(lane)
   return getDb()
     .prepare(`DELETE FROM agent_chat_messages WHERE user_id = ? AND agent_slug = ? AND ${sql}`)
@@ -283,7 +313,31 @@ function historyForModel(rows: ChatMessageRow[], withImages: boolean, workspace?
   return out
 }
 
-export function systemPromptFor(agent: ChatAgent, ctx: { username: string; now: Date; connectors: string[]; workspace?: string; userId?: number; fullAccess?: string }): string {
+/** Longest parent message quoted to the model in a reply thread; the rest is cut with a note. */
+const REPLY_PARENT_MAX_CHARS = 6000
+
+/**
+ * obj 901373: what the model is told at the top of a reply thread — the ONE
+ * message the thread hangs off. It goes in as a user-role turn, not into the
+ * system prompt: the quoted text may be another bot's relayed words or pasted
+ * content, and must carry no more authority than any other message. The
+ * thread's earlier replies follow it as ordinary history.
+ */
+export function replyThreadContextForModel(parent: ReplyParentRow, workspace?: string | null): string {
+  const who = parent.role === 'assistant' ? 'you (the bot) wrote' : 'I wrote'
+  const where = parent.thread_id === null ? 'our main conversation' : 'a side thread of our conversation'
+  const raw = parent.role === 'assistant' && parent.meta?.kind === 'bot_reply' ? botReplyForModel(parent.content, workspace) : parent.content
+  const body = raw.length > REPLY_PARENT_MAX_CHARS ? `${raw.slice(0, REPLY_PARENT_MAX_CHARS)}\n[…message cut here]` : raw
+  return [
+    `[Thread context, not a new request] I am replying in a thread on one earlier message that ${who} in ${where} (sent ${parent.created_at} UTC).`,
+    'Everything I say in this thread is about that message. Answer here, in this thread. The message:',
+    '<<<',
+    body || '(no text — an image or a card)',
+    '>>>',
+  ].join('\n')
+}
+
+export function systemPromptFor(agent: ChatAgent, ctx: { username: string; now: Date; connectors: string[]; workspace?: string; userId?: number; fullAccess?: string; openLoops?: string; followups?: string }): string {
   // obj 900797: person ∩ bot list, so the prompt never names a workspace the person cannot see.
   const allow = ctx.workspace === undefined ? undefined : ctx.userId === undefined ? null : botWorkspacesForPerson(ctx.userId, agent.slug)
   const parts = [
@@ -318,9 +372,13 @@ export function systemPromptFor(agent: ChatAgent, ctx: { username: string; now: 
         : '- You have no workspace you may work in with this person yet (an admin grants workspaces on your settings panel), so board, knowledge-base and secrets tools will refuse. Say so plainly if asked.',
     // obj 900972: said only while Full access counts for this bot, this person and this workspace.
     ctx.fullAccess ?? '',
+    // obj 901392: only in a turn that really has the follow-up tools.
+    ctx.followups ?? '',
     '- Never ask for or repeat passwords or API keys.',
     ctx.connectors.length ? `- Connected: ${ctx.connectors.join('; ')}.` : '',
     '- Keep answers short and use simple markdown (bullets, bold).',
+    // obj 901382: the bot's open-loops list and the rules for keeping it (only for a bot that tracks loops).
+    ctx.openLoops ?? '',
   ]
   return parts.filter(p => p !== '').join('\n')
 }
@@ -370,6 +428,19 @@ export async function runModelLoop(p: {
       record({ role: 'error', content: msg.slice(0, 500), provider: provider.id, model: provider.model, tool_name: null, meta: { provider_label: provider.label } })
       return { kind: 'failed', message: msg.slice(0, 500), step }
     }
+    // obj 901395: this model call was answered by another account than the one
+    // first tried. One quiet line says so. It is an `error`-role row with a
+    // kind (like 'stopped'), so it is shown but never replayed to the model.
+    if (out.seatMove) {
+      record({
+        role: 'error',
+        content: seatMoveLine(out.seatMove),
+        provider: provider.id,
+        model: provider.model,
+        tool_name: null,
+        meta: { kind: 'seat_moved', provider_label: provider.label, seat_to: out.seatMove.to, seat_from: out.seatMove.from.map(f => f.label) },
+      })
+    }
 
     if (out.toolCalls.length === 0) {
       const text = (out.content ?? '').trim() || '(no reply)'
@@ -409,6 +480,7 @@ export async function runModelLoop(p: {
             ...(r.objective_id ? { objective_id: r.objective_id } : {}),
             ...(r.bot_conversation_id ? { bot_conversation_id: r.bot_conversation_id } : {}),
             ...(r.decision_id ? { decision_id: r.decision_id } : {}),
+            ...(r.followup_id ? { followup_id: r.followup_id } : {}),
           },
         }, r.images)
       } catch (err) {
@@ -469,7 +541,25 @@ export interface TurnInput {
   /** web_search / web_fetch fetches (obj 900671) — tests inject; production uses the guarded defaults. */
   webDeps?: Pick<WebToolDeps, 'fetch' | 'pageFetch'>
   now?: () => Date
+  /**
+   * An explicit cancel from the CALLER (tests, a shutdown path). Never wire an
+   * HTTP request's 'close' to this: a dropped connection is not Stop (obj 901329).
+   * The person's Stop reaches a running turn through stopTurn, not this signal.
+   */
   signal?: AbortSignal
+  /**
+   * obj 901329: true once nobody is waiting on this turn's HTTP response (the
+   * browser left mid-turn). The turn still runs to the end; this only stops it
+   * from taking the person's message back on an "AI unavailable" failure, since
+   * no error status can reach them — the row and the error stay in the thread.
+   */
+  responseGone?: () => boolean
+  /**
+   * obj 901424: the message came from the person's signed-in browser (cookie
+   * session; never an API key or a bearer token). Only such a turn may reach
+   * the operator tools. A drain turn (queued messages) never counts.
+   */
+  browserSession?: boolean
   /**
    * obj 900949: no new message — this turn only delivers what is already queued
    * in the lane. Used by the drain that follows a turn; an empty queue is a no-op.
@@ -481,6 +571,21 @@ export interface TurnInput {
    * neither inserts nor runs anything.
    */
   clientMsgId?: string
+  /**
+   * obj 901392: this turn is started by one of the bot's own follow-ups, not by
+   * a typed message (followup-wake.ts). It is otherwise the SAME turn: same
+   * lane, same person, same tools and gates. Instead of a user row the lane
+   * gets one tool-style line (`triggerLine`), and the model is handed `brief`
+   * (the bot's note, framed) as the message to act on. `rules` is appended to
+   * the system prompt.
+   */
+  followup?: {
+    id: number
+    hop: number
+    triggerLine: string
+    brief: (ctx: ToolContext) => string
+    rules: string
+  }
 }
 
 /** What a `client_msg_id` may look like: short and plain, so it is safe to store and to match on. */
@@ -628,7 +733,11 @@ export function stopTurn(
   // Drop first, so the drain that follows the stopped turn finds nothing to send.
   const dropped = opts.dropQueued ? discardQueued(userId, slug, lane) : 0
   const running = inFlight.get(turnKey(userId, slug, lane))
-  if (running) running.controller.abort()
+  if (running) {
+    // obj 901329: logged distinctly from a dropped connection (routes/agent-chat.ts).
+    console.log(`[agent-chat] stop: the person pressed Stop (user=${userId} bot=${slug} lane=${lane.kind === 'main' ? 'main' : `thread:${lane.id}`}${dropped ? ` dropped_queued=${dropped}` : ''})`)
+    running.controller.abort()
+  }
   return { stopped: !!running, dropped, ...laneTurnState(userId, slug, lane) }
 }
 
@@ -658,7 +767,7 @@ export function drainLaneQueue(input: Omit<TurnInput, 'text' | 'images' | 'signa
   if (laneTurnState(input.userId, input.agent.slug, lane).queued === 0) return
   // runTurn claims the lane synchronously (before its first await), so no new
   // message can slip in between this check and the drain's turn starting.
-  const p = runTurn({ ...input, lane, text: '', images: [], drainOnly: true })
+  const p = runTurn({ ...input, lane, text: '', images: [], drainOnly: true, browserSession: false })
     .catch(err => {
       if (err instanceof ChatBusyError) return
       console.error('[agent-chat] queued turn failed:', err instanceof Error ? err.message : err)
@@ -682,8 +791,10 @@ export async function runTurn(input: TurnInput): Promise<{ messages: ChatMessage
     if (existing) return { messages: [existing] }
   }
   if (inFlight.has(key)) throw new ChatBusyError('This agent is still answering your last message.')
-  // One controller per turn: the caller's signal (the HTTP request closing) and
-  // Stop (stopTurn) both cancel it.
+  // One controller per turn. Stop (stopTurn) cancels it; so does an explicit
+  // caller signal. The HTTP request closing does NOT (obj 901329): the route no
+  // longer passes one, so a dropped connection lets the turn finish and persist,
+  // exactly like the drain below that already outlives its request.
   const controller = new AbortController()
   if (input.signal) {
     if (input.signal.aborted) controller.abort()
@@ -709,7 +820,20 @@ export async function runTurn(input: TurnInput): Promise<{ messages: ChatMessage
     const delivered = deliverQueued(userId, agent.slug, lane)
     created.push(...delivered)
     let userRow: ChatMessageRow | null = null
-    if (!input.drainOnly) {
+    let triggerRow: ChatMessageRow | null = null
+    if (input.followup) {
+      // A tool-style row: the person sees why the bot spoke, and it is never
+      // replayed to a model as if the person had typed it.
+      triggerRow = add({
+        role: 'tool',
+        content: input.followup.triggerLine.slice(0, 1200),
+        provider: null,
+        model: null,
+        tool_name: FOLLOWUP_WAKE_TOOL_NAME,
+        meta: { kind: 'followup_fired', ok: true, followup_id: input.followup.id },
+      })
+      created.push(triggerRow)
+    } else if (!input.drainOnly) {
       userRow = add(
         { role: 'user', content: input.text, provider: null, model: null, tool_name: null, meta: input.clientMsgId ? { client_msg_id: input.clientMsgId } : null },
         images,
@@ -717,17 +841,23 @@ export async function runTurn(input: TurnInput): Promise<{ messages: ChatMessage
       created.push(userRow)
     }
     const incoming = userRow ? [...delivered, userRow] : delivered
-    if (incoming.length === 0) return { messages: created }
+    if (incoming.length === 0 && !input.followup) return { messages: created }
     touchThread(lane)
 
-    const demo = isDemoOn(env) || agent.slug === DEMO_AGENT_SLUG
     // Demo switched on by env (AGENT_CHAT_DEMO=1) never went through the settings
     // route, so its sample notes may not be in the knowledge base yet.
     if (agent.slug === DEMO_AGENT_SLUG) {
       try { seedDemoKnowledge(env) } catch { /* the to-do tools report a missing file */ }
     }
-    const connectors = resolveConnectors({ demo, now })
-    const ctx: ToolContext = { userId, username: input.username, workspace: workspaceFor(userId, agent.slug), agent, kbRoot: knowledgeRoot(env), connectors, now, web: { env, signal, ...input.webDeps }, lane }
+    // obj 901331: demo is per bot. Only the demo assistant gets the sample inbox
+    // (resolveConnectors decides by slug); every other bot gets the person's own
+    // Google account when connected and allowed by "Who can use it". The install
+    // switch (isDemoOn) only lists the demo assistant now.
+    const chatWorkspace = workspaceFor(userId, agent.slug)
+    const connectors = resolveConnectors({ agentSlug: agent.slug, userId, workspace: chatWorkspace, now })
+    const ctx: ToolContext = { userId, username: input.username, workspace: chatWorkspace, agent, kbRoot: knowledgeRoot(env), connectors, now, web: { env, signal, ...input.webDeps }, lane, browserSession: !!input.browserSession && !input.drainOnly }
+    // obj 901392: carries only the chain length. No tool reads it to widen anything.
+    if (input.followup) ctx.followup = { id: input.followup.id, hop: input.followup.hop, personSpoke: delivered.length > 0 }
 
     let providerId: ChatProviderId | null = null
     let provider: ChatProvider
@@ -739,14 +869,18 @@ export async function runTurn(input: TurnInput): Promise<{ messages: ChatMessage
       return { messages: created }
     }
 
-    const system = systemPromptFor(withFullAccess({ ...ctx, agent: withResolvedKnowledgeFolders(agent, ctx.kbRoot, kbWorkspacesForChat(ctx.userId, agent.slug)) }).agent, {
+    const resolvedAgent = withResolvedKnowledgeFolders(agent, ctx.kbRoot, kbWorkspacesForChat(ctx.userId, agent.slug))
+    const system = systemPromptFor(withFullAccess({ ...ctx, agent: resolvedAgent }).agent, {
       fullAccess: fullAccessPromptLine(ctx),
+      followups: followupToolSpecs(ctx).length ? FOLLOWUP_PROMPT_LINE : '',
+      // obj 901382: read with the same gates as the bot's own read_file, on every turn.
+      openLoops: openLoopsPromptBlock({ agent: resolvedAgent, kbRoot: ctx.kbRoot, userId, workspace: ctx.workspace, username: input.username }),
       username: input.username,
       now: now(),
       connectors: [connectors.mail?.label, connectors.calendar?.label].filter((x): x is string => !!x),
       workspace: ctx.workspace,
       userId,
-    })
+    }) + (input.followup ? `\n${input.followup.rules}` : '')
     // obj 900620: the chat's workspace MCP servers, only if the agent lists `mcp`.
     let mcpTools: McpToolSet = { specs: [], targets: new Map() }
     // obj 900797: no granted workspace → no workspace MCP servers.
@@ -769,10 +903,16 @@ export async function runTurn(input: TurnInput): Promise<{ messages: ChatMessage
       }))
       return { messages: created }
     }
+    // obj 901373: in a reply thread the model first sees the message the thread
+    // hangs off, then the thread's earlier replies, then what just arrived.
+    const replyParent = replyParentOf(userId, agent.slug, lane)
     const convo: ChatMessage[] = [
+      ...(replyParent ? [{ role: 'user' as const, content: replyThreadContextForModel(replyParent, ctx.workspace) }] : []),
       ...historyForModel(prior, provider.supportsImages, ctx.workspace),
       // Several queued messages reach the model as consecutive user turns, in the order they were sent.
       ...incoming.map(r => ({ role: 'user' as const, content: userContentForModel(r, provider.supportsImages) })),
+      // obj 901392: the follow-up's note, last, so the model acts on it now.
+      ...(input.followup ? [{ role: 'user' as const, content: input.followup.brief(ctx) }] : []),
     ]
 
     const loop = await runModelLoop({
@@ -796,8 +936,15 @@ export async function runTurn(input: TurnInput): Promise<{ messages: ChatMessage
       // Nothing ran yet: take the message back so a retry is clean. After a
       // tool step, keep what happened so far and say so in the history. A
       // queue drain has no one waiting on a response, so it always records it.
-      if (loop.step === 0 && userRow && delivered.length === 0) {
+      // obj 901329: unless the browser already left — then no error status
+      // reaches anyone, so the message and the error stay in the thread.
+      if (loop.step === 0 && userRow && delivered.length === 0 && !input.responseGone?.()) {
         deleteMessage(userRow.id)
+        created.length = 0
+      } else if (loop.step === 0 && triggerRow && delivered.length === 0) {
+        // obj 901392: a follow-up that could not start leaves no trace in the
+        // lane; the drain retries it and writes its line again then.
+        deleteMessage(triggerRow.id)
         created.length = 0
       } else {
         created.push(add({ role: 'error', content: err.message, provider: provider.id, model: provider.model, tool_name: null, meta: { provider_label: provider.label } }))

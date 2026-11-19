@@ -248,6 +248,8 @@ export interface ChatMessage {
     queued?: boolean
     /** obj 900977: the id this client gave the message when it sent it; the server stores it and never stores the same id twice in a lane. */
     client_msg_id?: string
+    /** obj 901392: the follow-up this row scheduled or cancelled, or (kind 'followup_fired') was started by. */
+    followup_id?: number
   } | null
   images?: ChatImage[]
   created_at: string
@@ -258,7 +260,7 @@ export const ACCEPTED_IMAGE_TYPES = ['image/png', 'image/jpeg', 'image/gif', 'im
 export const MAX_IMAGES_PER_MESSAGE = 4
 export const MAX_IMAGE_BYTES = 5 * 1024 * 1024
 
-export interface EmailDraftPayload { to: string; subject: string; body: string; in_reply_to?: string | null }
+export interface EmailDraftPayload { to: string; subject: string; body: string; in_reply_to?: string | null; remote_id?: string | null }
 export interface EventDraftPayload { title: string; start: string; end: string; with: string[]; note?: string | null }
 
 export interface ChatDraft {
@@ -279,10 +281,35 @@ export interface ChatCard {
   url: string
 }
 
+/**
+ * obj 901392: a one-off follow-up the bot set for itself in this chat ("check
+ * back in 10 minutes"). Times are ISO 8601. The person can cancel it while it
+ * is still `pending`.
+ */
+export interface ChatFollowup {
+  id: number
+  status: 'pending' | 'running' | 'fired' | 'failed' | 'cancelled' | 'dropped'
+  note: string
+  card_id: number | null
+  when_card_changes: boolean
+  due_at: string
+  hop: number
+  thread_id: number | null
+  /** 'due' | 'card_changed' once it fired. */
+  fire_reason: string | null
+  /** Why it was dropped or failed; 'person' / 'bot' for a cancelled one. */
+  end_reason: string | null
+  created_at: string
+  fired_at: string | null
+  finished_at: string | null
+}
+
 export interface ThreadResponse {
   messages: ChatMessage[]
   drafts: ChatDraft[]
   cards: ChatCard[]
+  /** obj 901392: live state of each follow-up a line in view points at. Absent on an older server. */
+  followups?: ChatFollowup[]
   /**
    * obj 900949: the lane's turn state — is the bot working, and how many of the
    * person's messages wait for it. Absent on an older server (treated as idle).
@@ -290,6 +317,26 @@ export interface ThreadResponse {
   turn?: LaneTurn
   /** obj 900949: set on a POST answered 202 — the message was queued, not run. */
   queued?: boolean
+  /**
+   * obj 901373: the reply threads on this lane's messages, keyed by the parent
+   * message's id — only threads that hold at least one reply. Absent on an older server.
+   */
+  reply_threads?: Record<string, ReplyThreadSummary>
+}
+
+/** obj 901373: "N replies" under a message that has a thread. */
+export interface ReplyThreadSummary {
+  thread_id: number
+  reply_count: number
+  last_reply_at: string | null
+}
+
+/** obj 901373: POST /agents/:slug/messages/:id/thread — the thread on one message, created on first use. */
+export interface ReplyThreadOpenResponse {
+  thread: ChatThread
+  parent: ChatMessage
+  drafts?: ChatDraft[]
+  cards?: ChatCard[]
 }
 
 /** obj 900949: what the composer needs to know about one lane. */
@@ -312,6 +359,8 @@ export interface ChatThread {
   created_at: string
   updated_at: string
   message_count: number
+  /** obj 901373: set on a reply thread — the message it hangs off. Never set on a thread in the lane strip. */
+  parent_message_id?: number | null
 }
 
 export interface ThreadsResponse {

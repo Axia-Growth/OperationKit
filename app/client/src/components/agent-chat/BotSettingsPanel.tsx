@@ -2,6 +2,8 @@ import { useMemo, useRef, useState } from 'react'
 import { api } from '../../lib/api'
 import { Alert, Button, cn } from '../ui'
 import { HighAgencySection } from './HighAgencySection'
+import { CardWakesSection } from './CardWakesSection'
+import { DevOpsSection } from './DevOpsSection'
 import { WorkspaceAccessSection } from './WorkspaceAccessSection'
 import { FullAccessSection } from './FullAccessSection'
 import { DelegationSection } from './DelegationSection'
@@ -43,6 +45,7 @@ const SECTION_LINKS: Array<{ label: string; idPrefix: string }> = [
   { label: 'Full access', idPrefix: 'bot-full-access-title' },
   { label: 'Approve on my behalf', idPrefix: 'bot-delegation-title' },
   { label: 'High Agency', idPrefix: 'high-agency-title' },
+  { label: 'Card wakes', idPrefix: 'bot-card-wakes-title' },
 ]
 
 const GROUP_LABELS: Record<ToolGroup, string> = {
@@ -424,6 +427,10 @@ export function BotSettingsPanel({
         <DelegationSection agent={agent} isAdmin={isAdmin} />
 
         <HighAgencySection agent={agent} isAdmin={isAdmin} accessVersion={accessVersion} onAccessChanged={() => setGrantVersion(v => v + 1)} />
+
+        <CardWakesSection agent={agent} isAdmin={isAdmin} />
+
+        <DevOpsSection agent={agent} isAdmin={isAdmin} />
       </div>
     </section>
   )
