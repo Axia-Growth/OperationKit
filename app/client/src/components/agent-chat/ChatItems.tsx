@@ -125,7 +125,21 @@ export function ChatImageGallery({ images, className }: { images: ChatImage[]; c
  * working and not delivered to it yet — the bubble is quieter and carries a
  * small "Queued" chip until the bot picks it up. `sending` = not yet stored.
  */
-export function UserBubble({ m, queued, sending }: { m: Pick<ChatMessage, 'content' | 'images' | 'created_at'>; queued?: boolean; sending?: boolean }) {
+export function UserBubble({
+  m,
+  queued,
+  sending,
+  held,
+  onRemove,
+}: {
+  m: Pick<ChatMessage, 'content' | 'images' | 'created_at'>
+  queued?: boolean
+  sending?: boolean
+  /** obj 901488: queued when the person pressed Stop — it waits for them, not for the bot. */
+  held?: boolean
+  /** obj 901488: take this queued message back before the bot sees it. */
+  onRemove?: () => void
+}) {
   const images = m.images ?? []
   const waiting = queued || sending
   return (
@@ -142,13 +156,23 @@ export function UserBubble({ m, queued, sending }: { m: Pick<ChatMessage, 'conte
           <p className="mt-1 flex justify-end">
             <Badge tone="accent">
               <Clock aria-hidden="true" className="h-3 w-3" />
-              {sending ? 'Sending…' : 'Queued'}
+              {sending ? 'Sending…' : held ? 'Waiting for you' : 'Queued'}
             </Badge>
           </p>
         ) : (
           <p className="mt-1 text-right text-xs text-fg-2">{time(m.created_at)}</p>
         )}
       </div>
+      {queued && onRemove && (
+        <button
+          type="button"
+          onClick={onRemove}
+          aria-label={`Remove queued message: ${(m.content || 'image').slice(0, 60)}`}
+          className="min-h-[28px] px-1 text-xs text-fg-2 underline-offset-2 transition-colors duration-fast hover:text-fg-0 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/50"
+        >
+          Remove
+        </button>
+      )}
     </div>
   )
 }
@@ -166,7 +190,23 @@ export function BotThreadLink({ id, onOpen, className }: { id: number; onOpen: (
   )
 }
 
-export function AssistantBubble({ m, agent, onOpenBotThread }: { m: ChatMessage; agent: ChatAgentInfo; onOpenBotThread?: (id: number) => void }) {
+export function AssistantBubble({
+  m,
+  agent,
+  onOpenBotThread,
+  onContinue,
+}: {
+  m: ChatMessage
+  agent: ChatAgentInfo
+  onOpenBotThread?: (id: number) => void
+  /** obj 901488: set on the newest step-limit answer while nothing was sent after it — resumes from where it stopped. */
+  onContinue?: () => void
+}) {
+  // obj 901488: the turn ran out of steps and wrote this summary instead of failing.
+  const stepLimit = m.meta?.kind === 'step_limit'
+  // A long reply that used up its step or time budget (obj 901491). Its text is
+  // already the report, so it only gets the Continue button.
+  const turnLimit = m.meta?.kind === 'turn_limit'
   const by = m.meta?.provider_label ?? m.provider ?? 'unknown'
   // A line the server relayed from a bot-to-bot thread (obj 900859): no model
   // answered it in THIS chat, so say where it came from instead of "Answered by".
@@ -198,6 +238,24 @@ export function AssistantBubble({ m, agent, onOpenBotThread }: { m: ChatMessage;
             </>
           )}
         </p>
+        {(stepLimit || turnLimit) && (
+          <p className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 px-1 text-xs text-fg-2" data-testid="step-limit-note">
+            <span>
+              {turnLimit
+                ? `Stopped at the ${m.meta?.limit === 'time' ? 'time' : 'step'} limit.`
+                : `Stopped at the step limit${m.meta?.steps ? ` (${m.meta.steps} steps)` : ''}. This is a summary of what was done.`}
+            </span>
+            {onContinue && (
+              <button
+                type="button"
+                onClick={onContinue}
+                className="min-h-[32px] rounded-md border border-line bg-surface-0 px-2.5 py-1 text-sm font-medium text-fg-0 transition-colors duration-fast hover:border-line-strong hover:bg-surface-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/50"
+              >
+                Continue
+              </button>
+            )}
+          </p>
+        )}
       </div>
     </div>
   )

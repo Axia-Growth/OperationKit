@@ -239,6 +239,14 @@ export interface ChatMessage {
     bot_job?: number
     /** obj 900949: sent while the bot was working; it has not been delivered to the bot yet. */
     queued?: boolean
+    /** obj 901488: a queued message that was waiting when the person pressed Stop; it runs only once they confirm. */
+    held?: boolean
+    /** obj 901488 (kind 'step_limit'): the turn ran out of steps; this answer is its summary. `steps` = the limit. */
+    steps?: number
+    /** obj 901491 (kind 'turn_limit'): which budget ended the long reply. */
+    limit?: 'steps' | 'time'
+    /** obj 901488 (kind 'continue'): the step-limit answer this Continue press resumes. */
+    continue_from?: number
     /** obj 900977: the id this client gave the message when it sent it; the server stores it and never stores the same id twice in a lane. */
     client_msg_id?: string
     /** obj 901392: the follow-up this row scheduled or cancelled, or (kind 'followup_fired') was started by. */
@@ -311,6 +319,15 @@ export interface ThreadResponse {
   /** obj 900949: set on a POST answered 202 — the message was queued, not run. */
   queued?: boolean
   /**
+   * obj 900977 / 901488: set on a POST for a message the server already had
+   * (same id, or the same text again with nothing in between). Nothing new was
+   * stored or run; `duplicate_state` says where the first one stands.
+   */
+  duplicate?: boolean
+  duplicate_state?: 'queued' | 'running' | 'answered'
+  /** obj 901488: how it was matched. 'text' = the same words as a new send: the page asks before sending again. */
+  duplicate_by?: 'id' | 'text' | 'continue'
+  /**
    * obj 901491: the job of the reply running in this lane (how far it is, the
    * budget it runs under), or null when the lane is idle. Absent on an older server.
    */
@@ -343,6 +360,8 @@ export interface ReplyThreadOpenResponse {
 export interface LaneTurn {
   running: boolean
   queued: number
+  /** obj 901488: how many of the queued messages are held after a Stop, waiting for the person to confirm. Absent on an older server. */
+  held?: number
 }
 
 /** obj 901491: one long reply, as the server records it while it runs. */

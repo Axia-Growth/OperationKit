@@ -8,6 +8,7 @@ import { DevOpsSection } from './DevOpsSection'
 import { RepoRightsSection } from './RepoRightsSection'
 import { WorkspaceAccessSection } from './WorkspaceAccessSection'
 import { FullAccessSection } from './FullAccessSection'
+import { SecretAccessSection } from './SecretAccessSection'
 import { DelegationSection } from './DelegationSection'
 import {
   PROVIDER_LABELS,
@@ -426,6 +427,9 @@ export function BotSettingsPanel({
           version={accessVersion + grantVersion}
           onChanged={summary => onSaved({ ...agent, full_access: summary })}
         />
+
+        {/* obj 901484: which secrets this bot may use, on one screen with one Save. */}
+        <SecretAccessSection agent={agent} isAdmin={isAdmin} version={accessVersion + grantVersion} onSaved={onSaved} />
 
         <DelegationSection agent={agent} isAdmin={isAdmin} />
 

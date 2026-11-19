@@ -194,7 +194,7 @@ describe('a long chat turn finishes as a background job (obj 901491)', () => {
     // It really was long: 36 model calls, more than five minutes on the turn's clock.
     expect(model.bodies).toHaveLength(36)
     expect(clock.elapsedSeconds()).toBeGreaterThanOrEqual(5 * 60)
-    expect(laneTurnState(OWNER, SLUG)).toEqual({ running: false, queued: 0 })
+    expect(laneTurnState(OWNER, SLUG)).toEqual({ running: false, queued: 0, held: 0 })
 
     // The turn-level record: who, which bot, the budget, how far, how it ended.
     const [job] = jobs()
@@ -346,9 +346,15 @@ describe('the budget is per bot and admin-set (obj 901491)', () => {
     const clock = virtualClock()
     const model = workingModel({ toolRounds: 999, secondsPerCall: 5, clock })
     const r = await submit('merge everything', model, clock, 1)
-    // Off = exactly the old behaviour: the caller waits, 8 steps, the old error line, no job record.
+    // Off = the path without a budget: the caller waits, 8 steps, no job record.
+    // Since obj 901488 that path ends with a written step-limit summary (here the
+    // plain list of what ran, as this model never writes one), not the old error line.
     expect(r.background).toBeUndefined()
-    expect(r.messages.at(-1)).toMatchObject({ role: 'error', content: 'Stopped after 8 steps without a final answer. Try a more specific request.' })
+    expect(model.bodies).toHaveLength(9)
+    const end = r.messages.at(-1)!
+    expect(end).toMatchObject({ role: 'assistant', meta: { kind: 'step_limit', steps: 8, summary_by: 'list' } })
+    expect(r.messages.filter(m => m.role === 'tool')).toHaveLength(8)
+    expect(r.messages.some(m => m.role === 'error')).toBe(false)
     expect(jobs()).toEqual([])
   })
 
@@ -390,7 +396,7 @@ describe('the budget is per bot and admin-set (obj 901491)', () => {
     release()
     await whenLaneIdle(OWNER, SLUG)
     const get = await call('GET', `/agents/${SLUG}/messages`)
-    expect(get.json.turn).toEqual({ running: false, queued: 0 })
+    expect(get.json.turn).toEqual({ running: false, queued: 0, held: 0 })
     expect(get.json.turn_job).toBeNull()
     expect(get.json.messages.map((m: { role: string }) => m.role)).toEqual(['user', 'tool', 'tool', 'tool', 'assistant'])
     expect(get.json.messages.at(-1).content).toBe('Done in the background.')

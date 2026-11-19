@@ -9,7 +9,7 @@ import { ThinkingIndicator } from '../design/primitives'
 import { AgentAvatar, UserBubble } from './ChatItems'
 import { collectImages, humanSize, toWireImages, type PendingImage } from './attachments'
 import { fetchMessages, messagesKey, useCached, writeCache } from './chat-cache'
-import { mergeThread, newClientMsgId } from './thread-merge'
+import { SEND_AGAIN_QUESTION, duplicateNote, mergeThread, newClientMsgId, sendMayHaveLanded, shouldAskSendAgain } from './thread-merge'
 import { ACCEPTED_IMAGE_TYPES, type ChatAgentInfo, type ChatMessage, type LaneTurn, type ThreadResponse } from './types'
 
 /* Reply in thread (obj 901373).
@@ -103,7 +103,9 @@ export function ReplyThreadPanel({
 
   const changed = useRef(onChanged)
   changed.current = onChanged
-  const serverBusy = !pending && (!!thread?.turn?.running || queuedRows.length > 0)
+  // obj 901488: messages held after a Stop wait for the person, so they do not keep the poll going.
+  const heldRows = useMemo(() => queuedRows.filter(m => m.meta?.held), [queuedRows])
+  const serverBusy = !pending && (!!thread?.turn?.running || queuedRows.length > heldRows.length)
   useEffect(() => {
     if (!serverBusy) return
     const t = setInterval(() => void load(), THREAD_POLL_MS)
@@ -156,12 +158,48 @@ export function ReplyThreadPanel({
   const sentDraft = useRef<{ text: string; images: PendingImage[] } | null>(null)
   useEffect(() => { sentDraft.current = null }, [text, images, key])
 
-  const send = async (raw: string, attached: PendingImage[] = images) => {
+  const failedSend = useRef<{ text: string; id: string } | null>(null)
+  const [notice, setNotice] = useState<string | null>(null)
+  // obj 901488: the same words were sent again; ask before sending a second time.
+  const [askAgain, setAskAgain] = useState<{ text: string } | null>(null)
+  useEffect(() => {
+    if (!notice) return
+    const t = setTimeout(() => setNotice(null), 6000)
+    return () => clearTimeout(t)
+  }, [notice])
+
+  /** obj 901488: remove ONE queued reply before the bot sees it. */
+  const removeQueued = async (id: number) => {
+    try {
+      const r = await api.del<{ ok: boolean; turn: LaneTurn }>(`${base}/queued/${id}`)
+      writeCache<ThreadResponse>(key, t => (t ? { ...t, turn: r.turn, messages: t.messages.filter(m => m.id !== id) } : t as unknown as ThreadResponse))
+    } catch (e) {
+      setSendError(actionErrorMessage(e, 'Could not remove that reply'))
+      void load()
+    }
+  }
+
+  /** obj 901488: send the replies that were held when the person pressed Stop. */
+  const sendHeld = async () => {
+    try {
+      await api.post(`${base}/queued/release`, { thread_id: threadId })
+      void load()
+    } catch (e) {
+      setSendError(actionErrorMessage(e, 'Could not send the waiting replies'))
+    }
+  }
+
+  const send = async (raw: string, attached: PendingImage[] = images, again = false) => {
     const msg = raw.trim()
     if (!msg && attached.length === 0) return
     if (sentDraft.current && sentDraft.current.text === raw && sentDraft.current.images === attached) return
     sentDraft.current = { text: raw, images: attached }
-    const id = newClientMsgId()
+    // obj 901488: the same text sent again after a failed send is the same send (same id).
+    const retry = failedSend.current
+    const id = retry && retry.text === msg && attached.length === 0 ? retry.id : newClientMsgId()
+    failedSend.current = null
+    setNotice(null)
+    setAskAgain(null)
     // Send never waits on the bot: while it works the server queues the message.
     const queueIt = working
     const outKey = ++outboxSeq.current
@@ -174,10 +212,14 @@ export function ReplyThreadPanel({
     try {
       const r = await api.post<ThreadResponse>(
         `${base}/messages`,
-        { text: msg, client_msg_id: id, thread_id: threadId, ...(attached.length ? { images: toWireImages(attached) } : {}) },
+        { text: msg, client_msg_id: id, thread_id: threadId, ...(again ? { send_again: true } : {}), ...(attached.length ? { images: toWireImages(attached) } : {}) },
         { timeoutMs: 240_000 },
       )
       writeCache<ThreadResponse>(key, t => mergeThread(t ?? null, r))
+      // obj 901488: the server already had it — nothing ran twice. The same words
+      // as a new send: ask before sending again; a retry of the same send: a quiet note.
+      if (shouldAskSendAgain(r)) setAskAgain({ text: msg })
+      setNotice(duplicateNote(r))
       onChanged?.()
     } catch (e) {
       // The UI timeout is not "not sent": the server keeps working and the answer lands here.
@@ -186,10 +228,23 @@ export function ReplyThreadPanel({
         onChanged?.()
         return
       }
+      // obj 901488: a proxy timeout (524) or dropped connection with the
+      // message already stored is a send that went through: keep the box empty.
+      if (sendMayHaveLanded(e)) {
+        try {
+          const t = await api.get<ThreadResponse>(`${base}/messages?thread_id=${threadId}`)
+          if (t.messages.some(m => m.meta?.client_msg_id === id)) {
+            writeCache<ThreadResponse>(key, cur => mergeThread(cur ?? null, t))
+            onChanged?.()
+            return
+          }
+        } catch { /* cannot tell — hand the text back with its id kept */ }
+      }
       setText(cur => (cur.trim() ? cur : msg))
       setImages(cur => (cur.length ? cur : attached))
       setSendError(actionErrorMessage(e, 'Reply not sent'))
       sentDraft.current = null
+      if (attached.length === 0) failedSend.current = { text: msg, id }
     } finally {
       if (queueIt) setOutbox(cur => cur.filter(o => o.key !== outKey))
       else setPending(null)
@@ -201,7 +256,8 @@ export function ReplyThreadPanel({
     setSendError(null)
     try {
       const r = await api.post<{ stopped: boolean; dropped: number; turn: LaneTurn }>(`${base}/stop`, { thread_id: threadId })
-      writeCache<ThreadResponse>(key, t => (t ? { ...t, turn: r.turn } : t as unknown as ThreadResponse))
+      // obj 901488: after a Stop the queued replies are kept but held for the person.
+      writeCache<ThreadResponse>(key, t => (t ? { ...t, turn: r.turn, messages: r.stopped ? t.messages.map(m => (m.meta?.queued ? { ...m, meta: { ...m.meta, held: true } } : m)) : t.messages } : t as unknown as ThreadResponse))
       if (!pending) void load()
     } catch (e) {
       setSendError(actionErrorMessage(e, 'Could not stop the reply'))
@@ -257,7 +313,19 @@ export function ReplyThreadPanel({
               <ThinkingIndicator label={`${agent.name} is working…`} tone="fg-2" />
             </div>
           )}
-          {queuedRows.map(m => <UserBubble key={m.id} m={m} queued />)}
+          {queuedRows.map(m => <UserBubble key={m.id} m={m} queued held={!!m.meta?.held} onRemove={() => void removeQueued(m.id)} />)}
+          {heldRows.length > 0 && (
+            <p className="flex flex-wrap items-center justify-end gap-x-2 gap-y-1 self-end text-right text-xs text-fg-2" data-testid="held-note">
+              <span>You stopped the reply, so {heldRows.length === 1 ? 'this was' : 'these were'} not sent.</span>
+              <button
+                type="button"
+                onClick={() => void sendHeld()}
+                className="min-h-[32px] rounded-md border border-line bg-surface-0 px-2.5 py-1 text-sm font-medium text-fg-0 transition-colors duration-fast hover:border-line-strong hover:bg-surface-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/50"
+              >
+                {heldRows.length === 1 ? 'Send it now' : 'Send them now'}
+              </button>
+            </p>
+          )}
           {outboxBubbles.map(o => <UserBubble key={`out-${o.key}`} sending m={{ content: o.text, created_at: '', images: toBubbleImages(o.images) }} />)}
         </div>
       </div>
@@ -271,6 +339,14 @@ export function ReplyThreadPanel({
         {...dropProps}
       >
         {sendError && <p role="alert" className="mb-2 text-sm text-danger">{sendError}</p>}
+        {notice && <p role="status" data-testid="duplicate-note" className="mb-2 text-xs text-fg-2">{notice}</p>}
+        {askAgain && (
+          <div role="group" aria-label="Send again?" data-testid="send-again-prompt" className="mb-2 flex flex-wrap items-center gap-2 rounded-md border border-line bg-surface-2 px-3 py-2 text-sm text-fg-1">
+            <span className="mr-auto">{SEND_AGAIN_QUESTION}</span>
+            <Button type="button" size="sm" variant="ghost" onClick={() => setAskAgain(null)}>No</Button>
+            <Button type="button" size="sm" variant="primary" onClick={() => { const t = askAgain.text; setAskAgain(null); sentDraft.current = null; void send(t, [], true) }}>Send again</Button>
+          </div>
+        )}
         {isDragging && <p className="mb-2 text-sm text-accent">Drop the image to attach it</p>}
         {images.length > 0 && (
           <ul aria-label="Images attached to this reply" className="mb-2 flex flex-wrap gap-2">

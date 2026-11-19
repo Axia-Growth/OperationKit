@@ -13,6 +13,9 @@ import {
   listAgents,
   listMessages,
   drainLaneQueue,
+  ChatContinueError,
+  releaseHeldMessages,
+  removeQueuedMessage,
   getMessage,
   laneTurnState,
   laneTurnJob,
@@ -28,6 +31,7 @@ import { effectiveTools, visibleCardStatuses } from '../services/agent-chat/tool
 import { TOOL_CATALOG } from '../services/agent-chat/tool-names.js'
 import { webSearchStatus } from '../services/agent-chat/web-tools.js'
 import { BotConfigError, clearBotConfig, hasAllTools, setBotConfig } from '../services/agent-chat/bot-config.js'
+import { BotSecretAccessError, saveBotSecretAccess, secretAccessPanel, testBotSecretAccess } from '../services/agent-chat/bot-secret-access.js'
 import { listEnabledModels } from '../services/model-registry.js'
 import { aboutForAgents, ensureAboutFresh, getStoredAbout, queueAboutRefresh, resolveAbout, type BotAbout } from '../services/agent-chat/bot-about.js'
 import { redactForStorage } from '../services/secret-redaction.js'
@@ -125,6 +129,9 @@ import { listDevOpsAudit, writeDevOpsAudit } from '../services/dev-ops/audit.js'
  *   POST   /agents/:slug/high-agency/wake  admin: one wake now (works while off, to try it)
  *   GET    /agents/:slug/card-wakes    needs_agent card wakes: on/off (default on) + recent wakes (obj 901328)
  *   PUT    /agents/:slug/card-wakes    admin: {enabled} — turn this bot's card wakes off / back on
+ *   GET    /agents/:slug/secret-access       admin: this bot's secret grants in one workspace + suggested hosts (obj 901484)
+ *   PUT    /agents/:slug/secret-access       admin, browser only: {workspace, grants:[{name, hosts, methods?}], all_secrets?:{enabled, mode}, hosts?:[{name, hosts}]} — the whole panel in one save
+ *   POST   /agents/:slug/secret-access/test  admin: per secret, usable yes/no and why; calls no vendor
  *   GET    /agents/:slug/workspaces    the bot's workspace access list (obj 900797)
  *   PUT    /agents/:slug/workspaces    admin: set the whole list (restricts the bot)
  *   POST   /agents/:slug/workspaces    admin: grant one workspace
@@ -566,6 +573,83 @@ router.put('/agents/:slug/card-wakes', (req: AuthRequest, res) => {
   res.json(cardWakesPayload(req, a.slug))
 })
 
+// ── Secret access (obj 901484): one screen to give THIS bot named secrets ──
+//
+// Admin only, all three: the list holds every secret NAME in the workspace.
+// Saving is the signed-in browser only (never an API key, agent key or bearer
+// token), the same gate as the bot's model and tools. No value is ever read
+// into a response, and Test access calls no vendor.
+
+function secretAccessError(res: Response, err: unknown): void {
+  if (err instanceof BotSecretAccessError) {
+    res.status(err.status).json({ error: err.message })
+    return
+  }
+  if (err instanceof BotConfigError) {
+    res.status(err.status).json({ error: err.message })
+    return
+  }
+  throw err
+}
+
+router.get('/agents/:slug/secret-access', (req: AuthRequest, res) => {
+  if (req.user?.role !== 'admin') {
+    res.status(403).json({ error: 'Only an admin can see which secrets a bot may use.' })
+    return
+  }
+  const a = agentOr404(req, res)
+  if (!a) return
+  res.setHeader('Cache-Control', 'private, no-store')
+  try {
+    res.json({ secret_access: secretAccessPanel(a, req.query.workspace) })
+  } catch (err) {
+    secretAccessError(res, err)
+  }
+})
+
+router.put('/agents/:slug/secret-access', (req: AuthRequest, res) => {
+  if (!adminSessionOr403(req, res)) return
+  if (!req.cookies?.token || req.headers.authorization) {
+    res.status(403).json({ error: 'Secret access is changed from the signed-in web app, not with an API key.' })
+    return
+  }
+  const a = agentOr404(req, res)
+  if (!a) return
+  const body = (req.body ?? {}) as { workspace?: unknown; grants?: unknown; all_secrets?: unknown; hosts?: unknown }
+  try {
+    const saved = saveBotSecretAccess(a, body.workspace, body.grants, { id: req.user!.id, username: req.user!.username }, { all_secrets: body.all_secrets, hosts: body.hosts })
+    const updated = findAgent(a.slug)!
+    if (saved.tool_switched_on) syncWakeAfterBotChange(updated)
+    try {
+      logActivity({
+        project: 'operationkit',
+        event_type: 'decision',
+        title: `${a.name}: secret access in ${String(body.workspace)} changed by ${req.user!.username}`,
+        metadata: { kind: 'bot_secret_access_changed', slug: a.slug, workspace: body.workspace, ...saved },
+      })
+    } catch { /* the feed never decides the change */ }
+    res.setHeader('Cache-Control', 'private, no-store')
+    res.json({ saved, secret_access: secretAccessPanel(updated, body.workspace), agent: agentResponse(updated, saved.tool_switched_on ? { force: true, reason: 'bot settings changed' } : {}) })
+  } catch (err) {
+    secretAccessError(res, err)
+  }
+})
+
+router.post('/agents/:slug/secret-access/test', (req: AuthRequest, res) => {
+  if (req.user?.role !== 'admin') {
+    res.status(403).json({ error: 'Only an admin can test which secrets a bot may use.' })
+    return
+  }
+  const a = agentOr404(req, res)
+  if (!a) return
+  res.setHeader('Cache-Control', 'private, no-store')
+  try {
+    res.json({ test: testBotSecretAccess(a, (req.body as { workspace?: unknown } | undefined)?.workspace ?? req.query.workspace) })
+  } catch (err) {
+    secretAccessError(res, err)
+  }
+})
+
 // ── Long replies (obj 901491): the per-bot budget of a chat turn that runs as a background job ──
 
 function turnLimitsPayload(req: AuthRequest, slug: string) {
@@ -930,7 +1014,44 @@ router.post('/agents/:slug/stop', (req: AuthRequest, res) => {
   const lane = laneOr404(req, res, a.slug, req.body?.thread_id)
   if (!lane) return
   const r = stopTurn(req.user!.id, a.slug, lane, { dropQueued: req.body?.drop_queued === true })
-  res.json({ stopped: r.stopped, dropped: r.dropped, turn: { running: r.running, queued: r.queued } })
+  res.json({ stopped: r.stopped, dropped: r.dropped, turn: { running: r.running, queued: r.queued, held: r.held } })
+})
+
+/**
+ * obj 901488: the person confirmed the messages that were held when they
+ * pressed Stop. They are delivered now, in the order they were sent.
+ */
+router.post('/agents/:slug/queued/release', (req: AuthRequest, res) => {
+  if (req.authVia === 'agent_api_key') {
+    res.status(403).json({ error: 'Use the MCP tools to work with agents from another AI client' })
+    return
+  }
+  const a = agentOr404(req, res)
+  if (!a) return
+  const lane = laneOr404(req, res, a.slug, req.body?.thread_id)
+  if (!lane) return
+  const released = releaseHeldMessages(req.user!.id, a.slug, lane)
+  drainLaneQueue({ userId: req.user!.id, username: req.user!.username, agent: a, lane })
+  res.json({ released, turn: laneTurnState(req.user!.id, a.slug, lane) })
+})
+
+/**
+ * obj 901488: remove ONE queued message before the bot sees it. 409 when the
+ * bot already picked it up (or it was never queued): nothing is deleted then.
+ */
+router.delete('/agents/:slug/queued/:id', (req: AuthRequest, res) => {
+  if (req.authVia === 'agent_api_key') {
+    res.status(403).json({ error: 'Chat history is private to the person' })
+    return
+  }
+  const a = agentOr404(req, res)
+  if (!a) return
+  const r = removeQueuedMessage(req.user!.id, a.slug, Number(req.params.id))
+  if (!r.removed || !r.lane) {
+    res.status(409).json({ error: 'That message is no longer waiting. The bot already picked it up.', code: 'not_queued' })
+    return
+  }
+  res.json({ ok: true, removed: Number(req.params.id), turn: laneTurnState(req.user!.id, a.slug, r.lane) })
 })
 
 // ── side threads / concurrent task lanes (obj 900370) ──
@@ -1010,9 +1131,16 @@ router.post('/agents/:slug/messages', async (req: AuthRequest, res) => {
     res.status(400).json({ error: err instanceof ImageRejected ? err.message : 'That attachment could not be read.' })
     return
   }
+  // obj 901488: Continue on a step-limit answer. The server writes the text.
+  const rawContinue = req.body?.continue_from
+  if (rawContinue !== undefined && rawContinue !== null && !(Number.isInteger(rawContinue) && rawContinue > 0)) {
+    res.status(400).json({ error: 'continue_from must be a message id' })
+    return
+  }
+  const continueFrom = typeof rawContinue === 'number' ? rawContinue : undefined
   // A pasted screenshot on its own is a perfectly good message, so text is only
   // required when nothing is attached.
-  if (!text && images.length === 0) {
+  if (!continueFrom && !text && images.length === 0) {
     res.status(400).json({ error: 'text is required' })
     return
   }
@@ -1047,7 +1175,7 @@ router.post('/agents/:slug/messages', async (req: AuthRequest, res) => {
     // obj 901393: the server's own stamp of "the owner typed this in the browser",
     // from how THIS request authenticated — never from the body.
     const ownerBrowser = isOwnerBrowserSession(req)
-    const r = await submitMessage({ userId: req.user!.id, username: req.user!.username, agent: a, text, images, lane, clientMsgId, ownerBrowser, responseGone: () => disconnectedAt !== null, browserSession: signedInBrowser(req) })
+    const r = await submitMessage({ userId: req.user!.id, username: req.user!.username, agent: a, text, images, lane, clientMsgId, continueFrom, sendAgain: req.body?.send_again === true, ownerBrowser, responseGone: () => disconnectedAt !== null, browserSession: signedInBrowser(req) })
     if (disconnectedAt !== null) {
       console.log(`[agent-chat] disconnect: turn finished ${Date.now() - disconnectedAt}ms after the response closed (${where}); ${r.messages.length} row(s) stored for the person to see on return`)
       return
@@ -1060,10 +1188,12 @@ router.post('/agents/:slug/messages', async (req: AuthRequest, res) => {
       ...attachments(req.user!.id, a.slug, r.messages),
       queued: r.queued,
       ...(r.background ? { background: true } : {}),
-      // obj 900977: true when this client_msg_id was already stored — nothing new was added or run.
-      ...(r.duplicate ? { duplicate: true } : {}),
+      // obj 900977 / 901488: true when this message was already accepted (same
+      // id, same Continue press, or the same text again with nothing between) —
+      // nothing new was added or run. `duplicate_state` says where it stands.
+      ...(r.duplicate ? { duplicate: true, duplicate_state: r.duplicateState, duplicate_by: r.duplicateBy } : {}),
       turn: laneTurnState(req.user!.id, a.slug, lane),
-    turn_job: laneTurnJob(req.user!.id, a.slug, lane),
+      turn_job: laneTurnJob(req.user!.id, a.slug, lane),
       reply_threads: replyThreadsForLane(req.user!.id, a.slug, lane),
     })
   } catch (err) {
@@ -1073,6 +1203,10 @@ router.post('/agents/:slug/messages', async (req: AuthRequest, res) => {
     }
     if (err instanceof ChatBusyError) {
       res.status(409).json({ error: err.message })
+      return
+    }
+    if (err instanceof ChatContinueError) {
+      res.status(err.status).json({ error: err.message, code: 'nothing_to_continue' })
       return
     }
     if (err instanceof ChatUnavailableError) {

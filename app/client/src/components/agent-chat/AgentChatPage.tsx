@@ -14,7 +14,7 @@ import { ThinkingIndicator } from '../design/primitives'
 import { Tabs } from '../ui/Tabs'
 import { AgentAvatar, AssistantBubble, BotThreadLink, CardChip, DraftCard, ErrorLine, FollowupLine, ToolLine, UserBubble, time } from './ChatItems'
 import { ReplyThreadPanel } from './ReplyThreadPanel'
-import { mergeThread, newClientMsgId } from './thread-merge'
+import { SEND_AGAIN_QUESTION, duplicateNote, mergeThread, newClientMsgId, sendMayHaveLanded, shouldAskSendAgain } from './thread-merge'
 import { FullAccessBadge } from './FullAccessBadge'
 import { BotMessagesPanel } from './BotMessagesPanel'
 import { AgentInfoPanel } from './AgentInfoPanel'
@@ -287,6 +287,19 @@ function Conversation({
   const outboxSeq = useRef(0)
   const [stopping, setStopping] = useState(false)
   const [sendError, setSendError] = useState<string | null>(null)
+  // obj 901488: a small quiet line ("Already sent, still working") for a retry of the SAME send. Gone after a few seconds.
+  const [notice, setNotice] = useState<string | null>(null)
+  useEffect(() => {
+    if (!notice) return
+    const t = setTimeout(() => setNotice(null), 6000)
+    return () => clearTimeout(t)
+  }, [notice])
+  // obj 901488: the same words were sent again and the server already had them.
+  // Nothing ran; the person is asked before it is sent a second time.
+  const [askAgain, setAskAgain] = useState<{ key: string; text: string } | null>(null)
+  // obj 901488: a send that failed for real keeps its id, so sending the
+  // restored text again is the SAME send to the server, not a second message.
+  const failedSend = useRef<{ key: string; text: string; id: string } | null>(null)
   // null = the main conversation; a number = that side thread (obj 900370).
   const [lane, setLane] = useState<number | null>(null)
   const [laneBusy, setLaneBusy] = useState(false)
@@ -375,10 +388,26 @@ function Conversation({
   }, [thread?.messages])
   const pendingBubble = pending && !storedIds.has(pending.id) ? pending : null
   const outboxBubbles = useMemo(() => outbox.filter(o => !storedIds.has(o.id)), [outbox, storedIds])
-  const queuedCount = queuedRows.length + outboxBubbles.length
+  // obj 901488: queued messages the person stopped in front of. They wait for
+  // the person (Send now / Remove), not for the bot.
+  const heldRows = useMemo(() => queuedRows.filter(m => m.meta?.held), [queuedRows])
+  const readyRows = queuedRows.length - heldRows.length
+  const queuedCount = readyRows + outboxBubbles.length
+  // obj 901488: Continue shows on the newest step-limit answer (or a long
+  // reply's step / time limit report, kind 'turn_limit'), and only while
+  // nothing was sent after it and the bot is not working.
+  const continuableId = useMemo(() => {
+    const all = thread?.messages ?? []
+    for (let i = all.length - 1; i >= 0; i--) {
+      if (all[i].role === 'user') return null
+      if (all[i].role === 'assistant' && (all[i].meta?.kind === 'step_limit' || all[i].meta?.kind === 'turn_limit')) return all[i].id
+    }
+    return null
+  }, [thread?.messages])
   // While the server works through this lane with no request of ours open,
-  // re-read it so replies and picked-up queued messages appear.
-  const serverBusy = !pending && (!!thread?.turn?.running || queuedRows.length > 0)
+  // re-read it so replies and picked-up queued messages appear. Held messages
+  // are not on their way anywhere, so they do not keep the poll going.
+  const serverBusy = !pending && (!!thread?.turn?.running || readyRows > 0)
   useEffect(() => {
     if (!serverBusy) return
     const t = setInterval(() => void load(), TURN_POLL_MS)
@@ -389,6 +418,7 @@ function Conversation({
     setText('')
     setImages([])
     setSendError(null)
+    setNotice(null)
   }, [msgKey])
 
   useEffect(() => {
@@ -579,33 +609,59 @@ function Conversation({
   const sentDraft = useRef<{ text: string; images: PendingImage[] } | null>(null)
   useEffect(() => { sentDraft.current = null }, [text, images, msgKey])
 
-  const send = async (raw: string, attached: PendingImage[] = images) => {
+  /**
+   * `continueFrom` (obj 901488): the person pressed Continue on that step-limit
+   * answer. The server writes the message text; `raw` is only what the local
+   * bubble shows until the stored row arrives.
+   */
+  const send = async (raw: string, attached: PendingImage[] = images, continueFrom?: number, again = false) => {
     const msg = raw.trim()
     // A screenshot on its own is a message: send when there is text OR an image.
     if (!msg && attached.length === 0) return
-    if (sentDraft.current && sentDraft.current.text === raw && sentDraft.current.images === attached) return
-    sentDraft.current = { text: raw, images: attached }
+    if (!continueFrom) {
+      if (sentDraft.current && sentDraft.current.text === raw && sentDraft.current.images === attached) return
+      sentDraft.current = { text: raw, images: attached }
+    }
     const key = msgKey
+    const sentLane = lane
     // obj 900977: the id this message is known by on both sides. The server
     // stores it on the row and answers a repeat with that row, not a second one.
-    const id = newClientMsgId()
+    // obj 901488: the same text sent again after a failed send reuses its id.
+    const retry = failedSend.current
+    const id = !continueFrom && retry && retry.key === key && retry.text === msg && attached.length === 0 ? retry.id : newClientMsgId()
+    failedSend.current = null
     // obj 900949: Send never waits on the bot. While a turn runs, the message
     // goes straight to the server, which queues it (202) and delivers it next.
     const queueIt = working
     const outKey = ++outboxSeq.current
     if (queueIt) setOutbox(cur => [...cur, { key: outKey, id, text: msg, images: attached }])
     else setPending({ id, text: msg, images: attached })
-    setText('')
-    setImages([])
+    if (!continueFrom) {
+      setText('')
+      setImages([])
+    }
     setSendError(null)
+    setNotice(null)
+    setAskAgain(null)
     input.current?.focus()
     try {
       const r = await api.post<ThreadResponse>(
         `${base}/messages`,
-        { text: msg, client_msg_id: id, ...(lane === null ? {} : { thread_id: lane }), ...(attached.length ? { images: toWireImages(attached) } : {}) },
+        {
+          ...(continueFrom ? { continue_from: continueFrom } : { text: msg }),
+          client_msg_id: id,
+          ...(again ? { send_again: true } : {}),
+          ...(sentLane === null ? {} : { thread_id: sentLane }),
+          ...(attached.length ? { images: toWireImages(attached) } : {}),
+        },
         { timeoutMs: 240_000 },
       )
       writeCache<ThreadResponse>(key, t => mergeThread(t ?? null, r))
+      // obj 901488: the server already had this message. Nothing ran twice.
+      // The same words as a NEW send: ask before sending again. A retry of the
+      // same send (same id): say so quietly and keep following the turn.
+      if (shouldAskSendAgain(r)) setAskAgain({ key, text: msg })
+      setNotice(duplicateNote(r))
       // The strip shows per-lane message counts and ordering by last activity.
       void loadThreads()
     } catch (e) {
@@ -617,15 +673,63 @@ function Conversation({
         void loadThreads()
         return
       }
+      // obj 901488: a proxy timeout (524) or a dropped connection is not "not
+      // sent" either when the server has the message. Ask it: if the row with
+      // this id is in the lane, the send went through — the box stays empty and
+      // the turn is followed from the lane, exactly as after a reload.
+      if (sendMayHaveLanded(e)) {
+        try {
+          const t = await fetchMessages(slug, sentLane)
+          if (t.messages.some(m => m.meta?.client_msg_id === id)) {
+            writeCache<ThreadResponse>(key, cur => mergeThread(cur ?? null, t))
+            void loadThreads()
+            return
+          }
+        } catch { /* cannot tell — fall through and hand the text back with its id kept */ }
+      }
+      if (continueFrom) {
+        setSendError(actionErrorMessage(e, 'Could not continue'))
+        void load()
+        return
+      }
       // Nothing typed is lost: put it back unless the person is already typing the next one.
       setText(cur => (cur.trim() ? cur : msg))
       setImages(cur => (cur.length ? cur : attached))
       setSendError(actionErrorMessage(e, 'Message not sent'))
-      // Sending the restored draft again is a deliberate retry, not a double submit.
+      // Sending the restored draft again is a deliberate retry, not a double
+      // submit — and it is the same send, so it keeps its id (obj 901488).
       sentDraft.current = null
+      if (attached.length === 0) failedSend.current = { key, text: msg, id }
     } finally {
       if (queueIt) setOutbox(cur => cur.filter(o => o.key !== outKey))
       else setPending(null)
+    }
+  }
+
+  /** obj 901488: remove ONE queued message before the bot sees it. */
+  const removeQueued = async (id: number) => {
+    const key = msgKey
+    setSendError(null)
+    try {
+      const r = await api.del<{ ok: boolean; turn: LaneTurn }>(`${base}/queued/${id}`)
+      updateThread(key, t => ({ ...t, turn: r.turn, messages: t.messages.filter(m => m.id !== id) }))
+    } catch (e) {
+      // The bot picked it up in the meantime: show the lane as it now is.
+      setSendError(actionErrorMessage(e, 'Could not remove that message'))
+      void load()
+    }
+  }
+
+  /** obj 901488: the person confirms the messages that were held when they pressed Stop. */
+  const sendHeld = async () => {
+    const key = msgKey
+    setSendError(null)
+    try {
+      const r = await api.post<{ released: number; turn: LaneTurn }>(`${base}/queued/release`, lane === null ? {} : { thread_id: lane })
+      updateThread(key, t => ({ ...t, turn: r.turn, messages: t.messages.map(m => (m.meta?.held ? { ...m, meta: { ...m.meta, held: false } } : m)) }))
+      void load()
+    } catch (e) {
+      setSendError(actionErrorMessage(e, 'Could not send the waiting messages'))
     }
   }
 
@@ -646,7 +750,8 @@ function Conversation({
       updateThread(key, t => ({
         ...t,
         turn: r.turn,
-        messages: dropQueued ? t.messages.filter(m => !m.meta?.queued) : t.messages,
+        // obj 901488: after a Stop the queued messages are kept but held for the person.
+        messages: dropQueued ? t.messages.filter(m => !m.meta?.queued) : r.stopped ? t.messages.map(m => (m.meta?.queued ? { ...m, meta: { ...m.meta, held: true } } : m)) : t.messages,
       }))
       if (!pending) void load()
     } catch (e) {
@@ -751,6 +856,7 @@ function Conversation({
         onDiscard={d => draftAction(`/agent-chat/drafts/${d.id}/discard`, undefined, 'post', key)}
         onSave={(d, patch) => draftAction(`/agent-chat/drafts/${d.id}`, patch, 'put', key)}
         onOpenBotThread={openBotThread}
+        onContinue={own && !working && m.id === continuableId ? () => void send('Continue from where you stopped.', [], m.id) : undefined}
       />
     )
   }
@@ -1036,7 +1142,7 @@ function Conversation({
           )}
           {/* obj 900949: messages sent while the bot works wait here, in the
               order they were sent, until the bot picks them up. */}
-          {queuedRows.map(m => <UserBubble key={m.id} m={m} queued />)}
+          {queuedRows.map(m => <UserBubble key={m.id} m={m} queued held={!!m.meta?.held} onRemove={() => void removeQueued(m.id)} />)}
           {outboxBubbles.map(o => (
             <UserBubble
               key={`out-${o.key}`}
@@ -1049,6 +1155,21 @@ function Conversation({
               {working
                 ? `${agent.name} is mid-task. ${queuedCount === 1 ? 'Your message goes' : `Your ${queuedCount} messages go`} to it next, in order.`
                 : `Sending ${queuedCount === 1 ? 'your queued message' : `your ${queuedCount} queued messages`}…`}
+            </p>
+          )}
+          {/* obj 901488: after a Stop, queued messages wait for the person. */}
+          {heldRows.length > 0 && (
+            <p className="flex flex-wrap items-center justify-end gap-x-2 gap-y-1 self-end text-right text-xs text-fg-2" data-testid="held-note">
+              <span>
+                You stopped the reply, so {heldRows.length === 1 ? 'this message was' : `these ${heldRows.length} messages were`} not sent to {agent.name}.
+              </span>
+              <button
+                type="button"
+                onClick={() => void sendHeld()}
+                className="min-h-[32px] rounded-md border border-line bg-surface-0 px-2.5 py-1 text-sm font-medium text-fg-0 transition-colors duration-fast hover:border-line-strong hover:bg-surface-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/50"
+              >
+                {heldRows.length === 1 ? 'Send it now' : 'Send them now'}
+              </button>
             </p>
           )}
         </div>
@@ -1065,6 +1186,14 @@ function Conversation({
       >
         <div className="mx-auto max-w-[760px]">
           {sendError && <p role="alert" className="mb-2 text-sm text-danger">{sendError}</p>}
+          {notice && <p role="status" data-testid="duplicate-note" className="mb-2 text-xs text-fg-2">{notice}</p>}
+          {askAgain && askAgain.key === msgKey && (
+            <div role="group" aria-label="Send again?" data-testid="send-again-prompt" className="mb-2 flex flex-wrap items-center gap-2 rounded-md border border-line bg-surface-2 px-3 py-2 text-sm text-fg-1">
+              <span className="mr-auto">{SEND_AGAIN_QUESTION}</span>
+              <Button type="button" size="sm" variant="ghost" onClick={() => setAskAgain(null)}>No</Button>
+              <Button type="button" size="sm" variant="primary" onClick={() => { const t = askAgain.text; setAskAgain(null); sentDraft.current = null; void send(t, [], undefined, true) }}>Send again</Button>
+            </div>
+          )}
           {isDragging && <p className="mb-2 text-sm text-accent">Drop the image to attach it</p>}
           {images.length > 0 && (
             // Phone (obj 901376): one row of small thumbnails that scrolls sideways,
@@ -1126,7 +1255,7 @@ function Conversation({
                 onMouseDown={keepKeyboard}
                 onClick={() => void stop()}
                 loading={stopping}
-                aria-label={queuedCount > 0 ? `Stop ${agent.name}'s reply (your queued messages are kept)` : `Stop ${agent.name}'s reply`}
+                aria-label={queuedCount > 0 ? `Stop ${agent.name}'s reply (your queued messages are kept and wait for you)` : `Stop ${agent.name}'s reply`}
                 leftIcon={<Square aria-hidden="true" className="h-3.5 w-3.5 fill-current" />}
                 className="min-h-[44px] sm:min-h-[44px]"
               >
@@ -1139,7 +1268,7 @@ function Conversation({
           </div>
           {working && queuedCount > 0 && queuedRows.length > 0 && (
             <p className="mt-1.5 text-xs text-fg-2">
-              Stop keeps your queued {queuedRows.length === 1 ? 'message' : 'messages'}.{' '}
+              Stop keeps your queued {queuedRows.length === 1 ? 'message' : 'messages'}; {queuedRows.length === 1 ? 'it waits' : 'they wait'} for you to send {queuedRows.length === 1 ? 'it' : 'them'}.{' '}
               <button
                 type="button"
                 onClick={() => void discardQueued(queuedRows.length)}
@@ -1331,6 +1460,7 @@ function MessageRow({
   onDiscard,
   onSave,
   onOpenBotThread,
+  onContinue,
 }: {
   m: ChatMessage
   agent: ChatAgentInfo
@@ -1342,9 +1472,10 @@ function MessageRow({
   onDiscard: (d: ChatDraft) => Promise<void>
   onSave: (d: ChatDraft, patch: Record<string, string>) => Promise<void>
   onOpenBotThread?: (id: number) => void
+  onContinue?: () => void
 }) {
   if (m.role === 'user') return <UserBubble m={m} />
-  if (m.role === 'assistant') return <AssistantBubble m={m} agent={agent} onOpenBotThread={onOpenBotThread} />
+  if (m.role === 'assistant') return <AssistantBubble m={m} agent={agent} onOpenBotThread={onOpenBotThread} onContinue={onContinue} />
   if (m.role === 'error') return <ErrorLine m={m} />
   const botThread = m.meta?.ok !== false ? m.meta?.bot_conversation_id : undefined
   // obj 901392: a scheduled follow-up renders as its own live line (when it fires, the note, Cancel).

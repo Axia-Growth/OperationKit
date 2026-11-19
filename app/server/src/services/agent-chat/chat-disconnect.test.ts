@@ -233,7 +233,7 @@ describe('a dropped request is not Stop (obj 901329)', () => {
     await whenLaneIdle(OWNER, SLUG)
     const g = await call('GET', `/agents/${SLUG}/messages`)
     expect(g.status).toBe(200)
-    expect(g.json.turn).toEqual({ running: false, queued: 0 })
+    expect(g.json.turn).toEqual({ running: false, queued: 0, held: 0 })
     expect(g.json.messages.map((m: { role: string }) => m.role)).toEqual(['user', 'assistant'])
   })
 
@@ -320,7 +320,7 @@ describe('a dropped request is not Stop (obj 901329)', () => {
     const q1 = await call('POST', `/agents/${SLUG}/messages`, { text: 'two' })
     const q2 = await call('POST', `/agents/${SLUG}/messages`, { text: 'three' })
     expect([q1.status, q2.status]).toEqual([202, 202])
-    expect(q2.json.turn).toEqual({ running: true, queued: 2 })
+    expect(q2.json.turn).toEqual({ running: true, queued: 2, held: 0 })
     p.release()
     expect((await first).status).toBe(200)
     await p.arrived(2)
