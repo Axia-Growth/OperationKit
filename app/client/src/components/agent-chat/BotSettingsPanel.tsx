@@ -53,6 +53,7 @@ const SECTION_LINKS: Array<{ label: string; idPrefix: string }> = [
 
 const GROUP_LABELS: Record<ToolGroup, string> = {
   web: 'Web',
+  app: 'This app',
   knowledge: 'Knowledge',
   board: 'Board',
   images: 'Images',
@@ -63,7 +64,7 @@ const GROUP_LABELS: Record<ToolGroup, string> = {
   sandbox: 'Card sandbox and browser',
 }
 
-const GROUP_ORDER: ToolGroup[] = ['web', 'knowledge', 'board', 'images', 'bots', 'connectors', 'integrations', 'secrets', 'sandbox']
+const GROUP_ORDER: ToolGroup[] = ['web', 'app', 'knowledge', 'board', 'images', 'bots', 'connectors', 'integrations', 'secrets', 'sandbox']
 
 const PROVIDERS: ProviderId[] = ['claude', 'anthropic', 'openai', 'xai', 'openai-compatible', 'demo']
 
