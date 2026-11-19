@@ -32,6 +32,12 @@ export interface TriageBatchRequest {
   owner_bot?: string | null
   /** Optional free-text reason, kept on the batch audit row. */
   note?: string
+  /**
+   * Dry run: run every check and answer with exactly what WOULD happen to each
+   * card. Nothing is written — no batch row, no card change, no audit row.
+   * The answer is a TriageBatchPreview, not a TriageBatchResponse.
+   */
+  dry_run?: boolean
 }
 
 export type TriageItemResult = 'ok' | 'skipped' | 'failed'
@@ -54,6 +60,33 @@ export interface TriageBatchResponse {
   skipped: number
   failed: number
   items: TriageItemOutcome[]
+}
+
+/** One card in a dry run: what the real action would do to it right now. */
+export interface TriagePreviewItem {
+  objective_id: number
+  title: string | null
+  result: 'would_change' | 'skipped' | 'failed'
+  from_status: string | null
+  /** Where the card would end up (same as from_status for a reassign). */
+  to_status: string | null
+  /** would_change: the change in plain words. */
+  change?: string
+  /** skipped / failed: why, in plain words (the same text the real run records). */
+  error?: string
+}
+
+/** POST /api/board-triage/batches with `dry_run: true`. Nothing was changed. */
+export interface TriageBatchPreview {
+  dry_run: true
+  action: TriageAction
+  requested: number
+  would_change: number
+  skipped: number
+  failed: number
+  items: TriagePreviewItem[]
+  /** What the preview cannot promise (the gates that only run on the real move). */
+  note: string
 }
 
 export interface TriageBatchSummary {

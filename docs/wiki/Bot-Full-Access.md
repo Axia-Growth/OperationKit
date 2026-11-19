@@ -141,7 +141,7 @@ Adding a pull request to the list is a code change.
 ## Merge and deploy
 
 Full access never approves a merge, a prod migration or a deploy. Those are
-decided only by `services/delegated-approvals.ts` and `services/bot-approval.ts`,
+decided only by `services/delegated-approvals.ts` and `services/bot-close-eligibility.ts`,
 which read `delegation_grants` ("Approve on my behalf") and nothing else. A
 comment a bot posts with Full access reaches the card as an unverified relay
 and says in its first line that it is not an approval.

@@ -3,7 +3,7 @@ import path from 'path'
 import { slugify } from '../doc-ingest/notes.js'
 import { ANSWERS_DIR, GENERATED_BY, kbPagePath } from './paths.js'
 import { appendLog, compileWiki, fmField, isWikiPageRel, wikilink, yamlArray, yamlValue } from './wiki.js'
-import { noteKbWrite } from '../kb-semantic/service.js'
+import { noteKbChanged } from '../kb-semantic/service.js'
 
 /**
  * Filing an Ask answer back into the wiki (obj 720117) — the step that makes
@@ -100,7 +100,7 @@ export function fileAnswer(kbRoot: string, input: FileAnswerInput): { rel: strin
     filedBy: input.filedBy,
     updated: date,
   }), { flag: 'wx' })
-  noteKbWrite(path.join(kbRoot, rel)) // obj 900816: semantic index
+  noteKbChanged(path.join(kbRoot, rel)) // semantic index + link graph
   compileWiki(kbRoot, { now })
   appendLog(kbRoot, { kind: 'answer', title: `Saved an answer: ${question}`, pages: [rel, ...sources.map(s => s.rel)], when: now })
   return { rel, title: question }

@@ -121,6 +121,22 @@ function card(id: number, status: Objective['status'], extra: Partial<Objective>
   } as unknown as Objective
 }
 
+type Body = { action: string; objective_ids: number[]; dry_run?: boolean }
+/** The dry run the bar asks for before it confirms (obj 901519). `skip` = ids the server would leave alone. */
+function previewOf(body: Body, skip: Record<number, string> = {}) {
+  const items = body.objective_ids.map(id => skip[id]
+    ? { objective_id: id, title: `card ${id}`, result: 'skipped', from_status: 'review', to_status: null, error: skip[id] }
+    : { objective_id: id, title: `card ${id}`, result: 'would_change', from_status: 'review', to_status: body.action === 'approve' ? 'done' : 'cancelled' })
+  const would = items.filter(i => i.result === 'would_change').length
+  return { dry_run: true, action: body.action, requested: items.length, would_change: would, skipped: items.length - would, failed: 0, items, note: 'Nothing was changed.' }
+}
+/** Dry-run posts answer with a preview; the real post answers with `real`. */
+function serveTriage(real: unknown, skip: Record<number, string> = {}) {
+  apiPost.mockImplementation(async (_p: unknown, body: unknown) => ((body as Body).dry_run ? previewOf(body as Body, skip) : real))
+}
+const realPosts = () => apiPost.mock.calls.filter(c => !(c[1] as Body).dry_run)
+const dryPosts = () => apiPost.mock.calls.filter(c => (c[1] as Body).dry_run)
+
 describe('PreviewBoard — Needs You bulk triage (obj 900869)', () => {
   let container: HTMLElement
   let root: Root
@@ -172,7 +188,7 @@ describe('PreviewBoard — Needs You bulk triage (obj 900869)', () => {
   })
 
   it('approve asks for confirmation, then sends ONE audited batch with only the selected ids', async () => {
-    apiPost.mockResolvedValue({
+    serveTriage({
       batch_id: 41, action: 'approve', requested: 2, ok: 2, skipped: 0, failed: 0,
       items: [
         { objective_id: 1, title: 'card 1', result: 'ok', from_status: 'review', to_status: 'done' },
@@ -188,23 +204,27 @@ describe('PreviewBoard — Needs You bulk triage (obj 900869)', () => {
     expect(q('[data-testid="triage-count"]')?.textContent).toBe('2 of 3 selected')
 
     await click(q('[data-testid="triage-approve"]'))
-    // Nothing is sent before the person confirms.
-    expect(apiPost).not.toHaveBeenCalled()
+    // Before the person confirms, only the dry run is sent: it changes nothing.
+    expect(realPosts()).toHaveLength(0)
+    expect(dryPosts()).toHaveLength(1)
+    expect(dryPosts()[0][1]).toEqual({ action: 'approve', objective_ids: [1, 3], dry_run: true })
     const dialog = q('[role="alertdialog"]')
+    expect(dialog?.textContent).toContain('nothing has been changed yet')
     expect(dialog?.textContent).toContain('Approve 2 cards?')
     expect(dialog?.textContent).toContain('#1 card 1')
     expect(dialog?.textContent).toContain('#3 card 3')
 
     await click(buttonByText('Approve 2'))
-    expect(apiPost).toHaveBeenCalledTimes(1)
-    expect(apiPost.mock.calls[0][0]).toBe('/board-triage/batches')
-    expect(apiPost.mock.calls[0][1]).toEqual({ action: 'approve', objective_ids: [1, 3] })
+    expect(realPosts()).toHaveLength(1)
+    expect(realPosts()[0][0]).toBe('/board-triage/batches')
+    expect(realPosts()[0][1]).toEqual({ action: 'approve', objective_ids: [1, 3] })
     const result = q('[data-testid="triage-result"]')
     expect(result?.textContent).toContain('2 approved')
     expect(result?.textContent).toContain('#41')
   })
 
-  it('cancelling the confirmation sends nothing', async () => {
+  it('cancelling the confirmation changes nothing (only the dry run was sent)', async () => {
+    serveTriage(null)
     await mount()
     await click(q('[data-testid="triage-toggle"]'))
     await click(buttonByText('Select all 3'))
@@ -212,11 +232,11 @@ describe('PreviewBoard — Needs You bulk triage (obj 900869)', () => {
     await click(q('[data-testid="triage-dismiss"]'))
     expect(q('[role="alertdialog"]')?.textContent).toContain('Dismiss 3 cards?')
     await click(buttonByText('Cancel'))
-    expect(apiPost).not.toHaveBeenCalled()
+    expect(realPosts()).toHaveLength(0)
   })
 
   it('skipped cards are listed with the reason and stay selected', async () => {
-    apiPost.mockResolvedValue({
+    serveTriage({
       batch_id: 42, action: 'dismiss', requested: 2, ok: 1, skipped: 1, failed: 0,
       items: [
         { objective_id: 2, title: 'card 2', result: 'ok', from_status: 'review', to_status: 'cancelled' },
@@ -229,13 +249,58 @@ describe('PreviewBoard — Needs You bulk triage (obj 900869)', () => {
     await click(boxes().find(b => b.getAttribute('aria-label')?.startsWith('Select #3 '))!)
     await click(q('[data-testid="triage-dismiss"]'))
     await click(buttonByText('Dismiss 2'))
-    expect(apiPost.mock.calls[0][1]).toEqual({ action: 'dismiss', objective_ids: [2, 3] })
+    expect(realPosts()[0][1]).toEqual({ action: 'dismiss', objective_ids: [2, 3] })
     const result = q('[data-testid="triage-result"]')
     expect(result?.textContent).toContain('1 dismissed, 1 skipped')
     expect(result?.textContent).toContain('You do not have access to this objective')
     await click(buttonByText('Close'))
     // card 2 changed and left the selection; card 3 was skipped and stays selected.
     expect(q('[data-testid="triage-count"]')?.textContent).toBe('1 of 3 selected')
+  })
+
+  it('the confirmation shows the server dry run: which cards would change and which would be left alone, and why', async () => {
+    serveTriage(
+      { batch_id: 44, action: 'dismiss', requested: 3, ok: 2, skipped: 1, failed: 0, items: [] },
+      { 2: 'An agent is still running on this card — it is not in Needs You.' },
+    )
+    await mount()
+    await click(q('[data-testid="triage-toggle"]'))
+    await click(buttonByText('Select all 3'))
+    await click(q('[data-testid="triage-dismiss"]'))
+    const dialog = q('[role="alertdialog"]')
+    // The count is what the server would really change, not how many were ticked.
+    expect(dialog?.textContent).toContain('Dismiss 2 cards?')
+    expect(q('[data-testid="triage-preview-will"]')?.textContent).toContain('#1 card 1')
+    expect(q('[data-testid="triage-preview-will"]')?.textContent).not.toContain('#2 card 2')
+    expect(q('[data-testid="triage-preview-wont"]')?.textContent).toContain('#2 card 2: An agent is still running')
+    expect(realPosts()).toHaveLength(0)
+    await click(buttonByText('Dismiss 2'))
+    expect(realPosts()).toHaveLength(1)
+  })
+
+  it('when the dry run says nothing would change, confirming sends no action', async () => {
+    serveTriage(null, { 1: 'Not in Needs You (status done).', 2: 'Not in Needs You (status done).', 3: 'Not in Needs You (status done).' })
+    await mount()
+    await click(q('[data-testid="triage-toggle"]'))
+    await click(buttonByText('Select all 3'))
+    await click(q('[data-testid="triage-approve"]'))
+    expect(q('[role="alertdialog"]')?.textContent).toContain('Nothing to approve')
+    await click(buttonByText('OK'))
+    expect(realPosts()).toHaveLength(0)
+  })
+
+  it('if the dry run cannot be loaded, the plain confirmation still works', async () => {
+    apiPost.mockImplementation(async (_p: unknown, body: unknown) => {
+      if ((body as Body).dry_run) throw new Error('offline')
+      return { batch_id: 45, action: 'approve', requested: 3, ok: 3, skipped: 0, failed: 0, items: [] }
+    })
+    await mount()
+    await click(q('[data-testid="triage-toggle"]'))
+    await click(buttonByText('Select all 3'))
+    await click(q('[data-testid="triage-approve"]'))
+    expect(q('[role="alertdialog"]')?.textContent).toContain('Approve 3 cards?')
+    await click(buttonByText('Approve 3'))
+    expect(realPosts()).toHaveLength(1)
   })
 
   it('reassign hands the selection to a person through the same audited batch route', async () => {

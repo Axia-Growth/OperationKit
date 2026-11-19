@@ -17,17 +17,22 @@
 import type { Objective } from '@operationkit/shared'
 import { jailEnabled } from './session-jail.js'
 import { resolveWriteWorkspace } from './workspaces.js'
+import { captureDir, captureLayout, captureSubdir, decisionsDir, MONTH_PLACEHOLDER, type CaptureLayout } from '../lib/vault-layout.js'
 
 export const CC_API = 'http://localhost:3002'
 
-/** Workspace-relative decisions folder, used by both modes. */
-function decisionsRel(workspace: string | null | undefined): string {
-  return !workspace || workspace === 'personal' ? 'personal/decisions' : `workspaces/${workspace}/decisions`
+/** The vault's decisions folder as a NON-jailed session sees it (unchanged). */
+export function vaultDecisionsPath(workspace: string | null | undefined): string {
+  return `~/second-brain/${decisionsDir(workspace)}/`
 }
 
-/** The vault path a NON-jailed session writes decision docs to (unchanged). */
-export function vaultDecisionsPath(workspace: string | null | undefined): string {
-  return `~/second-brain/${decisionsRel(workspace)}/`
+/**
+ * The vault folder a NON-jailed session writes its decision capture to. Same
+ * as `vaultDecisionsPath` unless `settings.kb_capture_layout` says otherwise
+ * (lib/vault-layout.ts); the month is left as a `YYYY-MM` placeholder.
+ */
+export function vaultCapturePath(workspace: string | null | undefined, layout: CaptureLayout = captureLayout()): string {
+  return `~/second-brain/${captureDir(workspace, MONTH_PLACEHOLDER, layout)}/`
 }
 
 /**
@@ -86,9 +91,13 @@ export function buildKbAccessBlock(
 export function buildVaultCaptureBlock(
   objective: Pick<Objective, 'id' | 'workspace'>,
   jailed: boolean = jailEnabled(),
+  layout: CaptureLayout = captureLayout(),
 ): string[] {
   const ws = objective.workspace
-  const rel = decisionsRel(ws)
+  // `decisions`, or `log/YYYY-MM` — the one folder name this block spells out.
+  const sub = captureSubdir(MONTH_PLACEHOLDER, layout)
+  // Jailed: the folder as a JS expression over the file name (argv[2] starts YYYY-MM-DD).
+  const subExpr = layout === 'log-by-month' ? '"/log/"+process.argv[2].slice(0,7)+"/"' : `"/${sub}/"`
   const head = [
     '',
     '## Vault Capture (MANDATORY before you finish)',
@@ -101,12 +110,12 @@ export function buildVaultCaptureBlock(
     'If nothing in this session qualifies (e.g. routine bug fix, mechanical cleanup, no choices',
     'made), explicitly state in your final response: "No vault capture: <one-line reason>".',
     'Do NOT silently skip — the orchestrator now flags `capture-gap` when decisions are claimed',
-    'in the summary but no `/decisions/*.md` write occurred.',
+    `in the summary but no \`/${sub}/*.md\` write occurred.`,
   ]
   if (!jailed) {
     return [
       ...head,
-      `write a decision doc to ${vaultDecisionsPath(ws)}YYYY-MM-DD-<slug>.md before ending the session.`,
+      `write a decision doc to ${vaultCapturePath(ws, layout)}YYYY-MM-DD-<slug>.md before ending the session.`,
       '',
       'Use the template at ~/ai-workspace/protocols/vault-capture.md (frontmatter + Decision /',
       'Context / Rationale / Alternatives / Implications sections).',
@@ -117,13 +126,13 @@ export function buildVaultCaptureBlock(
     ...head,
     `write a decision doc before ending the session. You are sandboxed, so write it through the`,
     `control plane — there is no \`~/second-brain\` on this filesystem. Ask the API where your`,
-    `workspace's knowledge folder is, then PUT the file into its \`${rel.split('/').pop()}/\` subfolder:`,
+    `workspace's knowledge folder is, then PUT the file into its \`${sub}/\` subfolder:`,
     '',
     '```bash',
     'H="X-CC-Session-Token: $CC_SESSION_TOKEN"',
     `KB=$(curl -s "${CC_API}/api/docs/tree" -H "$H" | node -pe 'JSON.parse(require("fs").readFileSync(0,"utf8")).root')`,
     `curl -s -X PUT "${CC_API}/api/docs/file" -H "$H" -H 'Content-Type: application/json' \\`,
-    `  -d "$(node -e 'const fs=require("fs");process.stdout.write(JSON.stringify({path:process.argv[1]+"/decisions/"+process.argv[2],content:fs.readFileSync(process.argv[3],"utf8"),create_dirs:true}))' "$KB" "$(date -u +%F)-<slug>.md" /workspace/decision.md)"`,
+    `  -d "$(node -e 'const fs=require("fs");process.stdout.write(JSON.stringify({path:process.argv[1]+${subExpr}+process.argv[2],content:fs.readFileSync(process.argv[3],"utf8"),create_dirs:true}))' "$KB" "$(date -u +%F)-<slug>.md" /workspace/decision.md)"`,
     '```',
     '',
     'Write the doc body to `/workspace/decision.md` first (frontmatter + Decision / Context /',

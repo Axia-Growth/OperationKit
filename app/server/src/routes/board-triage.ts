@@ -4,6 +4,8 @@
  *   GET  /owners    — who a card can be handed to: people + registry bots
  *   GET  /batches   — recent bulk actions (the audit trail, newest first)
  *   POST /batches   — run ONE confirmed bulk action over up to TRIAGE_MAX_BATCH cards
+ *                     (`dry_run: true` = list exactly what it would touch and
+ *                     change nothing: no batch row, no card move, no audit row)
  *
  * A HUMAN tool. Only a person signed in to the web app (httpOnly cookie
  * session) may call it — never an agent key, a legacy API key or a Bearer JWT.
@@ -30,10 +32,12 @@ import {
   type Objective,
   type ObjectiveStatus,
   type TriageAction,
+  type TriageBatchPreview,
   type TriageBatchResponse,
   type TriageBatchSummary,
   type TriageItemOutcome,
   type TriageOwnerOptions,
+  type TriagePreviewItem,
 } from '@operationkit/shared'
 import { listBots, resolveBot } from '../services/bots/bot-registry.js'
 import { logObjectiveAudit } from '../services/objective-audit.js'
@@ -124,6 +128,7 @@ interface ParsedBatch {
   assignees?: number[] | undefined
   ownerBot?: string | null | undefined
   note: string | null
+  dryRun: boolean
 }
 
 function parseBatch(body: unknown): ParsedBatch | { error: string } {
@@ -134,7 +139,9 @@ function parseBatch(body: unknown): ParsedBatch | { error: string } {
   if (ids.some(n => !Number.isInteger(n) || n <= 0)) return { error: 'objective_ids must be positive integers' }
   if (ids.length > TRIAGE_MAX_BATCH) return { error: `At most ${TRIAGE_MAX_BATCH} cards per batch — split the selection.` }
   const note = typeof b.note === 'string' && b.note.trim() ? b.note.trim().slice(0, 500) : null
-  if (b.action !== 'reassign') return { action: b.action, ids, note }
+  if (b.dry_run !== undefined && typeof b.dry_run !== 'boolean') return { error: 'dry_run must be true or false' }
+  const dryRun = b.dry_run === true
+  if (b.action !== 'reassign') return { action: b.action, ids, note, dryRun }
 
   let assignees: number[] | undefined
   if (b.assigned_user_ids !== undefined) {
@@ -149,7 +156,83 @@ function parseBatch(body: unknown): ParsedBatch | { error: string } {
   if (assignees === undefined && ownerBot === undefined) {
     return { error: 'reassign needs assigned_user_ids and/or owner_bot (null clears the bot)' }
   }
-  return { action: 'reassign', ids, assignees, ownerBot, note }
+  return { action: 'reassign', ids, assignees, ownerBot, note, dryRun }
+}
+
+/**
+ * The per-card checks that decide whether a card is touched at all. The real
+ * run and the dry run both call this, so a preview can never promise a card
+ * the real action would skip. `null` = the action goes ahead for this card.
+ */
+function precheck(
+  req: AuthRequest,
+  id: number,
+  card: Objective | undefined,
+  action: TriageAction,
+): TriageItemOutcome | null {
+  if (!card || card.deleted_at) {
+    return { objective_id: id, title: null, result: 'failed', from_status: null, to_status: null, error: 'Card not found' }
+  }
+  const denied = requireOwnership(req, card)
+  if (denied) {
+    return { objective_id: id, title: card.title, result: 'skipped', from_status: card.status, to_status: null, error: denied }
+  }
+  // approve / dismiss: only a card that is in Needs You right now.
+  if (action !== 'reassign' && !cardNeedsHuman(card)) {
+    return {
+      objective_id: id, title: card.title, result: 'skipped', from_status: card.status, to_status: null,
+      error: card.status === 'review' ? 'An agent is still running on this card — it is not in Needs You.' : `Not in Needs You (status ${card.status}).`,
+    }
+  }
+  return null
+}
+
+const PREVIEW_NOTE: Record<TriageAction, string> = {
+  approve: 'Nothing was changed. On the real run each card still passes the usual completion checks before it moves to Done; a card that fails one is reported as failed and stays where it is.',
+  dismiss: 'Nothing was changed. On the real run each card moves to Cancelled through the usual status change; a card that changed in the meantime is skipped.',
+  reassign: 'Nothing was changed. On the real run each card gets the new owner and stays in its column.',
+}
+
+/** Dry run: the same checks as the real action, and not one write. */
+function previewBatch(
+  req: AuthRequest,
+  parsed: ParsedBatch,
+  botId: string | null | undefined,
+): TriageBatchPreview {
+  const db = getDb()
+  const items: TriagePreviewItem[] = parsed.ids.map(id => {
+    const card = db.prepare('SELECT * FROM objectives WHERE id = ?').get(id) as Objective | undefined
+    const stop = precheck(req, id, card, parsed.action)
+    if (stop) {
+      return {
+        objective_id: id, title: stop.title, result: stop.result === 'failed' ? 'failed' : 'skipped',
+        from_status: stop.from_status, to_status: null, ...(stop.error ? { error: stop.error } : {}),
+      }
+    }
+    const c = card!
+    if (parsed.action === 'reassign') {
+      const parts: string[] = []
+      if (botId !== undefined) parts.push(`bot: ${c.owner_bot ?? 'none'} → ${botId ?? 'none'}`)
+      if (parsed.assignees !== undefined) parts.push(`person: ${c.assigned_user_id ?? 'none'} → ${parsed.assignees.length ? parsed.assignees.join(', ') : 'none'}`)
+      return { objective_id: id, title: c.title, result: 'would_change', from_status: c.status, to_status: c.status, change: parts.join('; ') }
+    }
+    const target = ACTION_TARGET[parsed.action]
+    return {
+      objective_id: id, title: c.title, result: 'would_change', from_status: c.status, to_status: target,
+      change: `Needs You → ${target === 'done' ? 'Done' : 'Cancelled'}`,
+    }
+  })
+  const count = (r: TriagePreviewItem['result']) => items.filter(i => i.result === r).length
+  return {
+    dry_run: true,
+    action: parsed.action,
+    requested: parsed.ids.length,
+    would_change: count('would_change'),
+    skipped: count('skipped'),
+    failed: count('failed'),
+    items,
+    note: PREVIEW_NOTE[parsed.action],
+  }
 }
 
 router.post('/batches', async (req: AuthRequest, res) => {
@@ -180,6 +263,12 @@ router.post('/batches', async (req: AuthRequest, res) => {
     }
   }
 
+  // Dry run: answer before the first write (the batch row below is one).
+  if (parsed.dryRun) {
+    res.json(previewBatch(req, parsed, botId))
+    return
+  }
+
   const params: Record<string, unknown> = {}
   if (parsed.assignees !== undefined) params.assigned_user_ids = parsed.assignees
   if (botId !== undefined) params.owner_bot = botId
@@ -198,15 +287,9 @@ router.post('/batches', async (req: AuthRequest, res) => {
       items.push(o)
       insertItem.run(batchId, id, card?.title ?? null, card?.workspace ?? null, o.result, o.from_status, o.to_status, o.error ?? null)
     }
-    if (!card || card.deleted_at) {
-      record({ objective_id: id, title: null, result: 'failed', from_status: null, to_status: null, error: 'Card not found' })
-      continue
-    }
-    const denied = requireOwnership(req, card)
-    if (denied) {
-      record({ objective_id: id, title: card.title, result: 'skipped', from_status: card.status, to_status: null, error: denied })
-      continue
-    }
+    const stop = precheck(req, id, card, parsed.action)
+    if (stop) { record(stop); continue }
+    if (!card) continue // unreachable: precheck fails a missing card
 
     if (parsed.action === 'reassign') {
       try {
@@ -239,14 +322,6 @@ router.post('/batches', async (req: AuthRequest, res) => {
       continue
     }
 
-    // approve / dismiss: only a card that is in Needs You right now.
-    if (!cardNeedsHuman(card)) {
-      record({
-        objective_id: id, title: card.title, result: 'skipped', from_status: card.status, to_status: null,
-        error: card.status === 'review' ? 'An agent is still running on this card — it is not in Needs You.' : `Not in Needs You (status ${card.status}).`,
-      })
-      continue
-    }
     const target = ACTION_TARGET[parsed.action]
     try {
       const r = await runStatusChange(req, id, target, { actor: `user:${user.username}`, pathway, humanTerminal: true })

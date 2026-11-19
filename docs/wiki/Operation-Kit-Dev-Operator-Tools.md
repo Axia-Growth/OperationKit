@@ -108,6 +108,16 @@ code `conflict_skipped` or `head_changed_while_queued` (taken out of the queue).
 outcome (`allowed` / `refused` / `started` / `waiting` / `done` / `failed` /
 `rolled_back`), code, redacted detail.
 
+## Guarded auto-deploy (design, obj 901466)
+
+A deploy with no chat turn is designed in `docs/design/guarded-auto-deploy.md` and
+is NOT live. Only the guard exists: `services/dev-ops/auto-deploy-guard.ts`
+(`decideDevAutoDeploy`) refuses unless every waiting commit is a passed, green Dev
+merge, with no migration, no reserved PR, a clean live checkout, no deploy running,
+no cards working, no uncleared bad automatic deploy, under the daily cap and inside
+the window / file limit the owner picks. Its switch, `settings.dev_auto_deploy_enabled`,
+is off with no row and nothing reads it to deploy yet. `devOpsGate` is unchanged.
+
 ## Tests
 
 - `services/dev-ops/dev-ops.test.ts` — gate, merge relaxations, behind-branch update,
@@ -118,3 +128,5 @@ outcome (`allowed` / `refused` / `started` / `waiting` / `done` / `failed` /
 - `services/dev-ops/host-runner.test.ts` — the runner under bash with stubbed host
   tools: exact update.sh call, rollback on verify / health failure, no rollback when
   update.sh fails before its backup, Access write guards, token only on curl's stdin.
+- `services/dev-ops/auto-deploy-guard.test.ts` — every auto-deploy refusal, the
+  per-commit proof, the window, and the switch reading off by default.

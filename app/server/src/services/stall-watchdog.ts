@@ -390,6 +390,18 @@ export async function runStallWatchdogTick(deps: StallDeps): Promise<StallTickRe
       WHERE status = 'working' AND deleted_at IS NULL`,
   ).all() as StallCardRow[]
 
+  // obj 901519: a card with an open decision is parked on a question for the
+  // person. Its silence is expected, so it is neither flagged as stalled nor
+  // auto-restarted (a restart would re-run a worker that is waiting for an
+  // answer). The answer itself wakes the worker (decision-apply). An install
+  // that predates the decisions table has no parked cards.
+  let parkedOnPerson = new Set<number>()
+  try {
+    parkedOnPerson = new Set(
+      (db.prepare("SELECT DISTINCT objective_id FROM decisions WHERE state = 'open'").pluck().all() as number[]).map(Number),
+    )
+  } catch { /* no decisions table */ }
+
   const bumpActivity = db.prepare(
     'UPDATE objectives SET last_activity_at = ? WHERE id = ? AND (last_activity_at IS NULL OR last_activity_at < ?)',
   )
@@ -407,6 +419,15 @@ export async function runStallWatchdogTick(deps: StallDeps): Promise<StallTickRe
 
       if (Number(row.delegate_mode) > 0) continue
       if (deps.isExempt(row)) continue
+      if (parkedOnPerson.has(Number(row.id))) {
+        // Flagged before it asked: the flag no longer describes the card.
+        if (row.stalled_at) {
+          db.prepare('UPDATE objectives SET stalled_at = NULL, stall_reason = NULL WHERE id = ?').run(row.id)
+          out.cleared.push(row.id)
+          deps.broadcast(row.id)
+        }
+        continue
+      }
 
       const alive = row.session_id ? deps.isAlive(row.session_id) : false
       const decision = decideStall({
