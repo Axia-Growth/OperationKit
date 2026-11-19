@@ -26,6 +26,7 @@ import { stalledWindowMinutes } from '../services/accountability.js'
 import { listSupervisorRuns, reviewHighAgencyWork, SUPERVISOR_DEDUPE_PREFIX } from '../services/high-agency-supervisor.js'
 import { installedBots, runSupervisorNow, supervisorEnabled, supervisorHour } from '../services/high-agency-supervisor-scheduler.js'
 import { LIVE_REVIEW_ITEM_STATES } from '../db/schema/accountability.js'
+import { withSandboxCardGuard } from '../lib/card-session-scope.js'
 
 const router = Router()
 const SLUG = /^[a-z0-9][a-z0-9_-]{0,63}$/
@@ -64,7 +65,9 @@ router.get('/', (req, res) => {
   })
 })
 
-router.get('/flags', (req, res) => {
+// obj 901280: a jailed High Agency wake reads its OWN bot's flags (?bot=<its slug>);
+// the guard re-checks that binding. Every other sandbox caller stays 403.
+router.get('/flags', withSandboxCardGuard((req, res) => {
   const s = scope(req, res)
   if (!s) return
   let routedTo: string | undefined
@@ -78,7 +81,7 @@ router.get('/flags', (req, res) => {
   }
   const items = listReviewItems(getDb(), { dedupe_prefix: SUPERVISOR_DEDUPE_PREFIX, routed_to: routedTo, workspace: s.workspace, limit: 200 })
   res.json({ count: items.length, flags: items })
-})
+}))
 
 router.get('/preview', (req, res) => {
   const s = scope(req, res)

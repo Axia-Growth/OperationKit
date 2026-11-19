@@ -6,6 +6,10 @@ import {
   pickAccount,
   recordRateLimit,
   recordAuthFailure,
+  recordEmptyTurn,
+  liftEmptyTurnRest,
+  getAccountLabel,
+  type EmptyTurnRest,
   isRateLimitMessage,
   isAuthFailureMessage,
   parseResetTime,
@@ -57,11 +61,25 @@ export interface BackendResult {
   costUsd: number
   ttftMs: number | null
   attempts: number
+  /** obj 901395: display label of the seat that answered (never an email or a credential). */
+  slotLabel?: string
+  /** obj 901395: seats this request was moved off before `slot` answered, in order. Empty/absent = first seat answered. */
+  moved?: SeatAttempt[]
+}
+
+/** One seat a request tried and left (obj 901395). `label` is safe to show a person. */
+export interface SeatAttempt {
+  slot: string
+  label: string
+  kind: BackendErrorKind
 }
 
 export type LlmBackend = (req: BackendRequest) => Promise<BackendResult>
 
-export type BackendErrorKind = 'no_account' | 'rate_limit' | 'auth' | 'timeout' | 'aborted' | 'cli_error'
+// 'empty' (obj 901395): the CLI exited without a result and without any error
+// text — the "claude exited 0:" failure. Like rate_limit / auth it is a failure
+// of the SEAT's turn, so the request moves to the next seat.
+export type BackendErrorKind = 'no_account' | 'rate_limit' | 'auth' | 'timeout' | 'aborted' | 'cli_error' | 'empty'
 
 export class BackendError extends Error {
   constructor(
@@ -73,6 +91,26 @@ export class BackendError extends Error {
   ) {
     super(message)
   }
+  /** obj 901395: every seat the request tried before giving up, in order (set by the pool backend). */
+  tried: SeatAttempt[] = []
+  /** obj 901395: an empty-turn rest this failure put on its seat, so the pool can undo it. */
+  emptyRest: EmptyTurnRest | null = null
+}
+
+/**
+ * A seat label that is safe to show a person (obj 901395): the operator's
+ * label, unless it looks like an email address, a token or a path, in which
+ * case the plain seat id is shown instead.
+ */
+export function safeSeatLabel(id: string, label?: string | null): string {
+  const l = (label || '').trim()
+  if (!l || l.length > 40 || /[@/\\]/.test(l) || /sk-ant-|oat01|token/i.test(l)) return id
+  return l
+}
+
+/** Rotation applies to these failures, and only before anything was streamed to a client. */
+export function isRotatableKind(kind: BackendErrorKind): boolean {
+  return kind === 'rate_limit' || kind === 'auth' || kind === 'empty'
 }
 
 /** Priority at or above which a seat is a "reserve" seat, kept for sessions only. */
@@ -241,7 +279,8 @@ export function applyStreamLine(line: string, st: StreamState, startedAt: number
     st.costUsd = typeof ev.total_cost_usd === 'number' ? ev.total_cost_usd : 0
     if (ev.stop_reason) st.stopReason = ev.stop_reason
     if (ev.is_error || (typeof ev.subtype === 'string' && ev.subtype.startsWith('error'))) {
-      const msg = String(ev.result ?? ev.error ?? ev.subtype ?? 'error')
+      // `||`, not `??`: an errored result with result:"" must not read as "no error".
+      const msg = String(ev.result || ev.error || ev.subtype || 'error')
       st.resultError = msg
       if (isNotLoggedInMessage(msg)) st.notLoggedIn = msg
       else if (ev.api_error_status === 401 || isAuthFailureMessage(msg)) st.authFailed = msg
@@ -314,7 +353,10 @@ export function runClaudeTurn(
         const line = lineBuf.slice(0, nl).trim()
         lineBuf = lineBuf.slice(nl + 1)
         if (line) applyStreamLine(line, st, startedAt, d => {
-          emitted = true
+          // Only a caller that streams (the gateway's SSE path) has shown this
+          // text to anyone. Chat passes no onText, so nothing left the server
+          // and the turn can still move to another seat (obj 901395).
+          if (req.onText) emitted = true
           if (!settled) req.onText?.(d)
         })
       }
@@ -324,7 +366,7 @@ export function runClaudeTurn(
     })
     proc.on('error', err => fail(new BackendError('cli_error', `spawn failed: ${err.message}`, account.id, emitted)))
     proc.on('close', code => {
-      if (lineBuf.trim()) applyStreamLine(lineBuf.trim(), st, startedAt, d => { emitted = true; if (!settled) req.onText?.(d) })
+      if (lineBuf.trim()) applyStreamLine(lineBuf.trim(), st, startedAt, d => { if (req.onText) emitted = true; if (!settled) req.onText?.(d) })
       if (settled) return
       if (st.notLoggedIn || (!st.usage && isNotLoggedInMessage(stderr))) {
         // No credential reached the CLI. Rotate (kind 'auth') but never park:
@@ -340,10 +382,21 @@ export function runClaudeTurn(
         recordRateLimit(account.id, rl.reset, rl.raw)
         // A rate_limit_event can arrive alongside a successful answer (warning tier);
         // only fail the request when no answer came back.
-        if (!st.usage || st.resultError) return fail(new BackendError('rate_limit', 'account rate-limited', account.id, emitted))
+        if (!st.usage || st.resultError !== null) return fail(new BackendError('rate_limit', 'account rate-limited', account.id, emitted))
       }
-      if (st.resultError || code !== 0 || !st.usage) {
-        return fail(new BackendError('cli_error', `claude exited ${code}: ${(st.resultError ?? stderr).slice(0, 300)}`, account.id, emitted))
+      if (st.resultError !== null || code !== 0 || !st.usage) {
+        const reason = (st.resultError || stderr).trim()
+        if (!reason && !st.usage) {
+          // obj 901395: no result event and nothing on stderr. This is what the
+          // chat showed as "claude exited 0:" with an empty reason. Whatever the
+          // cause, THIS seat's turn produced nothing: rest the seat briefly and
+          // let the pool move the request to the next one.
+          const err = new BackendError('empty', `claude returned no answer and no error text on seat ${account.id} (exit code ${code})`, account.id, emitted)
+          err.emptyRest = recordEmptyTurn(account.id, `empty turn (exit code ${code}, model ${req.model})`)
+          return fail(err)
+        }
+        // Never an empty reason: say what is known instead.
+        return fail(new BackendError('cli_error', `claude exited ${code}: ${reason ? reason.slice(0, 300) : 'no error text was given'}`, account.id, emitted))
       }
       settled = true
       clearTimeout(timer)
@@ -363,6 +416,8 @@ export function runClaudeTurn(
 export interface TokenCandidate {
   id: string
   token: string
+  /** What a person is shown for this candidate (obj 901395). Default: `id`. */
+  label?: string
 }
 
 export interface ClaudeCliBackendOptions {
@@ -378,8 +433,8 @@ export interface ClaudeCliBackendOptions {
   credentialEnv?: (seat: AccountSlot) => Record<string, string>
   preferTokens?: TokenCandidate[]
   fallbackTokens?: TokenCandidate[]
-  /** Max turns attempted across seats in one request (default 3). */
-  maxAttempts?: number
+  /** Max turns attempted across seats in one request (default 3). A function is read per request (a setting). */
+  maxAttempts?: number | (() => number)
   timeoutMs?: number
   /** Where per-turn HOMEs are created (tests). Default os.tmpdir(). */
   homeRoot?: string
@@ -416,7 +471,7 @@ async function defaultSeatEnv(seat: AccountSlot): Promise<Record<string, string>
 
 function tokenSlot(t: TokenCandidate): AccountSlot {
   return {
-    id: t.id, label: t.id, priority: 0, homeDir: '', sessionsToday: 0, tokensToday: 0, costToday: 0,
+    id: t.id, label: t.label ?? t.id, priority: 0, homeDir: '', sessionsToday: 0, tokensToday: 0, costToday: 0,
     lastRateLimit: null, rateLimitResetsAt: null, activeSessions: [], usageLog: [],
   }
 }
@@ -442,11 +497,16 @@ export function createClaudeCliBackend(opts: ClaudeCliBackendOptions = {}): LlmB
     const env = opts.env ?? process.env
     const allowed = opts.slotFilter ?? gatewaySlotFilter(env)
     const timeoutMs = opts.timeoutMs ?? (Number(env.LLM_GATEWAY_TIMEOUT_MS) > 0 ? Number(env.LLM_GATEWAY_TIMEOUT_MS) : 300_000)
-    const maxAttempts = opts.maxAttempts ?? 3
+    const maxAttempts = typeof opts.maxAttempts === 'function' ? opts.maxAttempts() : (opts.maxAttempts ?? 3)
     const triedSeats = new Set<string>()
     const triedTokens = new Set<string>()
     let lastErr: BackendError | null = null
     let attempts = 0
+    // obj 901395: every seat this request left, for the "moved to another
+    // account" line and the "all accounts are limited" message.
+    const tried: SeatAttempt[] = []
+    const emptyRests: EmptyTurnRest[] = []
+    const labelOf = (account: AccountSlot) => safeSeatLabel(account.id, account.customLabel || account.label || getAccountLabel(account.id))
 
     // The result, or null when the failure is one to rotate past.
     const attempt = async (account: AccountSlot, extraEnv: Record<string, string>): Promise<BackendResult | null> => {
@@ -459,11 +519,13 @@ export function createClaudeCliBackend(opts: ClaudeCliBackendOptions = {}): LlmB
       const home = token ? makeTurnHome(opts.homeRoot, opts.homeLabel) : null
       try {
         const r = await run(home ? { ...account, homeDir: home } : account, req, timeoutMs, extraEnv)
-        return { ...r, attempts }
+        return { ...r, attempts, slotLabel: labelOf(account), moved: [...tried] }
       } catch (err) {
         const be = err instanceof BackendError ? err : new BackendError('cli_error', String(err), account.id)
         lastErr = be
-        if (be.emitted || (be.kind !== 'rate_limit' && be.kind !== 'auth')) throw be
+        if (be.emitted || !isRotatableKind(be.kind)) throw be
+        tried.push({ slot: account.id, label: labelOf(account), kind: be.kind })
+        if (be.emptyRest) emptyRests.push(be.emptyRest)
         console.warn(`[claude-cli] seat ${account.id}: ${be.kind} — rotating to the next seat`)
         return null
       } finally {
@@ -502,6 +564,12 @@ export function createClaudeCliBackend(opts: ClaudeCliBackendOptions = {}): LlmB
     }
     const fallback = await tryTokens(opts.fallbackTokens)
     if (fallback) return fallback
-    throw lastErr ?? new BackendError('no_account', 'no allowed Claude account is available')
+    const finalErr: BackendError = lastErr ?? new BackendError('no_account', 'no allowed Claude account is available')
+    finalErr.tried = tried
+    // Two or more seats and EVERY one came back empty: the cause is the request
+    // or the CLI, not the seats. Give the seats back so one broken request
+    // cannot bench the pool card sessions run on.
+    if (tried.length >= 2 && tried.every(t => t.kind === 'empty')) for (const r of emptyRests) liftEmptyTurnRest(r)
+    throw finalErr
   }
 }

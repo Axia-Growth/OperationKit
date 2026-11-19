@@ -11,6 +11,7 @@ import {
   checkWorktreeViolation,
 } from './session-worktree.js'
 import { resolveWriteWorkspace } from './workspaces.js'
+import { countPushesInTranscript, pushBatchWarning } from '../lib/push-batching.js'
 
 // ── Refusal / fallback-model telemetry ──
 // Scanned from the JSONL at session end (sessions are single-turn --print
@@ -96,6 +97,21 @@ export function scanStreamTelemetry(sessionId: string, jsonlPath: string, logPat
   if (objectiveId != null) {
     try { recordSessionEnvUsageFromTranscript(objectiveId, sessionId, content) } catch {}
   }
+
+  // obj 901348 — warn-only CI-cost telemetry: a session that pushed more than
+  // once started (up to) one full gate run per push once its PR was open.
+  try {
+    const pushes = countPushesInTranscript(content)
+    const text = pushBatchWarning(pushes)
+    const flag = `${sessionId}:push-batch`
+    if (text && !telemetryFlagged.has(flag)) {
+      telemetryFlagged.add(flag)
+      const summary = `[telemetry] push-batch session=${sessionId} pushes=${pushes}`
+      console.warn(summary)
+      try { fs.appendFileSync(logPath, `[WARNING] ${summary}\n`) } catch {}
+      fs.appendFileSync(jsonlPath, JSON.stringify({ type: 'warning', text, timestamp: new Date().toISOString() }) + '\n')
+    }
+  } catch {}
 
   // Hardened attribution (obj 701053): decide refusal/fallback from the MAIN
   // LOOP only. Sub-agent (sidechain) turns, helper models, and the rolled-up

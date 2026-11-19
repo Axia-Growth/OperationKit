@@ -24,7 +24,7 @@
  * A card no bot owns keeps the old `card_done` behaviour.
  */
 import type Database from 'better-sqlite3'
-import { decisionFollowUpText, type DecisionView, type Objective } from '@operationkit/shared'
+import { chatActionLine, decisionFollowUpText, optionFor, type ChatOnlyAction, type DecisionView, type Objective } from '@operationkit/shared'
 import { cardOwnerBot, type CardOwnerOptions } from './bots/card-owner.js'
 import { getDecision, redactDecisionText } from './decisions.js'
 
@@ -80,6 +80,47 @@ export function deliverDecisionToBot(
     }
   }
   return { slug, name: owner.name }
+}
+
+/**
+ * obj 901453 — a deploy / merge answer goes to the chat of the bot that raised it.
+ *
+ * The bot raised the decision from chat (`source = 'bot'`, `agent_slug` = its
+ * chat slug) and the person picked an option that needs a chat-only operator
+ * tool. Only a message the person TYPES in that chat can run it (`devOpsGate`,
+ * unchanged), so the chat gets one plain line saying exactly that, plus the
+ * decision text so the bot has the context when the person types the word.
+ *
+ * The line is posted as the BOT's message (role `assistant`), never as the
+ * person's: it is not a turn, wakes nothing and cannot open any gate. It goes
+ * to the lane of the person who decided. `delivered_to` is NOT set, so the
+ * answer is never handed to a later card session either (that session has no
+ * such tool, which is the bug this fixes). Returns null when there is no
+ * person to post for or the post failed; the caller then falls back to the card.
+ */
+export function deliverDecisionToChat(
+  db: Database.Database,
+  decision: DecisionView,
+  action: ChatOnlyAction,
+  p: { userId: number | null },
+  opts: { botName?: (slug: string) => string | null; notify?: (userId: number, slug: string) => void } = {},
+): DeliveredTo | null {
+  const slug = decision.agent_slug?.trim()
+  if (!slug || p.userId == null) return null
+  const opt = optionFor(decision.briefing, decision.chosen)
+  if (!opt) return null
+  let name = slug
+  try { name = opts.botName?.(slug)?.trim() || slug } catch { /* the slug will do */ }
+  const followUp = decisionFollowUpText({ decisionId: decision.id, briefing: decision.briefing, chosen: decision.chosen as string, note: decision.decision_note })
+  const line = chatActionLine({ action, optionKey: opt.key, optionLabel: opt.label, objectiveId: decision.objective_id, decisionId: decision.id })
+  db.prepare("INSERT INTO agent_chat_messages (user_id, agent_slug, role, content, meta) VALUES (?, ?, 'assistant', ?, ?)").run(
+    p.userId,
+    slug,
+    redactDecisionText([line, '', followUp].join('\n')),
+    JSON.stringify({ kind: 'decision_chat_action', action, decision_id: decision.id, objective_id: decision.objective_id }),
+  )
+  try { opts.notify?.(p.userId, slug) } catch { /* live refresh is best effort */ }
+  return { slug, name }
 }
 
 /** Mark a delivery consumed (picked up by a session, or applied by a reopen). */

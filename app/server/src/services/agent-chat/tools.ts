@@ -25,7 +25,7 @@ import { cardModelForBot } from './bot-card-model.js'
 import { CHILD_CAP_PER_PARENT, depthForParent, openChildCount } from '../../lib/objective-depth.js'
 import { checkAgentInWorkspacePool, defaultAgentForWorkspace } from '../../routes/objectives-helpers.js'
 import { broadcast } from '../../ws/index.js'
-import { getInitialStatus, validateOwnerBot, type Objective } from '@operationkit/shared'
+import { chatActionWordingErrors, getInitialStatus, validateOwnerBot, type Objective } from '@operationkit/shared'
 import { raiseDecision } from '../decisions.js'
 import type { ChatAgent } from './agent-defs.js'
 import { createDraft, type Connectors, type EmailDraft, type EventDraft } from './connectors.js'
@@ -46,10 +46,16 @@ import { containedIn, realpathOrNull, resolveVaultPath, workspaceScopeRoots } fr
 import { searchKnowledgeBase } from '../kb-semantic/search.js'
 import { noteKbWrite } from '../kb-semantic/service.js'
 import type { ChatLane } from './threads.js'
-import { fullAccessActive, fullAccessAnywhere, protectedCardRefusal, refuseExclusion } from './bot-full-access.js'
+import { fullAccessActive, fullAccessAnywhere, protectedCardRefusal, protectedPrTextRefusal, refuseExclusion } from './bot-full-access.js'
 import { exclusionGate, type OutboundCall } from './full-access-exclusions.js'
 import { FULL_ACCESS_FNS, fullAccessToolSpecs, runFullAccessTool, withFullAccess, type FullAccessHost } from './full-access-tools.js'
+import { CARD_WAKE_FNS, runCardWakeTool, type CardWakeScope } from './card-wake-tools.js'
+import { beginSelfAction, endSelfAction, SELF_ACTION_TOOLS } from './card-wake-routing.js'
 import { CARD_SANDBOX_FNS, cardSandboxToolSpecs, runCardSandboxTool } from './card-sandbox-tools.js'
+import { GRANT_MERGE_FNS, grantMergeToolSpecs, runGrantMergeTool } from './grant-merge-tool.js'
+import { FOLLOWUP_FNS, followupToolSpecs, runFollowupTool } from './followups.js'
+import { DEV_OPS_FNS, devOpsToolSpecs, runDevOpsTool } from './dev-ops-tools.js'
+import { writeDevOpsAudit } from '../dev-ops/audit.js'
 import { CARD_BROWSER_FNS, cardBrowserToolSpecs, runCardBrowserTool } from './card-browser-tools.js'
 import {
   BotMessageRefused,
@@ -95,6 +101,28 @@ export interface ToolContext {
   botWake?: { conversationId: number; depth: number }
   /** obj 900972: how a Full access tool starts or messages a card. Tests pass a stub; the host default uses the internal routes. */
   fullAccessHost?: FullAccessHost
+  /**
+   * obj 901328: set when this turn is a needs_agent CARD WAKE (card-wakes.ts).
+   * With `toolScope: 'chat'` (obj 901394, the default) the turn has the own-card
+   * tools plus this bot's normal chat tools, with the permissions of a normal chat
+   * turn for this person and no more. Otherwise it has ONLY the own-card tools
+   * (card-wake-tools.ts) and runChatTool refuses every other tool name.
+   */
+  cardWake?: CardWakeScope
+  /**
+   * obj 901392: set when this turn was started by one of the bot's own
+   * follow-ups (followup-wake.ts) rather than a typed message. It changes NO
+   * permission: the turn is an ordinary chat turn. It only carries the chain
+   * length, so schedule_followup can stop a runaway chain. `personSpoke` =
+   * a queued message from the person was delivered in this same turn.
+   */
+  followup?: { id: number; hop: number; personSpoke: boolean }
+  /**
+   * obj 901424: this turn's message came from the person's signed-in browser
+   * (cookie session), not an API key / bearer token / queued drain. Required by
+   * the operator tools (dev-ops-tools.ts).
+   */
+  browserSession?: boolean
 }
 
 /** What the chat UI shows for a tool call (drafts get buttons, cards get a status chip). */
@@ -109,6 +137,8 @@ export interface ToolOutcome {
   bot_conversation_id?: number
   /** obj 901059: a decision this call raised — the chat renders its briefing, Q&A thread and Approve/Deny. */
   decision_id?: number
+  /** obj 901392: a follow-up this call scheduled or cancelled — the chat renders its live state and a Cancel control. */
+  followup_id?: number
   /** obj 901028: an image this tool call attaches to the reply — rendered inline, same as a pasted screenshot. */
   images?: IncomingImage[]
 }
@@ -164,7 +194,7 @@ const SPECS: Record<string, ToolSpec[]> = {
       workspace: { type: 'string', description: 'Workspace slug to file the card in. Omit for this chat\'s workspace. Only workspaces this bot is granted and the person belongs to are accepted.' },
       parent_id: { type: 'integer', description: 'File this card UNDER another card: that card\'s number. Use it whenever the work belongs to an existing card, instead of writing "Parent: #N" in the text. The parent must be a top-level card you can see; the new card lands in the parent\'s workspace.' },
     }, ['title', 'description']))],
-  raise_decision: [fn('raise_decision', 'Ask the person to DECIDE something on a board card, with a short briefing. It shows at the top of the card and in this chat with a Q&A thread and Approve/Deny; their choice is sent to the card. Use this instead of asking for a decision in prose. Under about 200 words in total. Refused if the question or options are missing.',
+  raise_decision: [fn('raise_decision', 'Ask the person to DECIDE something on a board card, with a short briefing. It shows at the top of the card and in this chat with a Q&A thread and Approve/Deny; their choice is sent to the card. Use this instead of asking for a decision in prose. Under about 200 words in total. Refused if the question or options are missing. A deploy or merge never runs from the answer: an option that deploys or merges must say in its next that the person types deploy / merge in this chat (e.g. "You type deploy in this chat and I run it.").',
     obj({
       card_id: { type: 'integer', description: 'The card the decision is about' },
       context: { type: 'string', description: '2-3 sentences: where we are, what the decision is for, where it fits in the system' },
@@ -266,7 +296,11 @@ const IMPLIED_TOOLS: Record<string, string[]> = {
   // raise_decision only ASKS (a briefing on the card); it never acts, so it is
   // the one "write" implied: without it the bot asks for decisions in prose,
   // which is exactly what left Operator unable to see what he was approving.
-  create_objective: ['raise_decision'],
+  // obj 901392: a bot that can file cards can also set itself a one-off
+  // follow-up to check back on them, instead of asking the person to say
+  // "check". A follow-up turn has exactly a normal turn's permissions, so this
+  // implies no new reach, only a timer (limits: followups.ts).
+  create_objective: ['raise_decision', 'followups'],
 }
 
 /**
@@ -305,6 +339,13 @@ export function toolSpecsForContext(ctx: ToolContext): ToolSpec[] {
   const elevated = withFullAccess(ctx)
   const out = toolSpecsFor(elevated.agent)
   out.push(...fullAccessToolSpecs(ctx), ...cardSandboxToolSpecs(ctx), ...cardBrowserToolSpecs(ctx))
+  // obj 901347: merge one of the bot's own cards under the person's merge grant.
+  // Offered by the grant, never by Full access or "all tools".
+  out.push(...grantMergeToolSpecs(ctx))
+  // obj 901392: schedule / list / cancel the bot's own one-off follow-up wakes.
+  out.push(...followupToolSpecs(ctx))
+  // obj 901424: Operation Kit Dev's operator tools, behind their one admin switch.
+  out.push(...devOpsToolSpecs(ctx))
   return out
 }
 
@@ -725,6 +766,9 @@ function cardParent(ctx: ToolContext, parentRaw: unknown, workspaceRaw: unknown)
 function createCard(ctx: ToolContext, title: string, description: string, workspaceRaw?: unknown, parentRaw?: unknown): { id: number; status: string; note?: string; workspace: string; parent_id?: number } {
   const db = getDb()
   const { parentId, workspace } = cardParent(ctx, parentRaw, workspaceRaw)
+  // The same protected pull request text check as repo_session_start, for every bot.
+  const textRefusal = protectedPrTextRefusal({ slug: ctx.agent.slug, workspace, ability: 'create_objective', title, description, actorUserId: ctx.userId })
+  if (textRefusal) throw new ToolUseError(textRefusal)
   const under = parentId != null ? { parent_id: parentId } : {}
   const worker = chatCardAgent(ctx.agent, workspace)
   const bot = botForAgentSlug(ctx.agent.slug, db)
@@ -1050,12 +1094,106 @@ function s(args: Record<string, unknown>, key: string, required = false): string
  * tools are network calls and therefore async; everything else is the
  * synchronous runTool below, unchanged.
  */
+/** The mail + calendar tools (obj 901331): async, because a real mailbox is a network call. */
+const MAIL_CALENDAR_FNS = new Set(['email_list_inbox', 'email_read', 'email_create_draft', 'calendar_list_events', 'calendar_draft_event'])
+
+/**
+ * Read the inbox / calendar and save DRAFTS. There is no send and no insert
+ * here, by design: `ctx.connectors` has no such method. Delivery happens only
+ * on the person's own click (routes/agent-chat.ts, the drafts send route).
+ */
+async function runMailCalendarTool(ctx: ToolContext, fnName: string, args: Record<string, unknown>): Promise<ToolOutcome> {
+  const now = ctx.now ?? (() => new Date())
+  switch (fnName) {
+    case 'email_list_inbox': {
+      const mail = ctx.connectors.mail
+      if (!mail) throw new ToolUseError('No email account is connected for this bot. Connect Google at Settings → Account → Google Workspace, and check its "Who can use it" list includes this bot.')
+      const limit = Math.min(50, Math.max(1, Number(args.limit) || 10))
+      const msgs = await mail.listInbox(limit, args.unread_only === true)
+      return { result: { source: mail.label, messages: msgs }, summary: `Checked inbox (${msgs.length} emails)` }
+    }
+    case 'email_read': {
+      const mail = ctx.connectors.mail
+      if (!mail) throw new ToolUseError('No email account is connected for this bot. Connect Google at Settings → Account → Google Workspace, and check its "Who can use it" list includes this bot.')
+      const m = await mail.read(s(args, 'id', true))
+      if (!m) throw new ToolUseError(`No email with id "${args.id}".`)
+      return { result: m, summary: `Read email "${m.subject}"` }
+    }
+    case 'email_create_draft': {
+      const mail = ctx.connectors.mail
+      if (!mail) throw new ToolUseError('No email account is connected for this bot. Connect Google at Settings → Account → Google Workspace, and check its "Who can use it" list includes this bot.')
+      const draft: EmailDraft = { to: s(args, 'to', true), subject: s(args, 'subject', true), body: s(args, 'body', true), in_reply_to: s(args, 'in_reply_to') || null }
+      // obj 901331: a real mailbox also keeps the draft in its own Drafts folder.
+      // saveDraft only ever creates a DRAFT; sending stays the person's click.
+      if (mail.saveDraft) draft.remote_id = (await mail.saveDraft(draft)).remote_id
+      const row = createDraft(ctx.userId, ctx.agent.slug, 'email', mail.id, draft)
+      const where = draft.remote_id ? ' It is also in the Drafts folder of the connected mailbox.' : ''
+      return { result: { draft_id: row.id, status: 'draft', note: `Saved as a draft. It is NOT sent — the person must press Send.${where}` }, summary: `Drafted email to ${draft.to}`, draft_id: row.id }
+    }
+    case 'calendar_list_events': {
+      const cal = ctx.connectors.calendar
+      if (!cal) throw new ToolUseError('No calendar is connected for this bot. Connect Google at Settings → Account → Google Workspace, and check its "Who can use it" list includes this bot.')
+      const from = s(args, 'from') || now().toISOString()
+      const to = s(args, 'to') || new Date(Date.parse(from) + 7 * 86400_000).toISOString()
+      if (Number.isNaN(Date.parse(from)) || Number.isNaN(Date.parse(to))) throw new ToolUseError('from/to must be ISO dates.')
+      const events = await cal.listEvents(from, to)
+      return { result: { source: cal.label, events }, summary: `Checked calendar (${events.length} events)` }
+    }
+    case 'calendar_draft_event': {
+      const cal = ctx.connectors.calendar
+      if (!cal) throw new ToolUseError('No calendar is connected for this bot. Connect Google at Settings → Account → Google Workspace, and check its "Who can use it" list includes this bot.')
+      const start = s(args, 'start', true)
+      const end = s(args, 'end', true)
+      if (Number.isNaN(Date.parse(start)) || Number.isNaN(Date.parse(end))) throw new ToolUseError('start/end must be ISO date-times.')
+      const withList = Array.isArray(args.with) ? args.with.filter((x): x is string => typeof x === 'string') : []
+      const draft: EventDraft = { title: s(args, 'title', true), start, end, with: withList, note: s(args, 'note') || null }
+      const row = createDraft(ctx.userId, ctx.agent.slug, 'event', cal.id, draft)
+      return { result: { draft_id: row.id, status: 'draft', note: 'Saved as a draft. It is NOT on the calendar until the person presses "Add to calendar".' }, summary: `Drafted event "${draft.title}"`, draft_id: row.id }
+    }
+  }
+  throw new ToolUseError(`Unknown tool "${fnName}".`)
+}
+
 export async function runChatTool(ctxIn: ToolContext, fnName: string, args: Record<string, unknown>): Promise<ToolOutcome> {
   // obj 900948: knowledge folders resolved for this KB's layout (workspaces/<ws>/…).
+  // obj 901328: a card wake is confined to the own-card tools, before anything else.
+  // obj 901394: with the `chat` tool scope a card wake is a normal turn of this bot
+  // for this person, plus the own-card tools. Everything below applies unchanged.
+  if (ctxIn.cardWake) {
+    // obj 901424: an operator tool asked for in a card wake is refused, under either
+    // tool scope (a wake is never the person's browser session); audit the attempt.
+    if (DEV_OPS_FNS.has(fnName)) {
+      writeDevOpsAudit({ bot_slug: ctxIn.agent.slug, user_id: ctxIn.userId, username: ctxIn.username, action: fnName, outcome: 'refused', code: 'wake_turn', detail: 'asked for in a card wake' })
+      return runCardWakeTool(ctxIn, fnName, args)
+    }
+    if (ctxIn.cardWake.toolScope !== 'chat' || CARD_WAKE_FNS.has(fnName)) return withSelfAction(ctxIn, fnName, args, () => runCardWakeTool(ctxIn, fnName, args))
+  }
+  return withSelfAction(ctxIn, fnName, args, () => runChatToolInner(ctxIn, fnName, args))
+}
+
+/**
+ * obj 901394: bracket a tool call that changes a card, so the objective_events it
+ * writes are known to be the bot's own doing and never wake the bot for them.
+ */
+async function withSelfAction(ctx: ToolContext, fnName: string, args: Record<string, unknown>, run: () => Promise<ToolOutcome>): Promise<ToolOutcome> {
+  const cardId = Number(args.id ?? args.objective_id ?? args.card_id)
+  if (!SELF_ACTION_TOOLS.has(fnName) || !Number.isInteger(cardId) || cardId <= 0) return run()
+  const action = beginSelfAction(getDb(), { slug: ctx.agent.slug, objectiveId: cardId, tool: fnName }, ctx.now?.() ?? new Date())
+  try {
+    return await run()
+  } finally {
+    endSelfAction(getDb(), action)
+  }
+}
+
+async function runChatToolInner(ctxIn: ToolContext, fnName: string, args: Record<string, unknown>): Promise<ToolOutcome> {
   const ctx = withKbFolders(ctxIn)
   // obj 900972: the Full access tool family. Checked again inside, on every call.
   if (FULL_ACCESS_FNS.has(fnName)) return runFullAccessTool(ctx, fnName, args)
   if (CARD_SANDBOX_FNS.has(fnName)) return runCardSandboxTool(ctx, fnName, args)
+  if (GRANT_MERGE_FNS.has(fnName)) return runGrantMergeTool(ctx, fnName, args)
+  if (FOLLOWUP_FNS.has(fnName)) return runFollowupTool(ctx, fnName, args)
+  if (DEV_OPS_FNS.has(fnName)) return runDevOpsTool(ctx, fnName, args)
   if (CARD_BROWSER_FNS.has(fnName)) return runCardBrowserTool(ctx, fnName, args)
   if (BOT_MESSAGE_FNS.has(fnName)) return runBotMessageTool(ctx, fnName, args)
   if (fnName === 'secrets_list' || fnName === 'secret_http') return runSecretTool(ctx, fnName, args)
@@ -1073,6 +1211,11 @@ export async function runChatTool(ctxIn: ToolContext, fnName: string, args: Reco
         + (kw.results.length === 0 ? '; no results here does NOT mean the knowledge base is empty. Tell the person search is not working right now.' : '.')
       return { result: { ...kw, mode_used: 'keyword', warning }, summary: `Searched knowledge for "${q}" (${kw.results.length} found, search index unavailable)` }
     }
+  }
+  if (MAIL_CALENDAR_FNS.has(fnName)) {
+    const tool = owningTool(fnName)
+    if (!tool || !effectiveTools(ctx.agent).includes(tool)) throw new ToolUseError(`Tool "${fnName}" is not allowed for this agent.`)
+    return runMailCalendarTool(ctx, fnName, args)
   }
   if (fnName !== 'web_search' && fnName !== 'web_fetch') return runTool(ctx, fnName, args)
   if (!agentHasTool(ctx.agent, fnName)) throw new ToolUseError(`Tool "${fnName}" is not allowed for this agent.`)
@@ -1317,6 +1460,7 @@ export function runTool(ctxIn: ToolContext, fnName: string, args: Record<string,
   const ctx = withKbFolders(ctxIn)
   const tool = owningTool(fnName)
   if (!tool || !effectiveTools(ctx.agent).includes(tool)) throw new ToolUseError(`Tool "${fnName}" is not allowed for this agent.`)
+  if (MAIL_CALENDAR_FNS.has(fnName)) throw new ToolUseError(`Tool "${fnName}" runs through runChatTool (it may call the connected mailbox).`)
   const now = ctx.now ?? (() => new Date())
 
   switch (fnName) {
@@ -1433,6 +1577,10 @@ export function runTool(ctxIn: ToolContext, fnName: string, args: Record<string,
       const id = Number(args.card_id)
       // Only a card this person (and this bot) can see — the same rule as get_objective.
       const card = getBoardCard(ctx, id)
+      // obj 901453: an option may not promise a deploy / merge the Approve click
+      // cannot run. Those tools run only from a message the person types here.
+      const wording = chatActionWordingErrors(Array.isArray(args.options) ? (args.options as Array<{ key?: string; label: string; next: string }>) : [])
+      if (wording.length) throw new ToolUseError(`The decision was not raised. Fix these and call raise_decision again: ${wording.join('; ')}`)
       const out = raiseDecision(getDb(), {
         objective_id: card.id,
         workspace: card.workspace ?? '',
@@ -1474,47 +1622,6 @@ export function runTool(ctxIn: ToolContext, fnName: string, args: Record<string,
     case 'board_briefing': {
       const r = boardBriefing({ ...ctx, now }, { workspace: args.workspace, limit: args.limit })
       return { result: r, summary: r.empty ? 'Board briefing: no open cards' : `Board briefing: ${r.waiting_on_you.length} waiting on you, ${r.open_total} open` }
-    }
-    case 'email_list_inbox': {
-      const mail = ctx.connectors.mail
-      if (!mail) throw new ToolUseError('No email account is connected to this install yet.')
-      const limit = Math.min(50, Math.max(1, Number(args.limit) || 10))
-      const msgs = mail.listInbox(limit, args.unread_only === true)
-      return { result: { source: mail.label, messages: msgs }, summary: `Checked inbox (${msgs.length} emails)` }
-    }
-    case 'email_read': {
-      const mail = ctx.connectors.mail
-      if (!mail) throw new ToolUseError('No email account is connected to this install yet.')
-      const m = mail.read(s(args, 'id', true))
-      if (!m) throw new ToolUseError(`No email with id "${args.id}".`)
-      return { result: m, summary: `Read email "${m.subject}"` }
-    }
-    case 'email_create_draft': {
-      const mail = ctx.connectors.mail
-      if (!mail) throw new ToolUseError('No email account is connected to this install yet.')
-      const draft: EmailDraft = { to: s(args, 'to', true), subject: s(args, 'subject', true), body: s(args, 'body', true), in_reply_to: s(args, 'in_reply_to') || null }
-      const row = createDraft(ctx.userId, ctx.agent.slug, 'email', mail.id, draft)
-      return { result: { draft_id: row.id, status: 'draft', note: 'Saved as a draft. It is NOT sent — the person must press Send.' }, summary: `Drafted email to ${draft.to}`, draft_id: row.id }
-    }
-    case 'calendar_list_events': {
-      const cal = ctx.connectors.calendar
-      if (!cal) throw new ToolUseError('No calendar is connected to this install yet.')
-      const from = s(args, 'from') || now().toISOString()
-      const to = s(args, 'to') || new Date(Date.parse(from) + 7 * 86400_000).toISOString()
-      if (Number.isNaN(Date.parse(from)) || Number.isNaN(Date.parse(to))) throw new ToolUseError('from/to must be ISO dates.')
-      const events = cal.listEvents(from, to)
-      return { result: { source: cal.label, events }, summary: `Checked calendar (${events.length} events)` }
-    }
-    case 'calendar_draft_event': {
-      const cal = ctx.connectors.calendar
-      if (!cal) throw new ToolUseError('No calendar is connected to this install yet.')
-      const start = s(args, 'start', true)
-      const end = s(args, 'end', true)
-      if (Number.isNaN(Date.parse(start)) || Number.isNaN(Date.parse(end))) throw new ToolUseError('start/end must be ISO date-times.')
-      const withList = Array.isArray(args.with) ? args.with.filter((x): x is string => typeof x === 'string') : []
-      const draft: EventDraft = { title: s(args, 'title', true), start, end, with: withList, note: s(args, 'note') || null }
-      const row = createDraft(ctx.userId, ctx.agent.slug, 'event', cal.id, draft)
-      return { result: { draft_id: row.id, status: 'draft', note: 'Saved as a draft. It is NOT on the calendar until the person presses "Add to calendar".' }, summary: `Drafted event "${draft.title}"`, draft_id: row.id }
     }
   }
   throw new ToolUseError(`Unknown tool "${fnName}".`)

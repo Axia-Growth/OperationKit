@@ -29,6 +29,7 @@ import { skipMachineStatusWrite, runMachineStatusUpdate } from '../lib/status-lo
 import { logObjectiveAudit } from './objective-audit.js'
 import { parkUnreviewed } from './review-hygiene.js'
 import { evaluateAutoMerge } from './auto-merge.js'
+import { kickStandingMerge } from './standing-merge.js'
 import { TRANSCRIPT_DIR } from '../config.js'
 import { deriveWorktreeBranchName } from './branch-scope.js'
 import { isGateRejectionMemoryEnabled, getObjectiveTreeSha } from './governance.js'
@@ -67,6 +68,7 @@ import {
 import { delegatorParentOf } from './poller-delegator.js'
 import { noteStartReason } from './session-start-reasons.js'
 import { resolveHarnessRepo } from '../lib/install-defaults.js'
+import { captureReviewHeadSha } from './review-head.js'
 
 /** A single parsed test-agent criterion result (PR-gated harness loop). */
 interface CriterionResult {
@@ -859,6 +861,12 @@ export async function pollAIReviewSessions(): Promise<void> {
     }
 
     if (verdict === 'pass') {
+      // obj 901455: a pass is tied to the commit the reviewer read. The spawn
+      // site records it; if that GitHub read failed, record the head now so the
+      // grant merge can still tell whether the PR moved after this review.
+      if (obj.pr_number || obj.pr_url) {
+        await captureReviewHeadSha(db, obj, obj.ai_review_session_id, undefined, { onlyIfEmpty: true })
+      }
       let nextStatus: ObjectiveStatus = obj.type === 'project' ? 'review' : 'done'
       if (mustRouteToHumanReview(obj, { verdict: 'pass' }) && nextStatus === 'done') nextStatus = 'review'
       if (await ciGateBlocks(nextStatus)) continue
@@ -873,6 +881,10 @@ export async function pollAIReviewSessions(): Promise<void> {
       postHarnessStatus(obj, 'success', 'Test-agent verified the PR preview (pass).')
       const passed = db.prepare('SELECT * FROM objectives WHERE id = ?').get(obj.id) as Objective
       void evaluateAutoMerge(passed, 'pass', true)
+      // obj 901388: a bot's own passed card under a merge grant with "Merge
+      // without asking me each time" on. A no-op without such a grant; never
+      // reads auto_merge_enabled. All guards are mergeUnderGrant's.
+      if (passed.status === 'review') kickStandingMerge(passed.id)
     } else if (verdict === 'blocked') {
       let nextStatus: ObjectiveStatus = (obj.type === 'task' && delegatorParent == null) ? 'done' : 'review'
       if (mustRouteToHumanReview(obj) && nextStatus === 'done') nextStatus = 'review'

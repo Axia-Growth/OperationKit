@@ -30,12 +30,12 @@ export type ItemOwnerBot =
   | { ok: false; error: string; known: string[] }
 
 /** Chat bots installed on this board, with the admin's display-name overrides. */
-function installedChatBots(): Array<{ slug: string; name: string }> {
+function installedChatBots(): Array<{ slug: string; name: string; aliases?: string[] }> {
   try {
     const loaded = loadChatAgents({ env: process.env, includeDemo: false, includeBuiltins: builtinsEnabled(process.env) })
     let configs: ReturnType<typeof allBotConfigs> = new Map()
     try { configs = allBotConfigs() } catch { /* no table yet: every bot is its file */ }
-    return loaded.agents.map(a => applyBotConfig(a, configs.get(a.slug))).map(a => ({ slug: a.slug, name: a.name }))
+    return loaded.agents.map(a => applyBotConfig(a, configs.get(a.slug))).map(a => ({ slug: a.slug, name: a.name, aliases: a.aliases }))
   } catch {
     return []
   }
@@ -55,7 +55,8 @@ export function resolveItemOwnerBot(raw: unknown, db: Database): ItemOwnerBot {
   }
   const chat = installedChatBots()
   // Two chat bots can share a display name, so every match counts.
-  const hits = chat.filter(c => registryKey(c.name) === key || registryKey(c.slug) === key)
+  const hits = chat.filter(c =>
+    registryKey(c.name) === key || registryKey(c.slug) === key || (c.aliases ?? []).some(a => registryKey(a) === key))
   if (hits.length) return { ok: true, value: shape.value, botId: null, slugs: hits.map(c => c.slug.toLowerCase()) }
   const known = [...new Set([...bots.map(b => b.id), ...chat.map(c => c.name)])]
   return {

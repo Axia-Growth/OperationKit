@@ -24,6 +24,15 @@ Element.prototype.scrollTo = function scrollTo() {}
 async function settle(n = 12) {
   for (let i = 0; i < n; i++) await new Promise(r => setTimeout(r, 0))
 }
+/**
+ * Wait (bounded) for something a row click causes. Opening a bot is a React
+ * Router navigation, which commits as a transition: React time-slices it by
+ * the wall clock, so on a loaded runner it can take more macrotasks than any
+ * fixed settle() count (obj 901428; same cause as obj 901309 in the switch test).
+ */
+async function until(ok: () => boolean, max = 400) {
+  for (let i = 0; i < max && !ok(); i++) await new Promise(r => setTimeout(r, 0))
+}
 
 const agent = (slug: string, name: string, source = 'file') => ({
   slug, name, file_name: name, description: `${name} description`, avatar: name.slice(0, 2).toUpperCase(), colour: 'blue',
@@ -485,7 +494,7 @@ describe('pending badge (obj 900866)', () => {
     await settle()
     expect(badge('marketing-bot')).not.toBeNull()
     ;(row('marketing-bot')!.querySelector('button') as HTMLButtonElement).click()
-    await settle()
+    await until(() => writes().some(c => c.url === '/api/agent-chat/sidebar/bots/marketing-bot/read') && badge('marketing-bot') === null)
     expect(writes()).toContainEqual({ url: '/api/agent-chat/sidebar/bots/marketing-bot/read', method: 'POST', body: null })
     expect(badge('marketing-bot')).toBeNull()
   })

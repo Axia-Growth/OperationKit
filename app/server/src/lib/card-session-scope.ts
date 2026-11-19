@@ -37,8 +37,14 @@
  * card's row or review criteria, and every cross-card write or read
  * (`PATCH /objectives/:id/status`, `POST /objectives/:id/message`,
  * `GET /objectives/:id/output`) — on its own card id as well as any other.
- * Cross-card actions a High Agency wake may need from a jail are a follow-up
- * that needs the owner's approval, not a rule to add here.
+ *
+ * ## The one cross-card exception: High Agency wakes (obj 901280)
+ *
+ * When — and only when — the own-card list above refuses, a caller card that
+ * is a genuine High Agency wake (`lib/high-agency-wake-scope.ts`) may list,
+ * read, start, hold, close and message the cards ITS bot owns, in its own
+ * workspace, and read its bot's supervisor flags. A normal card session never
+ * gets past `resolveHighAgencyWake`, so its behaviour is unchanged.
  */
 import type { Request, Response } from 'express'
 import type Database from 'better-sqlite3'
@@ -47,14 +53,15 @@ import { isSandboxPeer } from './is-localhost.js'
 import { sessionTokenFromHeaders, verifySessionToken } from './session-trust.js'
 import { hasValidInternalSecret } from '../middleware/internal-secret.js'
 import { hasValidObjectivesToken } from '../middleware/objectives-token.js'
+import { authorizeHighAgencyWakeRequest, type HighAgencyWake, type WakeScope } from './high-agency-wake-scope.js'
 
-export type CardSessionScope = 'own' | 'create' | 'pr'
+export type CardSessionScope = 'own' | 'create' | 'pr' | WakeScope
 
 interface RouteRule {
   methods: readonly string[]
   /** Anchored, lower-case, against the path below `/api/internal`. Group 1 = `:id` when present. */
   pattern: RegExp
-  scope: CardSessionScope
+  scope: 'own' | 'create' | 'pr'
 }
 
 const ID = '(\\d{1,12})'
@@ -191,7 +198,7 @@ export function pinCreateItemsToCaller(caller: CardSessionCaller, items: Array<R
 }
 
 export type CardSessionDecision =
-  | { ok: true; caller: CardSessionCaller; route: MatchedRoute }
+  | { ok: true; caller: CardSessionCaller; route: MatchedRoute; wake?: HighAgencyWake }
   | { ok: false; reason: 'no_token' | 'bad_token' | 'not_allow_listed' | 'not_own_card' | 'out_of_scope_body' }
 
 /** The one decision the gate (and the handlers) make for a sandbox peer. */
@@ -201,7 +208,17 @@ export async function authorizeCardSessionRequest(req: Request, db?: Database.Da
   const d = db ?? getDb()
   const caller = resolveCardSessionCaller(headers, d)
   if (!caller) return { ok: false, reason: 'bad_token' }
-  const route = matchCardSessionRoute(req.method, internalSubPath(req))
+  const subPath = internalSubPath(req)
+  const own = ownCardDecision(req, caller, matchCardSessionRoute(req.method, subPath))
+  if (own.ok) return own
+  // obj 901280: a High Agency wake may act on the cards its bot owns. Tried only
+  // after the own-card list refused, so a normal session's answer is unchanged.
+  const wake = authorizeHighAgencyWakeRequest(caller, req, subPath, d)
+  if (wake.ok) return { ok: true, caller, route: { scope: wake.scope, id: wake.id }, wake: wake.wake }
+  return own
+}
+
+function ownCardDecision(req: Request, caller: CardSessionCaller, route: MatchedRoute | null): CardSessionDecision {
   if (!route) return { ok: false, reason: 'not_allow_listed' }
   switch (route.scope) {
     case 'own':
@@ -212,6 +229,8 @@ export async function authorizeCardSessionRequest(req: Request, db?: Database.Da
     }
     case 'create':
       return createBodyScopeError(caller, req.body) ? { ok: false, reason: 'out_of_scope_body' } : { ok: true, caller, route }
+    default:
+      return { ok: false, reason: 'not_allow_listed' }
   }
 }
 
@@ -225,7 +244,7 @@ export async function authorizeCardSessionRequest(req: Request, db?: Database.Da
 export async function sandboxCardGuard(
   req: Request,
   res: Response,
-): Promise<{ sandboxed: false } | { sandboxed: true; caller: CardSessionCaller } | false> {
+): Promise<{ sandboxed: false } | { sandboxed: true; caller: CardSessionCaller; wake: HighAgencyWake | null } | false> {
   if (!isSandboxPeer(req)) return { sandboxed: false }
   // A credentialled caller (X-Internal-Secret / objectives token) passed the gate
   // on that credential, exactly as before obj 901195.
@@ -238,7 +257,7 @@ export async function sandboxCardGuard(
     })
     return false
   }
-  return { sandboxed: true, caller: decision.caller }
+  return { sandboxed: true, caller: decision.caller, wake: decision.wake ?? null }
 }
 
 /**
@@ -255,7 +274,10 @@ export function withSandboxCardGuard<H extends (req: Request, res: Response, nex
       })
       .then((g) => {
         if (!g) return
-        if (g.sandboxed) res.locals.cardSessionCaller = g.caller
+        if (g.sandboxed) {
+          res.locals.cardSessionCaller = g.caller
+          if (g.wake) res.locals.highAgencyWake = g.wake
+        }
         return Promise.resolve(handler(req, res, next))
       })
       .catch(next)
@@ -265,4 +287,9 @@ export function withSandboxCardGuard<H extends (req: Request, res: Response, nex
 /** The sandboxed caller card set by `withSandboxCardGuard`, or null. */
 export function sandboxCallerOf(res: Response): CardSessionCaller | null {
   return (res.locals?.cardSessionCaller as CardSessionCaller | undefined) ?? null
+}
+
+/** The High Agency wake the jail decision admitted (obj 901280), or null. */
+export function sandboxWakeOf(res: Response): HighAgencyWake | null {
+  return (res.locals?.highAgencyWake as HighAgencyWake | undefined) ?? null
 }

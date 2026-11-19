@@ -35,8 +35,11 @@ vi.mock('../../hooks/useWorkspaces', () => ({
   useWorkspaces: () => ({ slugs: ['all', 'operationkit', 'client-a', 'env-ws'], labelOf: (s: string) => s.toUpperCase() }),
 }))
 
-function stateWith(workspaces: QueueAutostartState['workspaces']): QueueAutostartState {
-  return { workspaces, max_concurrent: 4, max_concurrent_source: 'default', in_flight: 1, grace_minutes: 1 }
+function stateWith(
+  workspaces: QueueAutostartState['workspaces'],
+  time_limits: QueueAutostartState['time_limits'] = {},
+): QueueAutostartState {
+  return { workspaces, max_concurrent: 4, max_concurrent_source: 'default', in_flight: 1, grace_minutes: 1, time_limits }
 }
 
 const ON = (workspace: string, over: Partial<QueueAutostartState['workspaces'][number]> = {}) => ({
@@ -69,6 +72,25 @@ afterEach(() => {
 
 function switches() {
   return Array.from(host.querySelectorAll<HTMLButtonElement>('button[role="switch"]'))
+}
+
+function timeLimitInput(label: string): HTMLInputElement {
+  const el = host.querySelector<HTMLInputElement>(`input[aria-label="Job time limit in minutes for ${label}"]`)
+  if (!el) throw new Error(`no time limit input for ${label}`)
+  return el
+}
+
+function timeLimitSaveButton(label: string): HTMLButtonElement {
+  const row = timeLimitInput(label).closest('li')
+  const btn = row?.querySelector<HTMLButtonElement>('button:not([role="switch"])')
+  if (!btn) throw new Error(`no save button for ${label}`)
+  return btn
+}
+
+function setInput(el: HTMLInputElement, value: string) {
+  const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value')!.set!
+  setter.call(el, value)
+  el.dispatchEvent(new Event('input', { bubbles: true }))
 }
 
 describe('QueueAutostartPanel', () => {
@@ -110,5 +132,66 @@ describe('QueueAutostartPanel', () => {
     switches()[0].click()
     await flush()
     expect(host.textContent).toContain('boom')
+  })
+
+  describe('job time limit', () => {
+    it('shows the current value, or "No limit set" when empty', async () => {
+      store.state = stateWith([ON('operationkit')], {
+        operationkit: { minutes: 30, source: 'workspace' },
+        'client-a': { minutes: null, source: 'none' },
+      })
+      flushSync(() => root.render(<QueueAutostartPanel />))
+      await flush()
+      expect(timeLimitInput('OPERATIONKIT').value).toBe('30')
+      expect(timeLimitInput('CLIENT-A').value).toBe('')
+      expect(host.textContent).toContain('No limit set')
+    })
+
+    it('saves a new value and disables Save until the field is dirty again', async () => {
+      store.state = stateWith([ON('operationkit')], { operationkit: { minutes: null, source: 'none' } })
+      apiMock.put.mockResolvedValue(
+        stateWith([ON('operationkit')], { operationkit: { minutes: 30, source: 'workspace' } }),
+      )
+      flushSync(() => root.render(<QueueAutostartPanel />))
+      await flush()
+      const input = timeLimitInput('OPERATIONKIT')
+      const save = timeLimitSaveButton('OPERATIONKIT')
+      expect(save.disabled).toBe(true)
+      setInput(input, '30')
+      await flush()
+      expect(save.disabled).toBe(false)
+      save.click()
+      await flush()
+      expect(apiMock.put).toHaveBeenCalledWith('/admin/queue-autostart/operationkit/time-limit', { minutes: 30 })
+      expect(timeLimitInput('OPERATIONKIT').value).toBe('30')
+      expect(timeLimitSaveButton('OPERATIONKIT').disabled).toBe(true)
+    })
+
+    it('clearing the field saves null', async () => {
+      store.state = stateWith([ON('operationkit')], { operationkit: { minutes: 30, source: 'workspace' } })
+      apiMock.put.mockResolvedValue(
+        stateWith([ON('operationkit')], { operationkit: { minutes: null, source: 'none' } }),
+      )
+      flushSync(() => root.render(<QueueAutostartPanel />))
+      await flush()
+      setInput(timeLimitInput('OPERATIONKIT'), '')
+      await flush()
+      timeLimitSaveButton('OPERATIONKIT').click()
+      await flush()
+      expect(apiMock.put).toHaveBeenCalledWith('/admin/queue-autostart/operationkit/time-limit', { minutes: null })
+      expect(host.textContent).toContain('No limit set')
+    })
+
+    it('rejects a non-integer without calling the API', async () => {
+      store.state = stateWith([ON('operationkit')], { operationkit: { minutes: null, source: 'none' } })
+      flushSync(() => root.render(<QueueAutostartPanel />))
+      await flush()
+      setInput(timeLimitInput('OPERATIONKIT'), '2.5')
+      await flush()
+      timeLimitSaveButton('OPERATIONKIT').click()
+      await flush()
+      expect(apiMock.put).not.toHaveBeenCalled()
+      expect(host.textContent).toContain('whole number of minutes')
+    })
   })
 })

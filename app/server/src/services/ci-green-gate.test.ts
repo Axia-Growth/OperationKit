@@ -145,6 +145,25 @@ describe('absent / queued / cancelled required check → bounded, never indefini
     expect(d.reason).toMatch(/not a worker failure/)
   })
 
+  it('obj 901489: an aggregate required job absent while its upstream jobs run reads as waiting, not "never scheduled"', () => {
+    // PRs 888/892/904/876/884 on 2026-11-19: the gate workflow started seconds after the
+    // branch update, but the `gate` job has no check run until unit/typecheck/build finish.
+    const d = evaluateCiGate(inputs({
+      requiredChecks: ruleset(['gate']),
+      rollup: [
+        checkRun('typecheck', 'SUCCESS'),
+        checkRun('unit (server)', '', 'IN_PROGRESS'),
+        checkRun('unit (client)', '', 'QUEUED'),
+      ],
+    }))
+    expect(d.action).toBe('hold')
+    expect(d.failingRequired).toEqual([])
+    expect(d.missingRequired).toEqual(['gate (not started yet: waiting on 2 other job(s) still running)'])
+    // Nothing else running and still absent: that IS the never-scheduled case.
+    const idle = evaluateCiGate(inputs({ requiredChecks: ruleset(['gate']), rollup: [checkRun('typecheck', 'SUCCESS')] }))
+    expect(idle.missingRequired).toEqual(['gate (never scheduled)'])
+  })
+
   it('reproduces the 2026-08-06 Actions outage: only Vercel checks present, zero Actions runs', () => {
     // PR #679 head cf95539 carried Vercel checks and NO check runs at all.
     const outage = evaluateCiGate(inputs({
