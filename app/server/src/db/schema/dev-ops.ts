@@ -14,6 +14,13 @@
  * just updated from its base (GitHub update-branch). The background tick merges
  * it, pinned to the new head, once CI on that head is green.
  *
+ * Since obj 901463 the `waiting` rows of one repo are an ordered merge queue
+ * (lowest id = head). Two additive columns: `stage` (`queued` = the branch has
+ * not been touched since the merge was asked for; `updated` = update-branch was
+ * called and the update commit is expected; rows from before the queue are
+ * `updated`) and `head_at` (when the row became the head; NULL = only queued so
+ * far). `updates` counts branch updates, which only ever happen at the head.
+ *
  * `dev_ops_deploys` is one row per update.sh deploy started from chat. The host
  * runner writes the outcome to a file; the tick settles it into this row.
  */
@@ -77,4 +84,9 @@ export function initDevOpsSchema(db: Database.Database): void {
       finished_at TEXT
     );
   `)
+  // obj 901463: merge queue columns (additive; old rows read as already-updated).
+  const cols = new Set((db.prepare('PRAGMA table_info(dev_ops_pending_merges)').all() as Array<{ name: string }>).map(c => c.name))
+  if (!cols.has('stage')) db.exec("ALTER TABLE dev_ops_pending_merges ADD COLUMN stage TEXT NOT NULL DEFAULT 'updated'")
+  if (!cols.has('head_at')) db.exec('ALTER TABLE dev_ops_pending_merges ADD COLUMN head_at TEXT')
+  db.exec('CREATE INDEX IF NOT EXISTS idx_dev_ops_pending_merges_repo ON dev_ops_pending_merges(repo, status)')
 }

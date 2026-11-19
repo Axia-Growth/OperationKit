@@ -296,7 +296,9 @@ describe('a limited or empty account hands the reply to the next one (obj 901395
     expect(r.status).toBe(503)
     expect(r.json.code).toBe('ai_unavailable')
     expect(r.json.reason).toBe('rate_limited')
-    expect(r.json.error).toMatch(/^All 2 Claude accounts are at their usage limit\. The first one resets at \d{1,2}:\d{2}\s?[AP]M \S+ \(in about 4[45] minutes\)\. /)
+    // After about 23:15 in the install timezone, now + 45 min is tomorrow, so the time carries a
+    // weekday ("Thursday, 12:08 AM EST"). Allow it, or the test fails every night (obj 901502).
+    expect(r.json.error).toMatch(/^All 2 Claude accounts are at their usage limit\. The first one resets at (?:[A-Z][a-z]+day, )?\d{1,2}:\d{2}\s?[AP]M \S+ \(in about 4[45] minutes\)\. /)
     expect(r.json.error).not.toMatch(/claude exited/)
     // Nothing ran, so the message is handed back (not stored half-answered).
     expect(await history(BOT)).toEqual([])
