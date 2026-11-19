@@ -39,6 +39,23 @@ async function until(ok: () => boolean, max = 200) {
   expect(ok(), 'switch rendered').toBe(true)
 }
 
+/**
+ * Park the page's idle warm-up (it warms the first bots ~300ms after the list
+ * shows). Tests that count the fetch a hover or focus makes use this, so on a
+ * slow runner the idle warm-up cannot fetch the bot first and turn the hover
+ * into a no-op.
+ */
+function parkIdleWarmup() {
+  vi.stubGlobal('requestIdleCallback', () => 0)
+  vi.stubGlobal('cancelIdleCallback', () => {})
+}
+
+/** Mount and wait (bounded) until Alpha's thread is on screen. */
+async function mountAlpha() {
+  await mount('/chat/alpha')
+  await until(() => !!conversation('Alpha')?.textContent?.includes('Hello from alpha'))
+}
+
 const bot = (slug: string, name: string) => ({
   slug, name, description: `${name} does things.`, avatar: name.slice(0, 2).toUpperCase(), colour: 'green',
   knowledge_folders: [], tools: ['search'], model: null, provider: null,
@@ -132,8 +149,7 @@ afterEach(() => {
 
 describe('switching bots (obj 900865)', () => {
   it('does not remount the page: one bot-list fetch, the same sidebar element', async () => {
-    await mount('/chat/alpha')
-    await settle()
+    await mountAlpha()
     expect(conversation('Alpha')?.textContent).toContain('Hello from alpha')
     const aside = host.querySelector('aside')
 
@@ -159,9 +175,11 @@ describe('switching bots (obj 900865)', () => {
   })
 
   it('a bot whose messages are still loading shows its header, a skeleton and the composer — never a blank pane', async () => {
-    await mount('/chat/alpha')
-    await settle()
+    // Hold beta from the start: the page warms the first bots ~300ms after the
+    // list is on screen, and on a slow runner that warm-up would otherwise
+    // fetch beta (unheld) before this test gets to hold it.
     hold.add('beta')
+    await mountAlpha()
 
     rowButton('beta').click()
     await until(() => !!conversation('Beta'))
@@ -174,16 +192,18 @@ describe('switching bots (obj 900865)', () => {
     assertPaneNotBlank('Beta')
     // …and the conversation replaces the skeleton the moment it lands.
     held.filter(h => h.slug === 'beta').forEach(h => h.release())
-    await settle()
+    await until(() => !!conversation('Beta')?.textContent?.includes('Hello from beta'))
     expect(conversation('Beta')?.textContent).toContain('Hello from beta')
     expect(skeleton()).toBeNull()
   })
 
   it('a bot seen before paints from memory on the click, with the network gone', async () => {
-    await mount('/chat/alpha')
-    await settle()
+    await mountAlpha()
     rowButton('beta').click()
-    await settle()
+    // The network is still up here; wait (bounded) for the navigation
+    // transition to commit and beta's thread to land, like the tests above. A
+    // fixed settle() raced React's time-sliced render on a loaded CI runner.
+    await until(() => !!conversation('Beta')?.textContent?.includes('Hello from beta'))
     expect(conversation('Beta')?.textContent).toContain('Hello from beta')
 
     offline = true // every refresh from here on hangs forever
@@ -199,8 +219,8 @@ describe('switching bots (obj 900865)', () => {
   })
 
   it('pointing at a bot in the sidebar warms it, and the click reuses that read', async () => {
-    await mount('/chat/alpha')
-    await settle()
+    parkIdleWarmup()
+    await mountAlpha()
     const before = msgGets('gamma')
 
     rowButton('gamma').dispatchEvent(new MouseEvent('pointerover', { bubbles: true }))
@@ -215,8 +235,8 @@ describe('switching bots (obj 900865)', () => {
   })
 
   it('keyboard focus on a bot warms it too', async () => {
-    await mount('/chat/alpha')
-    await settle()
+    parkIdleWarmup()
+    await mountAlpha()
     const before = msgGets('beta')
     rowButton('beta').focus()
     expect(msgGets('beta')).toBe(before + 1)
@@ -232,8 +252,7 @@ describe('switching bots (obj 900865)', () => {
   })
 
   it('a reply that lands after you switched away stays with the bot it belongs to', async () => {
-    await mount('/chat/alpha')
-    await settle()
+    await mountAlpha()
     // Send to alpha, holding the server's answer.
     let answer!: (r: Response) => void
     const fetchMock = globalThis.fetch as unknown as Mock<(url: string, init?: RequestInit) => Promise<Response>>
@@ -254,7 +273,7 @@ describe('switching bots (obj 900865)', () => {
     await settle()
 
     rowButton('beta').click()
-    await settle()
+    await until(() => !!conversation('Beta')?.textContent?.includes('Hello from beta'))
     answer(json({
       messages: [{ id: 9, role: 'assistant', content: 'Late reply for alpha', provider: 'demo', model: 'scripted', tool_name: null, meta: null, created_at: '2026-11-14 09:01:00' }],
       drafts: [],

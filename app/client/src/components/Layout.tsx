@@ -17,6 +17,7 @@ import { IconButton } from './ui/Button'
 import { commandPaletteShortcut } from '../lib/platform'
 import { Menu, MenuContent, MenuGroup, MenuGroupLabel, MenuItem, MenuSeparator, MenuTrigger } from './ui/Menu'
 import { HAS_CHAT_PAGE } from '../lib/optional-pages'
+import { useOnScreenKeyboard } from '../hooks/useOnScreenKeyboard'
 import { prefetchContext } from '../lib/kbContextData'
 import { SYSTEM_ROUTE, LEGACY_SYSTEM_ROUTES, AGENTS_ROUTE, JOBS_ROUTE, NEEDS_YOU_ROUTE, agentsTabRoute } from '../lib/routes'
 
@@ -157,11 +158,36 @@ function prefetchProps(href: string) {
   return href === '/knowledge' ? CONTEXT_PREFETCH : undefined
 }
 
+/** Visible height (keyboard open) under which the phone top bar also steps aside (obj 901376). */
+const TIGHT_VISIBLE_PX = 520
+
 export function Layout({ children, selectedWorkspaces, onWorkspacesChange, pageScroll = false }: LayoutProps) {
   const { user, logout } = useAuth()
   const navigate = useNavigate()
   const { workspaces: orgRecords, loading: orgsLoading, refresh: refreshOrgs, shortOf } = useWorkspaces()
   const currentPath = window.location.pathname
+  // obj 901376: the phone keyboard covers the bottom of the layout viewport
+  // without resizing it. While it is up the shell shrinks to the visible
+  // height (fixed-height pages only; a page-scroll route scrolls the document
+  // as before) and the bottom tab bar steps aside.
+  const keyboard = useOnScreenKeyboard()
+  const shellHeight = pageScroll ? null : keyboard.height
+  const tightForTyping = shellHeight !== null && shellHeight < TIGHT_VISIBLE_PX
+  useEffect(() => {
+    if (shellHeight === null) return
+    // iOS Safari also pans the page up to reveal the focused field. The shell
+    // already fits the visible area, so that pan only pushes the top bar off
+    // screen: put the page back at the top whenever it happens.
+    const vv = window.visualViewport
+    const pin = () => { if (window.scrollY !== 0 || (vv && vv.offsetTop !== 0)) window.scrollTo(0, 0) }
+    pin()
+    vv?.addEventListener('scroll', pin)
+    window.addEventListener('scroll', pin)
+    return () => {
+      vv?.removeEventListener('scroll', pin)
+      window.removeEventListener('scroll', pin)
+    }
+  }, [shellHeight])
 
   // Intercept plain left-clicks on nav anchors → in-app navigation (no reload).
   // Modified clicks (cmd/ctrl/shift/alt) and non-primary buttons fall through to
@@ -327,9 +353,13 @@ export function Layout({ children, selectedWorkspaces, onWorkspacesChange, pageS
     // and the sticky top bars stick to the viewport.
     <div
       data-scroll-mode={pageScroll ? 'page' : 'container'}
+      data-keyboard={keyboard.open ? 'open' : undefined}
       className={pageScroll
         ? 'flex min-h-full flex-col overflow-x-clip bg-surface-0'
         : 'flex h-full flex-col overflow-x-hidden bg-surface-0'}
+      // obj 901376: with the phone keyboard up, the fixed-height shell is as
+      // tall as the VISIBLE viewport, so a page's composer sits on the keyboard.
+      style={shellHeight !== null ? { height: shellHeight } : undefined}
     >
       {/* ── Desktop top bar ──
           Stable chrome (obj 900807): a 1fr | auto | 1fr grid, so "Jump to
@@ -425,7 +455,10 @@ export function Layout({ children, selectedWorkspaces, onWorkspacesChange, pageS
       </header>
 
       {/* ── Mobile top bar (minimal) ── */}
-      <header className={`${pageScroll ? 'sticky top-0 z-30 ' : ''}flex items-center justify-between border-b border-line bg-surface-0 px-3 py-0.5 sm:hidden`}
+      {/* obj 901376: on a short screen the keyboard leaves ~330px (iPhone, Safari
+          bars showing). The page being typed in needs all of it, so this bar
+          steps aside until the keyboard closes. */}
+      <header className={`${pageScroll ? 'sticky top-0 z-30 ' : ''}${tightForTyping ? 'hidden' : 'flex'} items-center justify-between border-b border-line bg-surface-0 px-3 py-0.5 sm:hidden`}
         style={{ paddingTop: 'calc(0.125rem + env(safe-area-inset-top))' }}
       >
         <a href="/" aria-label={`${brandName} home`} onClick={onNavClick('/')} className="flex min-w-0 items-center rounded-md">
@@ -468,12 +501,14 @@ export function Layout({ children, selectedWorkspaces, onWorkspacesChange, pageS
       </header>
 
       {/* ── Main content ── */}
-      <main className={`flex-1 ${pageScroll ? '' : 'overflow-hidden '}pb-[calc(3.5rem+env(safe-area-inset-bottom))] sm:pb-0`}>{children}</main>
+      <main className={`flex-1 ${pageScroll ? '' : 'overflow-hidden '}${keyboard.open ? '' : 'pb-[calc(3.5rem+env(safe-area-inset-bottom))] '}sm:pb-0`}>{children}</main>
 
       {/* ── Mobile bottom tab bar (≤4 tabs; the rest lives in the avatar menu) ── */}
       <nav
         aria-label="Primary"
-        className="fixed bottom-0 left-0 right-0 z-40 border-t border-line bg-surface-1 sm:hidden"
+        // obj 901376: gone while the phone keyboard is up — it was drawn half
+        // behind the keyboard and took room from the page; back when it closes.
+        className={`fixed bottom-0 left-0 right-0 z-40 border-t border-line bg-surface-1 sm:hidden${keyboard.open ? ' hidden' : ''}`}
         style={{ paddingBottom: 'env(safe-area-inset-bottom)' }}
       >
         <div className="flex items-stretch">

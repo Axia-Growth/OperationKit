@@ -11,6 +11,7 @@
 > | **A bot** | A durable identity — a name, a description, instructions, its own knowledge folders and tools. One file on the server. | By adding that file (see [Adding a bot](#adding-a-bot)). **Never from the Bots screen.** | By removing that file. |
 > | **The main conversation** | Your ongoing message history with one bot. There is exactly **one per bot** and it is always open. | Implicitly, by your first message. | **Clear** empties it — the bot stays. |
 > | **A side thread** | An extra, named conversation beside the main one. Its own history, its own context, and it runs **at the same time** as the others. | **+ Side thread** on the strip under the bot's name. | **Close** archives it (messages kept) — the main conversation is untouched. |
+> | **A thread** | Replies under **one message**. It opens in a panel beside the conversation; the bot answers there, knowing which message you mean. | **Reply in thread** on any message (hover it; on a phone it sits under the message). | **Close** (the ✕) hides the panel — the replies stay, and the message shows **N replies**. |
 >
 > That is why the Bots screen has no **New bot** button: it does not create bots. It *does* create side threads, because a side thread is a conversation, not a bot.
 
@@ -39,7 +40,18 @@ Under every reply you will see **"Answered by …"** — the AI service and mode
 
 Small grey lines between messages show what the bot did: "Checked inbox", "Read todo.md", "Created card #42".
 
-**Clear** (top right) deletes the messages of **the conversation you are looking at** from the server. In the main conversation that empties the main history and leaves your side threads alone; in a side thread it empties only that lane. **The bot itself is never deleted**, and board cards and saved notes stay.
+**Clear** (top right) deletes the messages of **the conversation you are looking at** from the server. In the main conversation that empties the main history and leaves your side threads alone; in a side thread it empties only that lane. **The bot itself is never deleted**, and board cards and saved notes stay. Clearing a conversation also clears the **threads** replied under its messages.
+
+### Reply in thread
+
+A bot often posts several separate things in a row — a decision, a status report, a finished card. To answer **one** of them without the bot guessing which:
+
+1. Hover the message (yours or the bot's) and press **Reply in thread**. On a phone the link sits under the message, and a long press opens it too.
+2. A **Thread** panel opens with that message at the top and its own box to type in. Enter sends; you can paste or attach a screenshot, as in the main box.
+3. The bot answers **in the thread**. It is given that message and the thread's earlier replies, and nothing is added to the main conversation.
+4. The message now shows **N replies** and the time of the last one. Press it to open the thread again.
+
+Threads work on messages in **Main** and in side threads such as **Card wakes**. A bot's unanswered reply in a thread counts toward its unread badge in the bot list, like any other reply. Messages inside a thread cannot start a thread of their own. Bot-to-bot conversations (**Bot messages**) are read-only for people and have no threads.
 
 ### Side threads, in a bit more detail
 
@@ -60,6 +72,7 @@ What each bot may do is written in its agent file (below). The server enforces i
 | **Look at a screenshot you paste in** | The image is stored in this install's own database next to your message, and handed to the AI as a real image. Only you can open it. If the agent's AI service cannot read images, the chat says so plainly rather than quietly ignoring the picture. |
 | **Hand bigger jobs to the board** | Anything that takes more than a few minutes (building a page, a report, research) becomes a board card. The card shows up in the chat with its status — *Waiting to start → In progress → Ready for your review → Done* — and keeps updating while you watch. Tap it to open the card. |
 | **Prepare email replies and meeting invites** | As **drafts only**. A draft appears in the conversation with **Send** / **Add to calendar**, **Edit** and **Discard** buttons. Nothing is sent until *you* press Send. A bot or API key can never press it for you. |
+| **Check back on its own** | After it starts a card (or anything that takes a while) the bot can set itself a one-off follow-up: "check back in 10 minutes". You see a line **Follow-up scheduled for HH:MM: what it will check**, with **Cancel**. When the time comes the bot answers in the same conversation without you typing anything. It has exactly the permissions of a normal reply and is never your approval of a merge, a deploy or a decision. At most 5 can wait in one conversation, and a chain stops after 6 in a row without a message from you. See [Bot follow-ups](../wiki/Bot-Follow-Ups.md). |
 | **Hand bigger jobs to the board** | Anything that takes more than a few minutes (building a page, a report, research) becomes a board card. The card shows up in the conversation with its status — *Waiting to start → In progress → Ready for your review → Done* — and keeps updating while you watch. Tap it to open the card. |
 
 ## Where your conversation is stored
@@ -160,6 +173,7 @@ Tools a bot can be given:
 | `create_objective` | put a job on the board (always in the person's own workspace) |
 | `get_objective`, `list_objectives` | read the real board — every card the person could see on the board themselves, in every workspace they belong to (not just cards this bot filed). An empty answer means the board really is empty. |
 | `board_briefing` | "what is waiting on me?": cards in review, failed AI reviews, blockers, secrets a worker needs, stuck workers, plus counts per column. Any bot that lists `get_objective` or `list_objectives` gets it automatically. |
+| `followups` | set itself a one-off follow-up in this chat: `schedule_followup` (`in_minutes` 2 to 1440, `note`, optional `card_id` and `when_card_changes`), `list_followups`, `cancel_followup`. Any bot that lists `create_objective` gets it automatically. See [Bot follow-ups](../wiki/Bot-Follow-Ups.md). |
 | `web_search` | search the public web (needs a search key, see [Web search](#web-search-and-reading-pages)) |
 | `web_fetch` | open one public web page and read its text |
 | `all` | every tool above, including tools added later |
@@ -190,3 +204,18 @@ The code keeps its existing `agent` / `agent-chat` names — only the user-facin
 - Side threads / concurrent task lanes (obj 900370): `app/server/src/services/agent-chat/threads.ts`. A message's lane is `agent_chat_messages.thread_id` — `NULL` means the main conversation, which is why every row written before the feature existed is already in the right place. Every read and write of the message table is scoped by `lanePredicate()`, the single place a lane becomes SQL; there is deliberately no predicate that spans lanes. The in-flight slot in `engine.ts` is keyed per lane, which is what makes the lanes concurrent. Proofs: `services/agent-chat/side-threads.test.ts` (isolation, concurrency, ceiling) and `routes/agent-chat-threads.test.ts` (the HTTP boundary). The row shape follows this install's own `mentor_threads`, not a new threading model.
 - Page: `app/client/src/components/agent-chat/`, routed at `/chat` and `/chat/:slug`.
 - Plugging in a real mailbox or calendar: implement `MailConnector` / `CalendarConnector` in `connectors.ts` and return it from `resolveConnectors()`. Delivery happens only in `deliver()` / `add()`, which only the Send route calls.
+
+## Typing on a phone (obj 901376)
+
+While the on-screen keyboard is open on a phone-width screen, the bot chat folds its chrome: the header keeps only
+back, avatar, name (and the side thread's name), and the action row, the Chat / Work / Activity tabs and the lane tabs
+are hidden. The app shell (`Layout.tsx`) shrinks to the visible viewport (`window.visualViewport`), hides the bottom
+tab bar, and on a short screen (under 520px visible) the top bar too. Everything returns when the keyboard closes.
+The state comes from one store, `hooks/useOnScreenKeyboard.ts` (touch = `pointer: coarse`, never screen width).
+
+The composer grows upward to 6 lines (5 when under 400px is visible), then scrolls inside. While the keyboard is
+open the message list keeps at least half of the visible area: the box stops growing sooner when it would take
+more (`lib/composerFit.ts`), down to one line. Attached images are one
+row of small thumbnails that scrolls sideways. On a touch device Return adds a line and only the Send button sends;
+on a desktop Enter sends and Shift+Enter adds a line. That rule is `lib/composerKeys.ts` (`enterSends`), shared by
+the bot chat and the card chat composer: a new chat box must use it too.

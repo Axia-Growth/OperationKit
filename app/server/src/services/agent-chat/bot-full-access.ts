@@ -480,6 +480,50 @@ export function protectedPrInText(text: string): number | null {
 }
 
 /**
+ * The plain refusal for card text that names a protected pull request. One
+ * sentence on why, one on how to file without it. Shared by both filing tools.
+ */
+export function protectedPrTextMessage(pr: number): string {
+  return (
+    `Refused: card text may not name pull request ${pr}, because it is protected, and this applies even to a mention like "do not touch PR ${pr}". ` +
+    `To file this card, take the number out of the title and description (write "the protected pull request" if you must refer to it) and send it again. This refusal was logged.`
+  )
+}
+
+/**
+ * The ONE text check for every tool that files a card from chat
+ * (`create_objective`, `repo_session_start`). Returns the refusal, ALREADY
+ * written to the audit log, or null when the title and description name no
+ * protected pull request.
+ *
+ * A negated mention ("do not touch PR 645") is refused too, on purpose: telling
+ * "do not touch 645" from "do touch 645, not 646" reliably is not possible with
+ * a pattern, and the wall must not depend on phrasing. Leaving the number out
+ * costs the bot nothing — a card that never names it cannot be pointed at it.
+ */
+export function protectedPrTextRefusal(input: {
+  slug: string
+  workspace: string | null
+  ability: string
+  title: string
+  description: string
+  actorUserId?: number | null
+}): string | null {
+  const pr = protectedPrInText(`${input.title}\n${input.description}`)
+  if (pr === null) return null
+  writeFullAccessAudit({
+    event: 'protected_refused',
+    slug: input.slug,
+    workspace: input.workspace,
+    actor: `bot:${input.slug}`,
+    actor_user_id: input.actorUserId ?? null,
+    ability: input.ability,
+    detail: `card text names protected PR ${pr}`,
+  })
+  return protectedPrTextMessage(pr)
+}
+
+/**
  * The refusal for a card that carries a protected pull request, ALREADY
  * written to the audit log, or null when the card is not protected. Every Full
  * access path that reads or acts on a card calls this first: the chat tools,

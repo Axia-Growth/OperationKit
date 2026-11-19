@@ -133,6 +133,19 @@ describe('agent files', () => {
         expect(dev.system_prompt).toContain(step)
       }
       expect(dev.how_to_use).toMatch(/No business profile yet\? That is fine\./)
+      // obj 901378: it merges its own passed PRs under a merge grant instead of
+      // handing them back, and ground rule 1 names that as the one exception.
+      expect(dev.system_prompt).toContain('## Merging your own cards')
+      expect(dev.system_prompt).toMatch(/call `merge_approved_pr` on each of YOUR OWN cards/)
+      expect(dev.system_prompt).toMatch(/You do not click buttons or change settings yourself\.\*\* .*The exceptions: merging your own cards with `merge_approved_pr`/)
+      expect(dev.system_prompt).toMatch(/Merging is not deploying/)
+      expect(dev.system_prompt).toMatch(/Never work around a refusal/)
+      // obj 901388: level A in plain words — Dev merges, the owner deploys.
+      expect(dev.system_prompt).toContain('### Level A: you merge, the owner deploys')
+      expect(dev.system_prompt).toMatch(/Merge without asking me each time/)
+      expect(dev.system_prompt).toMatch(/Never yours, whatever the grant says:\*\* deploying, production database migrations, secrets and keys, DNS and Cloudflare Access, billing, and protected or reserved pull requests/)
+      // The tool itself is grant-gated by the server, never listed in the file.
+      expect(dev.tools).not.toContain('merge_approved_pr')
     } finally {
       fs.rmSync(dir, { recursive: true, force: true })
     }

@@ -206,6 +206,11 @@ export interface Caller {
    * redactor to recognise, since their replies feed an LLM.
    */
   bot?: boolean
+  /**
+   * obj 901330 — a scoped bot's card session may reach only the names on its
+   * pack through the broker too. Absent = no extra narrowing.
+   */
+  keyFilter?: (key: string) => boolean
 }
 
 interface Row {
@@ -217,6 +222,7 @@ interface Row {
 }
 
 function visibleTo(row: Row, caller: Caller, policy: BrokerPolicy): boolean {
+  if (caller.keyFilter && !caller.keyFilter(row.key)) return false
   if (caller.isAdmin) return true
   const ws = new Set(caller.workspaces)
   switch (row.scope_type) {

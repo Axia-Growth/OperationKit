@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { ChatDecision } from '../decisions/ChatDecision'
-import { ArrowRight, BookOpen, CalendarDays, Clock, Download, LayoutGrid, Mail, X, type LucideIcon } from 'lucide-react'
+import { AlarmClock, ArrowRight, BookOpen, CalendarDays, Clock, Download, LayoutGrid, Mail, X, type LucideIcon } from 'lucide-react'
 import { Badge, Button, Modal, cn } from '../ui'
 import { StatusDot } from '../design/primitives'
 import { renderMarkdown } from '../../lib/markdown'
@@ -9,6 +9,7 @@ import {
   type ChatAgentInfo,
   type ChatCard,
   type ChatDraft,
+  type ChatFollowup,
   type ChatImage,
   type ChatMessage,
   type EmailDraftPayload,
@@ -52,7 +53,7 @@ export function AgentAvatar({
   )
 }
 
-function time(iso: string): string {
+export function time(iso: string): string {
   const d = new Date(iso.includes('T') ? iso : `${iso.replace(' ', 'T')}Z`)
   return Number.isNaN(d.getTime()) ? '' : d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })
 }
@@ -212,6 +213,16 @@ export function ErrorLine({ m }: { m: ChatMessage }) {
       </p>
     )
   }
+  // obj 901395: the reply was moved to another Claude account. Not a failure:
+  // one small, quiet line with the seat labels (never an email or a credential).
+  if (m.meta?.kind === 'seat_moved') {
+    return (
+      <p className="mx-auto max-w-[90%] text-center text-xs text-fg-2" data-testid="seat-moved-line">
+        <span aria-hidden="true">↻ </span>
+        {m.content}
+      </p>
+    )
+  }
   return (
     <div role="alert" className="mx-auto max-w-[90%] rounded-md border border-danger/30 bg-danger/10 px-3 py-2 text-sm text-fg-0">
       <span className="font-medium text-danger">Couldn't answer. </span>
@@ -250,6 +261,49 @@ export function ToolLine({ m }: { m: ChatMessage }) {
       {images.length > 0 && <ChatImageGallery images={images} />}
       {/* obj 901059: a raise_decision call renders the briefing itself, with its Q&A thread and Choose/Deny. */}
       {!failed && typeof m.meta?.decision_id === 'number' && <ChatDecision id={m.meta.decision_id} />}
+    </div>
+  )
+}
+
+/**
+ * obj 901392: a follow-up the bot set for itself ("check back in 10 minutes").
+ * While it waits the line says when it fires and what for, with Cancel; after
+ * that it says what became of it. The times are the viewer's local time.
+ */
+export function FollowupLine({ followup: f, onCancel }: { followup: ChatFollowup; onCancel?: (f: ChatFollowup) => Promise<void> }) {
+  const [busy, setBusy] = useState(false)
+  const waiting = f.status === 'pending'
+  let label: string
+  if (waiting) label = `Follow-up scheduled for ${time(f.due_at)}${f.when_card_changes && f.card_id ? ` (or sooner if card #${f.card_id} changes)` : ''}:`
+  else if (f.status === 'running') label = 'Follow-up running now:'
+  else if (f.status === 'fired') label = `Follow-up ran at ${time(f.fired_at ?? f.due_at)}${f.fire_reason === 'card_changed' ? ' (the card changed)' : ''}:`
+  else if (f.status === 'cancelled') label = `Follow-up cancelled${f.end_reason === 'person' ? ' by you' : f.end_reason === 'bot' ? ' by the bot' : ''}:`
+  else if (f.status === 'dropped') label = `Follow-up dropped (${f.end_reason ?? 'no longer possible'}):`
+  else label = `Follow-up could not run (${f.end_reason ?? 'error'}):`
+  return (
+    <div
+      data-testid="followup-line"
+      data-status={f.status}
+      className={cn('ml-9 flex max-w-[560px] items-start gap-2 rounded-lg border px-3 py-2 text-sm', waiting ? 'border-line bg-surface-2 text-fg-0' : 'border-line-soft bg-surface-1 text-fg-2')}
+    >
+      <AlarmClock aria-hidden="true" className={cn('mt-0.5 h-4 w-4 shrink-0', waiting ? 'text-accent' : 'text-fg-3')} />
+      <p className="min-w-0 flex-1 break-words">
+        <span className="font-medium">{label}</span> <span className={waiting ? 'text-fg-1' : undefined}>{f.note}</span>
+      </p>
+      {waiting && onCancel && (
+        <Button
+          variant="ghost"
+          size="sm"
+          loading={busy}
+          aria-label={`Cancel follow-up scheduled for ${time(f.due_at)}`}
+          onClick={async () => {
+            setBusy(true)
+            try { await onCancel(f) } finally { setBusy(false) }
+          }}
+        >
+          Cancel
+        </Button>
+      )}
     </div>
   )
 }
@@ -336,6 +390,13 @@ export function DraftCard({
           </>
         )}
         {draft.connector === 'demo' && <p className="pt-1 text-xs text-fg-2">Demo account — sample data, nothing leaves the server.</p>}
+        {draft.connector.startsWith('google:') && (
+          <p className="pt-1 text-xs text-fg-2">
+            {isEmail
+              ? `From ${draft.connector.slice('google:'.length)}.${(p as EmailDraftPayload).remote_id ? ' Also saved in your Gmail Drafts.' : ''} Nothing is sent until you press Send.`
+              : `For the calendar of ${draft.connector.slice('google:'.length)}. Nothing is added until you press Add to calendar; guests are not emailed.`}
+          </p>
+        )}
       </div>
       {open && (
         <footer className="flex flex-wrap items-center gap-2 border-t border-line-soft px-3.5 py-2.5">

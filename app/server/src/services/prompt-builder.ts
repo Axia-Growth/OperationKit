@@ -17,6 +17,7 @@ import { isStrategyNode } from './delegation.js'
 import { resolveAgentPromptFile } from './agent-registry.js'
 import { isStrategyTierEnabled } from './strategy-governance.js'
 import { HUMAN_VOICE } from '../lib/human-voice.js'
+import { PUSH_BATCHING_RULES } from '../lib/push-batching.js'
 import { SOURCING_AUTHORITY, needsSourcingAuthority } from '../lib/sourcing-authority.js'
 import {
   SANDBOX_LIVE_SCRIPT,
@@ -534,6 +535,8 @@ export function buildPrompt(objective: Objective): string {
       'Why this matters: a session once edited `index.ts` in the live checkout to import a file that only existed inside its worktree. When the worktree was cleaned up the import target vanished and the deployed server crash-looped. Isolation makes that impossible.',
       '',
       '**Do your work inside the worktree.** Make changes, test, verify.',
+      '',
+      ...PUSH_BATCHING_RULES,
     )
 
     if (mode === 'merge-back') {
@@ -543,7 +546,7 @@ export function buildPrompt(objective: Objective): string {
         '',
         `Your branch \`${branchName}\` is based off your parent's branch \`${parentBranch}\`. Your parent objective collects all of its children into ONE pull request — so you do NOT open your own PR.`,
         '',
-        '**When your work is complete:**',
+        '**When your work is complete (one push for the whole session):**',
         '```bash',
         'git add -A',
         'git commit -m "your descriptive message"',
@@ -572,7 +575,7 @@ export function buildPrompt(objective: Objective): string {
         '',
         'Your work reaches production ONLY through a merged PR — never by editing the live tree. Broken code on your branch cannot touch the running server until the PR is green and merged.',
         '',
-        '**When your work is complete, commit, push, and open a PR:**',
+        '**When your work is complete, commit, push ONCE, and open a PR:**',
         '```bash',
         'git add -A',
         'git commit -m "your descriptive message"',

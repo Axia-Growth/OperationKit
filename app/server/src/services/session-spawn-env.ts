@@ -41,6 +41,7 @@ import {
 } from '../lib/session-trust.js'
 import { sessionKbAccessEnabled, verifiedSenderStampsEnabled } from '../lib/session-trust.js'
 import { resolveWriteWorkspace } from './workspaces.js'
+import { botKeyFilter, botScopeEnv, sessionBotScope, type BotScope } from './bot-session-scope.js'
 
 // ────────────────────────────────────────────────────────────────────────────
 // Spawn-env construction (obj-2202 / onboarding gate B1–B4)
@@ -395,6 +396,9 @@ export function buildSpawnEnv(opts: {
   const connectorUse = { agent: objective.agent_context, workspace: objective.workspace }
   const delegated = isDelegatedCard(objective)
   const actor = spawnActor(objective, actingUserId)
+  // obj 901330 — a card for one of the scoped Example bots gets only its pack:
+  // connectors on its list AND named in the owner's Who can use it rule.
+  const botScope = safeBotScope(objective)
   const mayUse = (connectorId: string): boolean =>
     checkConnectorCredential({
       connectorId,
@@ -402,6 +406,7 @@ export function buildSpawnEnv(opts: {
       actor,
       use: connectorUse,
       delegated,
+      botScope,
     }).allowed
 
   if (mayUse(GITHUB_CONNECTOR)) {
@@ -484,7 +489,7 @@ export function buildSpawnEnv(opts: {
   // workspace B's servers or tokens; a card with no workspace receives none.
   // Never blocks a spawn.
   try {
-    Object.assign(env, workspaceMcpSpawnEnv(objective.workspace))
+    Object.assign(env, workspaceMcpSpawnEnv(objective.workspace, botScope ? { allowSlug: slug => botScope.mcpServers.has(slug) } : undefined))
   } catch (err) {
     console.warn('[session-manager] workspace MCP injection failed (env unchanged):', (err as Error).message)
   }
@@ -497,7 +502,15 @@ export function buildSpawnEnv(opts: {
   // store so a Settings → Secrets GH_TOKEN override is used the same way.
   Object.assign(env, githubPushHelperEnv(env))
 
+  // Markers so a scoped worker can tell what it holds and why (names only).
+  if (botScope) Object.assign(env, botScopeEnv(botScope))
+
   applySessionTrustEnv(env, objective, actingUserId)
+
+  // obj 901458 — a coding session that starts with no GitHub login says so on the
+  // card now, naming the reason, instead of failing silently at `git push`. Side
+  // effect only: the env is unchanged.
+  noteGithubUnavailableAtStart(objective, env, opts.sessionKind)
 
   return env
 }
@@ -514,12 +527,44 @@ export function sessionSecretKeyFilter(
   objective: Objective,
   actingUserId: number | null,
 ): ((key: string) => boolean) | undefined {
+  // obj 901330 — a scoped bot is filtered to its pack in EITHER mode, so an
+  // empty allowlist under migration no longer means "every key" for it.
+  const scope = safeBotScope(objective)
+  if (scope) {
+    let subjects = null
+    try {
+      subjects = sessionSubjects(objective, actingUserId)
+    } catch {
+      subjects = null
+    }
+    try {
+      return botKeyFilter(scope, subjects)
+    } catch {
+      return () => false
+    }
+  }
   const mode = getSessionEnvMode()
   if (mode !== 'enforce') return undefined
   try {
     return sessionKeyFilter(mode, allowlistedKeys(sessionSubjects(objective, actingUserId)))
   } catch {
     return () => false
+  }
+}
+
+/**
+ * The scoped-bot pack for this card, or null. A card whose agent_context names
+ * a scoped bot is scoped even if the ownership lookup fails.
+ */
+export function safeBotScope(objective: Objective): BotScope | null {
+  try {
+    return sessionBotScope(objective as Objective & { owner_bot?: string | null })
+  } catch {
+    try {
+      return sessionBotScope(objective, { ownerSlugs: () => [] })
+    } catch {
+      return null
+    }
   }
 }
 
@@ -576,6 +621,7 @@ export function githubSessionAccess(objective: Objective): GithubSessionAccess {
       actor,
       use: { agent: objective.agent_context, workspace: objective.workspace },
       delegated: isDelegatedCard(objective),
+      botScope: safeBotScope(objective),
     })
     if (!decision.allowed) return { state: 'unavailable', reason: decision.reason, ownerUserId, keyLabel }
     const summary = ownerUserId != null ? getForUser(ownerUserId) : null
@@ -631,5 +677,96 @@ export function applySessionTrustEnv(
     } catch (err) {
       console.warn('[session-trust] session token not minted:', (err as Error).message)
     }
+  }
+}
+
+/**
+ * Why GitHub is missing, in one plain sentence that names the fix (obj 900208).
+ * Shared by the prompt line (session-trust-prompt) and the start-time card note.
+ */
+export function githubUnavailableFix(reason: GithubUnavailableReason, keyLabel: string | null = null): string {
+  const fix: Record<GithubUnavailableReason, string> = {
+    no_owner:
+      'this card has no owner, so nobody\'s GitHub connection applies. Ask on the card for an owner to be assigned (the person whose GitHub should open the PR).',
+    not_connected:
+      'the card owner has not connected GitHub. The fix is Settings → Connectors → GitHub — one connection serves chat and coding sessions alike.',
+    key_connector: `this card was filed by the API key${keyLabel ? ` "${keyLabel}"` : ''}, which is not allowed to use GitHub. Its owner can add GitHub to that key in Settings → API keys.`,
+    delegated_card:
+      'this card was assigned to its owner by someone else, and the owner has not allowed GitHub on work assigned by others. The owner can turn that on in Settings → Connectors → GitHub.',
+    access_rule:
+      'the owner limited their GitHub connection to other agents or workspaces in Settings → Connectors → GitHub.',
+    cross_user: 'the GitHub connection belongs to someone else.',
+    bot_scope: "this card's bot does not have GitHub on its connector list (obj 901330). Only the owner can change a bot's list; do not work around it.",
+    no_grant:
+      "the owner's Settings → Connectors → GitHub → Who can use it list does not name this card's bot. The owner adds the bot there; do not ask for a GH_TOKEN secret.",
+    token_unreadable:
+      "the owner's GitHub connection is set up but its token could not be read at start. The owner can reconnect at Settings → Connectors → GitHub.",
+  }
+  return fix[reason] ?? fix.not_connected
+}
+
+/** Every reason a session can start without a GitHub login. */
+export type GithubUnavailableReason = ConnectorDenyReason | 'not_connected' | 'token_unreadable'
+
+/** activity_log metadata.kind of the start-time card note. */
+export const GITHUB_UNAVAILABLE_NOTE_KIND = 'github_unavailable_at_start'
+
+/**
+ * The start-time note for a session that holds no GitHub login, or null when
+ * none is due: GH_TOKEN/GITHUB_TOKEN is in the env (connection or a Secrets
+ * override), or the card is not on a repo project (it never needs to push).
+ * PURE apart from the non-auditing access read. Never throws.
+ */
+export function githubStartNote(
+  objective: Objective,
+  env: Record<string, string>,
+): { reason: GithubUnavailableReason; line: string } | null {
+  if (env.GH_TOKEN || env.GITHUB_TOKEN) return null
+  if (!String(objective.project ?? '').trim()) return null
+  const access = githubSessionAccess(objective)
+  const reason: GithubUnavailableReason = access.state === 'connected' ? 'token_unreadable' : access.reason
+  const keyLabel = access.state === 'connected' ? null : access.keyLabel
+  return {
+    reason,
+    line: `Session started with no GitHub login (${reason}): ${githubUnavailableFix(reason, keyLabel)} It cannot push a branch or open a pull request until that is fixed.`,
+  }
+}
+
+/**
+ * Write the start-time note as a card line (activity_log, metadata.kind
+ * `github_unavailable_at_start`) for a worker or follow-up session. One line per
+ * reason: a respawn with the same reason as the card's last such note writes
+ * nothing. Returns true when a line was written. Never throws, never blocks a spawn.
+ */
+export function noteGithubUnavailableAtStart(
+  objective: Objective,
+  env: Record<string, string>,
+  sessionKind: SpawnSessionKind,
+): boolean {
+  if (sessionKind !== 'worker' && sessionKind !== 'followup') return false
+  try {
+    const note = githubStartNote(objective, env)
+    if (!note) return false
+    const db = getDb()
+    const last = db
+      .prepare(
+        "SELECT json_extract(metadata, '$.reason') AS reason FROM activity_log WHERE objective_id = ? AND json_extract(metadata, '$.kind') = ? ORDER BY id DESC LIMIT 1",
+      )
+      .get(objective.id, GITHUB_UNAVAILABLE_NOTE_KIND) as { reason: string | null } | undefined
+    if (last?.reason === note.reason) return false
+    db.prepare(
+      `INSERT INTO activity_log (project, workspace, objective_id, event_type, title, metadata)
+       VALUES (?, ?, ?, 'progress', ?, ?)`,
+    ).run(
+      objective.project || '',
+      resolveWriteWorkspace(objective.workspace),
+      objective.id,
+      note.line,
+      JSON.stringify({ kind: GITHUB_UNAVAILABLE_NOTE_KIND, reason: note.reason, session_kind: sessionKind }),
+    )
+    return true
+  } catch (err) {
+    console.warn('[session-spawn-env] GitHub start note failed:', (err as Error).message)
+    return false
   }
 }

@@ -44,6 +44,7 @@ const {
   fullAccessAnywhere,
   isProtectedCard,
   protectedPrInText,
+  protectedPrTextMessage,
   FullAccessError,
 } = await import('./bot-full-access.js')
 const { classifyOutbound, exclusionGate } = await import('./full-access-exclusions.js')
@@ -774,18 +775,52 @@ describe('a card that carries a protected pull request (PR 645)', () => {
     expect((r.result as Loose).worker_agent).toBe('dev')
   })
 
-  it('repo_session_start will not file a session pointed at it', async () => {
-    fullAccessOn()
-    const count = () => (getDb().prepare('SELECT COUNT(*) AS n FROM objectives').get() as Loose).n
+  // obj 901461: ONE text check, ONE message, on both filing tools.
+  const TEXT_REFUSED = /^Refused: card text may not name pull request 645, because it is protected, and this applies even to a mention like "do not touch PR 645"\. To file this card, take the number out of the title and description \(write "the protected pull request" if you must refer to it\) and send it again\. This refusal was logged\.$/
+  const NAMING = ['Rebase PR 645 and push', 'see https://github.com/acme/infra/pull/645', 'finish #645', 'fix pull request #645']
+  // A negated mention is refused too (the safe default; see protectedPrTextRefusal).
+  const NEGATED = ['Do not touch PR 645.', 'Leave pull request #645 alone, it is protected']
+  const FILERS: { ability: string; run: (c: ReturnType<typeof ctx>, title: string, description: string) => Promise<Loose> }[] = [
+    { ability: 'repo_session_start', run: (c, title, description) => runChatTool(c, 'repo_session_start', { project: 'growth-site', title, description }) },
+    { ability: 'create_objective', run: (c, title, description) => runChatTool(c, 'create_objective', { title, description }) },
+  ]
+  const count = () => (getDb().prepare('SELECT COUNT(*) AS n FROM objectives').get() as Loose).n
+
+  for (const f of FILERS) {
+    it(`${f.ability}: card text naming it is refused with the plain message, negated or not, and nothing is filed`, async () => {
+      fullAccessOn()
+      const before = count()
+      for (const description of [...NAMING, ...NEGATED]) {
+        await refused(() => f.run(ctx(ADMIN, bot()), 'Help out', description), TEXT_REFUSED)
+      }
+      await refused(() => f.run(ctx(ADMIN, bot()), 'Push to PR #645', 'd'), TEXT_REFUSED)
+      expect(count()).toBe(before)
+      expect(hostCalls).toEqual([])
+      const rows = audit().filter(r => r.event === 'protected_refused' && r.ability === f.ability)
+      expect(rows).toHaveLength(NAMING.length + NEGATED.length + 1)
+      expect(rows[0]).toMatchObject({ workspace: GROWTH, actor: 'bot:dev', detail: 'card text names protected PR 645' })
+    })
+
+    it(`${f.ability}: the same card filed without the number goes through`, async () => {
+      fullAccessOn()
+      const before = count()
+      const r = await f.run(ctx(ADMIN, bot()), 'Help out', 'Fix the footer. Do not touch the protected pull request.')
+      expect(Number((r.result as Loose).id)).toBeGreaterThan(0)
+      expect(count()).toBe(before + 1)
+      expect(audit().filter(r => r.event === 'protected_refused')).toHaveLength(0)
+    })
+  }
+
+  it('create_objective applies the same check to a bot WITHOUT Full access', async () => {
     const before = count()
-    for (const description of ['Rebase PR 645 and push', 'see https://github.com/acme/infra/pull/645', 'finish #645', 'fix pull request #645']) {
-      await refused(() => runChatTool(ctx(ADMIN, bot()), 'repo_session_start', { project: 'growth-site', title: 'Help out', description }), /pull request 645 is protected.*This refusal was logged/)
-    }
-    await refused(() => runChatTool(ctx(ADMIN, bot()), 'repo_session_start', { project: 'growth-site', title: 'Push to PR #645', description: 'd' }), /pull request 645 is protected/)
+    await refused(() => runChatTool(ctx(ADMIN, bot('dev', { tools: ['create_objective'] })), 'create_objective', { title: 'Help out', description: 'Do not touch PR 645' }), TEXT_REFUSED)
     expect(count()).toBe(before)
-    expect(hostCalls).toEqual([])
-    expect(audit().filter(r => r.event === 'protected_refused' && r.ability === 'repo_session_start')).toHaveLength(5)
+    expect(audit().filter(r => r.event === 'protected_refused' && r.ability === 'create_objective')).toHaveLength(1)
+  })
+
+  it('the text pattern does not catch other numbers that merely contain 645', () => {
     expect(protectedPrInText('bump timeout to 6450ms, see PR 6451 and #1645')).toBeNull()
+    expect(protectedPrTextMessage(645)).toMatch(TEXT_REFUSED)
   })
 })
 

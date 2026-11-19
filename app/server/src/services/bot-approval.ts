@@ -28,7 +28,9 @@
  * What "approve" does: the same review → done move a person's Approve click
  * makes, through the same PATCH handler (`runStatusChange`) so every completion
  * gate still runs. It does NOT merge anything — merging stays with the merge
- * lane / the owner, exactly as for a human Approve. It is audited three ways:
+ * lane / the owner, exactly as for a human Approve. (The one bot path that
+ * merges is a separate, explicit request: `approval: merge` on the card message,
+ * services/grant-merge.ts, obj 901231.) It is audited three ways:
  * the objective_audit row (actor = the bot, pathway `bot-approve:<basis>`), a
  * `delegation_audit` row when a grant was used (event `approval_used`), and a
  * `decision` line on the card.

@@ -547,6 +547,9 @@ export interface Objective {
   ai_review_verdict: AIReviewVerdict | null
   ai_review_findings: string | null
   ai_review_session_id: string | null
+  /** The PR head commit the AI reviewer read (obj 901455). NULL for a review
+   *  from before the column, or when GitHub could not be read. */
+  ai_review_head_sha?: string | null
   /** WHY a `blocked` ai_review_verdict happened (obj 719328). Currently only
    *  `'preview-infra'` is populated — the reviewer's findings began with the P1
    *  marker `PREVIEW-INFRA-UNREACHABLE:`, meaning the preview HOST was down, not the

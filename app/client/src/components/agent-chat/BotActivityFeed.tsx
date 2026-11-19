@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { CheckCircle2, ChevronDown, ChevronRight, CirclePlay, FilePlus2, GitPullRequest, Eye, XCircle } from 'lucide-react'
+import { AlarmClock, CheckCircle2, ChevronDown, ChevronRight, CirclePlay, FilePlus2, GitPullRequest, Eye, XCircle } from 'lucide-react'
 import {
   NEEDS_YOU_LABELS,
   type BotActivityCardRef,
@@ -9,6 +9,7 @@ import {
   type BotActivityItemKind,
   type BotActivityResponse,
   type BotActivityRun,
+  type BotFollowupLogItem,
 } from '@operationkit/shared'
 import { api } from '../../lib/api'
 import { Alert, Badge, EmptyState, Skeleton, SkeletonText, cn } from '../ui'
@@ -233,6 +234,61 @@ function ActivityItemRow({ item }: { item: BotActivityItem }) {
   )
 }
 
+const FOLLOWUP_STATE: Record<BotFollowupLogItem['status'], { label: string; tone: 'verify' | 'neutral' | 'amber' | 'alarm' }> = {
+  pending: { label: 'Waiting', tone: 'amber' },
+  running: { label: 'Running', tone: 'amber' },
+  fired: { label: 'Ran', tone: 'verify' },
+  cancelled: { label: 'Cancelled', tone: 'neutral' },
+  dropped: { label: 'Dropped', tone: 'neutral' },
+  failed: { label: 'Failed', tone: 'alarm' },
+}
+
+/** obj 901392: the follow-ups this bot set for itself in YOUR chat with it: what ran, what was cancelled or dropped, what still waits. */
+function FollowupLog({ followups, agentName }: { followups: BotFollowupLogItem[]; agentName: string }) {
+  if (followups.length === 0) return null
+  return (
+    <section aria-label={`${agentName} follow-ups`} data-testid="followup-log" className="rounded-lg border border-line bg-surface-1">
+      <h3 className="flex items-center gap-2 border-b border-line-soft px-3 py-2 text-xs font-semibold uppercase tracking-eyebrow text-fg-1">
+        <AlarmClock className="h-3.5 w-3.5" aria-hidden="true" />
+        Follow-ups in your chat
+      </h3>
+      <ul className="divide-y divide-line-soft">
+        {followups.map(f => {
+          const st = FOLLOWUP_STATE[f.status]
+          const when = f.status === 'pending' || f.status === 'running' ? f.due_at : f.fired_at ?? f.finished_at ?? f.due_at
+          const why =
+            f.status === 'cancelled'
+              ? f.end_reason === 'person' ? 'by you' : f.end_reason === 'bot' ? 'by the bot' : ''
+              : f.status === 'fired'
+                ? f.fire_reason === 'card_changed' ? 'the card changed' : ''
+                : f.status === 'dropped' || f.status === 'failed'
+                  ? f.end_reason ?? ''
+                  : ''
+          return (
+            <li key={f.id} data-testid="followup-log-item" data-status={f.status} className="flex items-start gap-3 px-3 py-2 text-sm">
+              <span className="w-[72px] shrink-0 text-xs tabular-nums text-fg-2">
+                <span className="block text-fg-1">{clock(when)}</span>
+                {f.status === 'pending' ? 'due' : ago(when)}
+              </span>
+              <span className="min-w-0 flex-1">
+                <span className="block break-words text-fg-0">{f.note}</span>
+                {(why || f.card_id) && (
+                  <span className="block text-xs text-fg-2">
+                    {f.card_id ? <Link to={`/o/${f.card_id}`} className="text-accent hover:underline">Card #{f.card_id}</Link> : null}
+                    {f.card_id && why ? ' · ' : ''}
+                    {why}
+                  </span>
+                )}
+              </span>
+              <Badge tone={st.tone}>{st.label}</Badge>
+            </li>
+          )
+        })}
+      </ul>
+    </section>
+  )
+}
+
 export function BotActivityFeed({ agent }: { agent: Pick<ChatAgentInfo, 'slug' | 'name'> }) {
   const [data, setData] = useState<BotActivityResponse | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -273,6 +329,7 @@ export function BotActivityFeed({ agent }: { agent: Pick<ChatAgentInfo, 'slug' |
   return (
     <div className="mx-auto max-w-[860px] space-y-4 px-3 py-4 sm:px-6" data-testid="bot-activity-feed">
       <DailySummary data={data} agentName={agent.name} />
+      <FollowupLog followups={data.followups ?? []} agentName={agent.name} />
       {items.length === 0 ? (
         <EmptyState
           compact

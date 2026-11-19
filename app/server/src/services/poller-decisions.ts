@@ -3,7 +3,7 @@
  * No DB, no tmux, no timers. The poll loop in state-poller.ts calls these.
  */
 import { isClearDeadSessionEnabled } from './objective-audit.js'
-import type { MergeLane } from './merge-lane.js'
+import { classifyMergeLane, type MergeLane } from './merge-lane.js'
 import type { StartupFailure } from './session-startup-failure.js'
 import type {
   Objective,
@@ -155,8 +155,16 @@ export function resolveWorkerEndStatus(input: {
    * so nothing in the chain ever disagrees with "finished".
    */
   producedNothing?: boolean
+  /**
+   * obj 901381 — the card ended with a linked PR (`pr_number` / `pr_url`),
+   * whether or not it was created with `create_pr`. A PR is a PR: it gets the
+   * same adversarial review a `create_pr` card gets. Omitted = false = the
+   * pre-901381 table. Routine cards are excluded by the caller
+   * ({@link decideWorkerEndRoute}) so a recurring job never strands in review.
+   */
+  hasLinkedPr?: boolean
 }): ObjectiveStatus {
-  const { type, delegateMode, createPr, skipAi, hasDelegatorParent, isRoutine, lane, producedNothing } = input
+  const { type, delegateMode, createPr, skipAi, hasDelegatorParent, isRoutine, lane, producedNothing, hasLinkedPr } = input
   if (producedNothing) {
     // Never `done`. A job that produced nothing is visible to a human, with the
     // reason written onto the card by applyTruthfulOutcome.
@@ -176,7 +184,7 @@ export function resolveWorkerEndStatus(input: {
     if (isRoutine && type === 'task') return 'done'
     return 'review'
   }
-  if (createPr && !skipAi) {
+  if ((createPr || hasLinkedPr) && !skipAi) {
     // Yellow/Red (and omitted lane): reviewer posts harness/test-agent.
     // Green already returned above — poller posts harness on that path.
     return 'ai_review'
@@ -203,6 +211,63 @@ export function resolveWorkerEndStatus(input: {
     return type === 'project' ? 'review' : 'done'
   }
   return 'ai_review' // projects and bugs
+}
+
+/** obj 901381 — does this card carry a linked PR (number or URL)? */
+export function hasLinkedPr(o: { pr_number?: number | null; pr_url?: string | null }): boolean {
+  return o.pr_number != null || (typeof o.pr_url === 'string' && o.pr_url.trim() !== '')
+}
+
+/**
+ * obj 901381 — the ONE routing decision for a worker that just ended cleanly
+ * (working→review), taken from the objective ROW. `poller-loop.ts` calls this;
+ * it used to inline the same two calls with `createPr: !!objective.create_pr`
+ * as the only PR signal, which is what stranded chat-filed cards: a card filed
+ * with `create_pr = 0` whose session opened a PR was classified `green`
+ * (merge-lane.ts, no createPr → green) and `resolveWorkerEndStatus` sent green
+ * to `review` — no reviewer, no verdict, ever.
+ *
+ * Now a linked PR (`pr_number` / `pr_url`, set by `/pr-created` or the
+ * session-end autolink) counts as a PR whatever the card's origin. Routine
+ * cards keep the old routing so a recurring job cannot fill its
+ * `max_queue_depth` with review cards (obj 1970).
+ */
+export function decideWorkerEndRoute(
+  objective: Pick<Objective, 'type' | 'create_pr' | 'delegate_mode' | 'pr_number' | 'pr_url' | 'routine_id'> & {
+    skip_ai_review?: boolean | number | null
+  },
+  ctx: {
+    redPath: boolean
+    filesKnown: boolean
+    uiTouched: boolean
+    hasDelegatorParent: boolean
+    producedNothing?: boolean
+  },
+): { lane: MergeLane; status: ObjectiveStatus; prLinked: boolean } {
+  const isRoutine = objective.routine_id != null
+  const prLinked = hasLinkedPr(objective) && !isRoutine
+  const createPr = !!objective.create_pr
+  const lane = classifyMergeLane({
+    type: objective.type,
+    createPr,
+    delegateMode: !!objective.delegate_mode,
+    redPath: ctx.redPath,
+    filesKnown: ctx.filesKnown,
+    uiTouched: ctx.uiTouched,
+    prLinked,
+  })
+  const status = resolveWorkerEndStatus({
+    type: objective.type,
+    delegateMode: !!objective.delegate_mode,
+    createPr,
+    skipAi: !!objective.skip_ai_review,
+    hasDelegatorParent: ctx.hasDelegatorParent,
+    isRoutine,
+    lane,
+    producedNothing: ctx.producedNothing,
+    hasLinkedPr: prLinked,
+  })
+  return { lane, status, prLinked }
 }
 
 export type DelegatorBackstopAction = 'nudge' | 'route-review' | 'none'

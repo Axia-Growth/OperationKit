@@ -153,6 +153,28 @@ describe('owner issues a grant on the bot settings page', () => {
   })
 })
 
+// obj 901388 — "Merge without asking me each time" rides on the same owner-only POST.
+describe('the standing-merge switch on a grant', () => {
+  it('is off by default, set only by the owner on create, and only with merge', async () => {
+    const plain = await issue(['merge'])
+    const on = await asOwner('POST', grantsUrl, { workspace: 'growth', actions: ['merge'], expires_at: inDays(7), standing_merge: true })
+    expect(on.status).toBe(201)
+    expect(on.json.created).toMatchObject({ standing_merge: true, actions: ['merge'] })
+    const list = (await asOwner('GET', grantsUrl)).json.grants as Loose[]
+    expect(list.find(g => g.id === plain)?.standing_merge).toBe(false)
+
+    const deployOnly = await asOwner('POST', grantsUrl, { workspace: 'growth', actions: ['deploy'], expires_at: inDays(7), standing_merge: true })
+    expect(deployOnly.status).toBe(400)
+    expect(deployOnly.json.code).toBe('standing_merge_needs_merge')
+    const truthy = await asOwner('POST', grantsUrl, { workspace: 'growth', actions: ['merge'], expires_at: inDays(7), standing_merge: 'yes' })
+    expect(truthy.status).toBe(400)
+
+    const bot = await asBot('POST', grantsUrl, { workspace: 'growth', actions: ['merge'], expires_at: inDays(7), standing_merge: true })
+    expect(bot.status).toBe(403)
+    expect((getDb().prepare('SELECT COUNT(*) AS n FROM delegation_grants WHERE standing_merge = 1').get() as { n: number }).n).toBe(1)
+  })
+})
+
 describe('a bot can never grant, extend or revoke its own approvals', () => {
   it('agent key: create and revoke are refused; no grant is written', async () => {
     const id = await issue(['merge'])

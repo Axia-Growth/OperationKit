@@ -34,6 +34,7 @@
  *  - No secrets: reuses the droplet's existing `gh` auth (GH_CONFIG_DIR=/etc/gh). No
  *    tokens are read, logged, or committed.
  */
+import { PUSH_ONCE_FIX_LINE } from '../lib/push-batching.js'
 import { execFile } from 'child_process'
 import { getDb } from '../db/index.js'
 import type { Database } from 'better-sqlite3'
@@ -222,6 +223,7 @@ export function buildNudgeMessage(args: { pr: number; repo: string; headSha: str
     ``,
     `Fix in your PR-branch worktree (absolute paths only), commit, and \`git push\`. Do NOT`,
     `merge — Operator merges. If it fails again you'll get another automated nudge (bounded at ${cap}).`,
+    PUSH_ONCE_FIX_LINE,
   ].join('\n')
 }
 

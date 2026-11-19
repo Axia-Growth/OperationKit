@@ -39,6 +39,11 @@ export const CARD_BROWSER_TOOLS = ['card_browser'] as const
 // (context, one question, 2-4 options with pros/cons/next, recommendation). It
 // only ASKS: the person answers on the card or in chat, never the bot.
 export const DECISION_TOOLS = ['raise_decision'] as const
+// obj 901392: the bot sets itself a one-off follow-up wake in the chat it is in
+// (schedule_followup / list_followups / cancel_followup). When it is due the
+// bot runs an ordinary turn there and posts its answer; no new permission.
+// Implied by create_objective (tools.ts IMPLIED_TOOLS), like raise_decision.
+export const FOLLOWUP_TOOLS = ['followups'] as const
 
 /**
  * Tools "All tools" does NOT grant (obj 900749). A bot gets one only when it is
@@ -59,6 +64,7 @@ export const KNOWN_TOOL_NAMES: ReadonlySet<string> = new Set<string>([
   ...CARD_SANDBOX_TOOLS,
   ...CARD_BROWSER_TOOLS,
   ...DECISION_TOOLS,
+  ...FOLLOWUP_TOOLS,
 ])
 
 /** What "All tools" grants: every known tool except the explicit-only ones. */
@@ -103,6 +109,7 @@ export const TOOL_CATALOG: readonly ToolCatalogEntry[] = [
   { name: 'list_objectives', label: 'List cards', description: 'List board cards the person can see.', group: 'board' },
   { name: 'board_briefing', label: 'Board briefing', description: 'What is waiting on the person across their boards.', group: 'board' },
   { name: 'raise_decision', label: 'Ask for decisions', description: 'Ask the person to decide on a card with a short briefing: the question, options with pros and cons, a recommendation and a Q&A thread.', group: 'board' },
+  { name: 'followups', label: 'Check back later (follow-ups)', description: 'Set itself a one-off follow-up in the chat ("check back in 10 minutes") and answer there when it is due, with its normal permissions. Limits: 5 waiting per chat, 6 in a row without a message from you.', group: 'board' },
   { name: 'attach_image', label: 'Attach images', description: 'Attach a screenshot (a card artifact, a knowledge-base path, or a generated image) so it renders inline in the reply.', group: 'images' },
   { name: 'bot_messages', label: 'Message other bots', description: 'Send another bot a message in the same workspace and get its reply on a shared thread.', group: 'bots' },
   { name: 'email', label: 'Email (drafts only)', description: 'Read the inbox and draft replies. Nothing is sent without a click.', group: 'connectors' },

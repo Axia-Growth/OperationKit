@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom'
 import { ExternalLink, GitPullRequest, LayoutGrid } from 'lucide-react'
 import {
   NEEDS_YOU_LABELS,
+  REVIEW_STAGE_LABELS,
   WORK_GROUPS,
   WORK_GROUP_LABELS,
   type BotWorkCard,
@@ -83,6 +84,11 @@ function WorkCardRow({ c }: { c: BotWorkCard }) {
             {NEEDS_YOU_LABELS[r]}
           </Badge>
         ))}
+        {c.group === 'review' && c.needs_you.length === 0 && c.review_stage && c.review_stage !== 'not_review' && (
+          <span data-testid="work-card-review-stage">
+            <Badge tone="neutral">{REVIEW_STAGE_LABELS[c.review_stage]}</Badge>
+          </span>
+        )}
         {c.pr_url && (
           <a
             href={c.pr_url}
