@@ -27,6 +27,7 @@ In the workspace where it is on, and nowhere else, the bot may:
 | Read and edit scheduled tasks | `routine_list`, `routine_read`, `routine_update` (schedule, on/off, an AI task's title and brief) |
 | Read bot settings and run history | `bot_list`, `bot_read`, `bot_run_history` (bots that may work in that workspace) |
 | Get a repo checkout from chat | `repo_session_start` files a card on one of the workspace's projects, owned by the bot, and starts it; the card session runs in its own git worktree |
+| See what is merged but not live yet (read-only) | `release_status`: the merged pull requests on this install's `main` that the live checkout does not have, each with PR number, title, card, who merged it and a database-migration flag, plus the two "merged is not deployed" checks (checkout at `origin/main`; server started after the last merge). It never deploys or restarts anything, and it is named without "deploy" because no tool a bot is offered names merge, deploy, approve or migrate |
 | File and own cards past the workspace agent pool | `create_objective`; the bot's slug passes the pool through the one helper from obj 900948 (`botGrantedWorkspace` inside `checkAgentInWorkspacePool`). There is no second bypass. |
 
 ### In a card session (a High Agency wake)
@@ -169,6 +170,31 @@ which read `delegation_grants` ("Approve on my behalf") and nothing else. A
 comment a bot posts with Full access reaches the card as an unverified relay
 and says in its first line that it is not an approval.
 
+**A merge is not a deploy (obj 901389).** Under autonomy level A (decision #29)
+a bot may merge its own passed pull request under a MERGE grant
+(`merge_approved_pr`, `services/grant-merge.ts`); the owner deploys:
+
+- **A grant merge never auto-deploys itself.** When `settings.auto_deploy_enabled`
+  is on, the merged-PR webhook (`routes/github-webhook.ts`) asks
+  `decideMergeAutoDeploy` (`services/merge-deploy-gate.ts`). A PR merged under a
+  merge grant is recognised by a marker set just before `gh pr merge` (the webhook
+  can beat the audit row) or by its `delegation_audit` `approval_used` row. It is
+  NOT deployed, and the log says why (`[auto-deploy] SKIPPED — … merged by bot … under
+  merge grant #N …`), unless an active `deploy` grant (`delegation_grants.allow_deploy`)
+  from the same admin covers that bot in that workspace. A person's merge and the
+  background auto-merge deploy exactly as before; auto-deploy off is the same dry-run.
+- **The merge line says so.** The `grant_merge` card line and the bot's chat line
+  end with "Merged, not live until deployed: the owner deploys." and add
+  "⚠ Database migration: this PR changes …" when the PR touches
+  `app/server/src/db/**` or any `migrations/` folder (`lib/migration-paths.ts`;
+  test files do not count).
+- **The owner sees what is waiting.** Jobs page (where Settings → Platform
+  redirects), admins only: **Merged, waiting for deploy** (`GET /api/admin/deploy-status`,
+  `services/deploy-waiting.ts`). Read-only, no deploy or restart button. A Full
+  access bot talking to an admin reads the same list with `release_status`.
+- Nothing here changes who may deploy. `POST /api/internal/deploy` and
+  `scripts/self-deploy.sh` stay behind the server secret.
+
 **Standing merge (obj 901388).** A merge grant can carry one more switch,
 **Merge without asking me each time** (`delegation_grants.standing_merge`, off by
 default, set only when the grant is issued, merge grants only). With it on, the
@@ -232,5 +258,6 @@ Settings changes also appear in the activity feed
 | Tables | `app/server/src/db/schema/agent-chat.ts` |
 | Shared types | `app/shared/full-access.ts` |
 | UI | `app/client/src/components/agent-chat/FullAccessSection.tsx`, `FullAccessBadge.tsx` |
-| Tests | `bot-full-access.test.ts`, `agent-chat-full-access.test.ts` (server); `FullAccessSection.test.tsx`, `BotSidebar.test.tsx` (client) |
+| Merged, waiting for deploy (obj 901389) | `services/merge-deploy-gate.ts` (grant merge never auto-deploys), `services/deploy-waiting.ts`, `routes/admin-deploy-status.ts`, `client/.../settings/DeployWaitingPanel.tsx` |
+| Tests | `bot-full-access.test.ts`, `agent-chat-full-access.test.ts`, `github-webhook-grant-deploy.test.ts`, `deploy-waiting.test.ts` (server); `FullAccessSection.test.tsx`, `BotSidebar.test.tsx`, `DeployWaitingPanel.test.tsx` (client) |
 | Screenshots | `tests/smoke/bot-full-access/` |

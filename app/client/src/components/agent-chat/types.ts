@@ -105,16 +105,9 @@ export interface BotConfigInfo {
   updated_at: string
 }
 
-export type ToolGroup = 'web' | 'knowledge' | 'board' | 'bots' | 'connectors' | 'integrations' | 'secrets' | 'images'
-
-export interface ToolCatalogEntry {
-  name: string
-  label: string
-  description: string
-  group: ToolGroup
-  /** Not granted by "All tools"; must be ticked on its own (obj 900749 — secret use). */
-  explicit_only?: boolean
-}
+// The tool catalogue's shape comes from the shared list (obj 900966).
+export type { ToolGroup, ToolCatalogEntry } from '../../../../shared/bot-tools'
+import type { ToolCatalogEntry } from '../../../../shared/bot-tools'
 
 export interface AgentsResponse {
   agents: ChatAgentInfo[]

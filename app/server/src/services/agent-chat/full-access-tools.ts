@@ -59,6 +59,7 @@ import { chatCardModel, chatOwnerBotName, ToolUseError, type ToolContext, type T
 import { agentExists } from '../agent-registry.js'
 import { botForAgentSlug } from '../bots/bot-registry.js'
 import { publicCardUrl } from '../../lib/public-url.js'
+import { collectDeployStatus, type DeployStatus } from '../deploy-waiting.js'
 import { cardDecisionsForBot, cardOwnerAndGrants, cardThreadForBot, holdView } from './card-context.js'
 import { cardOwnerBot, ownerHasSlug } from '../bots/card-owner.js'
 import { requestAiReview, type RequestReviewResult } from '../ai-review-backfill.js'
@@ -130,7 +131,11 @@ export const hostFullAccessHost: FullAccessHost = {
   },
 }
 
-type FaCtx = Pick<ToolContext, 'userId' | 'agent' | 'workspace'> & Partial<Pick<ToolContext, 'botWake' | 'username' | 'kbRoot' | 'now'>> & { fullAccessHost?: FullAccessHost }
+type FaCtx = Pick<ToolContext, 'userId' | 'agent' | 'workspace'> & Partial<Pick<ToolContext, 'botWake' | 'username' | 'kbRoot' | 'now'>> & {
+  fullAccessHost?: FullAccessHost
+  /** Reads the "merged, waiting for deploy" picture (obj 901389); tests pass a stub. */
+  deployStatusReader?: () => DeployStatus
+}
 
 function personIsAdmin(userId: number): boolean {
   try {
@@ -262,6 +267,11 @@ const FULL_ACCESS_SPECS: ToolSpec[] = [
       description: { type: 'string', description: 'What to do in the repo, and what "done" looks like.' },
       workspace: WS_ARG,
     }, ['project', 'title', 'description'])),
+  // obj 901389. Named without "deploy" on purpose: no tool a bot is offered names
+  // merge / deploy / approve / migrate (bot-full-access.test.ts pins that), and
+  // this one only READS. It never deploys, restarts or migrates anything.
+  fn('release_status', 'Full access, read-only: which merged pull requests on this install\'s own main are NOT live yet (each with PR number, title, card number, who merged it, and a database-migration flag), and the two "merged is not deployed" checks: is the live checkout at origin/main, and did the running server start after the last merge. It never deploys or restarts anything: the owner deploys.',
+    obj({ workspace: WS_ARG })),
 ]
 
 export const FULL_ACCESS_FNS: ReadonlySet<string> = new Set(FULL_ACCESS_SPECS.map(s => s.function.name))
@@ -486,6 +496,35 @@ export async function runFullAccessTool(ctx: FaCtx & { username: string }, fnNam
   const me = botLabel(ctx)
 
   switch (fnName) {
+    case 'release_status': {
+      // Admin + Full access in this workspace, or a logged refusal. Read-only: not a WRITE_ABILITY.
+      requireWorkspace(ctx, fnName, args.workspace)
+      const st = (ctx.deployStatusReader ?? (() => collectDeployStatus(db)))()
+      return {
+        result: {
+          ok: st.ok,
+          ...(st.error ? { error: st.error } : {}),
+          summary: st.summary,
+          live: st.live,
+          checkout_at_origin_main: st.checkout_at_origin_main,
+          server_started_after_last_merge: st.server_started_after_last_merge,
+          server_started_at: st.server_started_at,
+          last_merge_at: st.last_merge_at,
+          waiting_for_deploy: (st.waiting ?? []).map(w => ({
+            pr: w.pr_number,
+            title: w.title,
+            card: w.card_id,
+            merged_by: w.merged_by_label,
+            migration: w.migration,
+            ...(w.migration ? { migration_paths: w.migration_paths } : {}),
+            sha: w.short_sha,
+          })),
+          migrations_waiting: st.migrations_waiting ?? 0,
+          note: 'Read-only. You cannot deploy: tell the person what is waiting; the owner deploys.',
+        },
+        summary: st.summary,
+      }
+    }
     case 'full_access_status': {
       if (!personIsAdmin(ctx.userId)) requireWorkspace(ctx, fnName, ctx.workspace)
       const on = fullAccessWorkspaces(ctx)

@@ -30,7 +30,8 @@ Sections are by who the loop waits on. `## Waiting on <owner>` is always the fir
 - The wake can only read cards Dev owns in its wake workspace. A loop whose card is in another workspace, or is not Dev's, is left as it is on a wake.
 - The wake brief is a copy saved with the High Agency setting. It is refreshed when the server starts and when the setting is saved on Dev's settings panel.
 - A person who cannot see the operationkit workspace never gets the list in their chat with Dev.
-- The list is capped at 12,000 characters in the chat instructions. Keep "Closed" short.
+- The chat instructions carry the first 12,000 characters of the list. A longer list is cut on a whole line, and the cut says how long the file is and the exact `read_file` call (path and `offset`) that returns the rest. The bot must read every page before it writes the file back. Keep "Closed" short anyway: every extra page is one more tool call per turn.
+- `read_file` returns up to 20,000 characters per call. A longer file comes back with `"truncated": true`, `next_offset` and `total_chars`; calling again with `offset` set to `next_offset` returns the next page, until `next_offset` is null (obj 901494). Before that change the rest of a long file could not be read in chat at all.
 
 ## Switch it off
 

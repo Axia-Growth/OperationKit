@@ -6,6 +6,7 @@ import { useRoutines, isAutoPaused, type RoutineSummary, type StrategyOption, ty
 import { RoutineAutoPauseBanner } from './RoutineAutoPauseBanner'
 import { HostCronJobs } from './jobs/HostCronJobs'
 import { QueueAutostartPanel } from './settings/QueueAutostartPanel'
+import { DeployWaitingPanel } from './settings/DeployWaitingPanel'
 import { KnowledgeIndexPanel } from './jobs/KnowledgeIndexPanel'
 import { useAuth } from '../context/AuthContext'
 import { ExecutionsPanel, type ExecutionsTarget } from './jobs/ExecutionsPanel'
@@ -638,6 +639,9 @@ export function JobsBoard(_props: JobsBoardProps) {
 
       {/* ── Queue auto-start (obj 900686; the last thing that was on Settings → Platform). Admin API. ── */}
       {kindFilter !== 'flow' && isAdmin && <QueueAutostartPanel />}
+
+      {/* ── Merged, waiting for deploy (obj 901389). Read-only, admin API. ── */}
+      {kindFilter !== 'flow' && isAdmin && <DeployWaitingPanel />}
 
       {/* ── Knowledge index for hybrid search (embedding backfill / re-embed jobs). Admin API. ── */}
       {kindFilter !== 'flow' && isAdmin && <KnowledgeIndexPanel />}

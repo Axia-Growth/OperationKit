@@ -45,6 +45,8 @@ interface FakePr {
   rollup: unknown[]
   required: string[] | 'unreadable'
   mergeError?: string
+  /** Changed files `gh pr view --json files` returns (obj 901389); 'unreadable' = gh fails. */
+  files?: string[] | 'unreadable'
   /** obj 901412: update-branch fails with this message when set. */
   updateError?: string
   /** obj 901412: the head GitHub moves the branch to after an update-branch. */
@@ -88,6 +90,10 @@ async function fakeExec(file: string, args: string[]): Promise<string> {
     if (fields === 'state') return p.state
     if (fields === 'headRefOid') return JSON.stringify({ headRefOid: p.headSha })
     if (fields === 'state,mergeStateStatus') return JSON.stringify({ state: p.state, mergeStateStatus: p.mergeStateStatus })
+    if (fields === 'files') {
+      if (p.files === 'unreadable') throw new Error('HTTP 502')
+      return JSON.stringify({ files: (p.files ?? []).map(f => ({ path: f })) })
+    }
     return JSON.stringify({ number: Number(args[2]), url: `https://github.com/acme/app/pull/${args[2]}`, headRefOid: p.headSha, baseRefName: 'main', statusCheckRollup: p.rollup, state: p.state })
   }
   if (args[0] === 'pr' && args[1] === 'merge') {
@@ -282,6 +288,44 @@ describe('1. happy path: grant + pass + green + clean → squash-merge, then don
     expect(moved.pathway).toBe(`grant-merge:#${g.id}`)
     expect(String(moved.actor)).toContain(`bot:${BOT}`)
     expect((getDb().prepare('SELECT terminal_by_human FROM objectives WHERE id = ?').get(id) as Loose).terminal_by_human).toBe(0)
+  })
+
+  it('obj 901389: the card line says the merge is not live until deployed, and nothing auto-deploys it', async () => {
+    const g = grant()
+    const id = card()
+    fake.pr.files = ['app/client/src/Thing.tsx']
+    const r = await approve(id)
+    expect(r.status).toBe(200)
+    expect(r.json.merge_line).toContain('Merged, not live until deployed: the owner deploys.')
+    expect(r.json.merge_line).not.toMatch(/migration/i)
+    const line = getDb().prepare("SELECT * FROM activity_log WHERE objective_id = ? AND json_extract(metadata, '$.kind') = 'grant_merge'").get(id) as Loose
+    expect(line.title).toContain('Merged, not live until deployed')
+    expect(JSON.parse(line.metadata)).toMatchObject({ live: false, migration_paths: [] })
+    // The merge is marked as a grant merge, so the merged-PR webhook will not auto-deploy it.
+    const { decideMergeAutoDeploy } = await import('../services/merge-deploy-gate.js')
+    expect(decideMergeAutoDeploy(getDb(), 'acme/app', 100 + seq)).toMatchObject({ deploy: false, grantMerge: { grantId: g.id, objectiveId: id } })
+  })
+
+  it('obj 901389: names the database migration when the PR changes a schema / migrations path', async () => {
+    grant()
+    const id = card()
+    fake.pr.files = ['app/server/src/db/schema/things.ts', 'app/server/src/db/schema/things.test.ts', 'README.md']
+    const r = await approve(id)
+    expect(r.status).toBe(200)
+    expect(r.json.merge_line).toContain('Merged, not live until deployed')
+    expect(r.json.merge_line).toContain('⚠ Database migration: this PR changes app/server/src/db/schema/things.ts.')
+    const line = getDb().prepare("SELECT * FROM activity_log WHERE objective_id = ? AND json_extract(metadata, '$.kind') = 'grant_merge'").get(id) as Loose
+    expect(line.title).toContain('Database migration')
+    expect(JSON.parse(line.metadata).migration_paths).toEqual(['app/server/src/db/schema/things.ts'])
+  })
+
+  it('obj 901389: says so when the PR files could not be read (never "no migration")', async () => {
+    grant()
+    const id = card()
+    fake.pr.files = 'unreadable'
+    const r = await approve(id)
+    expect(r.status).toBe(200)
+    expect(r.json.merge_line).toContain("Could not read the PR's files to check for a database migration.")
   })
 
   it('a card with no PR keeps the old behaviour: the DELEGATED message is delivered, nothing is merged', async () => {

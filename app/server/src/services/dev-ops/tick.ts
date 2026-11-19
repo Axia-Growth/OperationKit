@@ -7,6 +7,7 @@
  */
 import { settleDeploys } from './deploy.js'
 import { processPendingMerges } from './merge.js'
+import { processRepoPending } from './repo-merge.js'
 
 const TICK_MS = 30_000
 let timer: ReturnType<typeof setInterval> | null = null
@@ -18,6 +19,8 @@ export async function devOpsTickOnce(): Promise<void> {
   try {
     try { settleDeploys() } catch (err) { console.warn('[dev-ops] settle deploys failed:', (err as Error).message) }
     try { await processPendingMerges() } catch (err) { console.warn('[dev-ops] pending merges failed:', (err as Error).message) }
+    // obj 901492: PRs updated by repo and number (merge on green, or just "CI really started").
+    try { await processRepoPending() } catch (err) { console.warn('[dev-ops] repo pending failed:', (err as Error).message) }
   } finally {
     busy = false
   }

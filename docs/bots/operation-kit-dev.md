@@ -94,6 +94,18 @@ rollback, closing cards whose PR was merged by hand, and Cloudflare Access / DNS
 behind one switch on the bot's settings panel (on by default for this bot only) and every
 call is audit-logged. See [Operator tools](../wiki/Operation-Kit-Dev-Operator-Tools.md).
 
+**Verify before done (obj 901495).** Dev never reports "done" from a worker's note or a
+card status. After a merge it reads the PR from GitHub (merged?, merge commit, checks);
+after a deploy it compares the live commit with the head of the repo the server updates
+from and looks at the sync pull request. It reports the state in fixed words: "merged, not
+deployed", "deployed, commit X live", "deploy ran, nothing changed". One read-only call
+does it: `dev_deploy_status` (optionally with a card number).
+
+An admin can also give it **GitHub repo rights** for named repos (off by default): merge a
+pull request by repo and number when no card links it, the public sync pull request included,
+and update a branch so its checks really run. See
+[GitHub repo rights](../wiki/Dev-Bot-GitHub-Repo-Rights.md).
+
 ## Creating a bot, agent or skill
 
 The **Agents** page now opens with **Make a new bot, agent or skill**:

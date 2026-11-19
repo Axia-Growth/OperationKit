@@ -49,11 +49,11 @@ const { grantBotWorkspace } = await import('./bot-workspaces.js')
 const { parseAgentText, BUILTIN_DIR } = await import('./agent-defs.js')
 const { runTurn, systemPromptFor } = await import('./engine.js')
 const { withResolvedKnowledgeFolders } = await import('./knowledge-folders.js')
-const { kbWorkspacesForChat, runTool } = await import('./tools.js')
+const { kbWorkspacesForChat, runTool, MAX_READ_CHARS } = await import('./tools.js')
 const { buildHighAgencyBrief } = await import('./high-agency.js')
 const { UNTRUSTED_OPEN, UNTRUSTED_CLOSE } = await import('../../lib/untrusted-content.js')
 const {
-  DIGEST_MAX_LINES, LOOP_FORMAT, OPEN_LOOPS_DEFAULT_BOTS, OPEN_LOOPS_SETTING, STALE_AFTER_DAYS,
+  DIGEST_MAX_LINES, LOOP_FORMAT, PROMPT_MAX_CHARS, OPEN_LOOPS_DEFAULT_BOTS, OPEN_LOOPS_SETTING, STALE_AFTER_DAYS,
   digestText, findOpenLoopsFile, openLoopsBots, openLoopsBriefSection, openLoopsEnabledFor, openLoopsPromptBlock,
   postOpenLoopsDigest, waitingOnOwner,
 } = await import('./open-loops.js')
@@ -244,8 +244,108 @@ describe('1. chat: the bot knows its open loops without being asked', () => {
   it('caps a very long file', () => {
     writeLoops(`${LOOPS}\n${'x'.repeat(40_000)}`)
     const b = block(dev(), ADMIN, OK)
-    expect(b.length).toBeLessThan(16_000)
+    expect(b.length).toBeLessThan(17_000)
     expect(b).toContain('cut here')
+  })
+})
+
+// obj 901494: Dev's real file passed 20,000 characters. read_file returned the
+// first 20,000 with "truncated": true and no way on, and the prompt copy said
+// only "cut here", so the bot refused to rewrite its list for six turns.
+describe('1b. a list longer than one page can be read to the end and written back whole', () => {
+  const closed = Array.from({ length: 260 }, (_, i) => `- Nov ${String((i % 28) + 1).padStart(2, '0')}: Loop ${i + 100} closed: PR ${i + 500} merged and live, card done, nothing left to do here.`).join('\n')
+  const LONG = `${LOOPS}${closed}\n\n## Other lists\n\n- The older operator list is at workspaces/${OK}/bots/operation-kit/open-loops.md. LAST-LINE-MARKER\n`
+  const toolCtx = (a: Agent) => ({ userId: ADMIN, username: 'Operator', workspace: OK, agent: resolved(a, ADMIN), kbRoot: KB, connectors: { mail: null, calendar: null } })
+  type Page = { path: string; content: string; truncated: boolean; offset?: number; next_offset?: number | null; total_chars?: number; note?: string }
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const read = (a: Agent, args: Record<string, unknown>) => runTool(toolCtx(a) as any, 'read_file', args).result as Page
+
+  it('the fixture is longer than one read_file page and than the prompt copy', () => {
+    expect(LONG.length).toBeGreaterThan(MAX_READ_CHARS)
+    expect(LONG.length).toBeGreaterThan(PROMPT_MAX_CHARS)
+  })
+
+  it('read_file: the first page says it is cut and where the next page starts; following next_offset reaches the last line', () => {
+    writeLoops(LONG)
+    const first = read(dev(), { path: REL })
+    expect(first.truncated).toBe(true)
+    expect(first.offset).toBe(0)
+    expect(first.total_chars).toBe(LONG.length)
+    expect(first.content.length).toBeLessThanOrEqual(MAX_READ_CHARS)
+    expect(first.content).not.toContain('LAST-LINE-MARKER')
+    expect(first.next_offset).toBe(first.content.length)
+    expect(first.note).toContain(`offset ${first.next_offset}`)
+    expect(first.note).toContain(REL)
+
+    const pages = [first.content]
+    let next = first.next_offset ?? null
+    let calls = 0
+    while (next !== null) {
+      const p = read(dev(), { path: REL, offset: next })
+      expect(p.offset).toBe(next)
+      pages.push(p.content)
+      next = p.next_offset ?? null
+      if (next === null) {
+        expect(p.truncated).toBe(false)
+        expect(p.note).toMatch(/^This is the last page/)
+      }
+      if (++calls > 20) throw new Error('paging did not end')
+    }
+    // every byte, in order: what the bot now holds is the whole file
+    expect(pages.join('')).toBe(LONG)
+    expect(pages.join('')).toContain('LAST-LINE-MARKER')
+  })
+
+  it('read_file: the offset also works as a string, and a short file keeps its old result shape', () => {
+    writeLoops(LONG)
+    const first = read(dev(), { path: REL })
+    expect(read(dev(), { path: REL, offset: String(first.next_offset) }).offset).toBe(first.next_offset)
+    writeLoops()
+    expect(read(dev(), { path: REL })).toEqual({ path: REL, content: LOOPS, truncated: false })
+  })
+
+  it('read_file with an offset obeys the same folder wall as without one', () => {
+    writeLoops(LONG)
+    const exampleOnly = { ...dev(), knowledge_folders: [`workspaces/${EXAMPLE}`] }
+    expect(() => read(exampleOnly, { path: REL, offset: 20000 })).toThrow(/outside/)
+  })
+
+  it('the prompt copy ends on a whole line, says it is not the whole file, and names the exact read_file call for the rest', () => {
+    writeLoops(LONG)
+    const b = block(dev(), ADMIN, OK)
+    const m = b.match(/cut here at character (\d+) of (\d+)\. This is not the whole file\./)
+    expect(m).not.toBeNull()
+    const cutAt = Number(m![1])
+    expect(Number(m![2])).toBe(LONG.length)
+    expect(cutAt).toBeLessThanOrEqual(PROMPT_MAX_CHARS)
+    expect(LONG[cutAt - 1]).toBe('\n')
+    expect(b).toContain(`read_file with path "${REL}" and offset ${cutAt}`)
+    // the rules no longer say "do not call read_file" or "write back from the copy below"
+    expect(b).not.toContain('do not call read_file for it')
+    expect(b).not.toContain('starting from the copy below,')
+    expect(b).toContain('The copy below is NOT the whole file')
+    expect(b).toContain('never write back the partial copy below')
+    expect(b).not.toContain('LAST-LINE-MARKER')
+    expect(b.split(UNTRUSTED_CLOSE).length - 1).toBe(1)
+
+    // The prompt copy plus read_file from that offset is the whole file.
+    const head = LONG.slice(0, cutAt)
+    expect(b).toContain(head.slice(-200).trimEnd())
+    let rest = ''
+    let next: number | null = cutAt
+    while (next !== null) {
+      const p = read(dev(), { path: REL, offset: next })
+      rest += p.content
+      next = p.next_offset ?? null
+    }
+    expect(head + rest).toBe(LONG)
+  })
+
+  it('a list that fits is loaded whole with the old wording', () => {
+    const b = block(dev(), ADMIN, OK)
+    expect(b).toContain('do not call read_file for it')
+    expect(b).toContain('starting from the copy below,')
+    expect(b).not.toContain('cut here')
   })
 })
 

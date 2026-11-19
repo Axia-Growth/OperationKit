@@ -51,13 +51,22 @@ agent's instructions.
 
 | Tool | What it allows |
 |---|---|
-| `search`, `list_folders`, `read_file`, `write_doc` | Search, browse, read and write the knowledge base — only inside `knowledge_folders`. |
+| `search`, `list_folders`, `read_file`, `write_doc`, `file_answer` | Search, browse, read and write the knowledge base, and save a useful answer as a wiki page — only inside `knowledge_folders`. |
 | `create_objective`, `get_objective`, `list_objectives`, `board_briefing` | Create board cards for the coding tools, check on them, and summarise what is waiting on the person. |
+| `raise_decision` | Ask the person to decide something on a card, with a short briefing (question, options, recommendation). It only asks. A bot with `create_objective` gets it automatically. |
 | `followups` | Set itself a one-off follow-up in the chat it is in ("check back in 10 minutes") with `schedule_followup`, `list_followups` and `cancel_followup`. When it is due the bot runs an ordinary turn in that chat and posts its answer; the person sees a "Follow-up scheduled for HH:MM" line with **Cancel**. Any bot that lists `create_objective` gets it automatically. See `docs/wiki/Bot-Follow-Ups.md`. |
+| `attach_image` | Attach a screenshot or image to a reply so it shows in the chat. |
+| `bot_messages` | Message another bot that may work in the same workspace and get its reply on a shared thread. |
 | `email`, `calendar` | Read mail and calendar and prepare **drafts**. Nothing is sent until a person presses Send. |
 | `web_search`, `web_fetch` | Search the public web and read public pages. Search needs a search key on the install (see `docs/product/09-agent-chat.md`). |
-| `all` | Every built-in tool, including ones added in later releases. |
 | `mcp` | Use the tools of the MCP servers connected in the chat's workspace (Settings → Integrations). See `docs/connectors/MCP-SERVERS.md`. |
+| `secrets` | Call an outside service with a named secret. The server adds the value; the bot never sees it. **Not included in `all`.** |
+| `card_sandbox` | Look inside a card the bot owns: its files, log and transcript, and run a command in its sandbox. Every call is logged. **Not included in `all`.** |
+| `card_browser` | Open a public web page in a sandboxed browser and take a screenshot. **Not included in `all`.** |
+| `all` (or `*`) | Every built-in tool, including ones added in later releases, **except** `secrets`, `card_sandbox` and `card_browser`. Those three must be named as well, for example `tools: [all, secrets]`. |
+
+The list lives in one file, `app/shared/bot-tools.ts`; a test fails if this table
+misses a name.
 
 Other names are allowed (for connectors a client adds), but the importer will
 point out that they are not built in.

@@ -45,7 +45,7 @@ function w(file: string, body: string, mode = 0o644) {
 }
 const read = (f: string) => (fs.existsSync(f) ? fs.readFileSync(f, 'utf8') : '')
 
-function setup(opts: { verifyFails?: boolean; healthFailsUntilRollback?: boolean; updateFailsBeforeBackup?: boolean; partialBackup?: boolean; nothingNew?: boolean; policy?: unknown[] } = {}) {
+function setup(opts: { nothingNew?: boolean; originUrl?: string; verifyFails?: boolean; healthFailsUntilRollback?: boolean; updateFailsBeforeBackup?: boolean; partialBackup?: boolean; policy?: unknown[] } = {}) {
   T = fs.mkdtempSync(path.join(os.tmpdir(), 'cc-devops-runner-'))
   SRC = path.join(T, 'src')
   OPT = path.join(T, 'opt')
@@ -84,8 +84,9 @@ exec "$@"
 echo "$@" >> "${LOGS}/git.args"
 for a in "$@"; do
   case "$a" in
-    get-url) echo "https://x-access-token:hunter2@github.example.test/acme/public-copy.git"; exit 0 ;;
     rev-parse) cat "${T}/head"; exit 0 ;;
+    ls-remote) printf 'fedcba9876543210fedcba9876543210fedcba98\trefs/heads/main\n'; exit 0 ;;
+    remote) echo '${opts.originUrl ?? 'https://github.com/acme/public.git'}'; exit 0 ;;
     checkout) sha="\${@: -1}"; echo "$sha" > "${T}/head"; exit 0 ;;
   esac
 done
@@ -160,7 +161,7 @@ describe.skipIf(!READY)('host-runner.sh deploy', () => {
     expect(r.status.from_sha).toMatch(/^old/)
     expect(r.status.to_sha).toMatch(/^new/)
     expect(r.status.backup_dir).toContain(`${OPT}/backups/pre-update-`)
-    expect(r.status.source).toBe('https://github.example.test/acme/public-copy.git')
+    expect(r.status.source).toBe('https://github.com/acme/public.git')
   })
 
   it('same commit before and after → unchanged ("nothing new to deploy"), never deployed; no rollback (obj 901479)', () => {
@@ -169,13 +170,46 @@ describe.skipIf(!READY)('host-runner.sh deploy', () => {
     expect(r.code).toBe(0)
     expect(r.status.state).toBe('unchanged')
     expect(r.status.from_sha).toBe(r.status.to_sha)
-    expect(r.status.message).toMatch(/^nothing new to deploy: main at https:\/\/github\.example\.test\/acme\/public-copy\.git is still old0+/)
+    expect(r.status.message).toMatch(/^nothing new to deploy: main at https:\/\/github\.com\/acme\/public\.git is still old0+/)
     expect(r.status.message).toContain('No new code went live')
     expect(JSON.stringify(r.status)).not.toContain('hunter2')
     // update.sh, verify.sh and the health check still ran; nothing was restored.
     expect(read(path.join(LOGS, 'update.args')).trim()).toBe(`--config ${CONF}`)
     expect(read(path.join(LOGS, 'verify.args')).trim()).toBe(`--config ${CONF}`)
     expect(read(path.join(LOGS, 'backup.args'))).toBe('')
+  })
+})
+
+describe.skipIf(!READY)('host-runner.sh: the commit before and after (obj 901495)', () => {
+  it('a deploy that moved the code names both commits', () => {
+    setup()
+    expect(deploy().status.message).toMatch(/^deployed new1+ \(was old0+\)/)
+  })
+
+  it('src-info is read-only: HEAD, owner/repo and origin main; no fetch, checkout, pull or update.sh', () => {
+    setup()
+    w(path.join(T, 'head'), '0123456789abcdef0123456789abcdef01234567\n')
+    const r = run(['src-info', SRC, CONF])
+    expect(r.code).toBe(0)
+    expect(r.json).toEqual({ ok: true, code: 'ok', head: '0123456789abcdef0123456789abcdef01234567', origin_repo: 'acme/public', origin_main: 'fedcba9876543210fedcba9876543210fedcba98' })
+    const git = read(path.join(LOGS, 'git.args'))
+    expect(git).toMatch(/rev-parse HEAD/)
+    expect(git).toMatch(/ls-remote origin refs\/heads\/main/)
+    expect(git).not.toMatch(/fetch|checkout|pull|reset|merge|push/)
+    expect(read(path.join(LOGS, 'update.args'))).toBe('')
+    expect(read(path.join(LOGS, 'docker.args'))).toBe('')
+    expect(read(path.join(LOGS, 'curl.argv'))).toBe('')
+  })
+
+  it('src-info never returns the origin URL: a token in it stays on the host', () => {
+    setup({ originUrl: `https://x-access-token:${TOKEN}@github.com/acme/public.git` })
+    const r = run(['src-info', SRC, CONF])
+    expect(r.json).toMatchObject({ ok: true, origin_repo: 'acme/public' })
+    expect(r.stdout + r.stderr).not.toContain(TOKEN)
+    setup({ originUrl: 'git@github.com:acme/public.git' })
+    expect(run(['src-info', SRC, CONF]).json).toMatchObject({ origin_repo: 'acme/public' })
+    setup({ originUrl: 'https://git.example.test/somewhere/else.git' })
+    expect(run(['src-info', SRC, CONF]).json).toMatchObject({ ok: true, origin_repo: '' })
   })
 })
 

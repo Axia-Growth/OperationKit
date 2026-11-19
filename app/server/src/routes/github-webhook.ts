@@ -27,6 +27,7 @@ import {
 } from '../services/dev-items.js'
 import { isAutoDeployEnabled, shouldAutoDeploy, triggerAutoDeploy, selfRepo } from '../services/auto-deploy.js'
 import { getDb } from '../db/index.js'
+import { decideMergeAutoDeploy, skippedDeployLine } from '../services/merge-deploy-gate.js'
 import { sendFollowUp } from '../services/session-manager.js'
 import { broadcast } from '../ws/index.js'
 
@@ -112,6 +113,7 @@ interface GithubPRPayload {
     title?: string
     body?: string | null
     user?: { login?: string }
+    merged_by?: { login?: string } | null
     labels?: Array<{ name?: string }>
     base?: { ref?: string }
     head?: { ref?: string }
@@ -385,6 +387,15 @@ router.post('/', (req: Request, res: Response) => {
 
     const { entryId, status } = collectFromMergedPR(normalized)
 
+    // obj 901389: remember who pressed merge, for the "merged, waiting for deploy" list.
+    if (entryId && pr.merged_by?.login) {
+      try {
+        getDb().prepare('UPDATE changelog_entries SET merged_by = ? WHERE id = ?').run(String(pr.merged_by.login).slice(0, 100), entryId)
+      } catch (e) {
+        console.warn('[github-webhook] merged_by stamp failed:', (e as Error).message)
+      }
+    }
+
     // ── Universal Development: ship the closing refs + stamp the changelog ──
     // (api.md §6.3). Runs AFTER collectFromMergedPR so the entry row exists and
     // its id can be stamped onto the items. Entirely best-effort: every failure
@@ -501,7 +512,20 @@ router.post('/', (req: Request, res: Response) => {
       const baseRef = pr.base?.ref || null
       if (shouldAutoDeploy({ repo: normalized.repo, baseRef })) {
         if (isAutoDeployEnabled(getDb())) {
-          triggerAutoDeploy(`PR #${normalized.prNumber} merged to ${baseRef}`)
+          // obj 901389: a merge a bot made under a MERGE grant never deploys itself.
+          // It deploys only when an active DEPLOY grant from the same admin covers
+          // that bot in that workspace; otherwise the owner deploys. A person's
+          // merge and the background auto-merge are unchanged.
+          const gate = decideMergeAutoDeploy(getDb(), normalized.repo, normalized.prNumber)
+          if (!gate.deploy) {
+            console.log(skippedDeployLine(normalized.repo, normalized.prNumber, gate.grantMerge))
+          } else {
+            triggerAutoDeploy(
+              gate.reason === 'deploy_grant'
+                ? `PR #${normalized.prNumber} merged to ${baseRef} under merge grant #${gate.grantMerge.grantId}; deploy grant #${gate.deployGrantId}`
+                : `PR #${normalized.prNumber} merged to ${baseRef}`,
+            )
+          }
         } else {
           console.log(
             `[auto-deploy] DRY-RUN — WOULD auto-deploy (PR #${normalized.prNumber} → ${baseRef}); enable via settings.auto_deploy_enabled=1`,

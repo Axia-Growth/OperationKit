@@ -58,11 +58,19 @@ process.env.CC_DEV_OPS_PROTECTED_SHA256 = sha(SEEDED)
 
 // ── fake GitHub ──────────────────────────────────────────────────────────────
 interface FakePr { state: string; mergeStateStatus: string; headSha: string; rollup: unknown[]; required: string[] }
-const fake: { pr: FakePr; calls: string[][]; onUpdate: ((p: FakePr) => void) | null; parents: Record<string, string[]> } = {
+interface FakeSyncPr { number: number; state: string; url: string; createdAt: string; updatedAt: string; mergedAt: string | null }
+const fake: {
+  pr: FakePr; calls: string[][]; onUpdate: ((p: FakePr) => void) | null; parents: Record<string, string[]>
+  /** obj 901495: `repos/<repo>/commits/main` answers, the sync PR list, and what a merged PR's merge commit is. */
+  mains: Record<string, { sha: string; date: string }>; syncPrs: FakeSyncPr[]; mergeCommit: string
+} = {
   pr: { state: 'OPEN', mergeStateStatus: 'CLEAN', headSha: 'abc1234', rollup: [], required: [] },
   calls: [],
   onUpdate: null,
   parents: {},
+  mains: {},
+  syncPrs: [],
+  mergeCommit: 'fe11ed0000000000000000000000000000000001',
 }
 async function fakeExec(file: string, args: string[]): Promise<string> {
   fake.calls.push([file, ...args])
@@ -76,6 +84,12 @@ async function fakeExec(file: string, args: string[]): Promise<string> {
       if (p.headSha !== before) fake.parents[p.headSha] = [before, 'base0000000000']
       return '{"message":"Updating pull request branch."}'
     }
+    const mm = /^repos\/([^/]+\/[^/]+)\/commits\/main$/.exec(String(args[1]))
+    if (mm) {
+      const m = fake.mains[mm[1]]
+      if (!m) throw new Error('HTTP 404 Not Found')
+      return JSON.stringify(m)
+    }
     const cm = /^repos\/[^/]+\/[^/]+\/commits\/([0-9a-f]+)$/.exec(String(args[1]))
     if (cm) return JSON.stringify(fake.parents[cm[1]] ?? ['someone0000', 'else0000000'])
     if (String(args[1]).endsWith('/protection')) throw new Error('HTTP 404 Not Found')
@@ -84,8 +98,14 @@ async function fakeExec(file: string, args: string[]): Promise<string> {
   if (args[0] === 'pr' && args[1] === 'view') {
     const fields = args[args.indexOf('--json') + 1]
     if (fields === 'state,mergeStateStatus') return JSON.stringify({ state: p.state, mergeStateStatus: p.mergeStateStatus })
+    const mergeCommit = p.state === 'MERGED' ? { oid: fake.mergeCommit } : null
+    if (fields === 'state,mergeCommit') return JSON.stringify({ state: p.state, mergeCommit })
+    if (fields === 'state,mergedAt,mergeCommit,baseRefName,statusCheckRollup') {
+      return JSON.stringify({ state: p.state, mergedAt: p.state === 'MERGED' ? '2026-11-19T03:48:21Z' : null, mergeCommit, baseRefName: 'main', statusCheckRollup: p.rollup })
+    }
     return JSON.stringify({ number: Number(args[2]), url: `https://github.com/acme/app/pull/${args[2]}`, headRefOid: p.headSha, baseRefName: 'main', statusCheckRollup: p.rollup, state: p.state })
   }
+  if (args[0] === 'pr' && args[1] === 'list') return JSON.stringify(fake.syncPrs)
   if (args[0] === 'pr' && args[1] === 'merge') { p.state = 'MERGED'; return '' }
   throw new Error(`unexpected gh ${args.join(' ')}`)
 }
@@ -114,6 +134,9 @@ const { setHostRunnerForTests, hostDockerArgs } = await import('./host-exec.js')
 const { accessGuard, dnsGuard, protectedAccessEmails, protectedAccessHashes, ACCESS_PROTECTED_SEED_SHA256 } = await import('./cloudflare.js')
 const { registerKnownSecret, clearRegisteredSecretsForTests } = await import('../secret-redaction.js')
 const { DEV_OPS_FNS } = await import('../agent-chat/dev-ops-tools.js')
+const { describeEndState, sameCommit, countChecks } = await import('./end-state.js')
+const { deployOutcome } = await import('./deploy.js')
+const { __resetBuildInfoForTests } = await import('../../lib/build-info.js')
 
 type Agent = import('../agent-chat/agent-defs.js').ChatAgent
 type Ctx = import('../agent-chat/tools.js').ToolContext
@@ -209,6 +232,8 @@ beforeEach(() => {
   fake.calls = []
   fake.onUpdate = null
   fake.parents = {}
+  fake.mains = {}
+  fake.syncPrs = []
   host.calls = []
   host.reply = () => ({ code: 0, stdout: '{"ok":true,"code":"ok"}\n', stderr: '' })
   getDb().prepare('DELETE FROM agent_chat_dev_ops').run()
@@ -468,8 +493,9 @@ describe('6. deploy: the standard update.sh flow', () => {
   it('starts the host runner detached with the exact paths; message names the exact command; no skip/force flag', async () => {
     const r = (await call('dev_deploy', { note: 'ship #880' })).result as Loose
     expect(r).toMatchObject({ ok: true, code: 'started' })
-    expect(host.calls).toHaveLength(1)
-    const c = host.calls[0]
+    // One deploy run; the only other host call is the read-only look at what is live (obj 901495).
+    expect(host.calls.filter(h => h.args[0] !== 'src-info')).toHaveLength(1)
+    const c = host.calls.find(h => h.args[0] === 'deploy')!
     expect(c.opts.detached).toBe(true)
     expect(c.args).toEqual(['deploy', '/opt/operationkit-src', '/opt/operationkit-src/client.conf', String(r.deploy_id), 'https://ai.example.test/api/health', '/srv/ok/state/data'])
     expect(r.message).toContain('sudo bash /opt/operationkit-src/install/update.sh --config /opt/operationkit-src/client.conf')
@@ -486,7 +512,7 @@ describe('6. deploy: the standard update.sh flow', () => {
     await call('dev_deploy', {})
     const second = (await call('dev_deploy', {})).result as Loose
     expect(second.code).toBe('deploy_running')
-    expect(host.calls).toHaveLength(1)
+    expect(host.calls.filter(h => h.args[0] === 'deploy')).toHaveLength(1)
     expect(lastAudit()).toMatchObject({ action: 'deploy', outcome: 'refused', code: 'deploy_running' })
   })
 
@@ -523,7 +549,7 @@ describe('6. deploy: the standard update.sh flow', () => {
     const d = (out.result as Loose).deploys[0]
     expect(d).toMatchObject({ id: r.deploy_id, status: 'unchanged', new_code_live: false, from_sha: '0e7efcbc7b5e', to_sha: '0e7efcbc7b5e' })
     expect(d.message).toContain('Sync from upstream')
-    expect(out.summary).toContain('nothing new to deploy')
+    expect(out.summary).toContain('Nothing new to deploy')
     expect(out.summary).not.toMatch(/: deployed/)
     const settled = getDb().prepare("SELECT * FROM dev_ops_audit WHERE action = 'deploy_settled' ORDER BY id DESC LIMIT 1").get() as Loose
     expect(settled).toMatchObject({ outcome: 'no_change', code: 'unchanged' })
@@ -698,5 +724,239 @@ describe('9. audit trail', () => {
     await expect(call('dev_merge_pr', { id: 999999 })).rejects.toThrow(/not on a board you can see/)
     expect(auditCount()).toBe(before + 1)
     expect(lastAudit()).toMatchObject({ outcome: 'refused', code: 'not_visible' })
+  })
+})
+
+// ── obj 901495: verify the end state before saying "done" ────────────────────
+describe('10. the real end state: merged sha, live commit, public main, private main, the sync PR', () => {
+  const LIVE = '0e7efcbc7b5e90b879670c1ffb466b7ee4ceca5e'
+  const NEWER = 'a1b2c3d4e5f60718293a4b5c6d7e8f9012345678'
+  const PRIVATE_HEAD = '7805eb32d0b1921c236d4e58c62b2c43342141d0'
+  const PUBLIC = 'acme/public'
+  const PRIVATE = 'acme/app' // where the fixture cards open their pull requests
+  const OPEN_SYNC: FakeSyncPr = { number: 135, state: 'OPEN', url: `https://github.com/${PUBLIC}/pull/135`, createdAt: '2026-11-18T22:10:33Z', updatedAt: '2026-11-19T03:49:10Z', mergedAt: null }
+  const MERGED_SYNC: FakeSyncPr = { number: 126, state: 'MERGED', url: `https://github.com/${PUBLIC}/pull/126`, createdAt: '2026-11-18T04:03:26Z', updatedAt: '2026-11-19T03:50:00Z', mergedAt: '2026-11-19T03:50:00Z' }
+
+  /** The host checkout as host-runner.sh `src-info` reports it; every other host call is the default OK. */
+  function hostSource(originMain: string, head = LIVE) {
+    host.reply = c => c.args[0] === 'src-info'
+      ? { code: 0, stdout: `${JSON.stringify({ ok: true, code: 'ok', head, origin_repo: PUBLIC, origin_main: originMain })}\n`, stderr: '' }
+      : { code: 0, stdout: '{"ok":true,"code":"ok"}\n', stderr: '' }
+  }
+  function live(sha: string) {
+    process.env.GIT_SHA = sha
+    __resetBuildInfoForTests()
+  }
+  const writes = () => fake.calls.filter(c => c.includes('PUT') || c.includes('POST') || c.includes('--method') || (c[1] === 'pr' && !['view', 'list'].includes(c[2])))
+
+  beforeEach(() => {
+    card() // a Dev card with a PR on the private repo: this is how the private repo is found
+    live(LIVE)
+    fake.mains = { [PRIVATE]: { sha: PRIVATE_HEAD, date: '2026-11-19T03:48:21Z' }, [PUBLIC]: { sha: LIVE, date: '2026-11-18T18:41:23Z' } }
+    fake.syncPrs = [OPEN_SYNC, { ...MERGED_SYNC, updatedAt: '2026-11-18T18:41:24Z', mergedAt: '2026-11-18T18:41:24Z' }]
+    hostSource(LIVE)
+    fake.calls = []
+    host.calls = []
+  })
+  afterAll(() => {
+    delete process.env.GIT_SHA
+    __resetBuildInfoForTests()
+  })
+
+  it('the Nov 18-19 case in ONE read-only call: live is current with public main, but the merged code waits in an open sync PR', async () => {
+    const out = await call('dev_deploy_status', {})
+    const r = out.result as Loose
+    expect(r.end_state).toMatchObject({
+      live_commit: LIVE.slice(0, 12),
+      source_checkout: { head: LIVE, origin_repo: PUBLIC, origin_main_head: LIVE },
+      public_main: { repo: PUBLIC, sha: LIVE },
+      private_main: { repo: PRIVATE, sha: PRIVATE_HEAD, committed_at: '2026-11-19T03:48:21Z' },
+      sync_pr: { repo: PUBLIC, number: 135, state: 'OPEN' },
+      live_matches_public_main: true,
+      private_waiting_on_sync: true,
+      state: 'merged_not_deployed',
+      notes: [],
+    })
+    expect(r.end_state.summary).toContain(`Deployed, commit ${LIVE.slice(0, 12)} live`)
+    expect(r.end_state.summary).toContain('a deploy now would change nothing')
+    expect(r.end_state.summary).toContain('Merged, not deployed: sync PR #135 on acme/public is open (not merged)')
+    expect(out.summary).toContain('Merged, not deployed')
+    // Read-only: one host look, GitHub reads only, nothing written anywhere.
+    expect(host.calls.map(h => h.args[0])).toEqual(['src-info'])
+    expect(host.calls[0].opts.detached).toBeFalsy()
+    expect(host.calls[0].opts.stdin).toBeUndefined()
+    expect(writes()).toEqual([])
+    expect(lastAudit()).toMatchObject({ action: 'deploy_status', outcome: 'allowed', code: 'read' })
+    expect(lastAudit().detail).toContain('sync PR #135')
+  })
+
+  it('public main moved and the server did not: "merged, not deployed", naming both commits', async () => {
+    hostSource(NEWER)
+    fake.syncPrs = [MERGED_SYNC]
+    const es = ((await call('dev_deploy_status', {})).result as Loose).end_state
+    expect(es).toMatchObject({ state: 'merged_not_deployed', live_matches_public_main: false, private_waiting_on_sync: false, public_main: { sha: NEWER } })
+    expect(es.summary).toContain(`Merged, not deployed: live commit is ${LIVE.slice(0, 12)}, acme/public main is at ${NEWER.slice(0, 12)}`)
+  })
+
+  it('everything through: "deployed, commit X live"', async () => {
+    fake.syncPrs = [MERGED_SYNC]
+    const es = ((await call('dev_deploy_status', {})).result as Loose).end_state
+    expect(es).toMatchObject({ state: 'deployed', live_matches_public_main: true, private_waiting_on_sync: false, sync_pr: { number: 126, state: 'MERGED' } })
+    expect(es.summary).toContain(`Deployed, commit ${LIVE.slice(0, 12)} live`)
+    expect(es.summary).not.toContain('Merged, not deployed')
+  })
+
+  it('private main newer than the last merged sync and no sync PR open: says the sync has not run for it', async () => {
+    fake.syncPrs = [{ ...MERGED_SYNC, mergedAt: '2026-11-18T18:41:24Z' }]
+    const es = ((await call('dev_deploy_status', {})).result as Loose).end_state
+    expect(es).toMatchObject({ state: 'merged_not_deployed', private_waiting_on_sync: true })
+    expect(es.summary).toContain('is newer than the last merged sync PR #126')
+  })
+
+  it('the code was pulled on the host but the app still runs the old commit: said in words', async () => {
+    hostSource(NEWER, NEWER)
+    fake.syncPrs = [MERGED_SYNC]
+    const es = ((await call('dev_deploy_status', {})).result as Loose).end_state
+    expect(es.summary).toContain(`The host checkout is at ${NEWER.slice(0, 12)} but the running app is ${LIVE.slice(0, 12)}`)
+  })
+
+  it('host not readable: falls back to GitHub when the repo is configured, and says what was not read', async () => {
+    host.reply = () => ({ code: 125, stdout: '', stderr: 'docker: Cannot connect to the Docker daemon' })
+    let es = ((await call('dev_deploy_status', {})).result as Loose).end_state
+    expect(es).toMatchObject({ state: 'unknown', public_main: null, source_checkout: null, live_commit: LIVE.slice(0, 12) })
+    expect(es.notes.join(' ')).toMatch(/Host checkout not read/)
+    expect(es.summary).toContain('could not be read')
+
+    getDb().prepare("INSERT OR REPLACE INTO settings (key, value) VALUES ('dev_ops_public_repo', ?)").run(PUBLIC)
+    try {
+      es = ((await call('dev_deploy_status', {})).result as Loose).end_state
+      expect(es).toMatchObject({ public_main: { repo: PUBLIC, sha: LIVE }, sync_pr: { number: 135 }, state: 'merged_not_deployed' })
+    } finally {
+      getDb().prepare("DELETE FROM settings WHERE key = 'dev_ops_public_repo'").run()
+    }
+  })
+
+  it('a GitHub read that fails is a note, never a throw and never a guess', async () => {
+    delete fake.mains[PRIVATE]
+    const es = ((await call('dev_deploy_status', {})).result as Loose).end_state
+    expect(es.private_main).toBeNull()
+    expect(es.notes.join(' ')).toMatch(/acme\/app main not read: HTTP 404/)
+    expect(es.sync_pr).toMatchObject({ number: 135 })
+  })
+
+  it('no secret and no origin URL in the result: only owner/repo', async () => {
+    registerKnownSecret('OK_CF_API_TOKEN_TEST', FAKE_CF_TOKEN)
+    host.reply = () => ({ code: 0, stdout: `${JSON.stringify({ ok: true, code: 'ok', head: LIVE, origin_repo: `https://x:${FAKE_CF_TOKEN}@github.com/${PUBLIC}`, origin_main: LIVE })}\n`, stderr: '' })
+    const out = await call('dev_deploy_status', {})
+    expect(JSON.stringify(out)).not.toContain(FAKE_CF_TOKEN)
+    // A value that is not a plain owner/repo is dropped, not passed on.
+    expect((out.result as Loose).end_state.source_checkout.origin_repo).toBeNull()
+    expect(allAuditText()).not.toContain(FAKE_CF_TOKEN)
+  })
+
+  it('deploy rows say whether the commit moved: "deploy ran, nothing changed" when it did not', async () => {
+    const settle = async (from: string, to: string) => {
+      getDb().prepare('DELETE FROM dev_ops_deploys').run()
+      const r = (await call('dev_deploy', {})).result as Loose
+      fs.writeFileSync(path.join(DATA_DIR, 'dev-ops', `deploy-${r.deploy_id}.json`), JSON.stringify({ id: r.deploy_id, state: 'deployed', step: 'done', message: 'x', from_sha: from, to_sha: to }))
+      return call('dev_deploy_status', {})
+    }
+    const same = await settle(LIVE, LIVE)
+    expect((same.result as Loose).deploys[0]).toMatchObject({ status: 'unchanged', changed: false })
+    expect((same.result as Loose).deploys[0].outcome).toContain(`Nothing new to deploy: commit ${LIVE.slice(0, 12)} before and after`)
+    expect(same.summary).toContain('Nothing new to deploy')
+
+    const moved = await settle(LIVE, NEWER)
+    expect((moved.result as Loose).deploys[0]).toMatchObject({ status: 'deployed', changed: true })
+    expect((moved.result as Loose).deploys[0].outcome).toContain(`Deployed: the code moved from ${LIVE.slice(0, 12)} to ${NEWER.slice(0, 12)}`)
+  })
+
+  it('deployOutcome: running / rolled back / failed never read as shipped', () => {
+    expect(deployOutcome({ status: 'started', from_sha: null, to_sha: null })).toMatchObject({ changed: null })
+    expect(deployOutcome({ status: 'rolled_back', from_sha: LIVE, to_sha: LIVE }).outcome).toContain('nothing new is live')
+    expect(deployOutcome({ status: 'failed', from_sha: null, to_sha: null }).outcome).toContain('nothing new is confirmed live')
+    expect(deployOutcome({ status: 'deployed', from_sha: 'unknown', to_sha: 'unknown' })).toMatchObject({ changed: null })
+  })
+
+  it('dev_deploy says up front when there is nothing new to deploy (and still runs what was asked)', async () => {
+    const out = await call('dev_deploy', { note: 'ship it' })
+    const r = out.result as Loose
+    expect(r).toMatchObject({ ok: true, code: 'started', expect_change: false, before: { live_commit: LIVE.slice(0, 12), public_main: { sha: LIVE }, sync_pr: { number: 135, state: 'OPEN' } } })
+    expect(r.message).toContain('this deploy is expected to change nothing')
+    expect(r.message).toContain('sync PR #135')
+    expect(out.summary).toContain('expected to change nothing')
+    expect(host.calls.map(h => h.args[0])).toEqual(['src-info', 'deploy'])
+  })
+
+  it('dev_deploy with something new: expect_change true, no heads-up', async () => {
+    hostSource(NEWER)
+    const r = (await call('dev_deploy', {})).result as Loose
+    expect(r).toMatchObject({ ok: true, expect_change: true })
+    expect(r.message).not.toContain('expected to change nothing')
+    expect(r.message).toContain(`A deploy would move the server to ${NEWER.slice(0, 12)}`)
+  })
+
+  it('dev_deploy still starts when the end state cannot be read (expect_change null)', async () => {
+    host.reply = c => c.args[0] === 'src-info' ? { code: 1, stdout: '', stderr: 'boom' } : { code: 0, stdout: '{"ok":true,"code":"ok"}\n', stderr: '' }
+    const r = (await call('dev_deploy', {})).result as Loose
+    expect(r).toMatchObject({ ok: true, code: 'started', expect_change: null })
+  })
+
+  it('after a merge: dev_merge_pr returns the merge sha and says "merged, not deployed"', async () => {
+    const id = card()
+    const r = (await call('dev_merge_pr', { id })).result as Loose
+    expect(r).toMatchObject({ ok: true, code: 'merged', merge_sha: fake.mergeCommit })
+    expect(r.message).toContain(`as ${fake.mergeCommit.slice(0, 12)}`)
+    expect(r.message).toContain('Merged, not deployed')
+    // An already-merged PR reports the same facts.
+    const again = card({ status: 'review' })
+    fake.pr.state = 'MERGED'
+    const r2 = (await call('dev_merge_pr', { id: again })).result as Loose
+    expect(r2).toMatchObject({ code: 'already_merged', merge_sha: fake.mergeCommit })
+    expect(r2.message).toContain('Merged, not deployed')
+  })
+
+  it('dev_deploy_status with a card id: GitHub says merged or not, the merge sha and the checks', async () => {
+    const id = card()
+    fake.pr.state = 'MERGED'
+    let pr = ((await call('dev_deploy_status', { id })).result as Loose).pr
+    expect(pr).toMatchObject({ repo: PRIVATE, merged: true, state: 'MERGED', merge_sha: fake.mergeCommit, merged_at: '2026-11-19T03:48:21Z', base: 'main', checks: { total: 2, passed: 2, failed: [], pending: [] } })
+    expect(pr.summary).toContain(`is merged as ${fake.mergeCommit.slice(0, 12)} into main (2/2 checks passed)`)
+    expect(pr.summary).toContain('Merged, not deployed')
+
+    fake.pr = { ...fake.pr, state: 'OPEN', rollup: RED }
+    pr = ((await call('dev_deploy_status', { id })).result as Loose).pr
+    expect(pr).toMatchObject({ merged: false, merge_sha: null, checks: { failed: ['gate'] } })
+    expect(pr.summary).toContain('Not merged')
+    expect(writes()).toEqual([])
+    expect(lastAudit()).toMatchObject({ action: 'deploy_status', objective_id: id })
+  })
+
+  it('a card with no PR, and a card the person cannot see', async () => {
+    const pr = ((await call('dev_deploy_status', { id: card({ prNumber: null }) })).result as Loose).pr
+    expect(pr.error).toMatch(/no pull request/)
+    await expect(call('dev_deploy_status', { id: 999999 })).rejects.toThrow(/not on a board you can see/)
+    expect(lastAudit()).toMatchObject({ outcome: 'refused', code: 'not_visible' })
+  })
+
+  it('still gated: not offered to, and refused for, anyone but an admin typing to Dev in the browser', async () => {
+    const out = await call('dev_deploy_status', {}, ctx(DEV, { browserSession: false }))
+    expect((out.result as Loose).ok).toBe(false)
+    expect(host.calls).toEqual([])
+    expect(fake.calls).toEqual([])
+  })
+
+  it('pure helpers', () => {
+    expect(sameCommit('0e7efcbc7b5e', LIVE)).toBe(true)
+    expect(sameCommit(LIVE, NEWER)).toBe(false)
+    expect(sameCommit(null, LIVE)).toBeNull()
+    expect(sameCommit('unknown', LIVE)).toBeNull()
+    expect(countChecks([{ name: 'gate', status: 'IN_PROGRESS', conclusion: '' }, { name: 'unit', conclusion: 'SUCCESS' }, { name: 'cla', conclusion: 'SKIPPED' }, { name: 'build', conclusion: 'FAILURE' }]))
+      .toEqual({ total: 4, passed: 2, failed: ['build'], pending: ['gate'] })
+    // One repo for cards and the server (no sync step): deployed means deployed.
+    expect(describeEndState({ live_commit: LIVE.slice(0, 12), public_main: { repo: PUBLIC, sha: LIVE }, private_main: null, sync_pr: null, source_checkout: null }))
+      .toMatchObject({ state: 'deployed', live_matches_public_main: true })
+    expect(describeEndState({ live_commit: null, public_main: null, private_main: null, sync_pr: null, source_checkout: null }))
+      .toMatchObject({ state: 'unknown', summary: 'The live commit is unknown.' })
   })
 })

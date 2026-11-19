@@ -14,6 +14,15 @@
  * just updated from its base (GitHub update-branch). The background tick merges
  * it, pinned to the new head, once CI on that head is green.
  *
+ * `dev_ops_repo_grants` (obj 901492) is the per-repo "GitHub repo rights" grant:
+ * one row per repo an admin switched on for the Dev bot. No row = OFF. A revoke
+ * stamps `revoked_at`; rows are kept for the audit trail.
+ *
+ * `dev_ops_repo_pending` (obj 901492) is the repo-and-number twin of
+ * `dev_ops_pending_merges`: a PR whose branch the tool just updated. `mode`
+ * says what the tick does when CI on the new head is green: `merge` it, or
+ * `ci_only` (just make sure CI really started, then stop).
+ *
  * Since obj 901463 the `waiting` rows of one repo are an ordered merge queue
  * (lowest id = head). Two additive columns: `stage` (`queued` = the branch has
  * not been touched since the merge was asked for; `updated` = update-branch was
@@ -68,6 +77,39 @@ export function initDevOpsSchema(db: Database.Database): void {
       finished_at TEXT
     );
     CREATE INDEX IF NOT EXISTS idx_dev_ops_pending_merges_status ON dev_ops_pending_merges(status);
+
+    CREATE TABLE IF NOT EXISTS dev_ops_repo_grants (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      bot_slug TEXT NOT NULL COLLATE NOCASE,
+      repo TEXT NOT NULL COLLATE NOCASE,
+      granted_by INTEGER,
+      granted_by_username TEXT,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      revoked_at TEXT,
+      revoked_by INTEGER
+    );
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_dev_ops_repo_grants_active
+      ON dev_ops_repo_grants(bot_slug, repo) WHERE revoked_at IS NULL;
+
+    CREATE TABLE IF NOT EXISTS dev_ops_repo_pending (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      repo TEXT NOT NULL,
+      pr_number INTEGER NOT NULL,
+      mode TEXT NOT NULL DEFAULT 'merge' CHECK (mode IN ('merge', 'ci_only')),
+      previous_head_sha TEXT NOT NULL,
+      bot_slug TEXT NOT NULL,
+      user_id INTEGER,
+      username TEXT,
+      workspace TEXT,
+      status TEXT NOT NULL DEFAULT 'waiting' CHECK (status IN ('waiting', 'merged', 'ci_started', 'failed', 'expired')),
+      updates INTEGER NOT NULL DEFAULT 1,
+      ci_kicks INTEGER NOT NULL DEFAULT 0,
+      last_reason TEXT,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+      finished_at TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_dev_ops_repo_pending_status ON dev_ops_repo_pending(status);
 
     CREATE TABLE IF NOT EXISTS dev_ops_deploys (
       id INTEGER PRIMARY KEY AUTOINCREMENT,

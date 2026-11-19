@@ -232,6 +232,8 @@ describe('1. happy path: own card + active merge grant + pass + green + clean â†
     expect(r).toMatchObject({ merged: true, done: true, pr_url: `https://github.com/acme/app/pull/${300 + seq}` })
     expect(out.objective_id).toBe(id)
     expect(out.summary).toContain(`under grant #${g.id}`)
+    // obj 901389: the bot's chat line says a grant merge is not a deploy.
+    expect(out.summary).toContain('Merged, not live until deployed: the owner deploys.')
 
     expect(merges()).toHaveLength(1)
     expect(merges()[0]).toEqual(expect.arrayContaining(['--squash', '--delete-branch', '--repo', 'acme/app', '--match-head-commit', 'abc1234']))

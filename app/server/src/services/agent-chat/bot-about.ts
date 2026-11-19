@@ -33,11 +33,11 @@ import crypto from 'crypto'
 import { getDb } from '../../db/index.js'
 import type { ChatAgent } from './agent-defs.js'
 import { effectiveTools } from './tools.js'
-import { TOOL_CATALOG } from './tool-names.js'
+import { TOOL_CATALOG, toolReachFor } from './tool-names.js'
 import { redactForStorage } from '../secret-redaction.js'
 
 /** Bump when the rules text or the model brief changes, so every cached About is refreshed. */
-export const ABOUT_GENERATOR_VERSION = 1
+export const ABOUT_GENERATOR_VERSION = 2
 
 export const ABOUT_LIMITS = {
   summary: 300,
@@ -160,20 +160,12 @@ function folderList(folders: string[]): string {
  * always describing the bot as it is right now.
  */
 export function rulesAbout(a: AboutAgent): GeneratedAbout {
-  const tools = new Set(effectiveTools(a))
-  const has = (...t: string[]) => t.some(x => tools.has(x))
-  const where = a.knowledge_folders.length ? `your notes in ${folderList(a.knowledge_folders)}` : 'your knowledge base'
-
-  const bullets: string[] = []
-  if (has('search', 'read_file', 'list_folders')) bullets.push(`Ask about anything in ${where}; it looks there before it answers.`)
-  if (has('write_doc', 'file_answer')) bullets.push('Ask it to save a note or a useful answer; each save shows up in the conversation.')
-  if (has('web_search', 'web_fetch')) bullets.push('Ask it to look something up on the web or read a public page.')
-  if (has('board_briefing', 'list_objectives', 'get_objective')) bullets.push('Ask what is waiting on you on the board, or about a card by its number.')
-  if (has('create_objective')) bullets.push('For bigger work, ask it to put a task on the board; the team’s coding tools pick it up.')
-  if (has('email')) bullets.push('Ask it to draft email replies; you review each one and press Send yourself.')
-  if (has('calendar')) bullets.push('Ask it to plan a meeting; it drafts the invite and nothing is added until you press Add.')
-  if (has('mcp')) bullets.push('It can use the integrations connected to this workspace in Settings → Integrations.')
-  if (!tools.size) bullets.push('It has no tools, so it answers from its instructions and this conversation only.')
+  const tools = effectiveTools(a)
+  const has = (t: string) => tools.includes(t)
+  // One line per tool family, from the shared list (app/shared/bot-tools.ts), so
+  // a new tool cannot be missing here (obj 900966).
+  const bullets: string[] = toolReachFor(tools).map(r => r.about(folderList(a.knowledge_folders)))
+  if (!tools.length) bullets.push('It has no tools, so it answers from its instructions and this conversation only.')
   bullets.push('Use + Side thread for a separate topic; it runs alongside this conversation.')
   bullets.push('Never paste a password or API key. Store it in Settings → Secrets and refer to it by name.')
 

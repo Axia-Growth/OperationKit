@@ -71,6 +71,8 @@ import {
   type MergeGithubAuthQuery,
 } from './grant-merge-github-auth.js'
 import { getDb } from '../db/index.js'
+import { noteGrantMergeInFlight } from './merge-deploy-gate.js'
+import { migrationPaths } from '../lib/migration-paths.js'
 import { classifyHeadMove, isSha, requestReReviewForStalePass } from './review-head.js'
 
 export type GrantMergeRefusal =
@@ -276,6 +278,12 @@ export interface GrantMergeOk {
   headSha: string
   ci: string
   /**
+   * Schema / migration paths the PR touches (lib/migration-paths.ts), [] when
+   * none, or null when GitHub would not list the PR's files (unknown — never
+   * read as "no migration").
+   */
+  migrationPaths: string[] | null
+  /**
    * obj 901454: the PR was already merged on GitHub (by hand) when the approval
    * arrived. Nothing was merged here; the caller still closes the card.
    */
@@ -291,6 +299,13 @@ export interface GrantMergeDeps {
   resolveAuth?: (q: MergeGithubAuthQuery) => MergeGithubAuth | null
   /** Reserved PRs; defaults to `loadReservedPrs()` (seed + server-side setting/env). */
   reserved?: readonly ReservedPr[]
+  /**
+   * The merge grant this merge runs under (obj 901389). When set, the PR is
+   * marked as a grant merge just before `gh pr merge`, so the merged-PR webhook
+   * — which can arrive before the audit row is written — never auto-deploys it
+   * without a deploy grant (services/merge-deploy-gate.ts).
+   */
+  grantId?: number
   /**
    * obj 901455 — the pass read an older commit and the PR changed since by more
    * than a GitHub update-branch merge. Defaults to clearing the pass and
@@ -354,7 +369,7 @@ export async function mergeUnderGrant(card: GrantMergeCard, deps: GrantMergeDeps
   // obj 901454: merged by hand on GitHub. The merge — the irreversible part — has
   // already happened, so there is nothing to check or merge; the card just closes.
   if (prState === 'MERGED') {
-    return { ok: true, repo, prNumber, prUrl, headSha, ci: 'PR was already merged on GitHub', alreadyMerged: true }
+    return { ok: true, repo, prNumber, prUrl, headSha, ci: 'PR was already merged on GitHub', alreadyMerged: true, migrationPaths: null }
   }
   if (prState && prState !== 'OPEN') {
     return refuse(409, 'pr_not_open', `PR #${prNumber} on ${repo} is ${prState.toLowerCase()}, not open. Nothing was merged and the card was not closed.`)
@@ -402,6 +417,9 @@ export async function mergeUnderGrant(card: GrantMergeCard, deps: GrantMergeDeps
     return refuse(502, 'head_sha_unreadable', `GitHub did not return a readable head commit for PR #${prNumber} on ${repo}, so the merge cannot be pinned to the commit CI checked. Nothing was merged and the card was not closed.`)
   }
 
+  // Marked BEFORE the merge and kept even if `gh` reports an error: a merge that
+  // landed but timed out must still not auto-deploy (fail toward the owner step).
+  if (deps.grantId != null) noteGrantMergeInFlight(repo, prNumber, deps.grantId, card.id)
   try {
     await exec('gh', ['pr', 'merge', String(prNumber), '--squash', '--delete-branch', '--repo', repo, '--match-head-commit', headSha])
   } catch (err) {
@@ -409,7 +427,19 @@ export async function mergeUnderGrant(card: GrantMergeCard, deps: GrantMergeDeps
     if (a) return a
     return refuse(502, 'merge_failed', `GitHub refused the squash-merge of PR #${prNumber} (${(err as Error).message}). The card was not closed.`)
   }
-  return { ok: true, repo, prNumber, prUrl, headSha, ci: ci.reason }
+  return { ok: true, repo, prNumber, prUrl, headSha, ci: ci.reason, migrationPaths: await prMigrationPaths(exec, repo, prNumber) }
+}
+
+/** The PR's migration / schema paths, read with the same `gh` access the merge used. Null = unreadable. */
+async function prMigrationPaths(exec: ExecFn, repo: string, prNumber: number): Promise<string[] | null> {
+  try {
+    const raw = await exec('gh', ['pr', 'view', String(prNumber), '--repo', repo, '--json', 'files'])
+    const j = JSON.parse(raw) as { files?: Array<{ path?: string }> }
+    if (!Array.isArray(j.files)) return null
+    return migrationPaths(j.files.map(f => String(f?.path ?? '')).filter(Boolean))
+  } catch {
+    return null
+  }
 }
 
 /**

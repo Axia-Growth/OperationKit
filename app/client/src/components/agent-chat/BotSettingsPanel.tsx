@@ -5,6 +5,7 @@ import { HighAgencySection } from './HighAgencySection'
 import { CardWakesSection } from './CardWakesSection'
 import { LongRepliesSection } from './LongRepliesSection'
 import { DevOpsSection } from './DevOpsSection'
+import { RepoRightsSection } from './RepoRightsSection'
 import { WorkspaceAccessSection } from './WorkspaceAccessSection'
 import { FullAccessSection } from './FullAccessSection'
 import { DelegationSection } from './DelegationSection'
@@ -58,9 +59,10 @@ const GROUP_LABELS: Record<ToolGroup, string> = {
   connectors: 'Email & calendar',
   integrations: 'Integrations',
   secrets: 'Secrets',
+  sandbox: 'Card sandbox and browser',
 }
 
-const GROUP_ORDER: ToolGroup[] = ['web', 'knowledge', 'board', 'images', 'bots', 'connectors', 'integrations', 'secrets']
+const GROUP_ORDER: ToolGroup[] = ['web', 'knowledge', 'board', 'images', 'bots', 'connectors', 'integrations', 'secrets', 'sandbox']
 
 const PROVIDERS: ProviderId[] = ['claude', 'anthropic', 'openai', 'xai', 'openai-compatible', 'demo']
 
@@ -434,6 +436,8 @@ export function BotSettingsPanel({
         <LongRepliesSection agent={agent} isAdmin={isAdmin} />
 
         <DevOpsSection agent={agent} isAdmin={isAdmin} />
+
+        <RepoRightsSection agent={agent} isAdmin={isAdmin} />
       </div>
     </section>
   )
