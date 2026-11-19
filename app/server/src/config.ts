@@ -3,9 +3,86 @@
  * Import from here instead of hardcoding paths across the codebase.
  */
 
-// ── Base Directories ──
-export const PROJECTS_DIR = process.env.PROJECTS_DIR || '/home/operator/projects'
-export const AI_WORKSPACE_DIR = process.env.AI_WORKSPACE_DIR || '/home/operator/ai-workspace'
+import fs from 'fs'
+import os from 'os'
+import path from 'path'
+import { fileURLToPath } from 'url'
+
+// ── Base Directories (obj 901032) ──
+// Every path below is: its own env var if set, else a folder under ONE install
+// home. Explicit env vars always win, so a host that sets them is unchanged.
+//
+// The install home is USER_HOME if set, else LEGACY_APP_HOME when that folder
+// already exists on this machine, else the current user's home, else a `home`
+// folder next to the database. Before obj 901032 every default was hard-wired
+// under LEGACY_APP_HOME, so a fresh install that did not have that folder failed
+// with ENOENT (e.g. enabling a starter pack: mkdir '<legacy>/ai-workspace/agents').
+// Installs set up against the old default (the operator host, whose compose
+// mounts land there, and installer installs, which mount the app home there)
+// still have the folder, so they resolve to exactly the paths they had.
+//
+// install/lib.sh app_home() reads LEGACY_APP_HOME's literal from this file: keep
+// it a plain single-quoted string on one line.
+export const LEGACY_APP_HOME = '/home/operator'
+
+export interface InstallPathOptions {
+  /** Does LEGACY_APP_HOME exist on this machine? */
+  legacyHomeExists: boolean
+  /** os.homedir() of the server process ('' when unknown). */
+  userHome: string
+  /** The install's data directory (where the database lives). */
+  dataDir: string
+}
+
+export interface InstallPaths {
+  HOME_DIR: string
+  PROJECTS_DIR: string
+  AI_WORKSPACE_DIR: string
+  SECOND_BRAIN_DIR: string
+  TRANSCRIPT_DIR: string
+  ASSISTANT_DIR: string
+}
+
+/** Pure: same inputs, same paths. Exported for tests. */
+export function resolveInstallPaths(env: NodeJS.ProcessEnv, opts: InstallPathOptions): InstallPaths {
+  const set = (v: string | undefined): string | undefined => (v && v.trim() ? v.trim() : undefined)
+  // A user home of '' or '/' (a service account with no home) is not a place to
+  // write an install's files; fall back to the data directory instead.
+  const userHome = opts.userHome && path.resolve(opts.userHome) !== '/' ? path.resolve(opts.userHome) : ''
+  const home = set(env.USER_HOME)
+    ?? (opts.legacyHomeExists ? LEGACY_APP_HOME : undefined)
+    ?? (userHome || path.join(path.resolve(opts.dataDir), 'home'))
+  return {
+    HOME_DIR: home,
+    PROJECTS_DIR: set(env.PROJECTS_DIR) ?? path.join(home, 'projects'),
+    AI_WORKSPACE_DIR: set(env.AI_WORKSPACE_DIR) ?? path.join(home, 'ai-workspace'),
+    SECOND_BRAIN_DIR: set(env.SECOND_BRAIN_DIR) ?? path.join(home, 'second-brain'),
+    TRANSCRIPT_DIR: set(env.TRANSCRIPT_DIR) ?? path.join(home, 'transcripts'),
+    ASSISTANT_DIR: set(env.ASSISTANT_DIR) ?? path.join(home, 'assistant'),
+  }
+}
+
+function isDir(p: string): boolean {
+  try { return fs.statSync(p).isDirectory() } catch { return false }
+}
+
+function safeHomedir(): string {
+  try { return os.homedir() } catch { return '' }
+}
+
+/** Same default as db/index.ts: DB_PATH's folder, else app/server/data. */
+const DEFAULT_DATA_DIR = process.env.DB_PATH
+  ? path.dirname(path.resolve(process.env.DB_PATH))
+  : path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../data')
+
+const INSTALL_PATHS = resolveInstallPaths(process.env, {
+  legacyHomeExists: isDir(LEGACY_APP_HOME),
+  userHome: safeHomedir(),
+  dataDir: DEFAULT_DATA_DIR,
+})
+
+export const PROJECTS_DIR = INSTALL_PATHS.PROJECTS_DIR
+export const AI_WORKSPACE_DIR = INSTALL_PATHS.AI_WORKSPACE_DIR
 
 // ── Live (served) checkout (obj-1150 drift guard) ──
 // The running server reads its source from this bind-mounted checkout. Uncommitted
@@ -17,10 +94,10 @@ export const CC_REPO_DIR = process.env.CC_REPO_DIR || `${PROJECTS_DIR}/operation
 // OUTSIDE these prefixes (e.g. scripts/*.mjs scratch files) are harmless and MUST
 // NOT trip the guard.
 export const CC_SERVED_PATHS = ['app/server/src', 'app/client/src', 'app/shared', 'app/client/dist']
-export const SECOND_BRAIN_DIR = process.env.SECOND_BRAIN_DIR || '/home/operator/second-brain'
-export const TRANSCRIPT_DIR = process.env.TRANSCRIPT_DIR || '/home/operator/transcripts'
-export const ASSISTANT_DIR = process.env.ASSISTANT_DIR || '/home/operator/assistant'
-export const HOME_DIR = process.env.USER_HOME || '/home/operator'
+export const SECOND_BRAIN_DIR = INSTALL_PATHS.SECOND_BRAIN_DIR
+export const TRANSCRIPT_DIR = INSTALL_PATHS.TRANSCRIPT_DIR
+export const ASSISTANT_DIR = INSTALL_PATHS.ASSISTANT_DIR
+export const HOME_DIR = INSTALL_PATHS.HOME_DIR
 
 // ── Derived Paths ──
 export const AGENTS_DIR = `${AI_WORKSPACE_DIR}/agents`

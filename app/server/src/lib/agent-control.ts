@@ -6,6 +6,7 @@
  * workspaces, filtered to own cards unless the membership is 'all').
  */
 import type Database from 'better-sqlite3'
+import { reviewStageOf, reviewStageNeedsPerson } from '@operationkit/shared'
 import { getUserWorkspaces } from '../middleware/workspace.js'
 
 export interface ControlUser {
@@ -307,6 +308,13 @@ interface AttentionRow {
   workspace: string
   has_blockers: number
   ai_review_verdict: string | null
+  /** obj 901387: what the shared review-stage rule reads. */
+  session_id?: string | null
+  has_pr?: number | null
+  create_pr?: number | null
+  skip_ai_review?: number | null
+  /** The card has an open (unanswered) decision briefing. */
+  open_decision?: number | null
   ai_review_findings: string | null
   last_session_summary: string | null
   last_note: string | null
@@ -331,13 +339,22 @@ function classify(row: AttentionRow, staleMin: number): { kind: AttentionKind; w
     return { kind: 'needs_secret', why: `Needs secret from you: ${secrets.join('; ')}` }
   }
   if (row.status === 'review') {
+    // obj 901387: "in review" is a stage, not an ask. The same rule the Bots
+    // page uses (shared reviewStageOf) decides whether the card waits on the
+    // person; a card still waiting on its AI review, or with an agent on it,
+    // is left out unless it carries an open decision.
+    const stage = reviewStageOf(row)
+    const summary = oneLine(row.last_session_summary, WHY_MAX) ?? oneLine(row.last_note, WHY_MAX)
+    if (!reviewStageNeedsPerson(stage)) {
+      if (!row.open_decision) return null
+      return { kind: 'review', why: summary ? `Decision waiting on you: ${summary}` : 'Decision waiting on you' }
+    }
     if (row.ai_review_verdict === 'fail') {
       return {
         kind: 'failed_review',
         why: `AI review FAIL: ${oneLine(row.ai_review_findings, WHY_MAX) ?? 'no findings recorded'}`,
       }
     }
-    const summary = oneLine(row.last_session_summary, WHY_MAX) ?? oneLine(row.last_note, WHY_MAX)
     const lead = row.ai_review_verdict === 'pass' ? 'AI review passed — accept or reopen' : 'Awaiting you'
     return { kind: 'review', why: summary ? `${lead}: ${summary}` : lead }
   }
@@ -405,9 +422,17 @@ export function buildAttention(
   // last_note: the newest milestone/blocker on the card. last_session_summary is
   // empty on most parked cards (14 of 171 on the live board, 2026-10-04), while
   // the milestone says why it parked ("auto_merge_decision: PR is behind — rebase").
+  // An install that predates the decisions table simply has no open decisions.
+  const hasDecisions = !!db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'decisions'").get()
+  const openDecisionSql = hasDecisions
+    ? "EXISTS (SELECT 1 FROM decisions d WHERE d.objective_id = o.id AND d.state = 'open')"
+    : '0'
   const rows = db
     .prepare(
       `SELECT o.id, o.title, o.status, o.workspace, o.has_blockers, o.ai_review_verdict, o.needs_secret,
+              o.session_id, o.create_pr, o.skip_ai_review,
+              (o.pr_number IS NOT NULL OR COALESCE(o.pr_url, '') != '') AS has_pr,
+              ${openDecisionSql} AS open_decision,
               substr(o.ai_review_findings, 1, 600) AS ai_review_findings,
               substr(o.last_session_summary, 1, 600) AS last_session_summary,
               o.stalled_at, o.stall_reason,

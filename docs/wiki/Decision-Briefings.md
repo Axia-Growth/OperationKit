@@ -107,6 +107,21 @@ The plain card message route now answers a done card with
 message was not sent and nothing changed. Reopen the card first if you want it to
 act on this." The chat's legacy Approve/Reply shows that and offers **Reopen and send**.
 
+## Deploy and merge answers go to the chat (obj 901453)
+
+A decision click never runs a deploy or a merge. Those are chat tools (`dev_deploy`, `dev_merge_pr`,
+`merge_approved_pr`) and run only when an admin types in the bot's chat in the browser (`devOpsGate`, unchanged).
+
+- **Answering.** When a bot raised the decision from chat and the chosen option names a deploy or merge, the card
+  is not restarted (its session has no such tool). The outcome is `to_chat`: the bot's chat gets one line from the
+  bot, "You chose Deploy (A: …). Type deploy here to run it. Nothing has run yet…", plus the decision text. The
+  person types `deploy` there and the normal guarded tool runs (admin, switch on, own cards, audit, backup and
+  rollback). A worker's decision, a deny, an own answer and an option that only waits keep the old paths.
+- **Raising.** `raise_decision` refuses an option whose label leads with Deploy / Merge or whose `next` promises
+  "I deploy / I merge", unless the `next` says the person types the word in this chat ("You type deploy in this
+  chat and I run it.").
+- Not built: counting the Approve click itself as the live owner turn (it would widen `devOpsGate`).
+
 ## Learning log
 
 - Queryable: `GET /api/decisions/log?workspace=&objective_id=&since=&limit=` returns

@@ -42,6 +42,8 @@ import {
 } from '../services/followup-queue.js'
 import { appendVisibleError } from '../services/unanswered-followup.js'
 import { decideDelegatedApproval, recordDelegatedApproval } from '../services/delegated-approvals.js'
+import { cardHasPr } from '../services/grant-merge.js'
+import { runGrantApprovedMerge } from './grant-merge-route.js'
 import { chatBotForDeclared } from '../services/bots/register-chat-bot.js'
 import { listAgents } from '../services/agent-chat/engine.js'
 import { logActivity } from './feed.js'
@@ -398,6 +400,16 @@ router.post('/:id/message', async (req: AuthRequest, res) => {
     return
   }
   if (delegation.kind === 'allowed') sender = delegation.sender
+  // obj 901231 — `approval: merge` on a card that carries a PR is the grant-
+  // approved merge: the server squash-merges (verdict pass + CI green + clean,
+  // services/grant-merge.ts) and only then marks the card done. A refusal
+  // merges nothing, leaves the card where it is, and is not delivered to the
+  // worker. auto_merge_enabled is not involved.
+  if (delegation.kind === 'allowed' && delegation.action === 'merge' && cardHasPr(objective) && req.agentKey) {
+    const r = await runGrantApprovedMerge(req, objective, delegation, String(message))
+    res.status(r.status).json(r.body)
+    return
+  }
   // obj 900910: an AGENT / API / DELEGATED body crosses an agent boundary. It is
   // framed where the session reads it (followUpSessionText); scanned here —
   // telemetry only, delivery is never blocked.

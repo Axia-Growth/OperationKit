@@ -4,7 +4,6 @@ import { createCsrfGuard, csrfGuardEnabled } from './middleware/csrf-guard.js'
 import { apiRateLimitPerMinute, createApiRateLimiter } from './middleware/api-rate-limit.js'
 import cors from 'cors'
 import { createServer } from 'http'
-import fs from 'fs'
 import path from 'path'
 import { fileURLToPath } from 'url'
 import { initDb, getDb } from './db/index.js'
@@ -13,6 +12,7 @@ import { startPoller } from './services/state-poller.js'
 import { logPreviewSpoolHealth } from './services/preview-spool.js'
 import authRouter from './routes/auth.js'
 import brandingRouter, { renderBrandedIndex } from './routes/branding.js'
+import { mountSpaFallback } from './lib/spa-fallback.js'
 import agentKeyWebhooksRouter from './routes/agent-key-webhooks.js'
 import { startAgentWebhooks } from './services/agent-webhooks.js'
 import { agentKeyGuard } from './middleware/agent-key-guard.js'
@@ -41,6 +41,7 @@ import internalVaultRouter from './routes/internal-vault.js'
 import alertsRouter from './routes/alerts.js'
 import internalRoutinesRouter from './routes/internal-routines.js'
 import internalSupervisorRouter from './routes/internal-supervisor.js'
+import internalAiReviewRouter from './routes/internal-ai-review.js'
 import internalPostHogHotOwnerRouter from './routes/internal-posthog-hot-owner.js'
 import starterPacksRouter, { internalStarterPacksRouter } from './routes/starter-packs.js'
 import internalInstallRouter from './routes/internal-install.js'
@@ -107,6 +108,11 @@ import { startDreamCycleScheduler } from './services/dream-cycle.js'
 import { startRoutineScheduler } from './services/routine-scheduler.js'
 import { resyncHighAgencyRoutines, startHighAgencyCronRefresh } from './services/agent-chat/high-agency.js'
 import { startBotMessageDelivery } from './services/agent-chat/bot-wake.js'
+import { startCardWakeDelivery } from './services/agent-chat/card-wakes.js'
+import { startFollowupDelivery } from './services/agent-chat/followup-wake.js'
+import { startDevOpsTicks } from './services/dev-ops/tick.js'
+import { startOpenLoopsDigestHook } from './services/agent-chat/open-loops-hook.js'
+import { startStandingMergeSweeper } from './services/standing-merge.js'
 import { startHighAgencySupervisor } from './services/high-agency-supervisor-scheduler.js'
 import { seedExistingBotsOnce } from './services/agent-chat/bot-workspaces.js'
 import { listAgents } from './services/agent-chat/engine.js'
@@ -295,6 +301,7 @@ app.use('/api/internal', internalRouter)  // /api/internal/deploy, /restart, /ob
 app.use('/api/internal', internalVaultRouter)  // /api/internal/vault/*, /contactbook/history — telegram-contactbook sibling (localhost)
 app.use('/api/alerts', alertsRouter)  // ingest (bearer) + list/ack (JWT) — AlertBell + notify-failure.sh
 app.use('/api/internal/routines', internalRoutinesRouter)  // routines CRUD + run-now (localhost-only)
+app.use('/api/internal/ai-review', internalAiReviewRouter)  // request an AI review for a card stuck in review with a PR and no verdict (obj 901381)
 app.use('/api/internal/supervisor', internalSupervisorRouter)  // High Agency supervisor: status, routed flags, preview, run-now (obj 900795)
 app.use('/api/internal/posthog-hot-owner-sync', internalPostHogHotOwnerRouter)  // status + run-now + enabled flag (localhost-only; obj 900091)
 app.use('/api/internal/install', internalInstallRouter)  // installer: reload caches after bootstrap, seat status for verify.sh (localhost + secret; obj 720210)
@@ -456,13 +463,8 @@ const clientDist = path.join(__dirname, '../../client/dist')
 // index: false — the SPA shell is served below with the install's brand name
 // and favicon injected, so the very first paint is white-labeled (obj 900543).
 app.use(express.static(clientDist, { index: false }))
-app.get('*', (_req, res) => {
-  fs.readFile(path.join(clientDist, 'index.html'), 'utf-8', (err, html) => {
-    if (err) { res.status(404).send('Frontend not built'); return }
-    res.setHeader('Cache-Control', 'no-cache')
-    res.type('html').send(renderBrandedIndex(html))
-  })
-})
+// Unmatched /api/* → JSON 404 (any method); every other GET → the app shell (obj 901031).
+mountSpaFallback(app, clientDist, renderBrandedIndex)
 
 // Initialize WebSocket
 initWebSocket(server)
@@ -533,6 +535,27 @@ if (scratchVerdict.scratch) {
   // scratch copy never spends a model call. Kill switch:
   // settings.bot_messaging_enabled = '0'.
   startBotMessageDelivery()
+  // needs_agent card wakes (obj 901328): a card owned by an Operation Kit chat bot
+  // wakes that bot in its "Card wakes" thread instead of a webhook. Host only.
+  // Kill switch: settings.bot_card_wakes_enabled = '0'; per bot: its settings panel.
+  startCardWakeDelivery()
+  // One-off follow-up wakes a chat bot sets for itself (obj 901392): when one is
+  // due the bot runs an ordinary turn in the chat it was set in. Host only. A
+  // follow-up that came due while the server was down fires once on this first
+  // drain. Kill switch: settings.bot_followups_enabled = '0'.
+  startFollowupDelivery()
+  // Operation Kit Dev operator tools (obj 901424): merge updated branches once CI is
+  // green, and settle update.sh deploys after the restart they cause. Host only.
+  startDevOpsTicks()
+  // Open-loop tracking (obj 901382): when a High Agency wake of a bot that tracks
+  // loops ends, post its waiting-on-owner list into the bot's chat thread. Host
+  // only. Off: settings.open_loops_bots = '0'.
+  startOpenLoopsDigestHook()
+  // Standing merge (obj 901388): a bot's own passed PR is merged under the owner's
+  // merge grant without being asked, ONLY when that grant has "Merge without asking
+  // me each time" on. Same path and guards as a chat merge; 60s sweep + a kick from
+  // the reviewer-pass branch. Host only. Nothing happens without such a grant.
+  startStandingMergeSweeper()
   // Workflow engine (obj 900638, docs/design/WORKFLOWS.md §4). Arms its 2s tick here
   // (never on a scratch instance — startFlowEngine re-checks); every tick is a
   // heartbeat-only no-op until settings.flows_enabled = '1' (default '0' until B4).

@@ -2,6 +2,7 @@
  * tmux spawn wrapper — extracted from session-manager.ts (behavior frozen).
  * Does not own the live-session table; that lives in session-registry.ts.
  */
+import { withheldUnsetLine } from './bot-session-scope.js'
 import { execFileSync, execSync } from 'child_process'
 import fs from 'fs'
 import path from 'path'
@@ -611,8 +612,10 @@ export function spawnInTmux(opts: {
   // server's JWT signing key from the tmux server env (it could mint an owner
   // cookie and forge the VERIFIED sender stamp). buildSpawnEnv sets the marker.
   const unsetSigning = env.CC_STRIP_SIGNING_SECRETS === '1' ? '\nunset JWT_SECRET CC_JWT_SECRET' : ''
+  // obj 901330: a scoped bot must not inherit withheld store keys from the tmux server env.
+  const unsetWithheld = withheldUnsetLine(fullEnv)
   fs.writeFileSync(scriptFile, `#!/bin/bash
-unset ANTHROPIC_API_KEY ANTHROPIC_AUTH_TOKEN OPENAI_API_KEY GEMINI_API_KEY GOOGLE_API_KEY XAI_API_KEY GROK_CODE_XAI_API_KEY${unsetSigning}
+unset ANTHROPIC_API_KEY ANTHROPIC_AUTH_TOKEN OPENAI_API_KEY GEMINI_API_KEY GOOGLE_API_KEY XAI_API_KEY GROK_CODE_XAI_API_KEY${unsetSigning}${unsetWithheld}
 unset CARD_BROWSER_CF_ACCESS_CLIENT_ID CARD_BROWSER_CF_ACCESS_CLIENT_SECRET
 # D2 (obj 900540): the secrets-store KEK is the server's alone. A tmux server
 # started from a container env that still carries the legacy SECRETS_MASTER_KEY

@@ -30,8 +30,10 @@ function mount(router: Router): Router {
         console.log(`[starter-packs] ${action} ${req.params.id} (${workspace})${opts.dryRun ? ' [dry run]' : ''}`)
         res.json(result)
       } catch (err) {
-        const status = err instanceof PackError ? err.status : 500
-        res.status(status).json({ error: (err as Error).message })
+        if (err instanceof PackError) { res.status(err.status).json({ error: err.message }); return }
+        // Anything unexpected: log the detail, answer in plain words (obj 901032).
+        console.error('[starter-packs] %s %s (%s) failed:', action, req.params.id, workspace, err)
+        res.status(500).json({ error: `Could not switch the starter pack ${action === 'enable' ? 'on' : 'off'}. The server log has the details.` })
       }
     })
   }

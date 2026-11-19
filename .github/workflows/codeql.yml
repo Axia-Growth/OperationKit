@@ -18,6 +18,14 @@
 # switch on the public repo is ONE step: Settings > Code security > CodeQL >
 # switch to Advanced (disable default setup) AND set the variable. The private
 # upstream never sets it, so this is a no-op there.
+#
+# WHEN IT ANALYZES (obj 901348, CI cost): pushes to main, the weekly schedule,
+# manual dispatch, and the public repo's rolling OSS sync PR (head branch
+# `sync/from-upstream`, opened by oss-sync.yml). NOT on every ordinary PR push:
+# on the public repo 150 PR runs were 329.9 of 454.2 CodeQL minutes in 30 days.
+# Ordinary PRs still get a run, but the job is skipped (no runner, no minutes).
+# CodeQL is not a required check on either repo (only `gate` is), so a skipped
+# analysis never blocks a merge; main is analysed on every push after merge.
 # ---------------------------------------------------------------------------
 name: CodeQL
 
@@ -33,10 +41,17 @@ on:
 permissions:
   contents: read
 
+# One analysis per ref: a newer push to main (or the sync PR) supersedes the old one.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 jobs:
   analyze:
     name: Analyze (${{ matrix.language }})
-    if: vars.CODEQL_ADVANCED_SETUP == 'true'
+    if: >-
+      vars.CODEQL_ADVANCED_SETUP == 'true' &&
+      (github.event_name != 'pull_request' || github.head_ref == 'sync/from-upstream')
     runs-on: ubuntu-latest
     timeout-minutes: 60
     permissions:

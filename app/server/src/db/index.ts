@@ -34,6 +34,9 @@ import { initAgentControlSchema } from './schema/agent-control.js'
 import { initAgentChatSchema } from './schema/agent-chat.js'
 import { initBotJobsSchema } from './schema/bot-jobs.js'
 import { initBotMessagesSchema } from './schema/bot-messages.js'
+import { initBotCardWakesSchema } from './schema/bot-card-wakes.js'
+import { initBotFollowupsSchema } from './schema/bot-followups.js'
+import { initDevOpsSchema } from './schema/dev-ops.js'
 import { initAgentWebhooksSchema } from './schema/agent-webhooks.js'
 import { initEmailSchema } from './schema/email.js'
 import { initAccountabilitySchema } from './schema/accountability.js'
@@ -309,6 +312,13 @@ export function initDb(): Database.Database {
   // are inert until the flag is on. See services/governance.ts.
   if (!colNames.has('rejected_tree_sha')) {
     db.exec("ALTER TABLE objectives ADD COLUMN rejected_tree_sha TEXT")
+  }
+  // obj 901455 — the PR head commit the AI reviewer read (recorded at reviewer
+  // spawn, filled at verdict time if that read failed). The grant merge refuses
+  // a pass whose commit is not the PR head unless only GitHub update-branch
+  // merges came after it. Additive, nullable: NULL = a review from before this.
+  if (!colNames.has('ai_review_head_sha')) {
+    db.exec("ALTER TABLE objectives ADD COLUMN ai_review_head_sha TEXT")
   }
   if (!colNames.has('not_mergeable')) {
     db.exec("ALTER TABLE objectives ADD COLUMN not_mergeable INTEGER NOT NULL DEFAULT 0")
@@ -1107,6 +1117,12 @@ export function initDb(): Database.Database {
   initBotMessagesSchema(db)
   // Agent-key webhooks outbox (obj 719278) — reads objective_events, so after it.
   initAgentWebhooksSchema(db)
+  // needs_agent card wakes for in-product chat bots (obj 901328). Additive only.
+  initBotCardWakesSchema(db)
+  // One-off follow-up wakes a chat bot sets for itself (obj 901392). Additive only.
+  initBotFollowupsSchema(db)
+  // Operation Kit Dev operator tools (obj 901424): switch, audit, pending merges, deploys.
+  initDevOpsSchema(db)
   // One-time email sign-in links (obj 900497). Additive CREATE TABLE only.
   initEmailSchema(db)
   // Accountability record + the one decision queue (obj 900367, Stage 1).

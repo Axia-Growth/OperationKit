@@ -35,6 +35,7 @@ import {
   botLiveState,
   botOwnerToken,
   needsYouReasons,
+  reviewStageOf,
   RECENTLY_DONE_DAYS,
   RECENTLY_DONE_LIMIT,
   workGroupOf,
@@ -45,12 +46,14 @@ import {
   type BotActivityItemKind,
   type BotActivityResponse,
   type BotActivityRun,
+  type BotFollowupLogItem,
   type BotStatusEntry,
   type BotStatusResponse,
   type BotWorkCard,
   type BotWorkCounts,
   type BotWorkView,
   type NeedsYouReason,
+  type ReviewStage,
   type WorkGroup,
 } from '@operationkit/shared'
 import { visibilityClauseFor, type ControlUser, type VisibilityMembership } from '../../lib/agent-control.js'
@@ -60,6 +63,7 @@ import { resolveEffectiveCostCeiling } from '../spend-guard.js'
 import { listWorkspaces } from '../workspaces.js'
 import { narrowToBot } from './bot-workspaces.js'
 import { isAgentChatRunning } from './engine.js'
+import { followupLog } from './followups.js'
 import { getHighAgency, highAgencyView, routineNameFor } from './high-agency.js'
 
 /** The bot a view is for: its chat slug + display name. */
@@ -157,6 +161,10 @@ interface CardRow {
   status: string
   workspace: string
   pr_url: string | null
+  pr_number: number | null
+  create_pr: number | null
+  ai_review_verdict: string | null
+  skip_ai_review: number | null
   session_id: string | null
   has_blockers: number | null
   needs_secret: string | null
@@ -174,7 +182,7 @@ interface CardRow {
   updated_at: string
 }
 
-const CARD_COLS = `id, title, status, workspace, pr_url, session_id, has_blockers, needs_secret, stalled_at,
+const CARD_COLS = `id, title, status, workspace, pr_url, pr_number, create_pr, ai_review_verdict, skip_ai_review, session_id, has_blockers, needs_secret, stalled_at,
   job_disposition, job_review_note, last_session_summary, owner_bot, agent_context, routine_id,
   source_job_id, parent_id, effort, created_at, updated_at`
 
@@ -278,6 +286,7 @@ export interface CardSignals {
   ceiling_source: string | null
   ceiling_is_default: boolean
   needs_you: NeedsYouReason[]
+  review_stage: ReviewStage
   denied_action: string | null
 }
 
@@ -301,9 +310,21 @@ export function cardSignals(db: Database, rows: CardRow[]): Map<number, CardSign
       ceiling_source: ceiling?.source ?? null,
       ceiling_is_default: ceiling?.isDefault ?? false,
       denied_action: denied.get(r.id) ?? null,
+      review_stage: reviewStageOf({
+        status: r.status,
+        session_id: r.session_id,
+        ai_review_verdict: r.ai_review_verdict,
+        has_pr: !!r.pr_url || r.pr_number != null,
+        create_pr: r.create_pr,
+        skip_ai_review: r.skip_ai_review,
+      }),
       needs_you: needsYouReasons({
         status: r.status,
         session_id: r.session_id,
+        ai_review_verdict: r.ai_review_verdict,
+        has_pr: !!r.pr_url || r.pr_number != null,
+        create_pr: r.create_pr,
+        skip_ai_review: r.skip_ai_review,
         has_blockers: r.has_blockers,
         needs_secret_count: secretCount(r.needs_secret),
         stalled: !!r.stalled_at && r.status === 'working',
@@ -363,6 +384,7 @@ export function buildBotWork(db: Database, bot: BotRef, opts: BotWorkOptions): B
       ceiling_source: s.ceiling_source,
       ceiling_is_default: s.ceiling_is_default,
       needs_you: s.needs_you,
+      review_stage: s.review_stage,
       is_wake: isWake,
       updated_at: r.updated_at,
     })
@@ -851,6 +873,27 @@ export function buildBotActivity(db: Database, bot: BotRef, opts: BotActivityOpt
     },
     entries,
     items,
+    followups: viewerFollowups(bot.slug, opts.viewer.id),
+  }
+}
+
+/** obj 901392: the viewer's OWN follow-ups with this bot (a chat is private to its person). */
+function viewerFollowups(slug: string, viewerId: number): BotFollowupLogItem[] {
+  try {
+    return followupLog(viewerId, slug, 20).map(f => ({
+      id: f.id,
+      status: f.status,
+      note: f.note,
+      card_id: f.card_id,
+      due_at: f.due_at,
+      fired_at: f.fired_at,
+      finished_at: f.finished_at,
+      fire_reason: f.fire_reason,
+      end_reason: f.end_reason,
+      hop: f.hop,
+    }))
+  } catch {
+    return [] // table absent
   }
 }
 

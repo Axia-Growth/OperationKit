@@ -55,4 +55,13 @@ export function initDelegationGrantsSchema(db: Database.Database): void {
     CREATE INDEX IF NOT EXISTS idx_delegation_audit_grant ON delegation_audit(grant_id);
     CREATE INDEX IF NOT EXISTS idx_delegation_audit_objective ON delegation_audit(objective_id);
   `)
+
+  // obj 901388: "Merge without asking me each time" — a standing merge, opt-in
+  // per grant. Additive, default 0, so every grant that exists today stays off
+  // and nothing merges on its own until the owner issues a grant with it ticked.
+  // Like the rest of a grant it is set once, at creation; there is no update path.
+  const cols = new Set((db.prepare('PRAGMA table_info(delegation_grants)').all() as { name: string }[]).map(c => c.name))
+  if (!cols.has('standing_merge')) {
+    db.exec('ALTER TABLE delegation_grants ADD COLUMN standing_merge INTEGER NOT NULL DEFAULT 0 CHECK (standing_merge IN (0, 1))')
+  }
 }

@@ -292,6 +292,17 @@ export function initAgentChatSchema(db: Database.Database): void {
   if (!messageCols.some(c => c.name === 'thread_id')) {
     db.exec('ALTER TABLE agent_chat_messages ADD COLUMN thread_id INTEGER REFERENCES agent_chat_threads(id) ON DELETE CASCADE')
   }
+  // Reply in thread (obj 901373). A reply thread IS a side-thread row whose
+  // parent_message_id names the message it hangs off: same lane machinery (own
+  // history, own in-flight slot, unread, attachments), no second threading
+  // system. NULL = an ordinary named side thread, so every existing row is
+  // already correct and nothing is backfilled. At most one reply thread per
+  // parent message (the partial unique index).
+  const threadCols = db.prepare('PRAGMA table_info(agent_chat_threads)').all() as Column[]
+  if (!threadCols.some(c => c.name === 'parent_message_id')) {
+    db.exec('ALTER TABLE agent_chat_threads ADD COLUMN parent_message_id INTEGER')
+  }
+  db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_agent_chat_threads_parent ON agent_chat_threads(parent_message_id) WHERE parent_message_id IS NOT NULL')
   // The bytes follow their message into its lane. Carrying the lane on the
   // attachment row as well (rather than deriving it through message_id) is what
   // lets "clear THIS conversation" delete exactly one lane's images in one

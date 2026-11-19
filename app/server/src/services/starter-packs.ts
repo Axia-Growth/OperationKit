@@ -209,6 +209,30 @@ export class PackError extends Error {
   constructor(message: string, readonly status = 400) { super(message) }
 }
 
+const FS_REASONS: Record<string, string> = {
+  ENOENT: 'a folder on the way there does not exist and could not be made',
+  EACCES: 'the server is not allowed to write there',
+  EPERM: 'the server is not allowed to write there',
+  EROFS: 'that disk is read-only',
+  ENOSPC: 'the disk is full',
+  ENOTDIR: 'part of that path is a file, not a folder',
+  EEXIST: 'a file is in the way where a folder should be',
+}
+
+/**
+ * A filesystem failure as a plain sentence (obj 901032). The caller sees what
+ * could not be done and what to change, never a raw `ENOENT: … mkdir …`.
+ */
+export function folderError(what: string, err: unknown): PackError {
+  const code = (err as NodeJS.ErrnoException | undefined)?.code ?? ''
+  const reason = FS_REASONS[code] ?? 'the server could not write there'
+  console.warn(`[starter-packs] could not ${what}: ${(err as Error)?.message ?? err}`)
+  return new PackError(
+    `Could not ${what}: ${reason}. Point AI_WORKSPACE_DIR at a folder the server can write to, then try again.`,
+    500,
+  )
+}
+
 async function callSetup(p: StarterPack, which: 'path' | 'disable_path', opts: EnableOptions, steps: string[]): Promise<void> {
   const target = p.manifest.setup?.[which]
   if (!target) return
@@ -253,7 +277,11 @@ export async function enablePack(id: string, opts: EnableOptions): Promise<Enabl
     const dest = path.join(agentsDir, `${a.slug}.md`)
     if (!fs.existsSync(src)) throw new PackError(`pack ${id}: agent file missing: ${promptRel}`, 500)
     if (!fs.existsSync(dest)) {
-      if (!dry) { fs.mkdirSync(agentsDir, { recursive: true }); fs.copyFileSync(src, dest) }
+      if (!dry) {
+        try { fs.mkdirSync(agentsDir, { recursive: true }); fs.copyFileSync(src, dest) } catch (err) {
+          throw folderError(`save the ${a.label ?? a.slug} bot into its folder (${agentsDir})`, err)
+        }
+      }
       steps.push(`${dry ? 'would copy' : 'copied'} agent persona ${a.slug}.md`)
     } else steps.push(`agent persona ${a.slug}.md already present (kept)`)
 
