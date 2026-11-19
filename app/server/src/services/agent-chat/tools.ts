@@ -76,6 +76,7 @@ import {
 import { ArtifactError, readArtifactImage } from '../live-artifacts.js'
 import { ImageRejected, MAX_IMAGE_BYTES, parseIncomingImages, validateImageBytes, type IncomingImage } from './attachments.js'
 import { publicCardUrl } from '../../lib/public-url.js'
+import { APP_ROUTES_DEFAULT_BOTS, APP_ROUTES_DESCRIPTION, APP_ROUTES_TOOL, appRoutesSummary, searchAppMap } from './app-routes-tool.js'
 import { offsetArg, pageNote, pageText } from './text-page.js'
 import { cardDecisionsForBot, cardOwnerAndGrants, cardThreadForBot, holdView, type BotCardOwner, type BotDecisionView, type BotThreadEntry } from './card-context.js'
 
@@ -256,6 +257,9 @@ const SPECS: Record<string, ToolSpec[]> = {
       workspace: { type: 'string', description: 'Workspace slug to narrow to. Omit for every workspace the person can see.' },
       limit: { type: 'integer', minimum: 1, maximum: 50, description: 'Most items to return. Default 20' },
     }))],
+  // obj 901493: where a page, tab or setting is in the app, from the generated app map.
+  app_routes: [fn('app_routes', APP_ROUTES_DESCRIPTION,
+    obj({ query: { type: 'string', description: 'A page, panel or setting name, or an old path to check (for example "queue auto-start"). Omit to list every page.' } }))],
   // obj 900671: the public web.
   web_search: [fn('web_search', 'Search the public web for current information (news, prices, docs, companies, people in the news). Returns titles, URLs and snippets; open a result with web_fetch to read it in full. Cite the URLs you use.',
     obj({
@@ -334,16 +338,19 @@ const IMPLIED_TOOLS: Record<string, string[]> = {
  * settings) lists, plus implied reads. `all` / `*` (obj 900671) = every tool
  * this release knows, so an "all tools" bot gains new tools without an edit.
  */
-export function effectiveTools(agent: Pick<ChatAgent, 'tools'>): string[] {
+export function effectiveTools(agent: Pick<ChatAgent, 'tools'> & { slug?: string }): string[] {
   // obj 900749: "all" never includes an explicit-only tool (secret use) — it must be named too.
   if (listsAllTools(agent.tools)) return [...ALL_TOOLS_GRANT, ...agent.tools.filter(t => EXPLICIT_ONLY_TOOLS.has(t))]
   const out = new Set(agent.tools.filter(t => KNOWN_TOOL_NAMES.has(t)))
   for (const t of agent.tools) for (const extra of IMPLIED_TOOLS[t] ?? []) out.add(extra)
+  // obj 901493: the setup bot always has the app map, whatever its file or bot page lists
+  // (an install's own copy of the file was written before the tool existed).
+  if (agent.slug && APP_ROUTES_DEFAULT_BOTS.includes(agent.slug)) out.add(APP_ROUTES_TOOL)
   return [...out]
 }
 
 /** Does this agent have one agent-file tool (e.g. 'mcp', 'web_search')? */
-export function agentHasTool(agent: Pick<ChatAgent, 'tools'>, tool: string): boolean {
+export function agentHasTool(agent: Pick<ChatAgent, 'tools'> & { slug?: string }, tool: string): boolean {
   return effectiveTools(agent).includes(tool)
 }
 
@@ -1779,6 +1786,10 @@ export function runTool(ctxIn: ToolContext, fnName: string, args: Record<string,
     case 'list_objectives': {
       const r = listBoardCards(ctx, { workspace: args.workspace, status: args.status, limit: args.limit })
       return { result: r, summary: r.empty ? `Board check: no ${r.scope}` : `Listed ${r.cards.length} of ${r.total} board card(s)` }
+    }
+    case 'app_routes': {
+      const r = searchAppMap(args.query)
+      return { result: r, summary: appRoutesSummary(r) }
     }
     case 'board_briefing': {
       const r = boardBriefing({ ...ctx, now }, { workspace: args.workspace, limit: args.limit })

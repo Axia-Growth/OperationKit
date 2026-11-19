@@ -53,6 +53,9 @@ export const DECISION_TOOLS = ['raise_decision'] as const
 // bot runs an ordinary turn there and posts its answer; no new permission.
 // Implied by create_objective (tools.ts IMPLIED_TOOLS), like raise_decision.
 export const FOLLOWUP_TOOLS = ['followups'] as const
+// obj 901493: where a page, tab or setting is in the app right now, from the
+// generated app map (shared/app-map.generated.json). Read-only and static.
+export const APP_TOOLS = ['app_routes'] as const
 
 /**
  * Tools "All tools" does NOT grant (obj 900749). A bot gets one only when it is
@@ -74,6 +77,7 @@ export const KNOWN_TOOL_NAMES: ReadonlySet<string> = new Set<string>([
   ...CARD_BROWSER_TOOLS,
   ...DECISION_TOOLS,
   ...FOLLOWUP_TOOLS,
+  ...APP_TOOLS,
 ])
 
 /** What "All tools" grants: every known tool except the explicit-only ones. */
@@ -93,7 +97,7 @@ export function listsAllTools(tools: readonly string[]): boolean {
   return tools.some(t => ALL_TOOLS_TOKENS.has(t.trim().toLowerCase()))
 }
 
-export type ToolGroup = 'web' | 'knowledge' | 'board' | 'bots' | 'connectors' | 'integrations' | 'secrets' | 'sandbox' | 'images'
+export type ToolGroup = 'web' | 'app' | 'knowledge' | 'board' | 'bots' | 'connectors' | 'integrations' | 'secrets' | 'sandbox' | 'images'
 
 export interface ToolCatalogEntry {
   name: string
@@ -108,6 +112,7 @@ export interface ToolCatalogEntry {
 export const TOOL_CATALOG: readonly ToolCatalogEntry[] = [
   { name: 'web_search', label: 'Web search', description: 'Search the public web for current information.', group: 'web' },
   { name: 'web_fetch', label: 'Read web pages', description: 'Open one public web page and read its text.', group: 'web' },
+  { name: 'app_routes', label: 'App map (pages and settings)', description: 'Look up where a page, tab or setting is in this app right now, so the click paths the bot gives are never out of date.', group: 'app' },
   { name: 'search', label: 'Search knowledge', description: 'Search the bot’s knowledge folders.', group: 'knowledge' },
   { name: 'list_folders', label: 'Browse knowledge', description: 'List files in the bot’s knowledge folders.', group: 'knowledge' },
   { name: 'read_file', label: 'Read notes', description: 'Read a text file in the bot’s knowledge folders.', group: 'knowledge' },
@@ -220,6 +225,11 @@ export const TOOL_REACH: readonly ToolReachEntry[] = [
     tools: ['followups'],
     reach: () => 'Sets itself a one-off follow-up in this chat and checks back when it is due',
     about: () => 'Ask it to check back later; it schedules its own follow-up and answers here when it fires.',
+  },
+  {
+    tools: ['app_routes'],
+    reach: () => 'Looks up where a page, tab or setting is in this app right now',
+    about: () => 'Ask it where to find a page or setting; it checks the current app map before it answers.',
   },
 ]
 

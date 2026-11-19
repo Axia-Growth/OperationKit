@@ -59,6 +59,7 @@ agent's instructions.
 | `bot_messages` | Message another bot that may work in the same workspace and get its reply on a shared thread. |
 | `email`, `calendar` | Read mail and calendar and prepare **drafts**. Nothing is sent until a person presses Send. |
 | `web_search`, `web_fetch` | Search the public web and read public pages. Search needs a search key on the install (see `docs/product/09-agent-chat.md`). |
+| `app_routes` | Look up where a page, tab or setting is in this app right now, from the generated app map. Read-only and static. See `docs/wiki/App-Map.md`. |
 | `mcp` | Use the tools of the MCP servers connected in the chat's workspace (Settings → Integrations). See `docs/connectors/MCP-SERVERS.md`. |
 | `secrets` | Call an outside service with a named secret. The server adds the value; the bot never sees it. **Not included in `all`.** |
 | `card_sandbox` | Look inside a card the bot owns: its files, log and transcript, and run a command in its sandbox. Every call is logged. **Not included in `all`.** |
