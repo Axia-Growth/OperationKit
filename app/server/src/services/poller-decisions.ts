@@ -309,10 +309,19 @@ export function delegatorBackstopDecision(input: {
   return { recover: true, action: 'route-review', why }
 }
 
+/** Return the body of the LAST complete `<tag>…</tag>` block in `text`, trimmed.
+ *
+ * The reviewer transcript is every assistant message joined together, so a tag
+ * the reviewer wrote while still working (e.g. "if the preview stays down I will
+ * emit `<verdict>blocked</verdict>`") can appear before its final answer. The
+ * final block is the reviewer's answer, so it wins. The body may not contain
+ * another opening `<tag>`, so an early unclosed tag is not glued onto the final
+ * block. Exported for unit testing. */
 export function extractTag(text: string, tag: string): string | null {
-  const re = new RegExp(`<${tag}>([\\s\\S]*?)<\\/${tag}>`, 'i')
-  const m = text.match(re)
-  return m ? m[1].trim() : null
+  const re = new RegExp(`<${tag}>((?:(?!<${tag}>)[\\s\\S])*?)<\\/${tag}>`, 'gi')
+  let last: string | null = null
+  for (const m of text.matchAll(re)) last = m[1]
+  return last === null ? null : last.trim()
 }
 
 /** Parse the `<feature_brief>` block (obj 937): the reviewer emits a JSON object

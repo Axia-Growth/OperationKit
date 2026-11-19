@@ -133,6 +133,8 @@ export function extractReviewerOutput(sessionId: string): {
 } {
   // Concatenate all assistant text from the reviewer's JSONL — verdict can land
   // in any of the last few messages, especially in long sessions with tool use.
+  // extractTag reads the LAST block of each tag, so a tag written mid-session
+  // never outranks the reviewer's final answer.
   let transcript = ''
   let completed = false
   try {
