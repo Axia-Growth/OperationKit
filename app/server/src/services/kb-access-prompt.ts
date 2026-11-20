@@ -187,6 +187,63 @@ export function buildSandboxedObjectiveMemoryBlock(objectiveId: number): string[
   ]
 }
 
+/**
+ * The reviewer's knowledge-base block (obj 901525).
+ *
+ * `buildReviewerPrompt` never carried any instruction for reaching the vault —
+ * only the WORKER prompt (`buildPrompt`, via `buildKbAccessBlock` above) did.
+ * A reviewer's spawn env already gets the exact same control-plane credential
+ * a worker gets (`applySessionTrustEnv` is called for every `sessionKind`,
+ * `session-spawn-env.ts`), minted read-only (`readOnly: sessionKind ===
+ * 'reviewer'`) — so `GET /api/docs/file` / `/api/docs/search` already answer a
+ * reviewer's token scoped to the card's own workspace exactly like a worker's
+ * (`sessionFileAuth`, `middleware/session-file-access.ts`). With no prompt
+ * instruction telling it so, a reviewer whose rubric names a file under
+ * `workspaces/<ws>/...` had no way to know that route exists: in jail mode the
+ * vault is not on disk at all (empty `find`/`ls`), and in tmux mode it is
+ * right there read-write for everyone ELSE but the reviewer never thought to
+ * look through the one path that is actually its own. Both read as "the file
+ * does not exist" and FAILED a real deliverable (#901494, #901499, #901519).
+ *
+ * Always emitted (regardless of jail/tmux mode) — the HTTP route is the one
+ * surface guaranteed to behave the same in both, and it is READ-ONLY by
+ * construction for a reviewer's token, so steering the reviewer onto it can
+ * never let it write the knowledge base it is grading.
+ */
+export function buildReviewerKbAccessBlock(objective: Pick<Objective, 'id' | 'workspace'>): string[] {
+  const ws = resolveWriteWorkspace(objective.workspace)
+  return [
+    '',
+    '## Knowledge-base deliverables (READ-ONLY — use this before concluding a file is missing)',
+    '',
+    `When a criterion names a file under \`workspaces/${ws}/...\` (a runbook, a report, a decision doc,`,
+    'any vault page), do NOT rely on finding it on local disk — your sandbox may have no vault mount at',
+    'all, and even where one exists it is not where this card\'s deliverable necessarily lives. Read it',
+    `through the control plane instead, scoped to this card's own workspace (\`${ws}\`) exactly the way`,
+    'the worker that wrote it was scoped:',
+    '',
+    '```bash',
+    'H="X-CC-Session-Token: $CC_SESSION_TOKEN"',
+    `curl -sG "${CC_API}/api/docs/search" -H "$H" --data-urlencode 'q=<words from the criterion>'`,
+    `curl -sG "${CC_API}/api/docs/file" -H "$H" --data-urlencode 'path=<absolute path, e.g. workspaces/${ws}/...>'`,
+    '```',
+    '',
+    'Your token is READ-ONLY here (a write attempt is refused) — that is expected, you are grading, not',
+    'editing. Reading the status code correctly matters MORE than usual, because it changes your VERDICT:',
+    '- **404** — the path is inside your workspace and genuinely does not exist. This IS a real miss:',
+    '  grade the criterion `[FAIL]` (or `[BLOCKED]` only if you need a different file to confirm it).',
+    '- **403, a connection error, or any other failed call** — this is NOT evidence the file is missing.',
+    '  It means you could not reach it from here. Mark that criterion `[BLOCKED]` with the reason',
+    '  "could not check — <status/error>", never `[FAIL]` and never "the deliverable does not exist".',
+    '  If every criterion you can otherwise verify passes and the ONLY open item is a `[BLOCKED]` access',
+    '  problem like this, your OVERALL `<verdict>` is `blocked`, not `fail` — a `fail` here respawns a',
+    '  worker to redo work that was never missing, and burns a review iteration on an access problem',
+    '  that is not the worker\'s fault.',
+    '- **401** — your own token is missing or stale (`echo "${CC_SESSION_TOKEN:+set}"`). Treat the same',
+    '  as a 403: `[BLOCKED]`, not `[FAIL]`.',
+  ]
+}
+
 /** Where a jailed session puts partial outputs, and what to do when the helper is not in its repo. */
 export function sandboxedLiveOutputLines(objectiveId: number): string[] {
   return [

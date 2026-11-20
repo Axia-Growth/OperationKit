@@ -505,7 +505,7 @@ export function buildSpawnEnv(opts: {
   // Markers so a scoped worker can tell what it holds and why (names only).
   if (botScope) Object.assign(env, botScopeEnv(botScope))
 
-  applySessionTrustEnv(env, objective, actingUserId)
+  applySessionTrustEnv(env, objective, actingUserId, opts.sessionKind)
 
   // obj 901458 — a coding session that starts with no GitHub login says so on the
   // card now, naming the reason, instead of failing silently at `git push`. Side
@@ -643,6 +643,7 @@ export function applySessionTrustEnv(
   env: Record<string, string>,
   objective: Pick<Objective, 'id' | 'workspace'>,
   actingUserId: number | null,
+  sessionKind: SpawnSessionKind = 'worker',
 ): void {
   // obj 901106: the card browser's Cloudflare Access service token belongs to the
   // control plane alone (it trades it for a short-lived Access cookie). Never in
@@ -673,6 +674,11 @@ export function applySessionTrustEnv(
         objectiveId: objective.id,
         workspace: resolveWriteWorkspace(objective.workspace),
         actingUserId,
+        // obj 901525 — the AI reviewer may READ its workspace's knowledge base
+        // through this same token (to check a deliverable that lives there)
+        // but must never write it. Every other session kind keeps the
+        // read-write token it always had.
+        readOnly: sessionKind === 'reviewer',
       })
     } catch (err) {
       console.warn('[session-trust] session token not minted:', (err as Error).message)

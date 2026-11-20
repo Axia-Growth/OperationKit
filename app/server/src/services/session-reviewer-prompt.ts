@@ -11,6 +11,7 @@ import { prLinkageRepo } from './pr-linkage.js'
 import { previewHostFor } from '../lib/preview-health.js'
 import { getEffectiveGateMode, buildVisionRubricBlock, isBackendOnlyChange, type UiGateMode } from './design-context.js'
 import { maskWorkerScratch, buildReviewerArtifactBlock } from './prompt-builder.js'
+import { buildReviewerKbAccessBlock } from './kb-access-prompt.js'
 import { hasLockedCriteria } from './review-rubric.js'
 import { resolveBrowserPolicy, type BrowserPolicy } from '../lib/browser-policy.js'
 import { buildPlaywrightMcpArgs, resolveChromiumBinary, writePlaywrightMcpConfig } from '../lib/card-browser.js'
@@ -419,6 +420,8 @@ export function buildReviewerPrompt(
     // "the reviewer prompt never carries the scratch path" is asserted in
     // reviewer-prompt-mask.test.ts.
     buildReviewerArtifactBlock(objective),
+    '',
+    buildReviewerKbAccessBlock(objective).join('\n'),
     '',
     rubricSection,
     '',

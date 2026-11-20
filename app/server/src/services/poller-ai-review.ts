@@ -29,6 +29,8 @@ import { skipMachineStatusWrite, runMachineStatusUpdate } from '../lib/status-lo
 import { logObjectiveAudit } from './objective-audit.js'
 import { parkUnreviewed } from './review-hygiene.js'
 import { evaluateAutoMerge } from './auto-merge.js'
+import { holdForOpenPr } from './pr-merge-hold.js'
+
 import { kickStandingMerge } from './standing-merge.js'
 import { TRANSCRIPT_DIR } from '../config.js'
 import { deriveWorktreeBranchName } from './branch-scope.js'
@@ -870,6 +872,9 @@ export async function pollAIReviewSessions(): Promise<void> {
       let nextStatus: ObjectiveStatus = obj.type === 'project' ? 'review' : 'done'
       if (mustRouteToHumanReview(obj, { verdict: 'pass' }) && nextStatus === 'done') nextStatus = 'review'
       if (await ciGateBlocks(nextStatus)) continue
+      // obj 901456 — a pass with its PR still open waits in review until the PR
+      // merges (the merge tools need `review`); sweepMergedPrHolds closes it then.
+      nextStatus = holdForOpenPr(db, obj, nextStatus, 'reviewer-verdict-pass')
       runMachineStatusUpdate(
         db,
         "UPDATE objectives SET status = ?, ai_review_verdict = 'pass', ai_review_findings = ?, updated_at = datetime('now') WHERE id = ?",

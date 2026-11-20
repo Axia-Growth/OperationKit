@@ -90,6 +90,15 @@ export interface SessionTokenClaims {
   objectiveId: number
   workspace: string
   actingUserId: number | null
+  /**
+   * obj 901525 — set on a REVIEWER's token (never a worker's). A read-only
+   * token may GET `/api/docs/*` and `/api/files/*` scoped to its one workspace
+   * exactly like a worker's, but PUT `/api/docs/file` refuses it outright: a
+   * reviewer must never be able to write the knowledge base it is grading.
+   * Omitted (not `false`) on an ordinary token so existing claims round-trip
+   * byte-identically.
+   */
+  readOnly?: boolean
 }
 
 function key(): Buffer {
@@ -102,7 +111,13 @@ function sign(payload: string): string {
 
 export function mintSessionToken(claims: SessionTokenClaims, now = Date.now(), ttlMs = DEFAULT_TTL_MS): string {
   const payload = Buffer.from(
-    JSON.stringify({ o: claims.objectiveId, w: claims.workspace, u: claims.actingUserId, e: now + ttlMs }),
+    JSON.stringify({
+      o: claims.objectiveId,
+      w: claims.workspace,
+      u: claims.actingUserId,
+      e: now + ttlMs,
+      ...(claims.readOnly ? { ro: 1 } : {}),
+    }),
   ).toString('base64url')
   return `${SESSION_TOKEN_PREFIX}${payload}.${sign(payload)}`
 }
@@ -117,9 +132,14 @@ export function verifySessionToken(token: string | undefined | null, now = Date.
   const expected = Buffer.from(sign(payload))
   if (mac.length !== expected.length || !crypto.timingSafeEqual(mac, expected)) return null
   try {
-    const p = JSON.parse(Buffer.from(payload, 'base64url').toString('utf8')) as { o: unknown; w: unknown; u: unknown; e: unknown }
+    const p = JSON.parse(Buffer.from(payload, 'base64url').toString('utf8')) as { o: unknown; w: unknown; u: unknown; e: unknown; ro?: unknown }
     if (typeof p.o !== 'number' || typeof p.w !== 'string' || typeof p.e !== 'number' || p.e < now) return null
-    return { objectiveId: p.o, workspace: p.w, actingUserId: typeof p.u === 'number' ? p.u : null }
+    return {
+      objectiveId: p.o,
+      workspace: p.w,
+      actingUserId: typeof p.u === 'number' ? p.u : null,
+      ...(p.ro === 1 ? { readOnly: true } : {}),
+    }
   } catch {
     return null
   }

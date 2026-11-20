@@ -60,6 +60,7 @@ import {
   isPrAutolinkKilled,
 } from './pr-linkage.js'
 import { sweepPreviewInfraResurrect } from './preview-infra-resurrect.js'
+import { sweepMergedPrHolds, holdForOpenPr } from './pr-merge-hold.js'
 import { relinkPrFromTranscript } from './pr-transcript-link.js'
 import { insertAlert } from './notifier.js'
 import { runCompletionGate, applyGateHandback } from './ci-green-gate.js'
@@ -395,6 +396,17 @@ export async function pollActiveSessions(): Promise<void> {
     await sweepPRLinkageAndHarness()
   } catch (err) {
     console.error('[state-poller] sweepPRLinkageAndHarness failed:', err)
+  }
+
+  // obj 901456 — passed cards held in review for an open PR close once it merges.
+  // Internally throttled; one gh call per held card at most every 5 minutes.
+  try {
+    await sweepMergedPrHolds(getDb(), {
+      gh: realGhExec,
+      onUpdated: (row) => broadcast({ type: 'objective_updated', payload: row }),
+    })
+  } catch (err) {
+    console.error('[state-poller] sweepMergedPrHolds failed:', err)
   }
 
   // Auto-re-review for preview-infra-blocked PRs (obj 719328). A SIBLING sweep,
@@ -1182,7 +1194,10 @@ export async function pollActiveSessions(): Promise<void> {
         if (alreadyPassed || atAbsoluteCap) {
           // Forward status mirrors the reviewer PASS branch: project → human
           // review gate, everything else → done.
-          const forwardStatus: ObjectiveStatus = objective.type === 'project' ? 'review' : 'done'
+          let forwardStatus: ObjectiveStatus = objective.type === 'project' ? 'review' : 'done'
+          // obj 901456 — a passed card whose PR is still open waits in review
+          // until the PR merges (sweepMergedPrHolds then closes it).
+          if (alreadyPassed) forwardStatus = holdForOpenPr(db, objective, forwardStatus, 'rereview-skip-already-passed')
           const why = alreadyPassed
             ? `already passed AI review (verdict=pass, iteration ${objective.ai_review_iteration})`
             : `hit absolute AI-review cap (${MAX_AI_REVIEW_ITERATIONS} iterations)`

@@ -73,6 +73,8 @@ export interface SessionFilePrincipal {
   objectiveId: number
   /** The ONE workspace this request may touch. From the objective row. */
   workspace: string
+  /** obj 901525 — a reviewer's token. Read-only: PUT /api/docs/file refuses it. */
+  readOnly: boolean
 }
 
 declare module 'express-serve-static-core' {
@@ -85,6 +87,11 @@ declare module 'express-serve-static-core' {
 /** The single workspace a session-token caller is confined to, or null for everyone else. */
 export function sessionFileWorkspace(req: AuthRequest): string | null {
   return req.sessionFile?.workspace ?? null
+}
+
+/** True when the caller authenticated with a READ-ONLY session token (a reviewer). */
+export function sessionFileReadOnly(req: AuthRequest): boolean {
+  return req.sessionFile?.readOnly ?? false
 }
 
 const SLUG = /^[a-z0-9][a-z0-9_-]{0,63}$/i
@@ -146,7 +153,7 @@ export function sessionFileAuth(req: AuthRequest, res: Response, next: NextFunct
     return
   }
 
-  req.sessionFile = { objectiveId: objective.id, workspace }
+  req.sessionFile = { objectiveId: objective.id, workspace, readOnly: !!claims.readOnly }
   // De-escalated principal: never 'admin', whoever the acting user is.
   req.user = {
     id: user?.id ?? 0,

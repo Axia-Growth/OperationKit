@@ -178,7 +178,9 @@ export async function requireAuth(req: AuthRequest, res: Response, next: NextFun
       return
     }
     req.user = r.principal.user
-    req.sessionFile = { objectiveId: r.principal.objectiveId, workspace: r.principal.workspace }
+    // obj 901525: a card browser session is GET-only by construction
+    // (CARD_BROWSER_GET_ROUTES) — read-only here too, for the same reason.
+    req.sessionFile = { objectiveId: r.principal.objectiveId, workspace: r.principal.workspace, readOnly: true }
     req.cardBrowser = r.principal
     req.authVia = 'card_browser'
     next()

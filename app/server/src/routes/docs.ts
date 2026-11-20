@@ -2,7 +2,7 @@ import { Router, type Response } from 'express'
 import fs from 'fs'
 import path from 'path'
 import { type AuthRequest } from '../middleware/auth.js'
-import { sessionFileWorkspace, sessionOrRequireAuth } from '../middleware/session-file-access.js'
+import { sessionFileReadOnly, sessionFileWorkspace, sessionOrRequireAuth } from '../middleware/session-file-access.js'
 import { getUserWorkspaces } from '../middleware/workspace.js'
 import { getDocRoots, getWorkspaceSlugs } from '../services/workspaces.js'
 import { parseSearchMode, relatedDocs, searchKnowledgeBase } from '../services/kb-semantic/search.js'
@@ -472,6 +472,13 @@ router.get('/file', (req: AuthRequest, res) => {
 
 // PUT /api/docs/file  body: { path, content }
 router.put('/file', (req: AuthRequest, res) => {
+  // obj 901525 — a reviewer's session token is minted read-only: it may GRADE
+  // the knowledge base, never write it. Checked before any root resolution so
+  // a read-only token can never learn whether a write root exists either.
+  if (sessionFileReadOnly(req)) {
+    res.status(403).json({ error: 'This session holds a read-only knowledge-base token and may not write', code: 'session_read_only' })
+    return
+  }
   const writeRoots = getWriteRoots(req)
   const { path: filePath, content, create_dirs: createDirs } = req.body as {
     path?: string
