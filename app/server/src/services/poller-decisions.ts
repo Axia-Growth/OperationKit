@@ -354,8 +354,11 @@ export function extractJsonArrayTag(text: string, tag: string): string {
 }
 
 /** Tolerant matcher for a single findings line. Allows a leading bullet, mixed
- *  case, and SKIP/SKIPPED. Captures status, criterion id, and trailing evidence. */
-const CRITERION_LINE_RE = /^\s*[-*]?\s*\[\s*(PASS|FAIL|SKIP|SKIPPED)\s*\]\s*([^:\]]+?)\s*:\s*(.*)$/i
+ *  case, and BLOCKED/SKIP/SKIPPED (all three are saved as `skipped`). Captures
+ *  status, criterion id, and trailing evidence. Each stretch of whitespace
+ *  belongs to exactly one part of the pattern, so a line with thousands of
+ *  spaces is rejected quickly instead of stalling the poll loop. */
+const CRITERION_LINE_RE = /^\s*(?:[-*]\s*)?\[\s*(PASS|FAIL|BLOCKED|SKIP|SKIPPED)\s*\]\s*([^:\]\s](?:[^:\]]*[^:\]\s])?)\s*:\s*((?:\S.*)?)$/i
 
 /** Match filesystem paths / filenames ending in a screenshot image extension. */
 const SCREENSHOT_PATH_RE = /(?:~?\/|\.\/)?[\w./-]+\.(?:png|jpe?g|gif|webp)/gi
@@ -413,6 +416,23 @@ export function parseCriteriaResults(
     }
   }
   return results
+}
+
+/**
+ * Checks a "pass" verdict against the reviewer's own criterion lines. The prompt
+ * says pass means every criterion passed, so a pass with a [FAIL] line becomes a
+ * fail, and `contradictedBy` names the failed criteria. Any [FAIL] line counts,
+ * even one whose id is not in the saved list. A missing or skipped criterion does
+ * not, because for backend-only changes the reviewer gets a trimmed list
+ * (`rubricForChangedFiles`) that differs from the saved one.
+ */
+export function reconcilePassVerdict<V extends string | null>(
+  verdict: V,
+  results: Pick<AcceptanceCriterionResult, 'criterion_id' | 'status'>[],
+): { verdict: V | 'fail'; contradictedBy: string[] } {
+  if (verdict !== 'pass') return { verdict, contradictedBy: [] }
+  const contradictedBy = [...new Set(results.filter(r => r.status === 'fail').map(r => r.criterion_id))]
+  return { verdict: contradictedBy.length > 0 ? 'fail' : verdict, contradictedBy }
 }
 
 // Bounce cap after a FAIL. Last 7d in prod: 350 first-pass passes vs 9 third-round

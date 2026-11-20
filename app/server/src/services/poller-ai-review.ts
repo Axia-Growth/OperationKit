@@ -62,6 +62,7 @@ import {
   extractJsonArrayTag,
   parseAcceptanceCriteria,
   parseCriteriaResults,
+  reconcilePassVerdict,
   extractScreenshotPaths,
   decideRespawnAction,
   failingCriterionIds,
@@ -688,7 +689,7 @@ export async function pollAIReviewSessions(): Promise<void> {
 
     // Session ended (review or dead) — extract verdict
     const {
-      verdict, findings, mode, transcript,
+      verdict: reviewerVerdict, findings: reviewerFindings, mode, transcript,
       // PR-harness structured emit (machine-readable JSON strings); '[]' when absent.
       criteriaResults: criteriaResultsTag,
       screenshotPaths: screenshotPathsTag,
@@ -700,7 +701,7 @@ export async function pollAIReviewSessions(): Promise<void> {
     // obj 900959 — a reviewer that never started, died partway, or wrote nothing
     // gave no verdict because the RUNNER failed. That is not a review.
     const reviewerProducedNothing = !transcript || transcript.trim().length === 0
-    const reviewerRunnerFailed = !verdict && (!reviewerCompleted || reviewerProducedNothing)
+    const reviewerRunnerFailed = !reviewerVerdict && (!reviewerCompleted || reviewerProducedNothing)
     handleSessionDeath(obj.ai_review_session_id)
 
     // QW4: parse the reviewer transcript into structured per-criterion evidence
@@ -710,12 +711,23 @@ export async function pollAIReviewSessions(): Promise<void> {
     const acceptanceCriteria = parseAcceptanceCriteria(
       (obj as unknown as { acceptance_criteria: unknown }).acceptance_criteria
     )
-    const parsedCriteria = parseCriteriaResults(findings, acceptanceCriteria)
+    const parsedCriteria = parseCriteriaResults(reviewerFindings, acceptanceCriteria)
+    // If the reviewer said "pass" but marked a criterion [FAIL], treat the review as
+    // a fail. Everything below uses that corrected verdict, and the findings start
+    // with a note explaining the change.
+    const { verdict, contradictedBy } = reconcilePassVerdict(reviewerVerdict, parsedCriteria)
+    const findings = contradictedBy.length > 0
+      ? `> Verdict recorded as FAIL because the reviewer wrote \`pass\` but marked ${contradictedBy.map(id => `\`${id}\``).join(', ')} [FAIL] below.\n\n${reviewerFindings ?? ''}`
+      : reviewerFindings
+    if (contradictedBy.length > 0) {
+      // The ids come from the reviewer's own text, so quote them before logging.
+      console.warn(`[state-poller] Reviewer ${obj.ai_review_session_id} said pass but marked ${JSON.stringify(contradictedBy)} [FAIL] — objective ${obj.id} recorded as fail`)
+    }
     // Screenshots scraped from the rubric evidence + findings/transcript (deduped).
     const recScreenshotPaths = [
       ...new Set([
         ...parsedCriteria.map(r => r.screenshot_path).filter((p): p is string => !!p),
-        ...extractScreenshotPaths(findings),
+        ...extractScreenshotPaths(reviewerFindings),
         ...extractScreenshotPaths(transcript),
       ]),
     ]
