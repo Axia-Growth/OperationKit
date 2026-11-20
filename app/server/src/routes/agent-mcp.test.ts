@@ -44,7 +44,7 @@ const { default: agentsRouter } = await import('./agents.js')
 const { default: briefingRouter } = await import('./briefing.js')
 const { default: agentControlRouter } = await import('./agent-control.js')
 const { default: agentChatRouter } = await import('./agent-chat.js')
-const { default: agentMcpRouter, MCP_TOOLS, ToolError, patchStatus, cardUrl } = await import('./agent-mcp.js')
+const { default: agentMcpRouter, MCP_TOOLS, ToolError, patchStatus, cardUrl, toolSuccessResult } = await import('./agent-mcp.js')
 const { AGENT_DISCOVERY } = await import('../api/agent-openapi.js')
 
 const ADMIN_ID = 1
@@ -222,6 +222,46 @@ describe('MCP handshake', () => {
     })
     expect(res.status).toBe(202)
     expect(await res.text()).toBe('')
+  })
+
+  // Streamable HTTP (2025-06-18): a JSON-RPC notification or response gets
+  // 202 Accepted and no body. An id-less message is a notification even when
+  // the method is one this server does not handle.
+  it('other notifications and client responses are accepted with 202 and no body', async () => {
+    for (const body of [
+      { jsonrpc: '2.0', method: 'notifications/cancelled', params: { requestId: 1 } },
+      { jsonrpc: '2.0', method: 'notifications/does-not-exist' },
+      { jsonrpc: '2.0', id: 9, result: {} },
+    ]) {
+      const res = await fetch(`${baseUrl}/api/mcp`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Accept: 'application/json, text/event-stream', Authorization: `Bearer ${memberKey}` },
+        body: JSON.stringify(body),
+      })
+      expect(res.status, JSON.stringify(body)).toBe(202)
+      expect(await res.text(), JSON.stringify(body)).toBe('')
+    }
+  })
+
+  it('a successful tools/call returns the object as structuredContent and the same JSON as text', async () => {
+    const { result, data } = await callTool('whoami')
+    expect(result.isError).toBeFalsy()
+    expect(result.content).toEqual([{ type: 'text', text: JSON.stringify(data) }])
+    expect(result.structuredContent).toEqual(data)
+    expect(data.key_kind).toBe('legacy')
+  })
+
+  it('structuredContent is only attached when the tool result is a JSON object', () => {
+    const obj = { id: 7, title: 'Pasture', nested: { ok: true } }
+    expect(toolSuccessResult(obj)).toEqual({
+      content: [{ type: 'text', text: JSON.stringify(obj) }],
+      structuredContent: obj,
+    })
+    for (const out of [[1, 2], null, 'ok', 3, true]) {
+      const result = toolSuccessResult(out)
+      expect(result.structuredContent, JSON.stringify(out)).toBeUndefined()
+      expect(result.content).toEqual([{ type: 'text', text: JSON.stringify(out) }])
+    }
   })
 
   it('tools/list includes every knowledge tool AND every board tool, with object schemas', async () => {
