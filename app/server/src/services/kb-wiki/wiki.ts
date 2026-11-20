@@ -1,6 +1,6 @@
 import fs from 'fs'
 import path from 'path'
-import { ENTITY_TYPES, FOLDER_FOR, parseNote, relLink, slugify } from '../doc-ingest/notes.js'
+import { ENTITY_TYPES, FOLDER_FOR, parseNote, relLink, slugify, yamlStr } from '../doc-ingest/notes.js'
 import { ANSWERS_DIR, CONVERSATION_SOURCES_DIR, GENERATED_BY, INDEX_PAGE, LINT_REPORT_PAGE, LOG_PAGE, isProtectedPath } from './paths.js'
 import { noteKbChanged } from '../kb-semantic/service.js'
 
@@ -87,7 +87,7 @@ export function isKbWikiGenerated(text: string): boolean {
 
 /** YAML scalar: bare when safe, else JSON-quoted (valid YAML, and what parseNote reads back). */
 export function yamlValue(s: string): string {
-  return /^[\w .,'()&/-]+$/.test(s) && !/^[-?:]/.test(s) && !/:\s/.test(s) ? s : JSON.stringify(s)
+  return yamlStr(s)
 }
 
 export function yamlArray(items: string[]): string {
