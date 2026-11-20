@@ -11,7 +11,7 @@
 #   SAME genericize + gate pipeline oss-sync.yml uses for the main OSS cut
 #   (scripts/oss-genericize.sh + scripts/oss-sync-gate.sh), and — only if the
 #   gate passes — pushes the result as the GitHub wiki git repo for
-#   PUBLIC_WIKI_REPO (owner/Name.wiki, e.g. m1keluka/OperationKit.wiki).
+#   PUBLIC_WIKI_REPO (owner/Name.wiki, e.g. Axia-Growth/OperationKit.wiki).
 #
 #   FAIL-CLOSED, same discipline as oss-sync.yml: a gate failure aborts before
 #   any push. This is a MANUAL/CI publish step, not a continuous sync — running
@@ -24,8 +24,8 @@
 #     --push     also clone the wiki repo and push the result.
 #
 # ENV
-#   PUBLIC_WIKI_REPO   owner/Repo.wiki form, e.g. m1keluka/OperationKit.wiki
-#                      (default: m1keluka/OperationKit.wiki)
+#   PUBLIC_WIKI_REPO   owner/Repo.wiki form, e.g. Axia-Growth/OperationKit.wiki
+#                      (default: Axia-Growth/OperationKit.wiki)
 #   GH_TOKEN           GitHub token with push access to the wiki repo. Read
 #                      from the environment only — never hardcoded here.
 #   GITLEAKS_BIN       path to gitleaks (default: `gitleaks` on PATH)
@@ -41,7 +41,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 cd "$REPO_ROOT"
 
-PUBLIC_WIKI_REPO="${PUBLIC_WIKI_REPO:-m1keluka/OperationKit.wiki}"
+PUBLIC_WIKI_REPO="${PUBLIC_WIKI_REPO:-Axia-Growth/OperationKit.wiki}"
 DO_PUSH=0
 for arg in "$@"; do
   case "$arg" in

@@ -49,7 +49,7 @@ A fresh Ubuntu 24.04 server, the client's domain on Cloudflare, and a Claude acc
 your laptop follows [INSTALL.md](./INSTALL.md) and does the work; you answer a few questions and do two
 short sign-ins. About 30 to 45 minutes, most of it waiting for the build.
 
-The code: <https://github.com/m1keluka/OperationKit> (updates come from the same place, and are
+The code: <https://github.com/Axia-Growth/OperationKit> (updates come from the same place, and are
 applied by hand: [Updating](./INSTALL.md#updating)).
 
 **Recommended stack** (what we run and test): an **OVHcloud Rise** dedicated server, **Backblaze B2**
