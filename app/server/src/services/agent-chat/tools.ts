@@ -585,7 +585,7 @@ async function hybridKnowledgeSearch(ctx: ToolContext, q: string, mode: 'hybrid'
   const allow = (file: string) => folders.some(f => containedIn(file, f)) && !guard.deniedWorkspace(file)
   let found: Awaited<ReturnType<typeof searchKnowledgeBase>>
   try {
-    found = await searchKnowledgeBase(q, { mode, limit: 8, allow })
+    found = await searchKnowledgeBase(q, { mode, limit: 8, allow, root })
   } catch (err) {
     // obj 900951: a broken index must not look like "nothing found". The caller
     // still runs the word search, and tells the model the index is down.

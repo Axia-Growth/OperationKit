@@ -201,8 +201,14 @@ export function knowledgeFolders(req: AuthRequest): string[] {
 
 /** Display name for a knowledge folder: its path inside the knowledge base, else its last segment. */
 function folderLabel(dir: string, kbRoot: string): string {
-  if (dir === kbRoot) return 'Knowledge base'
-  const rel = path.relative(kbRoot, dir)
+  // Canonicalise both sides for the comparison only (macOS /var vs /private/var):
+  // the label is derived from the realpath'd spelling but the response paths stay
+  // in the configured spelling.
+  const canon = (p: string) => { try { return fs.realpathSync(p) } catch { return path.resolve(p) } }
+  const cDir = canon(dir)
+  const cRoot = canon(kbRoot)
+  if (cDir === cRoot) return 'Knowledge base'
+  const rel = path.relative(cRoot, cDir)
   if (rel && !rel.startsWith('..') && !path.isAbsolute(rel)) return rel.split(path.sep).join('/')
   return path.basename(dir)
 }
@@ -341,6 +347,9 @@ router.get('/search', async (req: AuthRequest, res) => {
     : undefined
   const rawLimit = parseInt(String(req.query.limit ?? ''), 10)
   const limit = Number.isFinite(rawLimit) && rawLimit > 0 ? Math.min(rawLimit, 20) : 8
+  // issue #134: optional cosine-similarity floor for semantic hits (0..1, default 0.2; 0 disables).
+  const rawMin = parseFloat(String(req.query.minSimilarity ?? ''))
+  const minSimilarity = Number.isFinite(rawMin) ? Math.max(0, Math.min(rawMin, 1)) : undefined
   const keyWs = keyWorkspaces(req)
   if (keyWs && workspace && !keyWs.includes(workspace)) {
     res.status(403).json({ error: `Workspace not allowed: agent key '${req.agentKey?.label ?? 'agent key'}' cannot use workspace '${workspace}'`, code: 'workspace_not_allowed', workspace, allowed_workspaces: keyWs })
@@ -351,7 +360,12 @@ router.get('/search', async (req: AuthRequest, res) => {
   // neither take a slot nor leak a snippet.
   const allow = (p: string) => resolveUnder(readRoots, p) !== null && filterToKeyWorkspaces(req, [p], (x) => x).length > 0
   try {
-    const r = await searchKnowledgeBase(q, { mode, workspace, limit, allow })
+    const r = await searchKnowledgeBase(q, { mode, workspace, limit, allow, minSimilarity })
+    // Canonicalise hit paths to the realpath'd spelling: read roots are realpath'd
+    // by resolveUnder, so the configured root (/var/...) and the returned hits must
+    // agree or clients comparing them see two spellings of one file (macOS).
+    const canon = (p: string) => { try { return fs.realpathSync(p) } catch { return p } }
+    r.results = r.results.map(h => ({ ...h, path: canon(h.path) }))
     res.json(r)
   } catch (err) {
     res.status(500).json({ error: (err as Error).message })

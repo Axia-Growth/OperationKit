@@ -42,6 +42,7 @@
  * cross-site, and the forwarded call carries exactly the token that was
  * validated — never a secret value, only the caller's own key.
  */
+import fs from 'node:fs'
 import { Router, type NextFunction, type Response } from 'express'
 import type { AgentScope } from '@operationkit/shared'
 import { requireAuth, type AuthRequest } from '../middleware/auth.js'
@@ -597,7 +598,20 @@ export const MCP_TOOLS: McpTool[] = [
       const mode = strArg(a, 'mode')
       const r = await rest('GET', `/api/docs/search${qs({ q: strArg(a, 'q', true), workspace: strArg(a, 'workspace'), limit: limitArg(a, 8, 20), mode: mode || undefined })}`)
       return {
-        results: (r.results ?? []).map((h: Record<string, unknown>) => compact(h, 500)),
+        // The REST route returns realpath'd paths (/private/var/... on macOS); MCP
+        // clients hold the lexical spelling they configured (/var/...), so rewrite
+        // each hit when both spellings resolve to the same file. Wart, kept local.
+        results: (r.results ?? []).map((h: Record<string, unknown>) => {
+          const c = compact(h, 500)
+          if (typeof c.path === 'string') {
+            try {
+              const real = fs.realpathSync(c.path)
+              const stripped = c.path.replace(/^\/private(?=\/)/, '')
+              if (stripped !== c.path && fs.realpathSync(stripped) === real) c.path = stripped
+            } catch { /* keep server spelling */ }
+          }
+          return c
+        }),
         ...(r.mode_used ? { mode: r.mode, mode_used: r.mode_used } : {}),
         ...(r.semantic && r.semantic.available === false && r.semantic.reason ? { note: `Semantic search unavailable: ${r.semantic.reason}` } : {}),
       }
@@ -634,7 +648,7 @@ export const MCP_TOOLS: McpTool[] = [
         workspace: strArg(a, 'workspace'),
         limit: limitArg(a, 50, 200),
       })}`)
-      return { results: (r.results ?? []).map((h: Record<string, unknown>) => compact(h, 300)), total: r.total, truncated: r.truncated }
+      return { results: (r.results ?? []).map((h: Record<string, unknown>) => { const c = compact(h, 300); if (typeof c.path === 'string') { try { const real = fs.realpathSync(c.path); const s = c.path.replace(/^\/private(?=\/)/, ''); if (s !== c.path && fs.realpathSync(s) === real) c.path = s } catch {} } return c }), total: r.total, truncated: r.truncated }
     },
   },
   {
