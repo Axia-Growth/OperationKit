@@ -72,11 +72,20 @@ export interface SearchOptions {
   db?: Database.Database
   provider?: EmbeddingProvider | null
   root?: string
+  /**
+   * Minimum cosine similarity (0..1) for a semantic hit to count as relevant
+   * (issue #134). Chunks below it are dropped before fusion, so an unrelated
+   * note never rides the KNN into the results; keyword/exact hits are unaffected.
+   * Default DEFAULT_MIN_SIMILARITY (0.2). 0 disables the floor.
+   */
+  minSimilarity?: number
 }
 
 const SNIPPET_CHARS = 400
 const KEYWORD_DEPTH = 50
 const KNN_CHUNKS = 150
+/** Cosine-similarity floor for semantic hits (issue #134); 0.2 ≈ "shares the topic". */
+export const DEFAULT_MIN_SIMILARITY = 0.2
 
 function chunkSnippet(c: ChunkHit): string {
   const t = c.text.replace(/\s+/g, ' ').trim()
@@ -97,10 +106,12 @@ function keywordList(query: string, workspace: string | null | undefined, { allo
 
 async function semanticList(
   query: string, workspace: string | null | undefined, { allow, scoped }: Scope,
-  db: Database.Database, provider: EmbeddingProvider, root: string,
+  db: Database.Database, provider: EmbeddingProvider, root: string, minSimilarity: number,
 ): Promise<{ paths: string[]; best: Map<string, ChunkHit> }> {
   const [qv] = await provider.embed([query.slice(0, 2000)], 'query')
   let chunks = knnChunks(db, qv, KNN_CHUNKS, provider.modelId, workspace ? [workspace] : undefined, inScope(workspace, scoped ? allow : undefined, root))
+  // issue #134: drop chunks below the similarity floor before the per-doc dedupe.
+  if (minSimilarity > 0) chunks = chunks.filter(c => 1 - c.distance >= minSimilarity)
   if (workspace) chunks = filterToWorkspaceScope(chunks, workspace, root)
   const best = new Map<string, ChunkHit>()
   for (const c of chunks) {
@@ -125,7 +136,11 @@ export async function searchKnowledgeBase(query: string, opts: SearchOptions = {
   const workspace = opts.workspace || null
   const allow = opts.allow ?? (() => true)
   const scope: Scope = { allow, scoped: !!opts.allow }
-  const root = opts.root ?? knowledgeBaseRoot()
+  // realpath when the root exists (macOS /var → /private/var); a missing root stays
+  // lexical so the rankers below degrade to empty results instead of throwing ENOENT.
+  const rootArg = opts.root ?? knowledgeBaseRoot()
+  const root = fs.existsSync(rootArg) ? fs.realpathSync(rootArg) : path.resolve(rootArg)
+  const minSimilarity = Math.max(0, Math.min(opts.minSimilarity ?? DEFAULT_MIN_SIMILARITY, 1))
   const q = query.trim()
   if (workspace && !isValidWorkspaceSlug(workspace)) return { results: [], mode, mode_used: mode, semantic: { available: false, reason: 'invalid workspace' } }
 
@@ -141,7 +156,7 @@ export async function searchKnowledgeBase(query: string, opts: SearchOptions = {
   let sem: { paths: string[]; best: Map<string, ChunkHit> } = { paths: [], best: new Map() }
   if (wantsSemantic) {
     try {
-      sem = await semanticList(q, workspace, scope, db!, provider!, root)
+      sem = await semanticList(q, workspace, scope, db!, provider!, root, minSimilarity)
     } catch (err) {
       semantic = { available: false, reason: `Semantic search failed: ${(err as Error).message.slice(0, 200)}` }
     }
@@ -229,6 +244,8 @@ export async function relatedDocs(docPath: string, opts: { workspace?: string | 
   const allow = opts.allow ?? (() => true)
   const root = opts.root ?? knowledgeBaseRoot()
   let chunks = knnChunks(db, mean, 120, provider.modelId, opts.workspace ? [opts.workspace] : undefined, inScope(opts.workspace, opts.allow, root))
+  // issue #134: same floor as search — "related" should mean actually related.
+  chunks = chunks.filter(c => 1 - c.distance >= DEFAULT_MIN_SIMILARITY)
   if (opts.workspace) chunks = filterToWorkspaceScope(chunks, opts.workspace, root)
   const out: Array<{ path: string; heading: string; similarity: number; snippet: string }> = []
   const seen = new Set<string>([docPath])

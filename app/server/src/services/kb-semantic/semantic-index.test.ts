@@ -330,6 +330,36 @@ describe('hybrid search', () => {
     expect(r.results.every(h => h.match === 'semantic')).toBe(true)
   })
 
+  // issue #134: semantic hits below the similarity floor must not appear, so
+  // search can say "nothing relevant" instead of returning the KNN's nearest junk.
+  it('drops semantic hits below the similarity floor (#134)', async () => {
+    const provider = await seed()
+    // "quantum" lights no concept dimension: every chunk is far from the query.
+    const r = await searchKnowledgeBase('quantum flux capacitor', { mode: 'semantic', db, provider, root, workspace: 'acme' })
+    expect(r.results).toEqual([])
+    // Hybrid with no keyword match either → empty, not nearest-junk.
+    const hy = await searchKnowledgeBase('quantum flux capacitor', { mode: 'hybrid', db, provider, root, workspace: 'acme' })
+    expect(hy.results).toEqual([])
+    // minSimilarity: 0 disables the floor and brings the nearest chunks back —
+    // and even those are below 0.2, which is what makes the floor a real filter here
+    // (the concept provider gives every vector a 0.05 residual dimension).
+    const off = await searchKnowledgeBase('quantum flux capacitor', { mode: 'semantic', db, provider, root, workspace: 'acme', minSimilarity: 0 })
+    expect(off.results.length).toBeGreaterThan(0)
+    expect(off.results.every(h => (h.similarity ?? 1) < 0.2)).toBe(true)
+    // Keyword hits are unaffected by the floor.
+    const kw = await searchKnowledgeBase('tomato soil', { mode: 'hybrid', db, provider, root, workspace: 'acme' })
+    expect(path.basename(kw.results[0].path)).toBe('garden.md')
+  })
+
+  it('relatedDocs skips notes below the similarity floor (#134)', async () => {
+    const provider = await seed()
+    const fleet = path.join(root, 'workspaces/acme/decisions/2026-01-01-fleet.md')
+    const rel = await relatedDocs(fleet, { db, provider, root, workspace: 'acme' })
+    // garden.md shares no concept with the fleet note: below the 0.2 floor.
+    expect(rel.some(r => r.path.endsWith('garden.md'))).toBe(false)
+    expect(rel.every(r => r.similarity >= 0.2)).toBe(true)
+  })
+
   it('lists related notes by similarity, excluding the note itself', async () => {
     const provider = await seed()
     write('workspaces/acme/notes/vehicles.md', '# Vehicles\nThe sedan and the car are both due for service.')
