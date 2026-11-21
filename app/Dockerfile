@@ -114,6 +114,18 @@ COPY . .
 # Build frontend
 RUN npm run build --workspace=client
 
+# tsgo — TypeScript-Go (Go-native compiler). Drop-in `tsc` replacement,
+# 4-5x faster than tsc on this codebase; same CLI surface. Used for the
+# typecheck step in CI and for any out-of-band `tsgo --noEmit` runs.
+# Same semantics as tsc 5.x (TS 7.0.2 stable release, July 2026), nothing
+# to migrate in source code. Binary is pre-built (no Go/Rust toolchain needed).
+ARG TSGO_VERSION=v7.0.2
+RUN curl -fsSL "https://github.com/microsoft/typescript-go/releases/download/typescript/${TSGO_VERSION}/typescript-linux-x64.tgz" -o /tmp/tsgo.tgz \
+  && tar xzf /tmp/tsgo.tgz -C /usr/local \
+  && ln -sf /usr/local/package/lib/tsc /usr/local/bin/tsgo \
+  && rm -f /tmp/tsgo.tgz \
+  && tsgo --version
+
 # Install tsx globally for running TypeScript server
 RUN npm install -g tsx
 # obj 900816: knowledge-base semantic search. Bake the default local embedding
