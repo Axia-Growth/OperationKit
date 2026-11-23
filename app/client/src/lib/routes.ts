@@ -29,6 +29,9 @@ export const JOBS_ROUTE = '/jobs'
 export const NEEDS_YOU_ROUTE = '/needs-you'
 export const HOST_CRON_ANCHOR = 'host-cron'
 export const HOST_CRON_ROUTE = `${JOBS_ROUTE}#${HOST_CRON_ANCHOR}`
+/** Queue auto-start + Job time limit card on the Jobs page's Runs tab (obj 901490): /jobs#queue-auto-start. */
+export const QUEUE_AUTOSTART_ANCHOR = 'queue-auto-start'
+export const QUEUE_AUTOSTART_ROUTE = `${JOBS_ROUTE}#${QUEUE_AUTOSTART_ANCHOR}`
 
 /**
  * Where AI accounts (subscription seats) are managed. Sprint 4b (obj 900496)

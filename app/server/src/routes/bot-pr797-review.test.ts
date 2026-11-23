@@ -42,7 +42,7 @@ const { setAssignment } = await import('../services/resource-assignments.js')
 const { buildPrompt, resolveWorkdir } = await import('../services/prompt-builder.js')
 const { resolveCardWorker } = await import('../services/prompt-builder-workdir.js')
 const { resolveAgentWorkdir, createAgent, agentExists } = await import('../services/agent-registry.js')
-const { botApprovalEligibility } = await import('../services/bot-approval.js')
+const { botApprovalEligibility } = await import('../services/bot-close-eligibility.js')
 const { BOT_REGISTRY_ADDITIONS_SETTING } = await import('../services/bots/bot-registry.js')
 type Agent = import('../services/agent-chat/agent-defs.js').ChatAgent
 

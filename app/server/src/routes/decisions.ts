@@ -46,7 +46,7 @@ import { decisionQueueCount, listDecidedHistory, listDecisionQueue, staleReasonF
 import { listAgents as listChatAgents } from '../services/agent-chat/engine.js'
 import { askAndAnswer } from '../services/decision-answerer.js'
 import { applyDecision, type ApplyDeps } from '../services/decision-apply.js'
-import { consumeDelivery, deliverDecisionToBot } from '../services/decision-delivery.js'
+import { consumeDelivery, deliverDecisionToBot, deliverDecisionToChat } from '../services/decision-delivery.js'
 import { notifyBotMessage } from '../services/agent-chat/sidebar-live.js'
 import { getSessionState } from '../services/session-control.js'
 import { resolveFollowUpSessionId } from '../services/objective-sessions.js'
@@ -56,7 +56,7 @@ import { noteStartReason } from '../services/session-start-reasons.js'
 import { logObjectiveAudit } from '../services/objective-audit.js'
 import { broadcast } from '../ws/index.js'
 import { workspaceKbRoot } from '../services/doc-ingest/kb-paths.js'
-import { noteKbWrite } from '../services/kb-semantic/service.js'
+import { noteKbChanged } from '../services/kb-semantic/service.js'
 
 const router = Router()
 
@@ -114,7 +114,7 @@ function fail(res: Response, err: unknown): void {
 
 function refreshKbLog(workspace: string): void {
   setImmediate(() => {
-    writeDecisionLogToKb(getDb(), workspace, { kbRoot: ws => workspaceKbRoot(ws), noteWrite: abs => noteKbWrite(abs) })
+    writeDecisionLogToKb(getDb(), workspace, { kbRoot: ws => workspaceKbRoot(ws), noteWrite: abs => noteKbChanged(abs) })
   })
 }
 
@@ -340,6 +340,12 @@ function liveDeps(userId: number | null = null): ApplyDeps {
     // obj 901151: a choice on a finished bot card goes to the bot, not a dead end.
     deliverToBot: (db, d, o) => deliverDecisionToBot(db, d, o, { userId }, { notify: notifyBotMessage }),
     consumeDelivery: (db, id, objectiveId) => consumeDelivery(db, id, objectiveId),
+    // obj 901453: a deploy / merge answer goes to the bot's chat (the only place it can run).
+    deliverToChat: (db, d, action) =>
+      deliverDecisionToChat(db, d, action, { userId }, {
+        notify: notifyBotMessage,
+        botName: slug => listChatAgents().agents.find(a => a.slug === slug)?.name ?? null,
+      }),
     getSessionState,
     resolveSessionId: (db, o) => resolveFollowUpSessionId(db, o),
     recordInJsonl: (sid, text, sender, queued) => recordFollowUpInJsonl(sid, text, undefined, sender, queued ? { queued: true } : undefined),

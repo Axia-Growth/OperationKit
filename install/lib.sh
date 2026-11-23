@@ -261,11 +261,12 @@ ok_paths() {
 }
 
 # The app's in-container home directory is defined by the app source (config.ts
-# USER_HOME default), not by the installer. Read it from the source so this
-# installer never hard-codes a person's username.
+# LEGACY_APP_HOME), not by the installer. Read it from the source so this
+# installer never hard-codes a person's username. The compose file mounts the
+# app home there AND passes it as USER_HOME, so the app never has to guess.
 app_home() {
   local h
-  h=$(sed -n "s/.*process\.env\.USER_HOME || '\([^']*\)'.*/\1/p" "$OK_REPO_DIR/app/server/src/config.ts" | head -1)
+  h=$(sed -n "s/^export const LEGACY_APP_HOME = '\([^']*\)'.*/\1/p" "$OK_REPO_DIR/app/server/src/config.ts" | head -1)
   [ -n "$h" ] || die "could not read the app home path from app/server/src/config.ts"
   printf '%s' "$h"
 }

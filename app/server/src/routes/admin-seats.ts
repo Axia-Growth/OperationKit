@@ -43,6 +43,14 @@ import { computeSeatUsage, RATE_LIMIT_HISTORY_SCAN, type ProvisioningHint, type 
 import { normalizeOrder, parseCardFailover, SEAT_KINDS, type SeatKind } from '../services/seat-pool.js'
 import { ensureGrokCliExecutable } from '../services/session-spawn-command.js'
 import { extractGrokDeviceAuth, grokLoginSucceeded } from '../services/grok-device-auth.js'
+import {
+  SEAT_ROTATION_DEFAULT,
+  SEAT_ROTATION_ENV,
+  SEAT_ROTATION_SETTING,
+  parseSeatRotationValue,
+  seatRotationBounds,
+  seatRotationSettings,
+} from '../services/seat-rotation-settings.js'
 
 const router = Router()
 
@@ -487,6 +495,53 @@ router.post('/seats/:id/login/status', async (req: AuthRequest, res) => {
 })
 
 // ── Cross-engine failover (opt-in) ──────────────────────────────────────────
+
+// ── Rotation settings (obj 901395) ──
+// How long a limited seat rests when the CLI gave no reset time, how long a
+// seat rests after an empty turn, and how many seats one reply may try.
+type RotationKey = keyof typeof SEAT_ROTATION_DEFAULT
+const ROTATION_KEYS = Object.keys(SEAT_ROTATION_DEFAULT) as RotationKey[]
+
+function rotationView() {
+  const bounds = seatRotationBounds()
+  // A value set in the server environment wins over the setting: say so, so the
+  // form does not look broken when a save changes nothing.
+  const envLocked = ROTATION_KEYS.filter(k => parseSeatRotationValue(k, process.env[SEAT_ROTATION_ENV[k]]) !== null)
+  return {
+    values: seatRotationSettings(),
+    defaults: SEAT_ROTATION_DEFAULT,
+    bounds: Object.fromEntries(ROTATION_KEYS.map(k => [k, { min: bounds[k][0], max: bounds[k][1] }])),
+    setting_names: SEAT_ROTATION_SETTING,
+    env_locked: envLocked,
+  }
+}
+
+router.get('/seats/rotation', (_req: AuthRequest, res) => {
+  res.json(rotationView())
+})
+
+router.put('/seats/rotation', (req: AuthRequest, res) => {
+  const body = (req.body ?? {}) as Record<string, unknown>
+  const bounds = seatRotationBounds()
+  const changes: [RotationKey, number][] = []
+  for (const k of ROTATION_KEYS) {
+    if (body[k] === undefined) continue
+    const n = parseSeatRotationValue(k, body[k])
+    if (n === null) {
+      res.status(400).json({ error: `${k} must be a whole number from ${bounds[k][0]} to ${bounds[k][1]}`, field: k })
+      return
+    }
+    changes.push([k, n])
+  }
+  if (changes.length === 0) {
+    res.status(400).json({ error: `Send at least one of: ${ROTATION_KEYS.join(', ')}` })
+    return
+  }
+  const put = getDb().prepare('INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value')
+  for (const [k, n] of changes) put.run(SEAT_ROTATION_SETTING[k], String(n))
+  auditSeat(req.user?.id, 'rotation_settings', null, changes.map(([k, n]) => `${k}=${n}`).join(' '))
+  res.json(rotationView())
+})
 
 router.get('/seats/failover/:workspace', (req: AuthRequest, res) => {
   res.json({ workspace: req.params.workspace, ...getWorkspaceFailover(req.params.workspace as string) })

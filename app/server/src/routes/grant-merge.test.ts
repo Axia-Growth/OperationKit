@@ -45,6 +45,14 @@ interface FakePr {
   rollup: unknown[]
   required: string[] | 'unreadable'
   mergeError?: string
+  /** Changed files `gh pr view --json files` returns (obj 901389); 'unreadable' = gh fails. */
+  files?: string[] | 'unreadable'
+  /** obj 901412: update-branch fails with this message when set. */
+  updateError?: string
+  /** obj 901412: the head GitHub moves the branch to after an update-branch. */
+  updatedHeadSha?: string
+  /** obj 901455: commits by sha, as `gh api repos/:repo/commits/:sha` returns them. */
+  commits?: Record<string, unknown>
 }
 const fake: { pr: FakePr; calls: string[][]; statusAtMerge: string | null } = {
   pr: { state: 'OPEN', mergeStateStatus: 'CLEAN', headSha: 'abc1234', rollup: [], required: [] },
@@ -58,6 +66,20 @@ async function fakeExec(file: string, args: string[]): Promise<string> {
   fake.calls.push([file, ...args])
   if (file !== 'gh') throw new Error(`unexpected exec ${file}`)
   const p = fake.pr
+  if (args[0] === 'api' && args.some(a => String(a).endsWith('/update-branch'))) {
+    if (p.updateError) throw new Error(p.updateError)
+    // GitHub merges the base into the branch: a new head, CI not run on it yet.
+    p.headSha = p.updatedHeadSha ?? 'def5678'
+    p.rollup = [{ name: 'gate', status: 'QUEUED', conclusion: '' }]
+    p.mergeStateStatus = 'BLOCKED'
+    return JSON.stringify({ message: 'Updating pull request branch.', url: 'https://github.com/acme/app/pull/1' })
+  }
+  const commitPath = args[0] === 'api' ? /^repos\/[^/]+\/[^/]+\/commits\/([0-9a-f]+)$/.exec(String(args[1])) : null
+  if (commitPath) {
+    const c = p.commits?.[commitPath[1]]
+    if (!c) throw new Error('HTTP 404 Not Found')
+    return JSON.stringify(c)
+  }
   if (args[0] === 'api') {
     if (p.required === 'unreadable') throw new Error('HTTP 500 boom')
     if (String(args[1]).endsWith('/protection')) throw new Error('HTTP 404 Not Found')
@@ -65,7 +87,13 @@ async function fakeExec(file: string, args: string[]): Promise<string> {
   }
   if (args[0] === 'pr' && args[1] === 'view') {
     const fields = args[args.indexOf('--json') + 1]
+    if (fields === 'state') return p.state
+    if (fields === 'headRefOid') return JSON.stringify({ headRefOid: p.headSha })
     if (fields === 'state,mergeStateStatus') return JSON.stringify({ state: p.state, mergeStateStatus: p.mergeStateStatus })
+    if (fields === 'files') {
+      if (p.files === 'unreadable') throw new Error('HTTP 502')
+      return JSON.stringify({ files: (p.files ?? []).map(f => ({ path: f })) })
+    }
     return JSON.stringify({ number: Number(args[2]), url: `https://github.com/acme/app/pull/${args[2]}`, headRefOid: p.headSha, baseRefName: 'main', statusCheckRollup: p.rollup, state: p.state })
   }
   if (args[0] === 'pr' && args[1] === 'merge') {
@@ -86,9 +114,14 @@ vi.mock('../services/worktree-reaper.js', async importOriginal => {
   return { ...actual, scheduleObjectiveWorktreeReap: () => {} }
 })
 const sendFollowUpMock = vi.fn((sessionId: string) => sessionId)
+const spawnReviewerMock = vi.fn(async (_o: unknown) => `reviewer-${Date.now()}`)
 vi.mock('../services/session-manager.js', async importOriginal => {
   const actual = await importOriginal<Record<string, unknown>>()
-  return { ...actual, sendFollowUp: (s: string) => sendFollowUpMock(s) }
+  return { ...actual, sendFollowUp: (s: string) => sendFollowUpMock(s), spawnReviewerSession: (o: unknown) => spawnReviewerMock(o), stopSession: async () => {} }
+})
+vi.mock('../services/files-touched.js', async importOriginal => {
+  const actual = await importOriginal<Record<string, unknown>>()
+  return { ...actual, realGhExec: (args: string[]) => fakeExec('gh', args) }
 })
 
 const { initDb, getDb } = await import('../db/index.js')
@@ -128,7 +161,7 @@ async function asBot(p: string, body: unknown) {
 }
 
 let seq = 0
-function card(spec: { title?: string; status?: string; verdict?: string | null; type?: string; pr?: boolean; workspace?: string; prNumber?: number; repo?: string } = {}): number {
+function card(spec: { title?: string; status?: string; verdict?: string | null; type?: string; pr?: boolean; workspace?: string; prNumber?: number; repo?: string; reviewedSha?: string | null } = {}): number {
   seq += 1
   const n = spec.prNumber ?? 100 + seq
   const repo = spec.repo ?? 'acme/app'
@@ -146,12 +179,14 @@ function card(spec: { title?: string; status?: string; verdict?: string | null; 
     spec.pr === false ? null : `https://github.com/${repo}/pull/${n}`,
     spec.pr === false ? null : n,
   ).lastInsertRowid)
+  if (spec.reviewedSha) getDb().prepare('UPDATE objectives SET ai_review_head_sha = ? WHERE id = ?').run(spec.reviewedSha, id)
   currentCard = id
   return id
 }
 
 const statusOf = (id: number) => (getDb().prepare('SELECT status FROM objectives WHERE id = ?').get(id) as { status: string }).status
 const merges = () => fake.calls.filter(c => c[1] === 'pr' && c[2] === 'merge')
+const updates = () => fake.calls.filter(c => c[1] === 'api' && c.some(a => a.endsWith('/update-branch')))
 const lastAudit = (id: number) => getDb().prepare('SELECT * FROM delegation_audit WHERE objective_id = ? ORDER BY id DESC').get(id) as Loose
 
 function grant(actions: string[] = ['merge'], workspace = 'growth') {
@@ -211,6 +246,7 @@ afterAll(async () => {
 
 beforeEach(() => {
   sendFollowUpMock.mockClear()
+  spawnReviewerMock.mockClear()
   clearRequiredChecksCache()
   fake.pr = { state: 'OPEN', mergeStateStatus: 'CLEAN', headSha: 'abc1234', rollup: GREEN, required: ['gate'] }
   fake.calls = []
@@ -252,6 +288,44 @@ describe('1. happy path: grant + pass + green + clean → squash-merge, then don
     expect(moved.pathway).toBe(`grant-merge:#${g.id}`)
     expect(String(moved.actor)).toContain(`bot:${BOT}`)
     expect((getDb().prepare('SELECT terminal_by_human FROM objectives WHERE id = ?').get(id) as Loose).terminal_by_human).toBe(0)
+  })
+
+  it('obj 901389: the card line says the merge is not live until deployed, and nothing auto-deploys it', async () => {
+    const g = grant()
+    const id = card()
+    fake.pr.files = ['app/client/src/Thing.tsx']
+    const r = await approve(id)
+    expect(r.status).toBe(200)
+    expect(r.json.merge_line).toContain('Merged, not live until deployed: the owner deploys.')
+    expect(r.json.merge_line).not.toMatch(/migration/i)
+    const line = getDb().prepare("SELECT * FROM activity_log WHERE objective_id = ? AND json_extract(metadata, '$.kind') = 'grant_merge'").get(id) as Loose
+    expect(line.title).toContain('Merged, not live until deployed')
+    expect(JSON.parse(line.metadata)).toMatchObject({ live: false, migration_paths: [] })
+    // The merge is marked as a grant merge, so the merged-PR webhook will not auto-deploy it.
+    const { decideMergeAutoDeploy } = await import('../services/merge-deploy-gate.js')
+    expect(decideMergeAutoDeploy(getDb(), 'acme/app', 100 + seq)).toMatchObject({ deploy: false, grantMerge: { grantId: g.id, objectiveId: id } })
+  })
+
+  it('obj 901389: names the database migration when the PR changes a schema / migrations path', async () => {
+    grant()
+    const id = card()
+    fake.pr.files = ['app/server/src/db/schema/things.ts', 'app/server/src/db/schema/things.test.ts', 'README.md']
+    const r = await approve(id)
+    expect(r.status).toBe(200)
+    expect(r.json.merge_line).toContain('Merged, not live until deployed')
+    expect(r.json.merge_line).toContain('⚠ Database migration: this PR changes app/server/src/db/schema/things.ts.')
+    const line = getDb().prepare("SELECT * FROM activity_log WHERE objective_id = ? AND json_extract(metadata, '$.kind') = 'grant_merge'").get(id) as Loose
+    expect(line.title).toContain('Database migration')
+    expect(JSON.parse(line.metadata).migration_paths).toEqual(['app/server/src/db/schema/things.ts'])
+  })
+
+  it('obj 901389: says so when the PR files could not be read (never "no migration")', async () => {
+    grant()
+    const id = card()
+    fake.pr.files = 'unreadable'
+    const r = await approve(id)
+    expect(r.status).toBe(200)
+    expect(r.json.merge_line).toContain("Could not read the PR's files to check for a database migration.")
   })
 
   it('a card with no PR keeps the old behaviour: the DELEGATED message is delivered, nothing is merged', async () => {
@@ -372,12 +446,14 @@ describe('6. money-path, project and unsafe PRs are not merged', () => {
     await expectRefused(card({ type: 'project' }), 409, 'project_card')
   })
 
-  for (const state of ['BEHIND', 'DIRTY', 'BLOCKED', 'UNKNOWN']) {
+  // BEHIND is no longer refused outright: obj 901412 updates the branch (see below).
+  for (const state of ['DIRTY', 'BLOCKED', 'UNKNOWN']) {
     it(`PR mergeStateStatus ${state}`, async () => {
       grant()
       fake.pr.mergeStateStatus = state
       const r = await expectRefused(card(), 409, 'pr_not_mergeable')
       expect(r.json.error).toContain(state)
+      expect(updates()).toHaveLength(0) // obj 901412: only BEHIND updates the branch
     })
   }
 
@@ -385,6 +461,24 @@ describe('6. money-path, project and unsafe PRs are not merged', () => {
     grant()
     fake.pr.state = 'CLOSED'
     await expectRefused(card(), 409, 'pr_not_open')
+  })
+
+  it('a PR merged by hand on GitHub → nothing is merged, the card is closed (obj 901454)', async () => {
+    grant()
+    fake.pr.state = 'MERGED'
+    fake.pr.mergeStateStatus = 'UNKNOWN'
+    fake.pr.mergeError = 'must not be called: the PR is already merged'
+    const id = card()
+    const r = await approve(id)
+    expect(r.json.code, JSON.stringify(r.json)).toBeUndefined()
+    expect(r.status).toBe(200)
+    expect(r.json).toMatchObject({ merged: true, already_merged: true })
+    expect(r.json.merge_line).toContain('already merged on GitHub')
+    expect(merges()).toHaveLength(0)
+    expect(statusOf(id)).toBe('done')
+    expect(lastAudit(id)).toMatchObject({ event: 'approval_used', reason: expect.stringContaining('grant_merge:already_merged') })
+    const audit = getDb().prepare("SELECT pathway FROM objective_audit WHERE objective_id = ? AND to_status = 'done'").get(id) as Loose
+    expect(audit?.pathway).toMatch(/^grant-merge:#/)
   })
 
   it('a card whose worker is still running', async () => {
@@ -499,5 +593,229 @@ describe('pure pieces', () => {
     expect(precheckGrantMerge(base)).toBeNull()
     expect(precheckGrantMerge({ ...base, is_strategy: 1 })?.code).toBe('strategy')
     expect(precheckGrantMerge({ ...base, pr_number: null })?.code).toBe('no_pr')
+  })
+})
+
+describe('7. BEHIND: the tool updates the branch itself, then merges only a green, CLEAN new head (obj 901412)', () => {
+  it('calls GitHub update-branch pinned to the head it read, never merges the old head, and returns branch_updated_ci_pending', async () => {
+    const g = grant()
+    fake.pr.mergeStateStatus = 'BEHIND'
+    fake.pr.headSha = 'abc1234'
+    const id = card()
+    const r = await approve(id)
+    expect(r.status).toBe(202)
+    expect(r.json.code).toBe('branch_updated_ci_pending')
+    expect(r.json.merged).toBe(false)
+    expect(r.json.error).toContain('was behind main')
+    expect(r.json.error).toContain('Nothing was merged')
+
+    expect(updates()).toHaveLength(1)
+    const u = updates()[0]
+    expect(u).toEqual(expect.arrayContaining(['--method', 'PUT', `repos/acme/app/pulls/${100 + seq}/update-branch`, '-f', 'expected_head_sha=abc1234']))
+    expect(u.join(' ')).not.toMatch(/rebase|force/)
+    expect(merges()).toHaveLength(0) // the old head is never merged
+    expect(statusOf(id)).toBe('review') // card not closed
+    expect(sendFollowUpMock).not.toHaveBeenCalled()
+
+    // The same audit trail the merge uses: delegation_audit + a card line.
+    expect(lastAudit(id)).toMatchObject({ event: 'approval_used', grant_id: g.id, action: 'merge', reason: 'grant_merge:branch_updated_ci_pending' })
+    const line = getDb().prepare("SELECT * FROM activity_log WHERE objective_id = ? AND json_extract(metadata, '$.kind') = 'grant_merge_branch_update'").get(id) as Loose
+    expect(line.title).toContain(`Updated PR #${100 + seq}`)
+    expect(JSON.parse(line.metadata)).toMatchObject({ repo: 'acme/app', previous_head_sha: 'abc1234', base_ref: 'main' })
+  })
+
+  it('a second approval while CI runs on the new head merges nothing; once green and CLEAN it merges pinned to the NEW head', async () => {
+    grant()
+    fake.pr.mergeStateStatus = 'BEHIND'
+    fake.pr.headSha = 'abc1234'
+    fake.pr.updatedHeadSha = 'fedcba987654'
+    // obj 901455: the pass read abc1234; the only commit after it is GitHub's update-branch merge.
+    fake.pr.commits = { fedcba987654: updateBranchMerge('fedcba987654', 'abc1234') }
+    const id = card({ reviewedSha: 'abc1234' })
+    expect((await approve(id)).status).toBe(202)
+    expect(fake.pr.headSha).toBe('fedcba987654')
+
+    // CI on the new head has not passed yet → refused, no merge, no second update.
+    const pending = await approve(id)
+    expect(pending.status).toBe(409)
+    expect(pending.json.code).toBe('ci_not_green')
+    expect(merges()).toHaveLength(0)
+    expect(updates()).toHaveLength(1)
+    expect(statusOf(id)).toBe('review')
+
+    // CI green on the new head and GitHub says CLEAN → merge, pinned to it.
+    fake.pr.rollup = GREEN
+    fake.pr.mergeStateStatus = 'CLEAN'
+    const ok = await approve(id)
+    expect(ok.status).toBe(200)
+    expect(ok.json.merged).toBe(true)
+    expect(merges()).toHaveLength(1)
+    const m = merges()[0]
+    expect(m[m.indexOf('--match-head-commit') + 1]).toBe('fedcba987654')
+    expect(m).not.toContain('abc1234')
+    expect(statusOf(id)).toBe('done')
+  })
+
+  it('BEHIND with CI red on the current head is refused as ci_not_green, with no update', async () => {
+    grant()
+    fake.pr.mergeStateStatus = 'BEHIND'
+    fake.pr.rollup = [{ name: 'gate', status: 'COMPLETED', conclusion: 'FAILURE' }]
+    await expectRefused(card(), 409, 'ci_not_green')
+    expect(updates()).toHaveLength(0)
+  })
+
+  it('a failed update-branch call is refused with a clear reason, nothing merged, card not moved', async () => {
+    grant()
+    fake.pr.mergeStateStatus = 'BEHIND'
+    fake.pr.updateError = 'HTTP 422: expected head sha didn’t match current head ref.'
+    const id = card()
+    const r = await expectRefused(id, 502, 'branch_update_failed')
+    expect(r.json.error).toContain('GitHub refused to update the branch')
+    expect(r.json.error).toContain('expected head sha')
+    expect(updates()).toHaveLength(1)
+    expect(statusOf(id)).toBe('review')
+    expect(lastAudit(id)).toMatchObject({ event: 'approval_denied', reason: 'grant_merge:branch_update_failed' })
+    expect(getDb().prepare("SELECT COUNT(*) AS n FROM activity_log WHERE objective_id = ? AND json_extract(metadata, '$.kind') = 'grant_merge_branch_update'").get(id)).toMatchObject({ n: 0 })
+  })
+
+  it('BEHIND with an unreadable head SHA never sends the update unpinned', async () => {
+    grant()
+    fake.pr.mergeStateStatus = 'BEHIND'
+    fake.pr.headSha = ''
+    await expectRefused(card(), 502, 'head_sha_unreadable')
+    expect(updates()).toHaveLength(0)
+  })
+})
+
+// ── obj 901455: a pass is tied to the commit the reviewer read ───────────────
+function updateBranchMerge(sha: string, firstParent: string, opts: { base?: string; login?: string } = {}) {
+  return {
+    sha,
+    parents: [{ sha: firstParent }, { sha: '0a1b2c3d4e5f' }],
+    commit: { message: `Merge branch '${opts.base ?? 'main'}' into cc/obj-1-feature`, committer: { name: 'GitHub', email: 'noreply@github.com' } },
+    committer: { login: opts.login ?? 'web-flow' },
+  }
+}
+function workerCommit(sha: string, parent: string) {
+  return {
+    sha,
+    parents: [{ sha: parent }],
+    commit: { message: 'fix: change after review', committer: { name: 'worker', email: 'worker@example.com' } },
+    committer: { login: 'm1keluka' },
+  }
+}
+const verdictOf = (id: number) => (getDb().prepare('SELECT ai_review_verdict, status, ai_review_session_id FROM objectives WHERE id = ?').get(id) as Loose)
+
+describe('8. the pass must be for the commit being merged (obj 901455)', () => {
+  it('pass on the current head commit → merges', async () => {
+    grant()
+    fake.pr.headSha = 'abc1234'
+    const id = card({ reviewedSha: 'abc1234' })
+    const r = await approve(id)
+    expect(r.status).toBe(200)
+    expect(merges()).toHaveLength(1)
+    expect(statusOf(id)).toBe('done')
+  })
+
+  it('pass on an OLD commit, PR changed by a push since → refused review_stale, pass cleared, fresh review started', async () => {
+    const g = grant()
+    fake.pr.headSha = 'bad9999'
+    fake.pr.commits = { bad9999: workerCommit('bad9999', 'abc1234') }
+    const id = card({ reviewedSha: 'abc1234' })
+    const r = await expectRefused(id, 409, 'review_stale')
+    expect(r.json.error).toContain('abc1234')
+    expect(r.json.error).toContain('bad9999')
+    expect(r.json.error).toContain('fresh AI review')
+    expect(spawnReviewerMock).toHaveBeenCalledTimes(1)
+    const row = verdictOf(id)
+    expect(row.status).toBe('ai_review')
+    expect(row.ai_review_verdict).toBeNull()
+    expect(row.ai_review_session_id).toMatch(/^reviewer-/)
+    expect(lastAudit(id)).toMatchObject({ event: 'approval_denied', grant_id: g.id, reason: 'grant_merge:review_stale' })
+    const stale = getDb().prepare("SELECT * FROM activity_log WHERE objective_id = ? AND json_extract(metadata, '$.kind') = 'ai_review_stale'").get(id) as Loose
+    expect(JSON.parse(stale.metadata)).toMatchObject({ reviewed_head_sha: 'abc1234', pr_head_sha: 'bad9999' })
+    // A second approval cannot merge on the cleared pass.
+    const again = await approve(id)
+    expect(again.status).toBe(409)
+    expect(merges()).toHaveLength(0)
+  })
+
+  it('pass followed ONLY by GitHub update-branch merges (two of them) → merges, pinned to the new head', async () => {
+    grant()
+    fake.pr.headSha = 'cafe0002'
+    fake.pr.commits = {
+      cafe0002: updateBranchMerge('cafe0002', 'cafe0001'),
+      cafe0001: updateBranchMerge('cafe0001', 'abc1234'),
+    }
+    const id = card({ reviewedSha: 'abc1234' })
+    const r = await approve(id)
+    expect(r.status).toBe(200)
+    expect(r.json.merged).toBe(true)
+    const m = merges()[0]
+    expect(m[m.indexOf('--match-head-commit') + 1]).toBe('cafe0002')
+    expect(spawnReviewerMock).not.toHaveBeenCalled()
+  })
+
+  it('a worker push ON TOP of an update-branch merge is still stale', async () => {
+    grant()
+    fake.pr.headSha = 'bad7777'
+    fake.pr.commits = {
+      bad7777: workerCommit('bad7777', 'cafe0001'),
+      cafe0001: updateBranchMerge('cafe0001', 'abc1234'),
+    }
+    await expectRefused(card({ reviewedSha: 'abc1234' }), 409, 'review_stale')
+  })
+
+  it('a merge from another branch, or a merge not made by GitHub, is stale', async () => {
+    grant()
+    fake.pr.headSha = 'cafe0003'
+    fake.pr.commits = { cafe0003: updateBranchMerge('cafe0003', 'abc1234', { base: 'experiment' }) }
+    await expectRefused(card({ reviewedSha: 'abc1234' }), 409, 'review_stale')
+    fake.pr.commits = { cafe0003: { ...updateBranchMerge('cafe0003', 'abc1234', { login: 'someone' }), commit: { message: "Merge branch 'main' into x", committer: { email: 'someone@example.com' } } } }
+    await expectRefused(card({ reviewedSha: 'abc1234' }), 409, 'review_stale')
+  })
+
+  it('a commit GitHub will not return counts as moved (fail closed)', async () => {
+    grant()
+    fake.pr.headSha = 'feed0001'
+    fake.pr.commits = {}
+    const r = await expectRefused(card({ reviewedSha: 'abc1234' }), 409, 'review_stale')
+    expect(r.json.error).toContain('could not be read')
+  })
+
+  it('a pass with no recorded commit (from before this check) merges as before', async () => {
+    grant()
+    fake.pr.headSha = 'bad9999'
+    const id = card({ reviewedSha: null })
+    expect((await approve(id)).status).toBe(200)
+    expect(merges()).toHaveLength(1)
+  })
+})
+
+describe('8b. recording the reviewed commit (obj 901455)', () => {
+  it('captureReviewHeadSha stores the PR head for the CURRENT reviewer only, and the verdict-time fallback never overwrites', async () => {
+    const { captureReviewHeadSha } = await import('../services/review-head.js')
+    const db = getDb()
+    const id = card({ verdict: null, status: 'ai_review' })
+    db.prepare("UPDATE objectives SET ai_review_session_id = 'rev-A' WHERE id = ?").run(id)
+    const exec = (f: string, a: string[]) => fakeExec(f, a)
+    fake.pr.headSha = 'aaaa1111'
+    expect(await captureReviewHeadSha(db, { id, pr_url: `https://github.com/acme/app/pull/${100 + seq}`, pr_number: 100 + seq }, 'rev-A', exec)).toBe('aaaa1111')
+    // A stale reviewer session cannot stamp the card.
+    fake.pr.headSha = 'bbbb2222'
+    expect(await captureReviewHeadSha(db, { id, pr_url: `https://github.com/acme/app/pull/${100 + seq}`, pr_number: 100 + seq }, 'rev-OLD', exec)).toBeNull()
+    // The verdict-time fallback only fills an empty column.
+    expect(await captureReviewHeadSha(db, { id, pr_url: `https://github.com/acme/app/pull/${100 + seq}`, pr_number: 100 + seq }, 'rev-A', exec, { onlyIfEmpty: true })).toBeNull()
+    expect((db.prepare('SELECT ai_review_head_sha AS s FROM objectives WHERE id = ?').get(id) as Loose).s).toBe('aaaa1111')
+  })
+
+  it('requesting a review resets the recorded commit, then records the new head', async () => {
+    const { requestAiReview } = await import('../services/ai-review-backfill.js')
+    const db = getDb()
+    const id = card({ verdict: null, reviewedSha: 'ddd0000' })
+    fake.pr.headSha = 'eee1111'
+    const r = await requestAiReview(db, id, { spawnReviewer: async () => 'rev-new', headExec: (f, a) => fakeExec(f, a) })
+    expect(r.ok).toBe(true)
+    await vi.waitFor(() => expect((db.prepare('SELECT ai_review_head_sha AS s FROM objectives WHERE id = ?').get(id) as Loose).s).toBe('eee1111'))
   })
 })

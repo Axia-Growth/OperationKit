@@ -78,7 +78,9 @@ export function chatBotGrantName(agent: ToolContext['agent']): string | null {
 
 /** Offered only to an ordinary chat turn whose person holds an active merge grant for this bot. */
 export function grantMergeToolSpecs(ctx: ToolContext): ToolSpec[] {
-  if (ctx.cardWake || ctx.botWake) return []
+  // obj 901394: a card wake with the chat tool scope is a normal turn of this bot for
+  // this person, so the same grant offers the same tool. A bot-to-bot wake never merges.
+  if (ctx.botWake || (ctx.cardWake && ctx.cardWake.toolScope !== 'chat')) return []
   const botName = chatBotGrantName(ctx.agent)
   if (!botName) return []
   if (!hasAnyActiveGrant(getDb(), { botName, action: 'merge', grantorUserId: ctx.userId, now: ctx.now?.() })) return []
@@ -92,7 +94,7 @@ function refused(id: number, code: string, error: string): ToolOutcome {
 export async function runGrantMergeTool(ctx: ToolContext, fnName: string, args: Record<string, unknown>): Promise<ToolOutcome> {
   if (fnName !== GRANT_MERGE_FN) throw new ToolUseError(`Unknown tool "${fnName}".`)
   // A wake turn never merges (runChatTool already routes wakes elsewhere; this is belt and braces).
-  if (ctx.cardWake || ctx.botWake) throw new ToolUseError('Merging is not available in a wake turn.')
+  if (ctx.botWake || (ctx.cardWake && ctx.cardWake.toolScope !== 'chat')) throw new ToolUseError('Merging is not available in a wake turn.')
   const id = Number(args.id)
   if (!Number.isInteger(id) || id <= 0) throw new ToolUseError('id must be a card number.')
   const note = typeof args.note === 'string' ? args.note.trim().slice(0, 500) : ''

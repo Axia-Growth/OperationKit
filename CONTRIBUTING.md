@@ -1,6 +1,6 @@
-# Contributing to OperationKit
+# Contributing to Operation Kit
 
-Thanks for helping. OperationKit is open source under the [Apache License 2.0](./LICENSE).
+Thanks for helping. Operation Kit is open source under the [Apache License 2.0](./LICENSE).
 Copyright 2026 Axia Growth LLC and contributors
 (see [NOTICE](./NOTICE)).
 
@@ -15,20 +15,154 @@ Copyright 2026 Axia Growth LLC and contributors
 ## Pull request workflow
 
 1. Fork the repository and create a branch from `main`.
-2. Make your change. Keep each PR focused on one thing.
-3. Run the checks locally (from `app/`):
-   ```bash
-   # From the repository root, before npm ci:
-   # node scripts/setup-check.mjs
-   npm ci
-   npx tsc --noEmit -p server/tsconfig.json
-   npm run test --workspace=server
-   npm run test --workspace=client
-   npm run build
-   ```
+2. Make your change. Keep each PR focused on one thing, and small enough to review in half
+   an hour.
+3. Run the checks below. They are the same commands CI runs.
 4. Open the pull request against `main` and fill in the PR template.
 5. Sign the CLA (below) if you have not already.
-6. A maintainer reviews the PR. CI must be green before merge.
+6. A maintainer reviews the PR. The `gate` check must be green before merge.
+
+New to the code? Read the [architecture overview](./docs/architecture/OVERVIEW.md) first: the
+life of a card, a directory map, and a "where do I add X" table.
+
+## Repository layout
+
+| Path | What is in it |
+|---|---|
+| `app/shared/` | Types and pure logic shared by server and client (`@operationkit/shared`) |
+| `app/server/src/` | Backend: Express routes, services, SQLite schema, WebSocket |
+| `app/client/src/` | Frontend: React, Vite, Tailwind |
+| `app/jail/` | Image for the per-card sandbox |
+| `docs/` | Architecture, product manual, API reference, wiki pages |
+| `install/`, `install.sh` | Installer for a fresh server |
+| `scripts/` | CI helpers and operator scripts |
+| `.github/workflows/gate.yml` | The required CI check |
+
+`app/` is one npm workspace (`shared`, `server`, `client`) with one lockfile. Run npm from
+`app/`, not from the repository root.
+
+## Local development setup
+
+You need:
+
+- **Node 22** and npm.
+- **A C/C++ toolchain and Python 3** (on Ubuntu, the `build-essential` package). The terminal
+  dependency `node-pty` compiles during install and has no prebuilt Linux binary. Without a
+  compiler `npm ci` fails at `node-pty`.
+- **git** and **tmux** on your PATH for the tests that use them (see
+  [Tests that need host resources](#tests-that-need-host-resources)).
+- Docker is only needed to run real AI sessions in a sandbox. It is not needed to build, test
+  or open the UI.
+
+Check your machine, then install:
+
+```bash
+node scripts/setup-check.mjs      # from the repository root; no dependencies needed
+cd app
+npm ci --include=dev
+```
+
+The setup check reports a missing Docker as a blocker. For code and docs work you can go on
+without it.
+
+Run the app locally against a throwaway database (two terminals, both in `app/`):
+
+```bash
+# Terminal 1: API on port 3002
+export DB_PATH="$(mktemp -d)/dev.db"
+export JWT_SECRET="dev-only-secret-change-me-0123456789"
+export CC_SCRATCH_SERVER=1
+npm run dev:server
+
+# Terminal 2: UI on http://localhost:5173 (proxies /api and /ws to port 3002)
+npm run dev:client
+```
+
+- `CC_SCRATCH_SERVER=1` serves HTTP and WebSocket but starts none of the background work
+  (session poller, schedulers, reapers). Use it whenever you are not running real sessions.
+  The server logs `[startup] SCRATCH instance` when it is on.
+- `JWT_SECRET` is required (16+ characters). There is no built-in default.
+- To get dev users to sign in with, run this once in a third terminal with the same
+  `DB_PATH`: `SEED_PASSWORD=<8+ characters> npm run seed`. It prints the usernames it made.
+- Startup warnings about host folders that do not exist on your machine are expected in dev.
+- Set `PORT` to move the API off 3002. The Vite proxy points at 3002, so change
+  `app/client/vite.config.ts` locally to match (do not commit that).
+
+## Checks to run before you open a PR
+
+From `app/`:
+
+```bash
+npx tsc --noEmit -p server/tsconfig.json     # server typecheck
+(cd client && npx tsc -b --noEmit)           # client typecheck (a separate CI step)
+npm run test --workspace=server              # server tests (Vitest, node)
+npm run test --workspace=client              # client tests (Vitest, jsdom)
+npm run build                                # production build of client and server
+```
+
+The client typecheck is easy to miss: `tsc -p server/tsconfig.json` does not cover the
+client, and CI runs `npx tsc -b --noEmit` inside `app/client` as its own step.
+
+From the repository root, if you added, renamed or removed a test file:
+
+```bash
+bash scripts/test-integrity-fixture-test.sh
+python3 scripts/test-integrity.py origin/main HEAD
+```
+
+CI also runs `shellcheck` on `scripts/migrate/*.sh` and
+`node --test scripts/setup-check.test.mjs`. Run those if you touched those files.
+
+## Tests
+
+Tests are Vitest, run from the command line. A test sits next to the file it covers:
+`foo.ts` and `foo.test.ts`. There is no browser-driven end-to-end suite, and one should not
+be added without agreeing it in an issue first.
+
+### Running one test
+
+```bash
+# from app/ ; the path is relative to the workspace (app/server or app/client)
+npm run test --workspace=server -- src/lib/objective-depth.test.ts
+npm run test --workspace=server -- src/lib/objective-depth.test.ts -t "root"
+npm run test --workspace=client -- src/lib/glossary.test.ts
+```
+
+`-t` filters by test name. Tests under `app/shared/` run as part of the server suite.
+
+### The test-integrity rule
+
+CI fails a PR that narrows the suite (`scripts/test-integrity.py`):
+
+- **No new skips.** An added line in a test file must not contain `.skip(`, `.only(`,
+  `xit(` or `xdescribe(`.
+- **No deleted test files**, unless the code the test covers is deleted in the same PR.
+  Renaming the source does not count as deleting it.
+
+If a test fails, fix the code or fix the test. Do not skip it, delete it or weaken its
+assertions to get to green. A reviewer will ask why.
+
+### Tests that need host resources
+
+The suite is written to pass on a plain CI runner. Server tests always use a throwaway
+SQLite file in the temp directory (`app/server/vitest.setup.ts`), never a real database.
+
+A few tests need something on the machine. Most of them skip themselves when it is missing
+(`describe.skipIf` / `it.skipIf`), so a skip on your machine is normal:
+
+| Needs | Tests | If it is missing |
+|---|---|---|
+| A compiled `node-pty` | Anything that imports the session or terminal code (most of the server suite) | The files fail to load. Install a compiler and run `npm ci` again. |
+| `tmux` | `services/scratch-instance.test.ts` | Skipped |
+| `git` | Worktree and credential-helper tests (`services/worktree-*.test.ts`, `services/repo-git-auth.test.ts`) | Fail |
+| The `gh` CLI | `services/session-github-connector.test.ts` | Skipped |
+| Linux (`/proc`, `df`) | Live checks in `services/host-stats.test.ts` | Skipped |
+| A temp directory that allows running files | Tests that write a small stub script and run it (`routes/internal-operationkit.test.ts`, `routes/integrations-builder.test.ts`, `services/repo-git-auth.test.ts`) | Fail on a `noexec` `/tmp`. Point `TMPDIR` at a directory that allows execution. |
+| An Operation Kit workspace folder with the `okit` CLI | The live half of `routes/internal-operationkit.test.ts`, `services/skill-graph.test.ts`, `services/knowledge-search.recall.test.ts` | Skipped |
+
+No test needs Docker, a network connection, an AI provider key or a GitHub token. If you
+add a test that needs a host resource, guard it with `skipIf` on a real probe (does the
+binary exist, does the folder exist), so CI stays independent of any one machine.
 
 ## Contributor License Agreement (required)
 

@@ -13,6 +13,7 @@ import {
   type OAIToolCall,
 } from '../services/llm-gateway/translate.js'
 import { BackendError, createClaudeCliBackend, type BackendUsage, type LlmBackend } from '../services/llm-gateway/claude-cli-backend.js'
+import { seatRotationSettings } from '../services/seat-rotation-settings.js'
 
 // ── OpenAI-compatible LLM gateway: /api/llm/v1 ──
 //
@@ -66,7 +67,9 @@ function keysMatch(given: string, expected: string): boolean {
 export function createLlmGatewayRouter(deps: LlmGatewayDeps = {}): Router {
   const router = Router()
   const env = () => deps.env ?? process.env
-  const backend = deps.backend ?? createClaudeCliBackend()
+  // obj 901395: how many accounts one request may try is an operator setting,
+  // read per request (seat_rotation_max_seats_per_turn, default 4; was a fixed 3).
+  const backend = deps.backend ?? createClaudeCliBackend({ maxAttempts: () => seatRotationSettings(env()).maxSeatsPerTurn })
   const log = deps.log ?? ((line: string) => console.log(line))
   const logFile = () => {
     if (deps.logFile !== undefined) return deps.logFile
@@ -236,6 +239,10 @@ export function createLlmGatewayRouter(deps: LlmGatewayDeps = {}): Router {
         return oaiError(res, 429, 'All allowed Claude accounts are rate-limited or unavailable', 'rate_limit_error', be.kind)
       }
       if (be?.kind === 'timeout') return oaiError(res, 504, 'Upstream model timed out', 'server_error', 'timeout')
+      // obj 901395: every account tried came back with no answer and no error text.
+      if (be?.kind === 'empty') {
+        return oaiError(res, 502, `The model returned no answer on ${Math.max(1, be.tried.length)} Claude account(s) and no error text was given. Retry the request.`, 'server_error', 'empty')
+      }
       return oaiError(res, 502, 'Upstream model error', 'server_error', be?.kind ?? 'upstream_error')
     } finally {
       inFlight--

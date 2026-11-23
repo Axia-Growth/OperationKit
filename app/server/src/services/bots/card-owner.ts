@@ -39,6 +39,8 @@ import { listBots, registryKey, type BotDefinition } from './bot-registry.js'
 export interface ChatBotRef {
   slug: string
   name: string
+  /** Other names it answers to, e.g. a built-in bot's default-brand name (obj 901033). */
+  aliases?: string[]
 }
 
 export interface CardOwnerBot {
@@ -76,7 +78,7 @@ export function installedChatBots(): ChatBotRef[] {
       const loaded = loadChatAgents({ env: process.env, includeDemo: false, includeBuiltins: builtinsEnabled(process.env) })
       let configs: ReturnType<typeof allBotConfigs> = new Map()
       try { configs = allBotConfigs() } catch { /* no table yet → every bot is its file */ }
-      bots = loaded.agents.map(a => applyBotConfig(a, configs.get(a.slug))).map(a => ({ slug: a.slug, name: a.name }))
+      bots = loaded.agents.map(a => applyBotConfig(a, configs.get(a.slug))).map(a => ({ slug: a.slug, name: a.name, aliases: a.aliases }))
     } catch {
       bots = []
     }
@@ -141,7 +143,8 @@ export function cardOwnerResolver(db: Database, opts: CardOwnerOptions = {}): (c
       const reg = bots.find(b =>
         registryKey(b.id) === key || registryKey(b.name) === key || b.aliases.some(a => registryKey(a) === key),
       ) ?? bySlug(explicit)
-      const chat = reg ? undefined : chatBots.find(c => registryKey(c.name) === key || registryKey(c.slug) === key)
+      const chat = reg ? undefined : chatBots.find(c =>
+        registryKey(c.name) === key || registryKey(c.slug) === key || (c.aliases ?? []).some(a => registryKey(a) === key))
       const owner: CardOwnerBot = reg
         ? fromRegistry(reg, 'owner_bot')
         : chat

@@ -1,5 +1,7 @@
+import { getTurnLimits, installTurnDefaults, longTurnsEnabled, recentTurnJobs, setTurnLimits, TURN_MINUTES_RANGE, TURN_STEPS_RANGE, TurnLimitsError } from '../services/agent-chat/long-turns.js'
 import { Router, type Response } from 'express'
 import { requireAuth, type AuthRequest } from '../middleware/auth.js'
+import { isOwnerBrowserSession } from './agent-chat-delegations.js'
 import {
   ChatBusyError,
   ChatUnavailableError,
@@ -11,7 +13,12 @@ import {
   listAgents,
   listMessages,
   drainLaneQueue,
+  ChatContinueError,
+  releaseHeldMessages,
+  removeQueuedMessage,
+  getMessage,
   laneTurnState,
+  laneTurnJob,
   stopTurn,
   submitMessage,
   seedDemoKnowledge,
@@ -24,6 +31,7 @@ import { effectiveTools, visibleCardStatuses } from '../services/agent-chat/tool
 import { TOOL_CATALOG } from '../services/agent-chat/tool-names.js'
 import { webSearchStatus } from '../services/agent-chat/web-tools.js'
 import { BotConfigError, clearBotConfig, hasAllTools, setBotConfig } from '../services/agent-chat/bot-config.js'
+import { BotSecretAccessError, saveBotSecretAccess, secretAccessPanel, testBotSecretAccess } from '../services/agent-chat/bot-secret-access.js'
 import { listEnabledModels } from '../services/model-registry.js'
 import { aboutForAgents, ensureAboutFresh, getStoredAbout, queueAboutRefresh, resolveAbout, type BotAbout } from '../services/agent-chat/bot-about.js'
 import { redactForStorage } from '../services/secret-redaction.js'
@@ -70,6 +78,8 @@ import {
   deleteThread,
   listThreads,
   maxThreadsPerBot,
+  openReplyThread,
+  replyThreadsForLane,
   resolveLane,
   ThreadRejected,
   updateThread,
@@ -80,10 +90,18 @@ import sidebarRouter from './agent-chat-sidebar.js'
 import delegationsRouter from './agent-chat-delegations.js'
 import botMessagesRouter from './agent-chat-bot-messages.js'
 import botWorkRouter from './agent-chat-bot-work.js'
+import { cancelFollowup, followupInfo, followupLog, followupsByIds, followupsEnabled, type FollowupInfo } from '../services/agent-chat/followups.js'
 import { markFeedMessage } from '../services/agent-chat/bot-attention.js'
 import { resolveNeedsYouMessages } from '../services/decision-queue.js'
 import { isHighAgencyActivityCard } from '../services/agent-chat/high-agency-cards.js'
-import { CARD_WAKES_THREAD_TITLE, cardWakesGloballyEnabled, getCardWakeSwitch, setCardWakeSwitch } from '../services/agent-chat/card-wake-routing.js'
+import {
+  CARD_WAKES_THREAD_TITLE, cardWakeDebounceSeconds, cardWakeMaxPerHour, cardWakePostsToChat, cardWakesGloballyEnabled, cardWakeToolScope, cardWakeWindowMinutes,
+  getCardWakeSwitch, setCardWakeSwitch,
+} from '../services/agent-chat/card-wake-routing.js'
+import { getDevOpsSwitch, setDevOpsSwitch } from '../services/dev-ops/switch.js'
+import { listRepoGrants, setRepoGrant } from '../services/dev-ops/repo-grant.js'
+import { REPO_RIGHTS_SECRET_NAME } from '../services/dev-ops/repo-merge.js'
+import { listDevOpsAudit, writeDevOpsAudit } from '../services/dev-ops/audit.js'
 
 /**
  * Built-in agent chat (obj 719987) — /api/agent-chat
@@ -97,6 +115,8 @@ import { CARD_WAKES_THREAD_TITLE, cardWakesGloballyEnabled, getCardWakeSwitch, s
  *   POST   /agents/:slug/threads       open a new side thread (a concurrent task lane)
  *   PATCH  /agents/:slug/threads/:id   rename / pin / archive (= close) a side thread
  *   DELETE /agents/:slug/threads/:id   delete a side thread and its messages
+ *   GET    /agents/:slug/followups     the caller's follow-ups with this bot: waiting + the log (obj 901392)
+ *   DELETE /agents/:slug/followups/:id the person's Cancel on a waiting follow-up
  *   GET    /attachments/:id            one image the caller attached (owner only)
  *   PUT    /drafts/:id                 edit a draft before sending
  *   POST   /drafts/:id/send            the person's Send / Add to calendar click
@@ -109,6 +129,9 @@ import { CARD_WAKES_THREAD_TITLE, cardWakesGloballyEnabled, getCardWakeSwitch, s
  *   POST   /agents/:slug/high-agency/wake  admin: one wake now (works while off, to try it)
  *   GET    /agents/:slug/card-wakes    needs_agent card wakes: on/off (default on) + recent wakes (obj 901328)
  *   PUT    /agents/:slug/card-wakes    admin: {enabled} — turn this bot's card wakes off / back on
+ *   GET    /agents/:slug/secret-access       admin: this bot's secret grants in one workspace + suggested hosts (obj 901484)
+ *   PUT    /agents/:slug/secret-access       admin, browser only: {workspace, grants:[{name, hosts, methods?}], all_secrets?:{enabled, mode}, hosts?:[{name, hosts}]} — the whole panel in one save
+ *   POST   /agents/:slug/secret-access/test  admin: per secret, usable yes/no and why; calls no vendor
  *   GET    /agents/:slug/workspaces    the bot's workspace access list (obj 900797)
  *   PUT    /agents/:slug/workspaces    admin: set the whole list (restricts the bot)
  *   POST   /agents/:slug/workspaces    admin: grant one workspace
@@ -257,7 +280,7 @@ function enabledModelsOrEmpty() {
 /** Only a signed-in admin may change what a bot runs on — never an API key (a bot must not grant itself tools). */
 function adminSessionOr403(req: AuthRequest, res: Response): boolean {
   if (req.user?.role !== 'admin' || req.authVia !== 'session') {
-    res.status(403).json({ error: 'Only an admin signed in to Command Center can change a bot\'s settings (model, tools, workspace access, High Agency).' })
+    res.status(403).json({ error: 'Only an admin signed in to the app in the browser can change a bot\'s settings (model, tools, workspace access, High Agency).' })
     return false
   }
   return true
@@ -299,7 +322,11 @@ function attachments(userId: number, slug: string, messages: ChatMessageRow[]) {
   const cardIds = [...new Set(messages.map(m => m.meta?.objective_id).filter((x): x is number => typeof x === 'number'))]
   const drafts = listDrafts(userId, slug).filter(d => draftIds.has(d.id))
   const cards = visibleCardStatuses(userId, cardIds, slug)
-  return { drafts, cards }
+  // obj 901392: the live state of each follow-up a line in view refers to (the "scheduled for HH:MM" line + Cancel).
+  const followupIds = messages.map(m => m.meta?.followup_id).filter((x): x is number => typeof x === 'number')
+  let followups: FollowupInfo[] = []
+  try { followups = followupsByIds(userId, slug, followupIds) } catch { /* table absent */ }
+  return { drafts, cards, followups }
 }
 
 function agentOr404(req: AuthRequest, res: Response): ChatAgent | null {
@@ -407,7 +434,7 @@ router.delete('/agents/:slug/config', (req: AuthRequest, res) => {
  */
 router.delete('/agents/:slug', (req: AuthRequest, res) => {
   if (req.user?.role !== 'admin' || req.authVia !== 'session') {
-    res.status(403).json({ error: 'Only an admin signed in to Command Center can delete a bot.' })
+    res.status(403).json({ error: 'Only an admin signed in to the app in the browser can delete a bot.' })
     return
   }
   const a = agentOr404(req, res)
@@ -508,7 +535,15 @@ function cardWakesPayload(req: AuthRequest, slug: string) {
       .filter(r => !mine || mine.has(String(r.workspace)))
       .slice(0, 20)
   } catch { recent = [] }
-  return { card_wakes: { ...sw, install_enabled: cardWakesGloballyEnabled(), thread_title: CARD_WAKES_THREAD_TITLE }, recent }
+  // obj 901394: the install-wide limits, read-only here (they are settings rows).
+  const limits = {
+    debounce_seconds: cardWakeDebounceSeconds(),
+    max_per_hour: cardWakeMaxPerHour(),
+    window_minutes: cardWakeWindowMinutes(),
+    tools: cardWakeToolScope(),
+    posts_to_chat: cardWakePostsToChat(),
+  }
+  return { card_wakes: { ...sw, install_enabled: cardWakesGloballyEnabled(), thread_title: CARD_WAKES_THREAD_TITLE, limits }, recent }
 }
 
 router.get('/agents/:slug/card-wakes', (req: AuthRequest, res) => {
@@ -536,6 +571,253 @@ router.put('/agents/:slug/card-wakes', (req: AuthRequest, res) => {
     })
   } catch { /* the feed never decides the change */ }
   res.json(cardWakesPayload(req, a.slug))
+})
+
+// ── Secret access (obj 901484): one screen to give THIS bot named secrets ──
+//
+// Admin only, all three: the list holds every secret NAME in the workspace.
+// Saving is the signed-in browser only (never an API key, agent key or bearer
+// token), the same gate as the bot's model and tools. No value is ever read
+// into a response, and Test access calls no vendor.
+
+function secretAccessError(res: Response, err: unknown): void {
+  if (err instanceof BotSecretAccessError) {
+    res.status(err.status).json({ error: err.message })
+    return
+  }
+  if (err instanceof BotConfigError) {
+    res.status(err.status).json({ error: err.message })
+    return
+  }
+  throw err
+}
+
+router.get('/agents/:slug/secret-access', (req: AuthRequest, res) => {
+  if (req.user?.role !== 'admin') {
+    res.status(403).json({ error: 'Only an admin can see which secrets a bot may use.' })
+    return
+  }
+  const a = agentOr404(req, res)
+  if (!a) return
+  res.setHeader('Cache-Control', 'private, no-store')
+  try {
+    res.json({ secret_access: secretAccessPanel(a, req.query.workspace) })
+  } catch (err) {
+    secretAccessError(res, err)
+  }
+})
+
+router.put('/agents/:slug/secret-access', (req: AuthRequest, res) => {
+  if (!adminSessionOr403(req, res)) return
+  if (!req.cookies?.token || req.headers.authorization) {
+    res.status(403).json({ error: 'Secret access is changed from the signed-in web app, not with an API key.' })
+    return
+  }
+  const a = agentOr404(req, res)
+  if (!a) return
+  const body = (req.body ?? {}) as { workspace?: unknown; grants?: unknown; all_secrets?: unknown; hosts?: unknown }
+  try {
+    const saved = saveBotSecretAccess(a, body.workspace, body.grants, { id: req.user!.id, username: req.user!.username }, { all_secrets: body.all_secrets, hosts: body.hosts })
+    const updated = findAgent(a.slug)!
+    if (saved.tool_switched_on) syncWakeAfterBotChange(updated)
+    try {
+      logActivity({
+        project: 'operationkit',
+        event_type: 'decision',
+        title: `${a.name}: secret access in ${String(body.workspace)} changed by ${req.user!.username}`,
+        metadata: { kind: 'bot_secret_access_changed', slug: a.slug, workspace: body.workspace, ...saved },
+      })
+    } catch { /* the feed never decides the change */ }
+    res.setHeader('Cache-Control', 'private, no-store')
+    res.json({ saved, secret_access: secretAccessPanel(updated, body.workspace), agent: agentResponse(updated, saved.tool_switched_on ? { force: true, reason: 'bot settings changed' } : {}) })
+  } catch (err) {
+    secretAccessError(res, err)
+  }
+})
+
+router.post('/agents/:slug/secret-access/test', (req: AuthRequest, res) => {
+  if (req.user?.role !== 'admin') {
+    res.status(403).json({ error: 'Only an admin can test which secrets a bot may use.' })
+    return
+  }
+  const a = agentOr404(req, res)
+  if (!a) return
+  res.setHeader('Cache-Control', 'private, no-store')
+  try {
+    res.json({ test: testBotSecretAccess(a, (req.body as { workspace?: unknown } | undefined)?.workspace ?? req.query.workspace) })
+  } catch (err) {
+    secretAccessError(res, err)
+  }
+})
+
+// ── Long replies (obj 901491): the per-bot budget of a chat turn that runs as a background job ──
+
+function turnLimitsPayload(req: AuthRequest, slug: string) {
+  const own = getTurnLimits(slug)
+  const defaults = installTurnDefaults()
+  const enabled = longTurnsEnabled()
+  return {
+    turn_limits: {
+      slug,
+      install_enabled: enabled,
+      max_steps: own.max_steps,
+      max_minutes: own.max_minutes,
+      updated_at: own.updated_at,
+      effective: { max_steps: own.max_steps ?? defaults.max_steps, max_minutes: own.max_minutes ?? defaults.max_minutes },
+      defaults,
+      ranges: { steps: TURN_STEPS_RANGE, minutes: TURN_MINUTES_RANGE },
+    },
+    // The record of recent turns (no message text) is for admins only.
+    recent: req.user?.role === 'admin' ? recentTurnJobs(slug, 10) : [],
+  }
+}
+
+router.get('/agents/:slug/turn-limits', (req: AuthRequest, res) => {
+  const a = agentOr404(req, res)
+  if (!a) return
+  res.json(turnLimitsPayload(req, a.slug))
+})
+
+router.put('/agents/:slug/turn-limits', (req: AuthRequest, res) => {
+  if (!adminSessionOr403(req, res)) return
+  const a = agentOr404(req, res)
+  if (!a) return
+  const body = (req.body ?? {}) as { max_steps?: unknown; max_minutes?: unknown }
+  try {
+    setTurnLimits(a.slug, { max_steps: body.max_steps, max_minutes: body.max_minutes }, req.user!.id)
+  } catch (err) {
+    if (err instanceof TurnLimitsError) {
+      res.status(err.status).json({ error: err.message })
+      return
+    }
+    throw err
+  }
+  const now = getTurnLimits(a.slug)
+  try {
+    logActivity({
+      project: 'operationkit',
+      event_type: 'decision',
+      title: `${a.name}: long-reply limits set to ${now.max_steps ?? 'default'} steps / ${now.max_minutes ?? 'default'} minutes by ${req.user!.username}`,
+      metadata: { kind: 'bot_turn_limits_changed', slug: a.slug, max_steps: now.max_steps, max_minutes: now.max_minutes },
+    })
+  } catch { /* the feed never decides the change */ }
+  res.json(turnLimitsPayload(req, a.slug))
+})
+
+// ── Operator tools (obj 901424): Operation Kit Dev's merge / deploy / close / Cloudflare switch ──
+
+function devOpsPayload(req: AuthRequest, slug: string) {
+  const sw = getDevOpsSwitch(slug)
+  let recent: unknown[] = []
+  if (sw.eligible && req.user?.role === 'admin') {
+    try { recent = listDevOpsAudit(20) } catch { recent = [] }
+  }
+  return { dev_ops: sw, recent }
+}
+
+// ── GitHub repo rights (obj 901492): per-repo grant for merge-by-number and CI refresh. OFF by default. ──
+
+function repoRightsPayload(slug: string) {
+  const sw = getDevOpsSwitch(slug)
+  let credentialStored = false
+  try {
+    credentialStored = !!(getDb().prepare('SELECT 1 FROM secrets WHERE key = ? LIMIT 1').get(REPO_RIGHTS_SECRET_NAME))
+  } catch { credentialStored = false }
+  return {
+    repo_rights: {
+      slug,
+      eligible: sw.eligible,
+      operator_tools_on: sw.enabled,
+      repos: sw.eligible ? listRepoGrants(slug) : [],
+      // The NAME of the optional dedicated credential, and whether one is stored. Never a value.
+      credential_name: REPO_RIGHTS_SECRET_NAME,
+      credential_stored: credentialStored,
+    },
+  }
+}
+
+router.get('/agents/:slug/repo-rights', (req: AuthRequest, res) => {
+  const a = agentOr404(req, res)
+  if (!a) return
+  res.json(repoRightsPayload(a.slug))
+})
+
+router.put('/agents/:slug/repo-rights', (req: AuthRequest, res) => {
+  if (!adminSessionOr403(req, res)) return
+  // Stricter than the other bot settings: the browser cookie itself must be there.
+  // An admin's Bearer JWT (a script holding a token) may not hand the bot a repo.
+  if (!signedInBrowser(req)) {
+    res.status(403).json({ error: 'Only an admin signed in to the app in the browser can change GitHub repo rights.', code: 'admin_only' })
+    return
+  }
+  const a = agentOr404(req, res)
+  if (!a) return
+  const body = (req.body ?? {}) as { repo?: unknown; enabled?: unknown }
+  if (typeof body.enabled !== 'boolean') {
+    res.status(400).json({ error: 'enabled must be true or false' })
+    return
+  }
+  const r = setRepoGrant(a.slug, body.repo, body.enabled, { id: req.user!.id, username: req.user!.username })
+  const refused = r.change === 'bot_not_eligible' || r.change === 'bad_repo'
+  writeDevOpsAudit({
+    bot_slug: a.slug, user_id: req.user!.id, username: req.user!.username, action: 'repo_grant',
+    target: r.repo ?? (typeof body.repo === 'string' ? body.repo.slice(0, 200) : null),
+    outcome: refused ? 'refused' : 'done', code: r.change,
+  })
+  if (r.change === 'bot_not_eligible') {
+    res.status(400).json({ error: 'Only the built-in Dev bot can be given GitHub repo rights.', code: r.change })
+    return
+  }
+  if (r.change === 'bad_repo') {
+    res.status(400).json({ error: 'Name one GitHub repo as owner/name (for example acme/website).', code: r.change })
+    return
+  }
+  if (r.change !== 'unchanged') {
+    try {
+      logActivity({
+        project: 'operationkit',
+        event_type: 'decision',
+        title: `${a.name}: GitHub repo rights ${r.change === 'granted' ? 'switched on' : 'switched off'} for ${r.repo} by ${req.user!.username}`,
+        metadata: { kind: 'dev_ops_repo_grant', slug: a.slug, repo: r.repo, enabled: body.enabled },
+      })
+    } catch { /* the feed never decides the change */ }
+  }
+  res.json(repoRightsPayload(a.slug))
+})
+
+router.get('/agents/:slug/dev-ops', (req: AuthRequest, res) => {
+  const a = agentOr404(req, res)
+  if (!a) return
+  res.json(devOpsPayload(req, a.slug))
+})
+
+router.put('/agents/:slug/dev-ops', (req: AuthRequest, res) => {
+  if (!adminSessionOr403(req, res)) return
+  const a = agentOr404(req, res)
+  if (!a) return
+  const enabled = (req.body as { enabled?: unknown } | undefined)?.enabled
+  if (typeof enabled !== 'boolean') {
+    res.status(400).json({ error: 'enabled must be true or false' })
+    return
+  }
+  const set = setDevOpsSwitch(a.slug, enabled, req.user!.id)
+  writeDevOpsAudit({
+    bot_slug: a.slug, user_id: req.user!.id, username: req.user!.username, action: 'switch',
+    outcome: set ? 'done' : 'refused', code: set ? (enabled ? 'on' : 'off') : 'bot_not_eligible',
+  })
+  if (!set) {
+    res.status(400).json({ error: 'Only the built-in Dev bot has operator tools.', code: 'bot_not_eligible' })
+    return
+  }
+  try {
+    logActivity({
+      project: 'operationkit',
+      event_type: 'decision',
+      title: `${a.name}: operator tools turned ${enabled ? 'on' : 'off'} by ${req.user!.username}`,
+      metadata: { kind: 'dev_ops_switched', slug: a.slug, enabled },
+    })
+  } catch { /* the feed never decides the change */ }
+  res.json(devOpsPayload(req, a.slug))
 })
 
 // ── Workspace access (obj 900797): which workspaces a global bot may work in ──
@@ -654,7 +936,67 @@ router.get('/agents/:slug/messages', (req: AuthRequest, res) => {
   // time the person looks at the lane, so a queued message never waits forever.
   drainLaneQueue({ userId: req.user!.id, username: req.user!.username, agent: a, lane })
   const messages = markActivityMessages(listMessages(req.user!.id, a.slug, { afterId: after, lane }))
-  res.json({ messages, ...attachments(req.user!.id, a.slug, messages), turn: laneTurnState(req.user!.id, a.slug, lane) })
+  res.json({
+    messages,
+    ...attachments(req.user!.id, a.slug, messages),
+    turn: laneTurnState(req.user!.id, a.slug, lane),
+    turn_job: laneTurnJob(req.user!.id, a.slug, lane),
+    // obj 901373: "N replies" under every message of this lane that has a thread.
+    reply_threads: replyThreadsForLane(req.user!.id, a.slug, lane),
+  })
+})
+
+/**
+ * Reply in thread (obj 901373): the thread on ONE message of this person's chat
+ * with this bot, created on first use. The thread is a lane like any side
+ * thread — read it with GET /messages?thread_id=<id> and post into it with
+ * POST /messages { thread_id } — it is just never listed in the lane strip.
+ */
+router.post('/agents/:slug/messages/:id/thread', (req: AuthRequest, res) => {
+  if (req.authVia === 'agent_api_key') {
+    res.status(403).json({ error: 'Chat history is private to the person' })
+    return
+  }
+  const a = agentOr404(req, res)
+  if (!a) return
+  try {
+    const r = openReplyThread(req.user!.id, a.slug, Number(req.params.id))
+    const parent = getMessage(req.user!.id, a.slug, r.parent.id)
+    res.status(r.created ? 201 : 200).json({ thread: r.thread, parent, ...attachments(req.user!.id, a.slug, parent ? [parent] : []) })
+  } catch (err) {
+    threadError(res, err)
+  }
+})
+
+// ── follow-ups the bot set for itself (obj 901392) ──
+
+/** The caller's own follow-ups with this bot: what still waits, and the log of what fired / was cancelled / dropped. */
+router.get('/agents/:slug/followups', (req: AuthRequest, res) => {
+  if (req.authVia === 'agent_api_key') {
+    res.status(403).json({ error: 'Follow-ups belong to a person\'s chat with the bot.' })
+    return
+  }
+  const a = agentOr404(req, res)
+  if (!a) return
+  res.json({ followups: followupLog(req.user!.id, a.slug, Number(req.query.limit) || 30), enabled: followupsEnabled() })
+})
+
+/** The person's Cancel on a waiting follow-up. Only their own, only while it still waits. */
+router.delete('/agents/:slug/followups/:id', (req: AuthRequest, res) => {
+  if (req.authVia === 'agent_api_key') {
+    res.status(403).json({ error: 'Follow-ups are cancelled by the person in the Bots page.' })
+    return
+  }
+  const a = agentOr404(req, res)
+  if (!a) return
+  const id = Number(req.params.id)
+  const row = Number.isInteger(id) && id > 0 ? cancelFollowup({ userId: req.user!.id, slug: a.slug, id, by: 'person' }) : null
+  if (!row) {
+    // Someone else's, already fired, or never existed: one answer for all three.
+    res.status(404).json({ error: 'No waiting follow-up with that id' })
+    return
+  }
+  res.json({ followup: followupInfo(row) })
 })
 
 /**
@@ -672,7 +1014,44 @@ router.post('/agents/:slug/stop', (req: AuthRequest, res) => {
   const lane = laneOr404(req, res, a.slug, req.body?.thread_id)
   if (!lane) return
   const r = stopTurn(req.user!.id, a.slug, lane, { dropQueued: req.body?.drop_queued === true })
-  res.json({ stopped: r.stopped, dropped: r.dropped, turn: { running: r.running, queued: r.queued } })
+  res.json({ stopped: r.stopped, dropped: r.dropped, turn: { running: r.running, queued: r.queued, held: r.held } })
+})
+
+/**
+ * obj 901488: the person confirmed the messages that were held when they
+ * pressed Stop. They are delivered now, in the order they were sent.
+ */
+router.post('/agents/:slug/queued/release', (req: AuthRequest, res) => {
+  if (req.authVia === 'agent_api_key') {
+    res.status(403).json({ error: 'Use the MCP tools to work with agents from another AI client' })
+    return
+  }
+  const a = agentOr404(req, res)
+  if (!a) return
+  const lane = laneOr404(req, res, a.slug, req.body?.thread_id)
+  if (!lane) return
+  const released = releaseHeldMessages(req.user!.id, a.slug, lane)
+  drainLaneQueue({ userId: req.user!.id, username: req.user!.username, agent: a, lane })
+  res.json({ released, turn: laneTurnState(req.user!.id, a.slug, lane) })
+})
+
+/**
+ * obj 901488: remove ONE queued message before the bot sees it. 409 when the
+ * bot already picked it up (or it was never queued): nothing is deleted then.
+ */
+router.delete('/agents/:slug/queued/:id', (req: AuthRequest, res) => {
+  if (req.authVia === 'agent_api_key') {
+    res.status(403).json({ error: 'Chat history is private to the person' })
+    return
+  }
+  const a = agentOr404(req, res)
+  if (!a) return
+  const r = removeQueuedMessage(req.user!.id, a.slug, Number(req.params.id))
+  if (!r.removed || !r.lane) {
+    res.status(409).json({ error: 'That message is no longer waiting. The bot already picked it up.', code: 'not_queued' })
+    return
+  }
+  res.json({ ok: true, removed: Number(req.params.id), turn: laneTurnState(req.user!.id, a.slug, r.lane) })
 })
 
 // ── side threads / concurrent task lanes (obj 900370) ──
@@ -752,9 +1131,16 @@ router.post('/agents/:slug/messages', async (req: AuthRequest, res) => {
     res.status(400).json({ error: err instanceof ImageRejected ? err.message : 'That attachment could not be read.' })
     return
   }
+  // obj 901488: Continue on a step-limit answer. The server writes the text.
+  const rawContinue = req.body?.continue_from
+  if (rawContinue !== undefined && rawContinue !== null && !(Number.isInteger(rawContinue) && rawContinue > 0)) {
+    res.status(400).json({ error: 'continue_from must be a message id' })
+    return
+  }
+  const continueFrom = typeof rawContinue === 'number' ? rawContinue : undefined
   // A pasted screenshot on its own is a perfectly good message, so text is only
   // required when nothing is attached.
-  if (!text && images.length === 0) {
+  if (!continueFrom && !text && images.length === 0) {
     res.status(400).json({ error: 'text is required' })
     return
   }
@@ -786,18 +1172,29 @@ router.post('/agents/:slug/messages', async (req: AuthRequest, res) => {
   try {
     // obj 900949: a lane that is busy QUEUES the message (202) instead of
     // refusing it; the turn that follows the running one delivers it, in order.
-    const r = await submitMessage({ userId: req.user!.id, username: req.user!.username, agent: a, text, images, lane, clientMsgId, responseGone: () => disconnectedAt !== null })
+    // obj 901393: the server's own stamp of "the owner typed this in the browser",
+    // from how THIS request authenticated — never from the body.
+    const ownerBrowser = isOwnerBrowserSession(req)
+    const r = await submitMessage({ userId: req.user!.id, username: req.user!.username, agent: a, text, images, lane, clientMsgId, continueFrom, sendAgain: req.body?.send_again === true, ownerBrowser, responseGone: () => disconnectedAt !== null, browserSession: signedInBrowser(req) })
     if (disconnectedAt !== null) {
       console.log(`[agent-chat] disconnect: turn finished ${Date.now() - disconnectedAt}ms after the response closed (${where}); ${r.messages.length} row(s) stored for the person to see on return`)
       return
     }
-    res.status(r.queued ? 202 : 200).json({
+    // obj 901491: 202 + `background` = the turn is still working and carries on
+    // server-side; this request does not wait for it (so no proxy ever times it
+    // out). Its tool lines and its answer land in the lane as they happen.
+    res.status(r.queued || r.background ? 202 : 200).json({
       messages: r.messages,
       ...attachments(req.user!.id, a.slug, r.messages),
       queued: r.queued,
-      // obj 900977: true when this client_msg_id was already stored — nothing new was added or run.
-      ...(r.duplicate ? { duplicate: true } : {}),
+      ...(r.background ? { background: true } : {}),
+      // obj 900977 / 901488: true when this message was already accepted (same
+      // id, same Continue press, or the same text again with nothing between) —
+      // nothing new was added or run. `duplicate_state` says where it stands.
+      ...(r.duplicate ? { duplicate: true, duplicate_state: r.duplicateState, duplicate_by: r.duplicateBy } : {}),
       turn: laneTurnState(req.user!.id, a.slug, lane),
+      turn_job: laneTurnJob(req.user!.id, a.slug, lane),
+      reply_threads: replyThreadsForLane(req.user!.id, a.slug, lane),
     })
   } catch (err) {
     if (disconnectedAt !== null) {
@@ -806,6 +1203,10 @@ router.post('/agents/:slug/messages', async (req: AuthRequest, res) => {
     }
     if (err instanceof ChatBusyError) {
       res.status(409).json({ error: err.message })
+      return
+    }
+    if (err instanceof ChatContinueError) {
+      res.status(err.status).json({ error: err.message, code: 'nothing_to_continue' })
       return
     }
     if (err instanceof ChatUnavailableError) {

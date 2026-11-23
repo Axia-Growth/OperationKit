@@ -9,7 +9,7 @@ import Database from 'better-sqlite3'
 
 const { cardIdsOwnedByBot, cardOwnerBot } = await import('./card-owner.js')
 const { reviewHighAgencyWork } = await import('../high-agency-supervisor.js')
-const { botApprovalEligibility } = await import('../bot-approval.js')
+const { botApprovalEligibility } = await import('../bot-close-eligibility.js')
 const { setObjectiveCeiling, recordSpend } = await import('../job-accounting.js')
 
 const NOW = new Date('2026-11-14T15:00:00.000Z')

@@ -1,11 +1,13 @@
 # Module inventory
 
+New here? Read [OVERVIEW.md](./OVERVIEW.md) first (life of a card, directory map, where to add things). This page is the long inventory.
+
 Snapshot of `origin/main`. `boot` = `startX()` from `app/server/src/index.ts`. `mounted` = `app.use` in that file. Unwired rows are **deferred delete**.
 
 ## Boot sequence (`app/server/src/index.ts`)
 
-1. `bootstrapDopplerSecrets()` then `assertInternalApiSecret()`
-2. `initDb()` — fatal on failure
+1. `initDb()` — fatal on failure
+2. `hydrateProcessEnvFromSecretsStore()` (native secret store → `process.env`), then `assertInternalApiSecret()`
 3. `reconcileFromHistory` (account-router, last 7 days)
 4. Express + `trust proxy` + CORS + GitHub raw webhook + JSON
 5. Route mounts (below)
@@ -85,7 +87,7 @@ Boot also calls `startContactbookSibling` after listen (no-ops unless Telegram e
 | `account-router.ts` | import side-effect | Claude seat rotation, spend caps, queue drain |
 | `prompt-builder.ts` | no | worker prompt assembly |
 | `stream-parser.ts` | prewarm | JSONL → SessionMessage |
-| `session-intel.ts` | boot extract/backfill | transcript extract + daily ledger |
+| `session-intel-{parse,summary,pipeline}.ts` | boot extract/backfill | transcript extract + daily ledger |
 | `session-lease.ts` | no | concurrent-session leases |
 | `session-spawn-clock.ts` | no | persisted spawn start times |
 | `context-builder.ts` | no | prior intel into prompts |
@@ -98,12 +100,11 @@ Boot also calls `startContactbookSibling` after listen (no-ops unless Telegram e
 | File | Boot | Purpose |
 |---|---|---|
 | `pr-health-watchdog.ts` | `startPrHealthWatchdog` | reconcile red PRs (inert until setting) |
-| `external-remediation.ts` | webhook | CI failure → resume worker (flag) |
+| `external-remediation-{classify,resolve,act}.ts` | webhook | CI failure → resume worker (flag) |
 | `ci-green-gate.ts` | poller | completion-boundary CI |
 | `ci-feedback-bridge.ts` | `startCiFeedbackBridge` | vitest fail → objective (flag) |
 | `deterministic-floor.ts` | poller | tsc/build/test under LLM reviewer (flag) |
-| `uat-gate.ts` | poller | UAT gate (flag) |
-| `outcome-verification.ts` | poller | outcome checks (flag) |
+| `deterministic-floor-outcome.ts` | poller | outcome checks (flag) |
 | `auto-merge.ts` | no | merge-on-green (flag, default off) |
 | `auto-deploy.ts` | webhook | self-deploy on main merge (flag) |
 | `false-pass.ts` | poller | gate false-pass detector |
@@ -136,12 +137,10 @@ Boot also calls `startContactbookSibling` after listen (no-ops unless Telegram e
 | `mentor-context.ts` | no | Haiku summarizer + open-tasks block (shared helpers; the assistant chat that used them was removed) |
 | `workspaces.ts` | no | workspace table cache |
 | `notifier.ts` | no | alerts table + email/telegram |
-| `uptimerobot.ts` | no | monitor API cache |
 | `crypto.ts` | no | AES-GCM test credentials |
 | `knowledge-search.ts` | no | vault grep |
 | `resource-assignments.ts` | no | agent/skill scope |
 | `user-github-tokens.ts` / `user-google-connections.ts` | no | per-user OAuth |
-| `scratchpad.ts` | no | per-user markdown |
 
 ## SQLite tables (from `db/index.ts` CREATE TABLE)
 

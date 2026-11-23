@@ -13,6 +13,7 @@
 //   - the DEMO bot is the demo setting; turn the demo off instead.
 // The route that calls this is admin + signed-in-browser only (the same gate
 // as changing a bot's model or tools).
+import { forgetBotSecretGrants } from './bot-secret-access.js'
 import fs from 'fs'
 import path from 'path'
 import { getDb } from '../../db/index.js'
@@ -90,5 +91,7 @@ export function deleteBotFolder(agent: ChatAgent, opts: { env?: NodeJS.ProcessEn
   forgetBotWorkspaceAccess(agent.slug)
   // …and its Full access (obj 900972). The audit log is kept.
   forgetFullAccess(agent.slug)
+  // …and its per-bot secret grants (obj 901484). The secrets audit log is kept.
+  forgetBotSecretGrants(agent.slug)
   return { slug: agent.slug, moved_to: path.relative(root, target), high_agency_disabled: haDisabled }
 }

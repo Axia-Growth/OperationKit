@@ -56,6 +56,13 @@ export interface DelegationGrant {
   created_by: string
   /** active = not revoked and not expired. */
   state: 'active' | 'expired' | 'revoked'
+  /**
+   * "Merge without asking me each time" (obj 901388). Only ever true on a grant
+   * that ticks merge. While the grant is active, the server itself merges the
+   * bot's OWN cards whose AI review passed (same guards as a chat merge).
+   * Set when the grant is issued; off for every grant issued before it existed.
+   */
+  standing_merge: boolean
 }
 
 export interface DelegationGrantsResponse {

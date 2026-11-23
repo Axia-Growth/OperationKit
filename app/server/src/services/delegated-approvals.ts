@@ -87,6 +87,8 @@ interface GrantRow {
   allow_merge: number
   allow_prod_migration: number
   allow_deploy: number
+  /** obj 901388: 1 = "Merge without asking me each time". Absent on a DB before the column. */
+  standing_merge?: number
   created_at: string
   expires_at: string
   revoked_at: string | null
@@ -125,6 +127,7 @@ function toGrant(db: Database, r: GrantRow, now: Date): DelegationGrant {
     revoked_by: r.revoked_by,
     created_by: r.created_by,
     state,
+    standing_merge: Number(r.standing_merge ?? 0) === 1 && Number(r.allow_merge) === 1,
   }
 }
 
@@ -203,6 +206,11 @@ export interface CreateGrantInput {
   expiresAt: unknown
   /** Workspaces this bot may be granted in (existence + bot access already applied). */
   allowedWorkspaces: string[]
+  /**
+   * obj 901388: "Merge without asking me each time". Optional; anything but
+   * `true` is off. Only valid together with the merge action.
+   */
+  standingMerge?: unknown
   now?: Date
 }
 
@@ -228,6 +236,19 @@ export function parseExpiry(raw: unknown, now: Date): string {
   return sqliteUtc(d)
 }
 
+/**
+ * obj 901388: the standing-merge switch. Off unless the caller sent exactly
+ * `true`; on without the merge action is a 400 (it would mean nothing).
+ */
+export function parseStandingMerge(raw: unknown, actions: DelegationAction[]): boolean {
+  if (raw === undefined || raw === null || raw === false) return false
+  if (raw !== true) throw new DelegationError(400, 'standing_merge_invalid', 'standing_merge must be true or false.')
+  if (!actions.includes('merge')) {
+    throw new DelegationError(400, 'standing_merge_needs_merge', '"Merge without asking me each time" only works on a grant that ticks merge.')
+  }
+  return true
+}
+
 export function createGrant(db: Database, input: CreateGrantInput): DelegationGrant {
   const now = input.now ?? new Date()
   const workspace = typeof input.workspace === 'string' ? input.workspace.trim() : ''
@@ -237,13 +258,14 @@ export function createGrant(db: Database, input: CreateGrantInput): DelegationGr
   }
   const actions = parseActions(input.actions)
   const expires = parseExpiry(input.expiresAt, now)
+  const standing = parseStandingMerge(input.standingMerge, actions)
   const has = (a: DelegationAction) => (actions.includes(a) ? 1 : 0)
   const info = db
     .prepare(
-      `INSERT INTO delegation_grants (granting_user_id, bot_name, agent_slug, workspace, allow_merge, allow_prod_migration, allow_deploy, created_at, expires_at, created_by)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO delegation_grants (granting_user_id, bot_name, agent_slug, workspace, allow_merge, allow_prod_migration, allow_deploy, standing_merge, created_at, expires_at, created_by)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
-    .run(input.grantor.id, input.botName, input.agentSlug, workspace, has('merge'), has('prod_migration'), has('deploy'), sqliteUtc(now), expires, input.grantor.username)
+    .run(input.grantor.id, input.botName, input.agentSlug, workspace, has('merge'), has('prod_migration'), has('deploy'), standing ? 1 : 0, sqliteUtc(now), expires, input.grantor.username)
   const id = Number(info.lastInsertRowid)
   writeDelegationAudit(db, {
     event: 'grant_created',
@@ -252,7 +274,7 @@ export function createGrant(db: Database, input: CreateGrantInput): DelegationGr
     bot_name: input.botName,
     action: actions.join(','),
     actor: input.grantor.username,
-    reason: `expires ${expires} UTC`,
+    reason: `expires ${expires} UTC${standing ? '; standing merge on (merges passed own cards without asking)' : ''}`,
   })
   return getGrant(db, id, now)!
 }
@@ -274,6 +296,8 @@ export interface ActiveGrantQuery {
   workspace: string
   action: DelegationAction
   grantorUserId: number
+  /** obj 901388: only a grant with "Merge without asking me each time" on matches. */
+  standingOnly?: boolean
   now?: Date
 }
 
@@ -284,11 +308,12 @@ export interface ActiveGrantQuery {
 export function findActiveGrant(db: Database, q: ActiveGrantQuery): GrantRow | null {
   const column = ACTION_COLUMN[q.action]
   if (!column) return null
+  const standing = q.standingOnly ? ' AND g.standing_merge = 1' : ''
   const row = db
     .prepare(
       `SELECT g.* FROM delegation_grants g
          JOIN users u ON u.id = g.granting_user_id
-        WHERE g.bot_name = ? AND g.workspace = ? AND g.${column} = 1
+        WHERE g.bot_name = ? AND g.workspace = ? AND g.${column} = 1${standing}
           AND g.granting_user_id = ?
           AND g.revoked_at IS NULL AND g.expires_at > ?
           AND u.role = 'admin'
@@ -390,10 +415,10 @@ export function decideDelegatedApproval(
 function grantDecision(
   db: Database,
   deny: (status: number, code: string, error: string, extra?: Partial<AuditEntry>) => DelegationDecision,
-  q: { botName: string; workspace: string; action: DelegationAction; grantor: { id: number; username: string }; now: Date },
+  q: { botName: string; workspace: string; action: DelegationAction; grantor: { id: number; username: string }; now: Date; standingOnly?: boolean },
 ): DelegationDecision {
   const { botName, workspace, action, now } = q
-  const grant = findActiveGrant(db, { botName, workspace, action, grantorUserId: q.grantor.id, now })
+  const grant = findActiveGrant(db, { botName, workspace, action, grantorUserId: q.grantor.id, now, standingOnly: q.standingOnly })
   if (!grant) {
     return deny(
       403,
@@ -477,6 +502,93 @@ export function decideChatBotApproval(
   const workspace = objective.workspace?.trim()
   if (!workspace) return deny(403, 'no_workspace', 'This card has no workspace, so no grant can cover it.')
   return grantDecision(db, deny, { botName: principal.botName, workspace, action, grantor: principal.user, now })
+}
+
+/**
+ * The audit label a STANDING merge is recorded under (obj 901388), so a merge
+ * the server made by itself can be told apart from a chat merge (`chat:<slug>`)
+ * and a card-message merge (the agent key's label).
+ */
+export function standingMergeAuditLabel(slug: string): string {
+  return `standing:${slug}`
+}
+
+/**
+ * A STANDING merge (obj 901388): no message and no chat turn. The server, on
+ * its own, merges a bot's own passed card under a merge grant whose owner
+ * ticked "Merge without asking me each time". Same `grantDecision` as the two
+ * other doors, with `standingOnly`, so the grant must ALSO have that switch on:
+ * exact bot × workspace × merge, issued by this person, who is still an admin,
+ * not revoked, not expired. The bot is the grant's own bot; the grantor is the
+ * grant's own owner — nothing here is declared by a caller.
+ */
+export function decideStandingMergeApproval(
+  db: Database,
+  principal: { grantor: { id: number; username: string }; botName: string; chatSlug: string },
+  objective: Pick<Objective, 'id' | 'workspace'>,
+  message: string,
+  now = new Date(),
+): DelegationDecision {
+  const label = standingMergeAuditLabel(principal.chatSlug)
+  const deny = (status: number, code: string, error: string, extra: Partial<AuditEntry> = {}): DelegationDecision => {
+    try {
+      writeDelegationAudit(db, {
+        event: 'approval_denied',
+        objective_id: objective.id,
+        workspace: objective.workspace ?? null,
+        action: 'merge',
+        actor: principal.grantor.username,
+        agent_key_id: null,
+        agent_key_label: label,
+        bot_name: principal.botName,
+        reason: code,
+        message,
+        ...extra,
+      })
+    } catch (err) {
+      console.warn('[delegated-approval] audit write failed:', (err as Error).message)
+    }
+    return { kind: 'denied', status, code, error }
+  }
+  const workspace = objective.workspace?.trim()
+  if (!workspace) return deny(403, 'no_workspace', 'This card has no workspace, so no grant can cover it.')
+  return grantDecision(db, deny, { botName: principal.botName, workspace, action: 'merge', grantor: principal.grantor, now, standingOnly: true })
+}
+
+/** A grant row with the switch on, as the standing-merge sweep reads it (obj 901388). */
+export interface StandingGrantRow {
+  id: number
+  granting_user_id: number
+  grantor_username: string | null
+  grantor_role: string | null
+  bot_name: string
+  agent_slug: string | null
+  workspace: string
+  expires_at: string
+  revoked_at: string | null
+}
+
+/**
+ * Every grant that was EVER issued with "Merge without asking me each time"
+ * on (merge ticked), newest first, with its grantor's current role. The sweep
+ * uses the newest live one per bot × workspace and, when none is live, the
+ * newest ended one to explain why nothing merged. Empty table / no column =
+ * no rows, so an install that never ticked the switch does nothing at all.
+ */
+export function listStandingGrants(db: Database): StandingGrantRow[] {
+  try {
+    return db
+      .prepare(
+        `SELECT g.id, g.granting_user_id, u.username AS grantor_username, u.role AS grantor_role,
+                g.bot_name, g.agent_slug, g.workspace, g.expires_at, g.revoked_at
+           FROM delegation_grants g LEFT JOIN users u ON u.id = g.granting_user_id
+          WHERE g.standing_merge = 1 AND g.allow_merge = 1
+          ORDER BY g.id DESC`,
+      )
+      .all() as StandingGrantRow[]
+  } catch {
+    return []
+  }
 }
 
 /**

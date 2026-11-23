@@ -3,7 +3,7 @@
  * search (obj 900816).
  *
  * WRITE PATHS. Every server path that writes a knowledge-base note calls
- * `noteKbWrite(path)` (docs PUT / MCP write_doc, chat write_doc + file_answer,
+ * `noteKbChanged(path)` (docs PUT / MCP write_doc, chat write_doc + file_answer,
  * document import, KB setup, wiki compile). That enqueues the file; one worker
  * drains the queue serially so a burst of imports never runs N models at once.
  * A periodic reconcile pass (mtime/size, then content hash) catches anything

@@ -25,6 +25,8 @@ import {
   listProgress,
   recordProgress,
   summarizeChildren,
+  summarizeTree,
+  type TreeRollup,
   type ChildrenRollup,
   type DerivedProgress,
   type ProgressEvent,
@@ -49,6 +51,8 @@ export interface ProgressView {
   /** Which source answers "how's it going": the worker's own snapshot, or the transcript. */
   progress_source: 'worker' | 'transcript' | 'none'
   children: ChildrenRollup | null
+  /** obj 901519: one status for this card and everything below it, at any depth; null when nothing is below it. */
+  tree: TreeRollup | null
   fanout: FanoutGroup | null
   session_starts: SessionStartRow[]
   /** Reason of the most recent spawn/resume (mirrors the newest session_starts
@@ -112,6 +116,7 @@ export function buildProgressView(
     transcript,
     progress_source: latest ? 'worker' : transcript ? 'transcript' : 'none',
     children: children.total > 0 ? children : null,
+    tree: summarizeTree(db, objective, c => (opts.canSeeChild ? opts.canSeeChild(c as unknown as Objective) : true)),
     fanout: getFanoutGroup(db, objective.id),
     session_starts: listSessionStarts(db, objective.id, 10),
     last_start_reason: (objective as { last_start_reason?: string | null }).last_start_reason ?? null,

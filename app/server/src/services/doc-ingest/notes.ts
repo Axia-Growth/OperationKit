@@ -1,7 +1,7 @@
 import fs from 'fs'
 import path from 'path'
 import crypto from 'crypto'
-import { noteKbWrite } from '../kb-semantic/service.js'
+import { noteKbChanged } from '../kb-semantic/service.js'
 
 /**
  * Knowledge-base note rendering + merging for document ingest (obj 719936).
@@ -456,7 +456,7 @@ export function writeOrganized(
     const existing = fs.existsSync(abs) ? fs.readFileSync(abs, 'utf8') : null
     fs.mkdirSync(path.dirname(abs), { recursive: true })
     fs.writeFileSync(abs, upsertEntityNote(existing, e, ref, today))
-    noteKbWrite(abs) // obj 900816: semantic index
+    noteKbChanged(abs) // semantic index + link graph
     notes.push({ rel, created: !existing })
   }
 
@@ -472,6 +472,6 @@ export function writeOrganized(
     summary: doc.summary,
     notes: [...new Set(notes.map(n => n.rel))],
   }))
-  noteKbWrite(path.join(kbRoot, sourceNoteRel)) // obj 900816: semantic index
+  noteKbChanged(path.join(kbRoot, sourceNoteRel)) // semantic index + link graph
   return { notes, sourceNoteRel }
 }

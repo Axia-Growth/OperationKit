@@ -21,8 +21,6 @@ test('the custom brand name is used for the page title', async ({ page }, info) 
 
 for (const path of PAGES) {
   test(`no vendor name on ${path} under a custom brand`, async ({ page }, info) => {
-    // Known bug, fix card #901033: /agents lists the built-in bot "Operation Kit Dev". Remove when that card ships.
-    test.fail(path === '/agents', 'Known bug — fix card #901033 (built-in bot "Operation Kit Dev" on Bots & skills)')
     await login(page, info)
     await page.goto(path)
     await page.waitForLoadState('networkidle').catch(() => {})
@@ -32,10 +30,9 @@ for (const path of PAGES) {
   })
 }
 
-// Known bug, fix card #901033: the built-in bots are named and described with
-// "Operation Kit" whatever the brand is. Remove test.fail when that card ships.
+// Card #901033: the built-in bots are written with a {brand} token, so their
+// name, description, how-to text and author follow the install's brand.
 test('bots page shows no vendor name under a custom brand', async ({ page }, info) => {
-  test.fail(true, 'Known bug — fix card #901033 (built-in bot "Operation Kit Dev", author "Operation Kit")')
   await login(page, info)
   await page.goto('/chat')
   await expect(page.getByText(BOT.name).first()).toBeVisible()

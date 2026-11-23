@@ -39,6 +39,15 @@ describe('session token', () => {
     expect(trust.verifySessionToken(t)).toEqual({ objectiveId: 42, workspace: 'example', actingUserId: 1 })
   })
 
+  it('round-trips a READ-ONLY token (obj 901525 — the reviewer), omitting the flag on an ordinary token', () => {
+    const ro = trust.mintSessionToken({ objectiveId: 42, workspace: 'example', actingUserId: 1, readOnly: true })
+    expect(trust.verifySessionToken(ro)).toEqual({ objectiveId: 42, workspace: 'example', actingUserId: 1, readOnly: true })
+    // An ordinary token has no `readOnly` key at all — not `readOnly: false`.
+    const rw = trust.mintSessionToken({ objectiveId: 42, workspace: 'example', actingUserId: 1 })
+    expect(trust.verifySessionToken(rw)).toEqual({ objectiveId: 42, workspace: 'example', actingUserId: 1 })
+    expect(Object.prototype.hasOwnProperty.call(trust.verifySessionToken(rw) ?? {}, 'readOnly')).toBe(false)
+  })
+
   it('rejects a tampered payload (cannot re-point the token at another card/workspace)', () => {
     const t = trust.mintSessionToken({ objectiveId: 42, workspace: 'example', actingUserId: 1 })
     const [payload, mac] = t.slice(4).split('.')

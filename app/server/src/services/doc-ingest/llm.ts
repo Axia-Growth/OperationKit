@@ -3,7 +3,7 @@ import fs from 'fs'
 import os from 'os'
 import path from 'path'
 import { pickAccount, type AccountSlot } from '../account-router.js'
-import { BackendError, buildClaudeArgs, buildClaudeEnv, runClaudeTurn } from '../llm-gateway/claude-cli-backend.js'
+import { BackendError, buildClaudeArgs, buildClaudeEnv, isRotatableKind, runClaudeTurn } from '../llm-gateway/claude-cli-backend.js'
 
 /**
  * The one AI call document ingest makes (obj 719936).
@@ -99,7 +99,8 @@ async function runWithPool(model: string, systemPrompt: string, prompt: string, 
       return (await run(account, { model, systemPrompt, prompt }, timeoutFor(env))).text
     } catch (err) {
       last = err instanceof Error ? err : new Error(String(err))
-      if (!(err instanceof BackendError) || (err.kind !== 'rate_limit' && err.kind !== 'auth')) break
+      // obj 901395: an empty turn (exit with no answer, no error text) rotates too.
+      if (!(err instanceof BackendError) || !isRotatableKind(err.kind)) break
     }
   }
   throw last ?? new Error('No AI account is connected. Connect a Claude account in Settings, then try again.')

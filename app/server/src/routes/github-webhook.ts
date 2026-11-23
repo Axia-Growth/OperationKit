@@ -12,6 +12,7 @@ import { enqueuePreviewDeploy, enqueuePreviewTeardown, kickHostDrain } from '../
 import { handleExternalCheckEvent } from '../services/external-remediation-act.js'
 import { autoLinkPullRequest } from '../services/external-remediation-resolve.js'
 import { recordPRTerminalState } from '../services/objective-prs.js'
+import { closeCardsForMergedPr } from '../services/merged-pr-close.js'
 import {
   parseDevRefs,
   resolveDevItemsFromBranch,
@@ -26,6 +27,7 @@ import {
 } from '../services/dev-items.js'
 import { isAutoDeployEnabled, shouldAutoDeploy, triggerAutoDeploy, selfRepo } from '../services/auto-deploy.js'
 import { getDb } from '../db/index.js'
+import { decideMergeAutoDeploy, skippedDeployLine } from '../services/merge-deploy-gate.js'
 import { sendFollowUp } from '../services/session-manager.js'
 import { broadcast } from '../ws/index.js'
 
@@ -111,6 +113,7 @@ interface GithubPRPayload {
     title?: string
     body?: string | null
     user?: { login?: string }
+    merged_by?: { login?: string } | null
     labels?: Array<{ name?: string }>
     base?: { ref?: string }
     head?: { ref?: string }
@@ -341,6 +344,18 @@ router.post('/', (req: Request, res: Response) => {
         console.error('[github-webhook] objective_prs state update failed:', (e as Error).message)
       }
 
+      // obj 901454 — a merge done by hand on GitHub is the card's sign-off: move the
+      // card whose own PR this is from review to done. Async and best-effort; it
+      // never fails the delivery (closeCardsForMergedPr never throws).
+      if (pr.merged === true && prNumber > 0 && payload.repository?.full_name) {
+        const mergedRepo = payload.repository.full_name
+        void closeCardsForMergedPr({ repo: mergedRepo, prNumber }).then((results) => {
+          for (const r of results) {
+            console.log(`[github-webhook] ${mergedRepo}#${prNumber} merged → card #${r.objectiveId} ${r.outcome} (${r.reason})`)
+          }
+        })
+      }
+
       // The dev_item_prs analogue of recordPRTerminalState above
       // (api.md §6.3.1). A closed-but-NOT-merged PR sets 'closed' and ships
       // NOTHING — the shipping decision lives in the merged block below.
@@ -371,6 +386,15 @@ router.post('/', (req: Request, res: Response) => {
     }
 
     const { entryId, status } = collectFromMergedPR(normalized)
+
+    // obj 901389: remember who pressed merge, for the "merged, waiting for deploy" list.
+    if (entryId && pr.merged_by?.login) {
+      try {
+        getDb().prepare('UPDATE changelog_entries SET merged_by = ? WHERE id = ?').run(String(pr.merged_by.login).slice(0, 100), entryId)
+      } catch (e) {
+        console.warn('[github-webhook] merged_by stamp failed:', (e as Error).message)
+      }
+    }
 
     // ── Universal Development: ship the closing refs + stamp the changelog ──
     // (api.md §6.3). Runs AFTER collectFromMergedPR so the entry row exists and
@@ -488,7 +512,20 @@ router.post('/', (req: Request, res: Response) => {
       const baseRef = pr.base?.ref || null
       if (shouldAutoDeploy({ repo: normalized.repo, baseRef })) {
         if (isAutoDeployEnabled(getDb())) {
-          triggerAutoDeploy(`PR #${normalized.prNumber} merged to ${baseRef}`)
+          // obj 901389: a merge a bot made under a MERGE grant never deploys itself.
+          // It deploys only when an active DEPLOY grant from the same admin covers
+          // that bot in that workspace; otherwise the owner deploys. A person's
+          // merge and the background auto-merge are unchanged.
+          const gate = decideMergeAutoDeploy(getDb(), normalized.repo, normalized.prNumber)
+          if (!gate.deploy) {
+            console.log(skippedDeployLine(normalized.repo, normalized.prNumber, gate.grantMerge))
+          } else {
+            triggerAutoDeploy(
+              gate.reason === 'deploy_grant'
+                ? `PR #${normalized.prNumber} merged to ${baseRef} under merge grant #${gate.grantMerge.grantId}; deploy grant #${gate.deployGrantId}`
+                : `PR #${normalized.prNumber} merged to ${baseRef}`,
+            )
+          }
         } else {
           console.log(
             `[auto-deploy] DRY-RUN — WOULD auto-deploy (PR #${normalized.prNumber} → ${baseRef}); enable via settings.auto_deploy_enabled=1`,

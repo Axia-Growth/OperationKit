@@ -87,6 +87,7 @@ import {
   handleLimitDeath,
   handleOverloadDeath,
   handleTurnsDeath,
+  bootResumeProd,
   recordFloorRun,
   logFloorMilestone,
   promoteArenaCohortIfReady,
@@ -136,7 +137,9 @@ import {
   pollActiveSessions,
   parkDelegatorIfWaiting,
   handleDeadSessionOutcome,
+  handleAbnormalEndProd,
 } from './poller-loop.js'
+import { newBootResumeBudget } from './boot-resume.js'
 
 // Poll cadence. Overridable via CC_POLL_INTERVAL_MS so ops can relieve
 // event-loop pressure without a code change (2026-08-17 incident: each tick does
@@ -204,6 +207,9 @@ async function sweepStaleWorkingSessions(): Promise<void> {
     .all() as Objective[]
 
   let swept = 0
+  let resumed = 0
+  // obj 901459 — per-boot cap on automatic resumes (see services/boot-resume.ts).
+  const resumeBudget = newBootResumeBudget(db)
   for (const obj of stale) {
     const state = getSessionState(obj.session_id!)
     if (state !== 'dead') continue
@@ -216,6 +222,16 @@ async function sweepStaleWorkingSessions(): Promise<void> {
     // instant its row leaves 'working'.
     try { handleSessionDeath(obj.session_id!) } catch (err) {
       console.error(`[state-poller] Startup sweep: handleSessionDeath failed for obj ${obj.id} (${obj.session_id}):`, err)
+    }
+
+    // obj 901459 — the restart cut this card off: give it the live loop's one
+    // automatic resume (queued messages, an unanswered owner message, or the
+    // abnormal-end retry), bounded per card by the shared stall budget and per
+    // boot by `boot_resume_max_per_boot`. A resumed card stays `working`.
+    const resumeOutcome = bootResumeProd(obj, resumeBudget, handleAbnormalEndProd)
+    if (resumeOutcome === 'queued' || resumeOutcome === 'unanswered' || resumeOutcome === 'abnormal_end') {
+      resumed++
+      continue
     }
 
     // Give the same truthful-outcome classifier the live loop uses a chance to
@@ -248,6 +264,7 @@ async function sweepStaleWorkingSessions(): Promise<void> {
   }
 
   if (swept > 0) console.log(`[state-poller] Startup sweep: moved ${swept} stale objectives to review`)
+  if (resumed > 0) console.log(`[state-poller] Startup sweep: resumed ${resumed} interrupted objective(s) once (cap ${resumeBudget.max})`)
 }
 
 export function stopPoller(): void {

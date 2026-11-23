@@ -42,7 +42,7 @@ Changing the provider, model or dimension changes the vector space, which starts
 
 ## Keeping the index current
 
-- **Every write path** calls `noteKbWrite(path)`: the Knowledge base editor and MCP `write_doc` (`PUT /api/docs/file`), chat-bot `write_doc` / `file_answer`, document import, chat/call imports, KB setup, wiki compile and lint. A single background queue embeds the file. A write never waits on embedding.
+- **Every write path** calls `noteKbChanged(path)` (the one hook: it queues the file for the semantic index through `noteKbWrite` and reindexes it in the link graph): the Knowledge base editor and MCP `write_doc` (`PUT /api/docs/file`), chat-bot `write_doc` / `file_answer`, document import, chat/call imports, KB setup, wiki compile and lint, contacts, loops, content drafts and the internal vault routes. `kb-write-hook.guard.test.ts` fails on a write path that skips it. A single background queue embeds the file. A write never waits on embedding.
 - **Backfill job.** It walks the whole knowledge base and shows its progress on the **Jobs** page (Knowledge index panel: progress, counts, Re-index / Stop). It can resume: a file whose content hash and model already match is skipped. A run that was `running` when the server restarted is marked `interrupted`, and the next run picks up the rest.
 - **Reconcile pass** every 15 minutes, on the host instance only and never on a scratch server. It catches edits made outside the server (Obsidian, git pulls) using mtime/size first and then the content hash, and it prunes deleted notes.
 

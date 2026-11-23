@@ -13,7 +13,7 @@ import { resolveObjectiveModel } from '../services/model-registry.js'
 import type { Objective } from '@operationkit/shared'
 import { hasValidObjectivesToken } from '../middleware/objectives-token.js'
 import { CHILD_CAP_PER_PARENT, depthForParent } from '../lib/objective-depth.js'
-import { inheritedOwnership } from '../lib/objective-ownership.js'
+import { inheritedOwnership, jobReplyOwnership } from '../lib/objective-ownership.js'
 import { getEffectiveGateMode, isRegisteredFrontendRepo, criteriaHaveUiBar, buildDsConformanceCriteria, repoHasE2eSuite, criteriaHaveQaBar, buildQaConformanceCriteria } from '../services/design-context.js'
 import { isBlockedRegistryEnabled, isBlockedRegistryKilled, findBlockingRule } from '../services/governance.js'
 import {
@@ -588,7 +588,17 @@ router.post('/objectives', withSandboxCardGuard(async (req, res) => {
       }
       // obj 900208 — a child acts for its parent's owner (and under its key's
       // connector limits) so it gets the same GitHub connection. See lib/objective-ownership.ts.
-      const owner = inheritedOwnership(db, item.parent_id ?? null, itemWorkspace)
+      let owner = inheritedOwnership(db, item.parent_id ?? null, itemWorkspace)
+      // obj 901458 — a job reply (source_job_id) with no owner from a parent gets
+      // the job's owner, else the routine's / wake's user, else the workspace's
+      // first admin, so its session starts with a GitHub login to push with.
+      if (itemSourceJobId != null && owner.created_by == null && owner.assigned_user_id == null) {
+        const { source: _src, ...replyOwner } = jobReplyOwnership(db, itemSourceJobId, itemWorkspace)
+        // A parent's agent key still limits the child (never widened by the fallback).
+        owner = owner.agent_key_id != null
+          ? { ...replyOwner, agent_key_id: owner.agent_key_id, agent_key_label: owner.agent_key_label }
+          : replyOwner
+      }
       const result = insert.run(
         item.title.trim(),
         item.description || '',
