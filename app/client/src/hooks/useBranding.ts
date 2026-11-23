@@ -40,7 +40,7 @@ export const DEFAULT_BRAND_NAME = 'Operation Kit'
  * `main` (obj 900745). An install does not serve the repo's docs/ folder, so
  * Settings → API & MCP links its API guide here. Kept in this module because it
  * names the product, like DEFAULT_BRAND_NAME (see no-hardcoded-brand.test.ts). */
-export const PUBLIC_DOCS_BASE = 'https://github.com/m1keluka/OperationKit/blob/main'
+export const PUBLIC_DOCS_BASE = 'https://github.com/Axia-Growth/OperationKit/blob/main'
 
 export const DEFAULT_BRANDING: Branding = {
   name: DEFAULT_BRAND_NAME,

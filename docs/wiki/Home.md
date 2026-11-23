@@ -25,7 +25,7 @@ Run it on Claude today. Point a workload at an open-weight model on your own GPU
 
 ## Elsewhere
 
-- Source: [github.com/m1keluka/OperationKit](https://github.com/m1keluka/OperationKit)
+- Source: [github.com/Axia-Growth/OperationKit](https://github.com/Axia-Growth/OperationKit)
 - License: Apache-2.0
 - Product docs (in-repo): `docs/product/`
 - Agent / HTTP API: `docs/api/`

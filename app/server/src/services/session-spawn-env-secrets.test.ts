@@ -73,6 +73,7 @@ describe('buildSpawnEnv — USE_SCOPED_SECRETS OFF: zero new keys', () => {
       'HOME', 'USER', 'TERM', 'PATH', 'GIT_SSH_COMMAND', 'GH_CONFIG_DIR',
       'SUPABASE_ACCESS_TOKEN',
       'GIT_AUTHOR_NAME', 'GIT_AUTHOR_EMAIL', 'GIT_COMMITTER_NAME', 'GIT_COMMITTER_EMAIL',
+      'GIT_IDENTITY', 'GIT_IDENTITY_HELP',
       // obj-706070: the per-user Google resolver ALWAYS appends this marker so a
       // session can distinguish "acting user's Google account" from "none". With
       // no connection seeded it is the only Google key ('absent'); the token keys
@@ -227,12 +228,13 @@ describe('buildSpawnEnv — USE_SCOPED_SECRETS ON: scoped set merged', () => {
     freshDb.initDb()
     const sm = await import('./session-manager.js')
     const env = sm.buildSpawnEnv({ objective: fakeObjective(), homeDir: '/home/ccuser-a', sessionKind: 'worker' })
-    // No secret-store keys added; the trailing 4 keys are the obj-701130 fallback
+    // No secret-store keys added; the trailing git-identity keys are the obj-701130 fallback
     // (injected before the scoped-secrets block, independent of USE_SCOPED_SECRETS).
     expect(Object.keys(env)).toEqual([
       'HOME', 'USER', 'TERM', 'PATH', 'GIT_SSH_COMMAND', 'GH_CONFIG_DIR',
       'SUPABASE_ACCESS_TOKEN',
       'GIT_AUTHOR_NAME', 'GIT_AUTHOR_EMAIL', 'GIT_COMMITTER_NAME', 'GIT_COMMITTER_EMAIL',
+      'GIT_IDENTITY', 'GIT_IDENTITY_HELP',
       // obj-706070: the per-user Google resolver ALWAYS appends this marker so a
       // session can distinguish "acting user's Google account" from "none". With
       // no connection seeded it is the only Google key ('absent'); the token keys

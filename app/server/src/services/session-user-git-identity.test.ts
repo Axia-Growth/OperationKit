@@ -40,7 +40,6 @@ process.env.CC_SESSION_KB_ACCESS = '0'
 const { initDb, getDb } = await import('../db/index.js')
 const tokens = await import('./user-github-tokens.js')
 const { userGitIdentityEnv, buildSpawnEnv } = await import('./session-manager.js')
-const { SAFE_FALLBACK_GIT_IDENTITY } = await import('./session-spawn-env.js')
 const { setAccess } = await import('../connectors/access.js')
 
 function seedUser(id: number, username: string): void {
@@ -139,16 +138,15 @@ describe('buildSpawnEnv — attribution rides on the spawn env, flags OFF (decou
     expect(linked.GIT_SSH_COMMAND).toBeDefined()
     expect(linked.GH_CONFIG_DIR).toBe('/etc/gh')
 
-    // obj-701130: an unlinked owner now ALSO carries a git-author identity — the
-    // m1keluka noreply FALLBACK (not EVA's per-user id, and not a GH_TOKEN). So the
-    // two envs share the same base ONCE each side's git-author keys are stripped:
-    // the linked side loses its 6 per-user keys, the unlinked side loses its 4
-    // fallback keys, and what remains is byte-identical.
+    // obj-701130: an unlinked owner also carries git-author keys — the install
+    // fallback, or blanked values when none is configured (never EVA's per-user
+    // id, and never a GH_TOKEN). So the two envs share the same base ONCE each
+    // side's git-identity keys are stripped, and what remains is byte-identical.
     const unlinked = buildSpawnEnv({ objective: objectiveOwnedBy(8), homeDir: '/home/ccuser-a', sessionKind: 'worker' })
     // obj 900208: a linked owner's spawn also carries the env-scoped github.com
     // https credential helper (GIT_CONFIG_*), so plain `git push` uses the token.
-    const perUser = ['GH_TOKEN', 'GITHUB_TOKEN', 'GIT_AUTHOR_NAME', 'GIT_AUTHOR_EMAIL', 'GIT_COMMITTER_NAME', 'GIT_COMMITTER_EMAIL', 'CC_ACTING_USER_ID', 'WORKSPACE_MCP_CREDENTIALS_DIR', 'GIT_CONFIG_COUNT', 'GIT_CONFIG_KEY_0', 'GIT_CONFIG_VALUE_0']
-    const fallbackKeys = ['GIT_AUTHOR_NAME', 'GIT_AUTHOR_EMAIL', 'GIT_COMMITTER_NAME', 'GIT_COMMITTER_EMAIL', 'CC_ACTING_USER_ID', 'WORKSPACE_MCP_CREDENTIALS_DIR']
+    const perUser = ['GH_TOKEN', 'GITHUB_TOKEN', 'GIT_AUTHOR_NAME', 'GIT_AUTHOR_EMAIL', 'GIT_COMMITTER_NAME', 'GIT_COMMITTER_EMAIL', 'CC_ACTING_USER_ID', 'WORKSPACE_MCP_CREDENTIALS_DIR', 'GIT_CONFIG_COUNT', 'GIT_CONFIG_KEY_0', 'GIT_CONFIG_VALUE_0', 'GIT_IDENTITY']
+    const fallbackKeys = ['GIT_AUTHOR_NAME', 'GIT_AUTHOR_EMAIL', 'GIT_COMMITTER_NAME', 'GIT_COMMITTER_EMAIL', 'GIT_IDENTITY', 'GIT_IDENTITY_HELP', 'CC_ACTING_USER_ID', 'WORKSPACE_MCP_CREDENTIALS_DIR']
     const strippedLinked = { ...linked }
     for (const k of perUser) delete strippedLinked[k]
     const strippedUnlinked = { ...unlinked }
@@ -156,23 +154,25 @@ describe('buildSpawnEnv — attribution rides on the spawn env, flags OFF (decou
     expect(strippedLinked).toEqual(strippedUnlinked)
   })
 
-  it('UNLINKED owner: spawn env carries the m1keluka noreply git-author FALLBACK, no token, never cc@ (obj-701130)', () => {
+  it('UNLINKED owner, no install fallback: git identity is blanked, no token, never cc@ (obj-701130)', () => {
     seedUser(8, 'unlinked')
     const env = buildSpawnEnv({ objective: objectiveOwnedBy(8), homeDir: '/home/ccuser-a', sessionKind: 'worker' })
     // No PR-actor token for an unlinked owner (PR auth rides the shared /etc/gh).
     expect(env.GH_TOKEN).toBeUndefined()
     expect(env.GITHUB_TOKEN).toBeUndefined()
-    // Commit author/committer = the GitHub-linked m1keluka noreply fallback — the
-    // durable guard against Vercel COMMIT_AUTHOR_REQUIRED. NEVER dev@example.com.
-    expect(env.GIT_AUTHOR_EMAIL).toBe('255270713+m1keluka@users.noreply.github.com')
-    expect(env.GIT_AUTHOR_NAME).toBe('m1keluka')
-    expect(env.GIT_COMMITTER_EMAIL).toBe('255270713+m1keluka@users.noreply.github.com')
-    expect(env.GIT_COMMITTER_NAME).toBe('m1keluka')
-    expect(env.GIT_AUTHOR_EMAIL).not.toBe('dev@example.com')
+    // No install fallback configured ⇒ the identity is present but EMPTY, so git
+    // refuses to commit rather than falling through to a host gitconfig (and
+    // never a vendor's identity). GIT_IDENTITY tells the session why.
+    expect(env.GIT_AUTHOR_EMAIL).toBe('')
+    expect(env.GIT_AUTHOR_NAME).toBe('')
+    expect(env.GIT_COMMITTER_EMAIL).toBe('')
+    expect(env.GIT_COMMITTER_NAME).toBe('')
+    expect(env.GIT_IDENTITY).toBe('absent')
     expect(Object.keys(env)).toEqual([
       'HOME', 'USER', 'TERM', 'PATH', 'GIT_SSH_COMMAND', 'GH_CONFIG_DIR',
       'SUPABASE_ACCESS_TOKEN',
       'GIT_AUTHOR_NAME', 'GIT_AUTHOR_EMAIL', 'GIT_COMMITTER_NAME', 'GIT_COMMITTER_EMAIL',
+      'GIT_IDENTITY', 'GIT_IDENTITY_HELP',
       // obj-706070 — the per-user Google resolver ALWAYS appends an explicit
       // connection marker. This owner has no google connection row, so it is
       // 'absent' and contributes no token keys (no silent fallback to a shared
@@ -191,7 +191,7 @@ describe('buildSpawnEnv — attribution rides on the spawn env, flags OFF (decou
     // The per-user identity from userGitIdentityEnv must NOT be overwritten by the
     // fallback — obj-701130 only fills GIT_AUTHOR_EMAIL when it is absent.
     expect(env.GIT_AUTHOR_EMAIL).toBe(EVA_EMAIL)
-    expect(env.GIT_AUTHOR_EMAIL).not.toBe('255270713+m1keluka@users.noreply.github.com')
+    expect(env.GIT_IDENTITY).toBe('user')
     expect(env.GIT_COMMITTER_EMAIL).toBe(EVA_EMAIL)
     expect(env.GH_TOKEN).toBe(RAW_PAT)
   })
@@ -209,7 +209,9 @@ describe('buildSpawnEnv — attribution rides on the spawn env, flags OFF (decou
     })
     expect(env.CC_ACTING_USER_ID).toBe('7')
     expect(env.GH_TOKEN).toBeUndefined()
-    expect(env.GIT_AUTHOR_EMAIL).toBe(SAFE_FALLBACK_GIT_IDENTITY.email)
+    // Falls back to the install identity — none configured here, so blanked.
+    expect(env.GIT_AUTHOR_EMAIL).toBe('')
+    expect(env.GIT_IDENTITY).toBe('absent')
   })
 
   it('and DOES once the assignee allows delegated work', () => {

@@ -77,6 +77,11 @@ services:
       TEST_CRED_ENCRYPTION_KEY: ${TEST_CRED_ENCRYPTION_KEY:?missing — run ./install.sh}
       CORS_ORIGINS: https://${OK_DOMAIN}
       OK_BRAND_NAME: ${OK_BRAND_NAME:-OperationKit}
+      # Git identity for commits by sessions whose card owner has not connected
+      # GitHub (session-spawn-env.ts resolveFallbackGitIdentity). Empty = no
+      # fallback: such a commit fails with a "connect GitHub" message.
+      OK_FALLBACK_GIT_NAME: ${OK_FALLBACK_GIT_NAME:-}
+      OK_FALLBACK_GIT_EMAIL: ${OK_FALLBACK_GIT_EMAIL:-}
       # The operator's own background jobs; nothing to run on a client install.
       HOST_BOOT_DAEMONS_ENABLED: "false"
       # Image-based install: no live checkout, so the drift guard has nothing to watch.
