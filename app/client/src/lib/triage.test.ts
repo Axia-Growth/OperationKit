@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest'
 import { TRIAGE_MAX_BATCH, type TriageBatchRequest, type TriageBatchResponse } from '@operationkit/shared'
-import { chunkIds, mergeBatchResults, pruneSelection, runTriage, toggleSelection } from './triage'
+import { chunkIds, mergeBatchResults, previewTriage, pruneSelection, runTriage, toggleSelection } from './triage'
 
 // obj 900869 — Needs You bulk triage, pure client logic.
 
@@ -93,5 +93,29 @@ describe('runTriage', () => {
 describe('mergeBatchResults', () => {
   it('is empty-safe', () => {
     expect(mergeBatchResults('approve', [])).toMatchObject({ requested: 0, ok: 0, skipped: 0, failed: 0, items: [] })
+  })
+})
+
+describe('previewTriage (dry run, obj 901519)', () => {
+  const preview = (body: TriageBatchRequest) => ({
+    dry_run: true as const, action: body.action, requested: body.objective_ids.length,
+    would_change: body.objective_ids.length - 1, skipped: 1, failed: 0,
+    items: body.objective_ids.map((id, i) => ({ objective_id: id, title: null, result: i === 0 ? 'skipped' as const : 'would_change' as const, from_status: 'review', to_status: null })),
+    note: 'Nothing was changed.',
+  })
+
+  it('sends every chunk with dry_run: true and adds the chunks up', async () => {
+    const post = vi.fn(async (body: TriageBatchRequest) => preview(body))
+    const many = Array.from({ length: TRIAGE_MAX_BATCH + 5 }, (_, i) => i + 1)
+    const out = await previewTriage(post, { action: 'dismiss', objective_ids: many })
+    expect(post).toHaveBeenCalledTimes(2)
+    expect(post.mock.calls.every(c => c[0].dry_run === true)).toBe(true)
+    expect(out).toMatchObject({ dry_run: true, action: 'dismiss', requested: many.length, would_change: many.length - 2, skipped: 2, failed: 0 })
+    expect(out.items).toHaveLength(many.length)
+  })
+
+  it('refuses an answer that is not a preview (a server that ran the action instead)', async () => {
+    const post = vi.fn(async () => ({ batch_id: 9, action: 'dismiss', requested: 1, ok: 1, skipped: 0, failed: 0, items: [] }) as never)
+    await expect(previewTriage(post, { action: 'dismiss', objective_ids: [1] })).rejects.toThrow(/did not return a preview/)
   })
 })

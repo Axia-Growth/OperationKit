@@ -44,6 +44,7 @@ const {
   fullAccessAnywhere,
   isProtectedCard,
   protectedPrInText,
+  protectedPrTextMessage,
   FullAccessError,
 } = await import('./bot-full-access.js')
 const { classifyOutbound, exclusionGate } = await import('./full-access-exclusions.js')
@@ -384,6 +385,11 @@ const ABILITIES: { name: string; run: (c: ReturnType<typeof ctx>) => Promise<Loo
     expect(row).toEqual({ workspace: GROWTH, project: 'growth-site', agent_context: 'dev', owner_bot: 'Operation Kit Dev', origin: 'agent_chat' })
     expect(hostCalls).toEqual([{ kind: 'start', id: r.result.id }])
   } },
+  { name: 'start a repo session with a checkable done and stop conditions (obj 901496)', run: c => runChatTool(c, 'repo_session_start', { project: 'growth-site', title: 'Fix the header', description: 'Header overlaps the logo', done_when: 'One open PR, CI green.', stop_conditions: ['it needs a database migration', 'the fix is already merged'] }), check: r => {
+    const row = getDb().prepare('SELECT description, completion_goal FROM objectives WHERE id = ?').get(r.result.id) as Loose
+    expect(row.completion_goal).toBe('One open PR, CI green.')
+    expect(row.description).toContain('Header overlaps the logo\n\n## Stop and report if\n- it needs a database migration\n- the fix is already merged\n\n— Repo session started from chat')
+  } },
   { name: 'file and own a card past the workspace agent pool', run: c => runChatTool(c, 'create_objective', { title: 'Audit the funnel', description: 'find the leak' }), check: r => {
     const row = getDb().prepare('SELECT workspace, agent_context, owner_bot FROM objectives WHERE id = ?').get(r.result.id) as Loose
     expect(row).toEqual({ workspace: GROWTH, agent_context: 'dev', owner_bot: 'Operation Kit Dev' })
@@ -698,6 +704,71 @@ describe('hard exclusions — secrets, keys and DNS are permanent; billing is on
   })
 })
 
+// ── release_status: what is merged but not live (obj 901389) ──
+
+describe('release_status — read-only "merged, waiting for deploy" for a Full access bot talking to an admin', () => {
+  const STATUS = {
+    ok: true, repo: 'acme/app', checked_at: NOW.toISOString(), head: 'a'.repeat(40), origin_main: 'b'.repeat(40),
+    checkout_at_origin_main: false, behind: 2, ahead: 0, dirty_served_files: [], migrations_waiting: 1,
+    last_merge_at: '2026-11-15T11:00:00Z', server_started_at: '2026-11-15T10:00:00Z', server_started_after_last_merge: false, live: false,
+    summary: '2 merged pull requests are waiting for a deploy (1 with a database migration).', note: 'Read-only.',
+    waiting: [
+      { sha: 'c'.repeat(40), short_sha: 'cccccccc', committed_at: '2026-11-15T11:00:00Z', pr_number: 102, pr_url: null, title: 'Add things table', card_id: 777, card_title: 'Things', merged_by: { kind: 'bot_grant', bot: 'Operation Kit Dev', grant_id: 4 }, merged_by_label: 'Operation Kit Dev (bot) under grant #4', migration: true, migration_paths: ['app/server/src/db/schema/things.ts'] },
+      { sha: 'd'.repeat(40), short_sha: 'dddddddd', committed_at: '2026-11-15T10:30:00Z', pr_number: 101, pr_url: null, title: 'Show the thing', card_id: null, card_title: null, merged_by: { kind: 'person', login: 'operator' }, merged_by_label: 'operator', migration: false, migration_paths: [] },
+    ],
+  } as Loose
+  let reads = 0
+  const withReader = (c: ReturnType<typeof ctx>) => ({ ...c, deployStatusReader: () => { reads++; return STATUS } })
+  beforeEach(() => { reads = 0 })
+
+  it('returns the waiting list and both "merged is not deployed" checks, and writes nothing', async () => {
+    fullAccessOn()
+    const before = audit().length
+    const r = await runChatTool(withReader(ctx(ADMIN, bot())), 'release_status', {})
+    expect(reads).toBe(1)
+    expect(r.result).toMatchObject({
+      ok: true, live: false, checkout_at_origin_main: false, server_started_after_last_merge: false, migrations_waiting: 1,
+      waiting_for_deploy: [
+        { pr: 102, title: 'Add things table', card: 777, merged_by: 'Operation Kit Dev (bot) under grant #4', migration: true, migration_paths: ['app/server/src/db/schema/things.ts'] },
+        { pr: 101, title: 'Show the thing', card: null, merged_by: 'operator', migration: false },
+      ],
+    })
+    expect(r.summary).toMatch(/2 merged pull requests are waiting/)
+    expect(audit().length).toBe(before) // a read, not a change: no ability_used row
+    expect(hostCalls).toHaveLength(0) // nothing started, messaged, deployed or restarted
+  })
+
+  it('is refused for a member, even when the bot has Full access', async () => {
+    fullAccessOn()
+    await refused(() => runChatTool(withReader(ctx(ALICE, bot())), 'release_status', {}), /only when it is working for an admin/)
+    expect(reads).toBe(0)
+    expect(audit().some(r => r.event === 'ability_refused' && r.ability === 'release_status')).toBe(true)
+  })
+
+  it('is refused for a bot without Full access (workspace granted, switch off), and once it expires', async () => {
+    grantBotWorkspace('dev', GROWTH, 'jordan')
+    await refused(() => runChatTool(withReader(ctx(ADMIN, bot())), 'release_status', {}), /no Full access/)
+    fullAccessOn('dev', GROWTH, { expires_at: IN_A_WEEK })
+    await refused(() => runChatTool(withReader(ctx(ADMIN, bot(), GROWTH, AFTER_EXPIRY)), 'release_status', {}), /it expired/)
+    expect(reads).toBe(0)
+  })
+
+  it('is refused in a workspace where Full access is not on', async () => {
+    fullAccessOn()
+    await refused(() => runChatTool(withReader(ctx(ADMIN, bot())), 'release_status', { workspace: OTHER }), /no Full access in "other-co"/)
+    expect(reads).toBe(0)
+  })
+
+  it('is offered only with Full access, and only to an admin', () => {
+    grantBotWorkspace('dev', GROWTH, 'jordan')
+    const names = (c: ReturnType<typeof ctx>) => toolSpecsForContext(c).map(s => s.function.name)
+    expect(names(ctx(ADMIN, bot()))).not.toContain('release_status')
+    fullAccessOn()
+    expect(names(ctx(ADMIN, bot()))).toContain('release_status')
+    expect(names(ctx(ALICE, bot()))).not.toContain('release_status')
+  })
+})
+
 // ── merge and deploy ──
 
 describe('merge and deploy approvals', () => {
@@ -774,18 +845,52 @@ describe('a card that carries a protected pull request (PR 645)', () => {
     expect((r.result as Loose).worker_agent).toBe('dev')
   })
 
-  it('repo_session_start will not file a session pointed at it', async () => {
-    fullAccessOn()
-    const count = () => (getDb().prepare('SELECT COUNT(*) AS n FROM objectives').get() as Loose).n
+  // obj 901461: ONE text check, ONE message, on both filing tools.
+  const TEXT_REFUSED = /^Refused: card text may not name pull request 645, because it is protected, and this applies even to a mention like "do not touch PR 645"\. To file this card, take the number out of the title and description \(write "the protected pull request" if you must refer to it\) and send it again\. This refusal was logged\.$/
+  const NAMING = ['Rebase PR 645 and push', 'see https://github.com/acme/infra/pull/645', 'finish #645', 'fix pull request #645']
+  // A negated mention is refused too (the safe default; see protectedPrTextRefusal).
+  const NEGATED = ['Do not touch PR 645.', 'Leave pull request #645 alone, it is protected']
+  const FILERS: { ability: string; run: (c: ReturnType<typeof ctx>, title: string, description: string) => Promise<Loose> }[] = [
+    { ability: 'repo_session_start', run: (c, title, description) => runChatTool(c, 'repo_session_start', { project: 'growth-site', title, description }) },
+    { ability: 'create_objective', run: (c, title, description) => runChatTool(c, 'create_objective', { title, description }) },
+  ]
+  const count = () => (getDb().prepare('SELECT COUNT(*) AS n FROM objectives').get() as Loose).n
+
+  for (const f of FILERS) {
+    it(`${f.ability}: card text naming it is refused with the plain message, negated or not, and nothing is filed`, async () => {
+      fullAccessOn()
+      const before = count()
+      for (const description of [...NAMING, ...NEGATED]) {
+        await refused(() => f.run(ctx(ADMIN, bot()), 'Help out', description), TEXT_REFUSED)
+      }
+      await refused(() => f.run(ctx(ADMIN, bot()), 'Push to PR #645', 'd'), TEXT_REFUSED)
+      expect(count()).toBe(before)
+      expect(hostCalls).toEqual([])
+      const rows = audit().filter(r => r.event === 'protected_refused' && r.ability === f.ability)
+      expect(rows).toHaveLength(NAMING.length + NEGATED.length + 1)
+      expect(rows[0]).toMatchObject({ workspace: GROWTH, actor: 'bot:dev', detail: 'card text names protected PR 645' })
+    })
+
+    it(`${f.ability}: the same card filed without the number goes through`, async () => {
+      fullAccessOn()
+      const before = count()
+      const r = await f.run(ctx(ADMIN, bot()), 'Help out', 'Fix the footer. Do not touch the protected pull request.')
+      expect(Number((r.result as Loose).id)).toBeGreaterThan(0)
+      expect(count()).toBe(before + 1)
+      expect(audit().filter(r => r.event === 'protected_refused')).toHaveLength(0)
+    })
+  }
+
+  it('create_objective applies the same check to a bot WITHOUT Full access', async () => {
     const before = count()
-    for (const description of ['Rebase PR 645 and push', 'see https://github.com/acme/infra/pull/645', 'finish #645', 'fix pull request #645']) {
-      await refused(() => runChatTool(ctx(ADMIN, bot()), 'repo_session_start', { project: 'growth-site', title: 'Help out', description }), /pull request 645 is protected.*This refusal was logged/)
-    }
-    await refused(() => runChatTool(ctx(ADMIN, bot()), 'repo_session_start', { project: 'growth-site', title: 'Push to PR #645', description: 'd' }), /pull request 645 is protected/)
+    await refused(() => runChatTool(ctx(ADMIN, bot('dev', { tools: ['create_objective'] })), 'create_objective', { title: 'Help out', description: 'Do not touch PR 645' }), TEXT_REFUSED)
     expect(count()).toBe(before)
-    expect(hostCalls).toEqual([])
-    expect(audit().filter(r => r.event === 'protected_refused' && r.ability === 'repo_session_start')).toHaveLength(5)
+    expect(audit().filter(r => r.event === 'protected_refused' && r.ability === 'create_objective')).toHaveLength(1)
+  })
+
+  it('the text pattern does not catch other numbers that merely contain 645', () => {
     expect(protectedPrInText('bump timeout to 6450ms, see PR 6451 and #1645')).toBeNull()
+    expect(protectedPrTextMessage(645)).toMatch(TEXT_REFUSED)
   })
 })
 

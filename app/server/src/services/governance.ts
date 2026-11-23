@@ -19,7 +19,7 @@
 // from the DB/git side-effects so it is exhaustively unit-testable without a live
 // board, tmux, or git.
 
-import { execSync } from 'child_process'
+import { execFileSync } from 'child_process'
 import fs from 'fs'
 import type { Database } from 'better-sqlite3'
 
@@ -105,9 +105,9 @@ export function gateRejectionDecision(input: GateRejectionInput): GateRejectionD
   return { skipAuditor: false, reason: null }
 }
 
-type GitExec = (cmd: string) => string
+type GitExec = (args: string[]) => string
 
-const defaultGitExec: GitExec = (cmd) => execSync(cmd, { timeout: 5000, stdio: ['ignore', 'pipe', 'ignore'] }).toString()
+const defaultGitExec: GitExec = (args) => execFileSync('git', args, { timeout: 5000, stdio: ['ignore', 'pipe', 'ignore'] }).toString()
 
 /**
  * Best-effort head tree SHA for an objective's committed work. Tries the
@@ -129,7 +129,7 @@ export function getObjectiveTreeSha(
   // 1) The objective's own worktree (its HEAD is the branch tip the worker built).
   try {
     if (worktreePath && fs.existsSync(worktreePath)) {
-      const out = gitExec(`git -C ${JSON.stringify(worktreePath)} rev-parse --verify --quiet "HEAD^{tree}"`)
+      const out = gitExec(['-C', worktreePath, 'rev-parse', '--verify', '--quiet', 'HEAD^{tree}'])
       const sha = out.trim()
       if (sha) return sha
     }
@@ -139,7 +139,7 @@ export function getObjectiveTreeSha(
   // 2) The project checkout, resolving the branch by name.
   if (projectDir && branchName) {
     try {
-      const out = gitExec(`git -C ${JSON.stringify(projectDir)} rev-parse --verify --quiet ${JSON.stringify(`${branchName}^{tree}`)}`)
+      const out = gitExec(['-C', projectDir, 'rev-parse', '--verify', '--quiet', `${branchName}^{tree}`])
       const sha = out.trim()
       if (sha) return sha
     } catch {

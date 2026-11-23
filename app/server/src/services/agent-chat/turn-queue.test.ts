@@ -18,8 +18,9 @@ import jwt from 'jsonwebtoken'
  *   2. Every queued message is delivered after the running turn, OLDEST FIRST,
  *      and the model is handed them in exactly that order — asserted against the
  *      request body that left the process, not an internal helper.
- *   3. Stop cancels the running turn and KEEPS the queue (it is delivered next);
- *      only an explicit drop_queued discards it.
+ *   3. Stop cancels the running turn and KEEPS the queue; only an explicit
+ *      drop_queued discards it. Since obj 901488 the kept messages are HELD:
+ *      they are delivered when the person confirms, not straight after the stop.
  *
  * The provider stub is a GATE: a turn sits inside it until the test releases
  * it, so "mid-turn" is a real state, not a race the test hopes to win.
@@ -33,7 +34,7 @@ process.env.AGENT_FILES_DIR = TMP_AGENTS
 process.env.KNOWLEDGE_BASE_DIR = TMP_KB
 
 const { initDb, getDb } = await import('../../db/index.js')
-const { findAgent, listMessages, laneTurnState, runTurn, stopTurn, submitMessage, whenLaneIdle, isAgentChatRunning } = await import('./engine.js')
+const { findAgent, listMessages, laneTurnState, runTurn, stopTurn, submitMessage, whenLaneIdle, isAgentChatRunning, releaseHeldMessages, drainLaneQueue } = await import('./engine.js')
 const { createThread, MAIN_LANE } = await import('./threads.js')
 const { default: router } = await import('../../routes/agent-chat.js')
 
@@ -160,7 +161,7 @@ describe('a message sent while the bot is working (obj 900949)', () => {
     expect(r.queued).toBe(true)
     expect(r.messages).toHaveLength(1)
     expect(r.messages[0]).toMatchObject({ role: 'user', content: 'second', meta: { queued: true } })
-    expect(laneTurnState(OWNER, SLUG)).toEqual({ running: true, queued: 1 })
+    expect(laneTurnState(OWNER, SLUG)).toEqual({ running: true, queued: 1, held: 0 })
     // Stored right away: a reload while the bot works still shows it.
     expect(lane().map(m => m.content)).toContain('second')
     // ...but the running turn's model never saw it.
@@ -171,7 +172,7 @@ describe('a message sent while the bot is working (obj 900949)', () => {
     await p.arrived(2)
     p.release()
     await whenLaneIdle(OWNER, SLUG)
-    expect(laneTurnState(OWNER, SLUG)).toEqual({ running: false, queued: 0 })
+    expect(laneTurnState(OWNER, SLUG)).toEqual({ running: false, queued: 0, held: 0 })
   })
 
   it('delivers several mid-turn messages after the running turn, in the order they were sent', async () => {
@@ -239,7 +240,7 @@ describe('a message sent while the bot is working (obj 900949)', () => {
 })
 
 describe('Stop (obj 900949)', () => {
-  it('cancels the running turn and keeps the queue, which is then delivered', async () => {
+  it('cancels the running turn and keeps the queue, which waits for the person and is delivered once they confirm (obj 901488)', async () => {
     const p = gatedProvider()
     const first = turn('long job', p)
     await p.arrived(1)
@@ -255,7 +256,19 @@ describe('Stop (obj 900949)', () => {
     expect(done.messages.map(m => m.role)).toEqual(['user', 'error'])
     expect(done.messages[1].meta).toMatchObject({ kind: 'stopped' })
 
-    // The queue was kept: it goes to the model next, in order.
+    // The queue was kept, but HELD: nothing goes to the model until the person confirms.
+    expect(s).toMatchObject({ queued: 2, held: 2 })
+    await whenLaneIdle(OWNER, SLUG)
+    expect(p.bodies).toHaveLength(1)
+    expect(laneTurnState(OWNER, SLUG)).toEqual({ running: false, queued: 2, held: 2 })
+    // Reading the lane (which picks up a queue left by a restart) does not deliver them either.
+    drainLaneQueue({ userId: OWNER, username: 'user2', agent: agent(), lane: MAIN_LANE, env: ENV, deps: { fetch: p.fetch } })
+    await whenLaneIdle(OWNER, SLUG)
+    expect(p.bodies).toHaveLength(1)
+
+    // Confirmed: they go to the model, in the order they were sent.
+    expect(releaseHeldMessages(OWNER, SLUG, MAIN_LANE)).toBe(2)
+    drainLaneQueue({ userId: OWNER, username: 'user2', agent: agent(), lane: MAIN_LANE, env: ENV, deps: { fetch: p.fetch } })
     await p.arrived(2)
     expect(userLines(p.bodies[1])).toEqual(['long job', 'follow-up 1', 'follow-up 2'])
     p.release()
@@ -279,12 +292,12 @@ describe('Stop (obj 900949)', () => {
   })
 
   it('is a no-op on an idle lane', () => {
-    expect(stopTurn(OWNER, SLUG, MAIN_LANE)).toEqual({ stopped: false, dropped: 0, running: false, queued: 0 })
+    expect(stopTurn(OWNER, SLUG, MAIN_LANE)).toEqual({ stopped: false, dropped: 0, running: false, queued: 0, held: 0 })
   })
 })
 
 describe('over HTTP (obj 900949)', () => {
-  it('POST mid-turn → 202 queued; GET reports the turn state; POST /stop cancels and keeps the queue', async () => {
+  it('POST mid-turn → 202 queued; GET reports the turn state; POST /stop cancels and holds the queue (obj 901488)', async () => {
     const p = gatedProvider()
     const first = turn('first', p)
     await p.arrived(1)
@@ -293,22 +306,32 @@ describe('over HTTP (obj 900949)', () => {
     expect(q.status).toBe(202)
     expect(q.json.queued).toBe(true)
     expect(q.json.messages[0]).toMatchObject({ content: 'queued one', meta: { queued: true } })
-    expect(q.json.turn).toEqual({ running: true, queued: 1 })
+    expect(q.json.turn).toEqual({ running: true, queued: 1, held: 0 })
 
     const g = await call('GET', `/agents/${SLUG}/messages`)
     expect(g.status).toBe(200)
-    expect(g.json.turn).toEqual({ running: true, queued: 1 })
+    expect(g.json.turn).toEqual({ running: true, queued: 1, held: 0 })
 
     const s = await call('POST', `/agents/${SLUG}/stop`, {})
     expect(s.status).toBe(200)
     expect(s.json).toMatchObject({ stopped: true, dropped: 0 })
-    expect(s.json.turn.queued).toBe(1)
+    expect(s.json.turn).toMatchObject({ queued: 1, held: 1 })
     await first
+    await whenLaneIdle(OWNER, SLUG)
+    // Held: reading the lane shows it waiting and does not start a turn for it.
+    const held = await call('GET', `/agents/${SLUG}/messages`)
+    expect(held.json.turn).toEqual({ running: false, queued: 1, held: 1 })
+    expect(held.json.messages.find((m: { content: string }) => m.content === 'queued one').meta).toMatchObject({ queued: true, held: true })
+    expect(p.bodies).toHaveLength(1)
+    // The deps of the drain a route starts are the real ones, so confirm through the engine here
+    // (the HTTP route for it is covered in chat-step-limit-queue.test.ts).
+    releaseHeldMessages(OWNER, SLUG, MAIN_LANE)
+    drainLaneQueue({ userId: OWNER, username: 'user2', agent: agent(), lane: MAIN_LANE, env: ENV, deps: { fetch: p.fetch } })
     await p.arrived(2)
     p.release()
     await whenLaneIdle(OWNER, SLUG)
     const after = await call('GET', `/agents/${SLUG}/messages`)
-    expect(after.json.turn).toEqual({ running: false, queued: 0 })
+    expect(after.json.turn).toEqual({ running: false, queued: 0, held: 0 })
     expect(after.json.messages.filter((m: { role: string }) => m.role === 'user').map((m: { content: string }) => m.content)).toEqual(['first', 'queued one'])
   })
 
@@ -369,7 +392,7 @@ describe('client_msg_id is an idempotency key (obj 900977)', () => {
     expect(a.duplicate).toBeUndefined()
     expect(b).toMatchObject({ queued: true, duplicate: true })
     expect(b.messages[0].id).toBe(a.messages[0].id)
-    expect(laneTurnState(OWNER, SLUG)).toEqual({ running: true, queued: 1 })
+    expect(laneTurnState(OWNER, SLUG)).toEqual({ running: true, queued: 1, held: 0 })
 
     p.release()
     await first
@@ -408,8 +431,10 @@ describe('client_msg_id is an idempotency key (obj 900977)', () => {
     const p = gatedProvider()
     const first = turn('first', p)
     await p.arrived(1)
+    // obj 901488: the same TEXT twice in a row is one message (see
+    // chat-step-limit-queue.test.ts), so "different messages" differ in text here.
     await submit('same text', MAIN_LANE, 'scope-msg-001')
-    await submit('same text', MAIN_LANE, 'scope-msg-002')
+    await submit('other text', MAIN_LANE, 'scope-msg-002')
     expect(laneTurnState(OWNER, SLUG).queued).toBe(2)
     // The same id in another lane is that lane's own message.
     const other = submit('same text', side, 'scope-msg-001', p)
@@ -422,7 +447,7 @@ describe('client_msg_id is an idempotency key (obj 900977)', () => {
     p.release()
     await whenLaneIdle(OWNER, SLUG)
     await whenLaneIdle(OWNER, SLUG, side)
-    expect(users().map(m => m.content)).toEqual(['first', 'same text', 'same text'])
+    expect(users().map(m => m.content)).toEqual(['first', 'same text', 'other text'])
   })
 
   it('over HTTP: a repeated POST answers with the stored row (202 queued, then 200 delivered); a bad id is a 400', async () => {

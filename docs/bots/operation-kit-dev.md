@@ -24,6 +24,8 @@ prompts.
 | Write its own notes: `business/profile.md`, `business/automation-ideas.md` | Change settings, connect accounts or send email — you press those buttons |
 | Read the board cards you can see, and what is waiting on you | See secret values (it only ever needs a key's **name**) |
 | File a board card for bigger work (a new integration, a new skill) | Start work by itself without the card showing up on your board |
+| Merge the pull request of its **own** card when you ask, if you gave it an "Approve on my behalf" merge grant (review passed, checks green) | Merge anyone else's card, a reserved PR, or anything the merge tool refuses; deploy or run a production migration |
+| With **Merge without asking me each time** ticked on that grant: its own passed cards are merged as soon as they pass, and you get one line in its chat | Deploy, run a production migration, touch secrets, keys, DNS or Cloudflare Access, billing, or a protected PR — ever |
 
 Its tools are `search`, `list_folders`, `read_file`, `write_doc`, `create_objective`,
 `get_objective`, `list_objectives` and `board_briefing`. It has no email or calendar
@@ -34,6 +36,75 @@ Cards it files are ordinary task cards (the same path as any chat bot not in the
 `owner_bot` registry), so a coding session can actually build what it describes.
 It is deliberately **not** in the bot registry (`services/bots/bot-registry.ts`):
 registered bots file *read-only* jobs, which would stop it from handing off build work.
+
+## Merging its own cards (obj 901378)
+
+The bot's instructions tell it to call `merge_approved_pr` itself when the person asks
+for a merge, instead of handing the merge back. The tool is not in the file's `tools:`
+list: the server offers it only while the person chatting holds an active merge grant
+for the bot (`services/agent-chat/grant-merge-tool.ts`), and re-checks every call (own
+card, grant, AI review `pass`, live CI green, PR open and clean). The instructions also
+make it check the AI review verdict before calling a PR "ready to merge", report a
+refusal word for word, and say after a merge that deploying is still the owner's step.
+
+## Level A: Dev merges, the owner deploys (obj 901388)
+
+On card #901383 the owner chose autonomy level A (decision #29): Operation Kit Dev
+merges its own passed pull requests; the owner deploys. Turning it on is one grant:
+
+1. **Bots → Operation Kit Dev → Settings → Approve on my behalf.**
+2. Pick the workspace, tick **Merge**, then tick **Merge without asking me each time**.
+3. Pick how long it lasts and press **Grant**. (A grant cannot be edited: to switch an
+   existing merge grant to "without asking", issue a new one and revoke the old one.)
+
+From then on, when one of Dev's own cards reaches review with AI review `pass` and a PR,
+the **server** merges it (`services/standing-merge.ts`) through the same path and checks as
+a chat merge: own card only, verdict pass, strict live CI green, PR open and clean,
+squash pinned to the checked commit, never a Strategy, project, money-path or reserved PR.
+The card moves to done and Dev posts one line in its chat to the person who gave the grant:
+PR number, card number, "merged, not live until you deploy". CI still running is a wait
+(up to 60 minutes); any other refusal leaves the card in review with one line saying why,
+and it is not retried until a new AI review passes. If the grant has expired or was
+revoked, the card line and one chat line say when it ended and where to renew it.
+
+Deploys, production migrations, secrets and keys, DNS and Cloudflare Access, billing and
+protected PRs are never Dev's, with or without this switch. A standing merge never deploys. The separate operator tools (below) let an
+admin who is chatting with Dev ask for a deploy or a Cloudflare change explicitly; the merge
+grant plays no part in that.
+
+An install that replaced the bot with its own `agents/operation-kit-dev/agent.md` does
+not get this text from an upgrade: copy the **Merging your own cards** section (with its
+**Level A** part) and the last sentence of ground rule 1 into that file.
+
+## Card wakes
+
+When a card this bot owns finishes or needs it, the server wakes it for a turn so it can close the
+card out, and posts its short answer in your chat with it. On by default; the switch is **Card wakes**
+on the bot's settings panel. The shipped instructions carry a short "When a card wakes you" section.
+An install that keeps its own copy of the bot file (or an instructions override) does not need to
+change it for wakes to work, because the platform adds the wake rules to every wake turn; paste the
+section in by hand only if you want it in the bot's own words too. Full page:
+[Bot card wakes](../wiki/Bot-Card-Wakes.md).
+
+## Operator tools (obj 901424)
+
+On the owner's install, an admin chatting with Operation Kit Dev also gets its **operator
+tools** — merge its own PRs once CI is green, the standard `update.sh` deploy with automatic
+rollback, closing cards whose PR was merged by hand, and Cloudflare Access / DNS. They sit
+behind one switch on the bot's settings panel (on by default for this bot only) and every
+call is audit-logged. See [Operator tools](../wiki/Operation-Kit-Dev-Operator-Tools.md).
+
+**Verify before done (obj 901495).** Dev never reports "done" from a worker's note or a
+card status. After a merge it reads the PR from GitHub (merged?, merge commit, checks);
+after a deploy it compares the live commit with the head of the repo the server updates
+from and looks at the sync pull request. It reports the state in fixed words: "merged, not
+deployed", "deployed, commit X live", "deploy ran, nothing changed". One read-only call
+does it: `dev_deploy_status` (optionally with a card number).
+
+An admin can also give it **GitHub repo rights** for named repos (off by default): merge a
+pull request by repo and number when no card links it, the public sync pull request included,
+and update a branch so its checks really run. See
+[GitHub repo rights](../wiki/Dev-Bot-GitHub-Repo-Rights.md).
 
 ## Creating a bot, agent or skill
 

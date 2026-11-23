@@ -62,3 +62,34 @@ describe('BriefPanel review hygiene', () => {
     expect(container.textContent).not.toMatch(/blocked/i)
   })
 })
+
+/* obj 901496 — "done" and the stop conditions are their own sections on the card. */
+describe('BriefPanel card brief', () => {
+  it('shows Done when and Stop and report if as sections, and takes the stop list out of the description', async () => {
+    const { container } = await render(
+      <BriefPanel
+        objective={card({
+          status: 'working',
+          completion_goal: 'One open PR, CI green.',
+          description: 'Add the export button.\n\n## Stop and report if\n- it needs a database migration\n- the button already exists\n\n— Requested in chat with "Dev" by sam.',
+        })}
+        reviews={[]}
+        prs={[]}
+      />,
+    )
+    expect(q(container, 'brief-done-when')?.textContent).toContain('One open PR, CI green.')
+    const stops = [...(q(container, 'brief-stop-conditions')?.querySelectorAll('li') ?? [])].map(li => li.textContent)
+    expect(stops).toEqual(['it needs a database migration', 'the button already exists'])
+    const text = container.textContent ?? ''
+    expect(text).toContain('Add the export button.')
+    expect(text).toContain('Requested in chat')
+    expect(text.match(/it needs a database migration/g)).toHaveLength(1)
+  })
+
+  it('shows neither section on a card filed without them', async () => {
+    const { container } = await render(<BriefPanel objective={card({ description: 'Just do it.', completion_goal: null })} reviews={[]} prs={[]} />)
+    expect(q(container, 'brief-done-when')).toBeNull()
+    expect(q(container, 'brief-stop-conditions')).toBeNull()
+    expect(container.textContent).toContain('Just do it.')
+  })
+})

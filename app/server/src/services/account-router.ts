@@ -60,6 +60,10 @@ export interface AccountSlot {
   costToday: number
   lastRateLimit: string | null   // ISO timestamp
   rateLimitResetsAt: string | null // ISO — the seat's cooldown_until (name kept for state-file compatibility)
+  // Why the seat is cooling down (obj 901395): 'limit' = a usage/rate limit,
+  // 'empty_turn' = a turn that came back with no answer and no error text.
+  // Absent on older records and whenever the seat is not cooling down.
+  cooldownReason?: 'limit' | 'empty_turn' | null
   // Set when the account's OAuth credential is dead (401: expired/revoked token,
   // invalid credentials). DISTINCT from a rate limit: a 401 is a CREDENTIAL
   // problem that never self-heals on a timer — the slot needs a re-login
@@ -510,6 +514,7 @@ function isAccountAvailable(account: AccountSlot): boolean {
   if (account.rateLimitResetsAt && Date.parse(account.rateLimitResetsAt) <= now) {
     account.lastRateLimit = null
     account.rateLimitResetsAt = null
+    account.cooldownReason = null
   }
   // Dead credential (401/403), credits exhausted, disabled or cooling down →
   // out. Credential parks never auto-expire: only a passing test/reconnect
@@ -672,6 +677,47 @@ export function recordSessionEnd(accountId: string, sessionId: string, tokensUse
   console.log(`[account-router] Session ${sessionId} ended on account ${accountId}. Active: ${account.activeSessions.length}, Tokens today: ${account.tokensToday}`)
 }
 
+/**
+ * Where the Claude pool stands, in counts only (obj 901395) — for the "all
+ * accounts are limited" message. Disabled seats are not counted: they are not
+ * in rotation. No label, id or credential leaves this function.
+ */
+export interface ClaudePoolSummary {
+  /** Enabled Claude seats the caller may use. */
+  total: number
+  available: number
+  /** Cooling down after a usage limit (or an empty turn), or out of credits. */
+  limited: number
+  /** Needs a reconnect / an admin, or has no usable sign-in. */
+  signedOut: number
+  /** Earliest end of a running cool-down (ISO), or null when none has a timer. */
+  earliestReset: string | null
+}
+export function claudePoolSummary(filter?: (account: AccountSlot) => boolean, now = Date.now()): ClaudePoolSummary {
+  loadState()
+  const out: ClaudePoolSummary = { total: 0, available: 0, limited: 0, signedOut: 0, earliestReset: null }
+  let earliest: number | null = null
+  for (const a of state.accounts) {
+    if (!isClaudeRotationSlot(a) || (filter && !filter(a))) continue
+    const health = seatHealth(a, now)
+    if (health === 'disabled') continue
+    // The legacy server-token seat is only a fallback while no pasted seat
+    // exists; dormant, it is not an account anyone would count.
+    if (a.id === SANDBOX_ACCOUNT_ID && !seatCredentialUsable(a)) continue
+    out.total++
+    if (health === 'cooling_down' || health === 'credits_exhausted') {
+      out.limited++
+      if (health === 'cooling_down') {
+        const t = Date.parse(a.rateLimitResetsAt!)
+        if (earliest === null || t < earliest) earliest = t
+      }
+    } else if (health !== 'healthy' || !seatCredentialUsable(a)) out.signedOut++
+    else out.available++
+  }
+  out.earliestReset = earliest === null ? null : new Date(earliest).toISOString()
+  return out
+}
+
 export interface RateLimitEvent {
   timestamp: string
   accountId: string
@@ -704,6 +750,100 @@ export function getRateLimitHistory(limit = 50): RateLimitEvent[] {
   }
 }
 
+// ── cool-down lengths (obj 901395) ──
+// The router holds no DB handle; seat-rotation-settings.ts registers a reader
+// for the two operator settings. Unregistered (unit tests) = the old constants.
+export interface SeatCooldownConfig {
+  /** First backoff step for a limit with no stated reset. */
+  limitBaseMs: number
+  /** Rest after a turn that came back empty. 0 = do not rest the seat. */
+  emptyTurnMs: number
+}
+const DEFAULT_COOLDOWN_CONFIG: SeatCooldownConfig = { limitBaseMs: 15 * 60_000, emptyTurnMs: 5 * 60_000 }
+let cooldownConfig: () => SeatCooldownConfig = () => DEFAULT_COOLDOWN_CONFIG
+export function registerSeatCooldownConfig(fn: () => SeatCooldownConfig): void {
+  cooldownConfig = fn
+}
+function readCooldownConfig(): SeatCooldownConfig {
+  try {
+    const c = cooldownConfig()
+    return {
+      limitBaseMs: c.limitBaseMs > 0 ? c.limitBaseMs : DEFAULT_COOLDOWN_CONFIG.limitBaseMs,
+      emptyTurnMs: c.emptyTurnMs >= 0 ? c.emptyTurnMs : DEFAULT_COOLDOWN_CONFIG.emptyTurnMs,
+    }
+  } catch {
+    return DEFAULT_COOLDOWN_CONFIG
+  }
+}
+
+/** What an empty-turn rest changed, so it can be undone (liftEmptyTurnRest). */
+export interface EmptyTurnRest {
+  accountId: string
+  until: string
+  prevResetsAt: string | null
+  prevLastRateLimit: string | null
+}
+
+/**
+ * A turn on this seat came back EMPTY: the CLI exited without an answer and
+ * without any error text (obj 901395; the "claude exited 0:" chat failure of
+ * 2026-11-17). That is not proof of a usage limit, so the seat only rests for
+ * the short `seat_empty_turn_cooldown_minutes` window and its failure streak
+ * is left alone; a real limit message still goes through recordRateLimit. A
+ * cool-down already running is never shortened or replaced. Returns what was
+ * changed (null = nothing: unknown seat, resting switched off, or the seat was
+ * already cooling down).
+ */
+export function recordEmptyTurn(accountId: string, triggerMessage?: string): EmptyTurnRest | null {
+  loadState()
+  const account = state.accounts.find(a => a.id === accountId)
+  if (!account) return null
+  const { emptyTurnMs } = readCooldownConfig()
+  if (emptyTurnMs <= 0) return null
+  const now = Date.now()
+  if (account.rateLimitResetsAt && Date.parse(account.rateLimitResetsAt) > now) return null
+  const rest: EmptyTurnRest = {
+    accountId,
+    until: new Date(now + emptyTurnMs).toISOString(),
+    prevResetsAt: account.rateLimitResetsAt,
+    prevLastRateLimit: account.lastRateLimit,
+  }
+  account.lastRateLimit = new Date(now).toISOString()
+  account.rateLimitResetsAt = rest.until
+  account.cooldownReason = 'empty_turn'
+  saveState()
+  appendRateLimitHistory({
+    timestamp: new Date(now).toISOString(),
+    accountId,
+    label: account.label,
+    tokensAtLimit: account.tokensToday,
+    sessionsAtLimit: account.sessionsToday,
+    costAtLimit: account.costToday,
+    activeSessions: account.activeSessions.length,
+    resetTime: rest.until,
+    triggerMessage: (triggerMessage || 'empty turn: the CLI exited with no answer and no error text').slice(0, 500),
+  })
+  console.log(`[account-router] Account ${accountId} (${account.label}) returned an empty turn. Resting until ${rest.until}`)
+  return rest
+}
+
+/**
+ * Undo an empty-turn rest, but only if it is still exactly the one that was
+ * set. Used when EVERY seat tried for one request came back empty: the cause
+ * is then the request (or the CLI), not the seats, and a broken chat turn must
+ * not bench the pool that card sessions run on.
+ */
+export function liftEmptyTurnRest(rest: EmptyTurnRest): boolean {
+  const account = state.accounts.find(a => a.id === rest.accountId)
+  if (!account || account.rateLimitResetsAt !== rest.until || account.cooldownReason !== 'empty_turn') return false
+  account.rateLimitResetsAt = rest.prevResetsAt
+  account.lastRateLimit = rest.prevLastRateLimit
+  account.cooldownReason = null
+  saveState()
+  console.log(`[account-router] Account ${rest.accountId}: empty-turn rest lifted (every seat tried came back empty, so it is not this seat)`)
+  return true
+}
+
 export function recordRateLimit(accountId: string, resetTime?: Date, triggerMessage?: string): void {
   const account = state.accounts.find(a => a.id === accountId)
   if (!account) return
@@ -712,7 +852,8 @@ export function recordRateLimit(accountId: string, resetTime?: Date, triggerMess
   // No stated reset → exponential backoff from the seat's failure streak
   // (seat-pool.ts), capped at one 5h window. A known sooner reset is never
   // pushed later by a weaker signal.
-  applySeatFailure(account, 'rate_limit', { now: now.getTime(), resetAt: resetTime || null })
+  applySeatFailure(account, 'rate_limit', { now: now.getTime(), resetAt: resetTime || null, baseMs: readCooldownConfig().limitBaseMs })
+  account.cooldownReason = 'limit'
   const resetAt = new Date(account.rateLimitResetsAt!)
   saveState()
 
@@ -750,6 +891,7 @@ export function clearRateLimit(accountId: string): void {
   // A good turn clears the cooldown, a credits park and the failure streak
   // (not a credential park — that needs a passing test or a reconnect).
   if (!applyGoodTurn(account)) return
+  account.cooldownReason = null
   console.log(`[account-router] Good turn on ${accountId} (${getAccountLabel(accountId)}) — cleared cooldown${was ? ` (was resetting ${was})` : ''}`)
   saveState()
 }
@@ -802,6 +944,7 @@ export function forceClearRateLimit(accountId: string): AccountSlot | null {
   const had = account.rateLimitResetsAt
   account.lastRateLimit = null
   account.rateLimitResetsAt = null
+  account.cooldownReason = null
   saveState()
   console.log(`[account-router] Admin cleared bench on ${accountId} (${account.label}) — was resetting ${had ?? '(none)'}`)
   return account

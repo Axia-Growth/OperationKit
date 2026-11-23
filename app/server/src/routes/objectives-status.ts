@@ -58,6 +58,7 @@ import { sessionCapReached, SESSION_CAP_ERROR } from '../lib/session-cap.js'
 import { markAutoStartRequested } from '../lib/queue-autostart.js'
 import { workingStartAction, marksPriorSessionFailed } from '../lib/working-start.js'
 import { findRunningTwinForStart, recordDedupe, duplicateStartConflictBody, duplicateGuardWindowHours } from '../lib/objective-dedupe.js'
+import { captureReviewHeadSha } from '../services/review-head.js'
 
 /**
  * Who is moving a card when the move does not come straight from the public
@@ -160,7 +161,7 @@ async function handleStatusPatch(req: StatusRequest, res: Response): Promise<voi
 
   // obj 900952: an agent key may close a PR card only on a passing AI review, or
   // with a stated reason that goes on the audit trail. The same pass rule the
-  // bot-approve route applies (services/bot-approval.ts); people are not gated.
+  // bot-approve route applies (services/bot-close-eligibility.ts); people are not gated.
   let closeOverrideReason: string | null = null
   if (viaAgentKey && status === 'done' && (existing.pr_url || existing.pr_number) && existing.ai_review_verdict !== 'pass') {
     closeOverrideReason = parseOverrideReason((req.body as { override_reason?: unknown }).override_reason)
@@ -268,9 +269,12 @@ async function handleStatusPatch(req: StatusRequest, res: Response): Promise<voi
            ai_review_verdict = NULL,
            ai_review_findings = NULL,
            ai_review_iteration = ?,
+           ai_review_head_sha = NULL,
            updated_at = datetime('now')
          WHERE id = ?`
       ).run(reviewerSessionId, nextIteration, req.params.id)
+      // obj 901455: record the PR commit this reviewer reads (best-effort, async).
+      void captureReviewHeadSha(db, existing, reviewerSessionId)
     } else if (status === 'done') {
       // ── Deterministic floor on the SELF-CLAIM path (obj 2335) ──────────────
       // A direct working→done PATCH is a self-claimed completion that would

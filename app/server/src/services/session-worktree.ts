@@ -63,7 +63,7 @@ export function resolveWorktreeBase(objective: Objective, projectDir: string): s
         if (parentBranch) {
           // Use the parent branch only if it actually exists (parent spawned first).
           try {
-            execSync(`git -C ${JSON.stringify(projectDir)} rev-parse --verify --quiet ${JSON.stringify(parentBranch)}`, { timeout: 5000, stdio: 'pipe' })
+            execFileSync('git', ['-C', projectDir, 'rev-parse', '--verify', '--quiet', parentBranch], { timeout: 5000, stdio: 'pipe' })
             return parentBranch
           } catch {
             // Parent branch not created yet — fall through to origin/main.
@@ -247,13 +247,13 @@ export function ensureWorktree(objective: Objective, branchName: string): string
     // it; otherwise create it off the resolved base.
     let branchExists = false
     try {
-      execSync(`git -C ${JSON.stringify(projectDir)} rev-parse --verify --quiet ${JSON.stringify(branchName)}`, { timeout: 5000, stdio: 'pipe' })
+      execFileSync('git', ['-C', projectDir, 'rev-parse', '--verify', '--quiet', branchName], { timeout: 5000, stdio: 'pipe' })
       branchExists = true
     } catch {}
     if (branchExists) {
-      execSync(`git -C ${JSON.stringify(projectDir)} worktree add ${JSON.stringify(worktreePath)} ${JSON.stringify(branchName)}`, { timeout: 20000, stdio: 'pipe' })
+      execFileSync('git', ['-C', projectDir, 'worktree', 'add', worktreePath, branchName], { timeout: 20000, stdio: 'pipe' })
     } else {
-      execSync(`git -C ${JSON.stringify(projectDir)} worktree add -b ${JSON.stringify(branchName)} ${JSON.stringify(worktreePath)} ${JSON.stringify(base)}`, { timeout: 20000, stdio: 'pipe' })
+      execFileSync('git', ['-C', projectDir, 'worktree', 'add', '-b', branchName, worktreePath, base], { timeout: 20000, stdio: 'pipe' })
     }
     // obj 900829: record the branch's upstream NOW, from the trusted control
     // plane. A jailed session sees the repo's `config` READ-ONLY (it is where a

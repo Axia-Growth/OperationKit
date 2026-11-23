@@ -4,6 +4,7 @@ import { api } from '../../lib/api'
 import { Button, SkeletonText, cn } from '../ui'
 import { AgentAvatar } from './ChatItems'
 import type { ChatAgentInfo } from './types'
+import { toolReachFor } from '../../../../shared/bot-tools'
 
 /* The "i" panel on a bot's conversation (obj 900672): what this bot is for, how
    to use it, example prompts to start from, and what it can actually reach.
@@ -22,29 +23,15 @@ import type { ChatAgentInfo } from './types'
      fetched when the panel opens (GET /agent-chat/agents/:slug), rendered as
      plain text in a <pre>, and there is deliberately no way to edit it here. */
 
-/** Plain-language names for what a bot can reach, keyed by its `tools:` entries. */
-const REACH: Array<{ tools: string[]; text: (a: ChatAgentInfo) => string }> = [
-  {
-    tools: ['search', 'list_folders', 'read_file'],
-    text: a => (a.knowledge_folders.length
-      ? `Reads your Context folders: ${a.knowledge_folders.join(', ')}`
-      : 'Reads your Context'),
-  },
-  { tools: ['write_doc', 'file_answer'], text: () => 'Saves notes into those folders — each save shows up in the conversation' },
-  { tools: ['list_objectives', 'get_objective', 'board_briefing'], text: () => 'Reads the board cards you can see' },
-  { tools: ['create_objective'], text: () => 'Files bigger jobs as board cards for the team’s coding tools' },
-  { tools: ['bot_messages'], text: () => 'Messages other bots in the same workspace and brings their replies back here' },
-  { tools: ['email'], text: () => 'Reads your inbox and writes email drafts — nothing is sent until you press Send' },
-  { tools: ['calendar'], text: () => 'Reads your calendar and drafts invites — nothing is added until you press Add' },
-  { tools: ['mcp'], text: () => 'Uses the MCP servers connected for this workspace in Settings → Integrations' },
-  { tools: ['web_search', 'web_fetch'], text: () => 'Searches the public web and reads public pages' },
-]
-
+/**
+ * Plain-language lines for what a bot can reach, from the shared tool list
+ * (app/shared/bot-tools.ts, obj 900966) so every tool has a line.
+ */
 export function reachLines(a: ChatAgentInfo): string[] {
   // effective_tools is what the bot can really call (after the bot page's
   // overrides and "All tools"); older servers send only the file's list.
   const tools = a.effective_tools ?? a.tools
-  return REACH.filter(r => r.tools.some(t => tools.includes(t))).map(r => r.text(a))
+  return toolReachFor(tools).map(r => r.reach(a.knowledge_folders.join(', ')))
 }
 
 /** Where the bot's instructions are changed — said plainly, since they cannot be changed here. */

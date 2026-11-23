@@ -215,6 +215,11 @@ export function initDevelopmentSchema(db: Database.Database): void {
   if (!clCols.has('dev_item_id')) {
     db.exec('ALTER TABLE changelog_entries ADD COLUMN dev_item_id INTEGER REFERENCES dev_items(id) ON DELETE SET NULL')
   }
+  if (!clCols.has('merged_by')) {
+    // obj 901389: the GitHub login that pressed merge (from the merged-PR webhook
+    // payload, no extra GitHub call), for the "merged, waiting for deploy" list.
+    db.exec('ALTER TABLE changelog_entries ADD COLUMN merged_by TEXT')
+  }
   db.exec(`
     CREATE INDEX IF NOT EXISTS idx_changelog_workspace_status
       ON changelog_entries(workspace, status, merged_at DESC);

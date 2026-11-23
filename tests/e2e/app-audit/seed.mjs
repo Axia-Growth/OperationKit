@@ -17,6 +17,8 @@ import { fileURLToPath } from 'node:url'
 
 export const WS = 'e2e-ws'
 export const BOT = 'e2e-helper'
+// obj 901277: a Full-access demo bot that OWNS a card with an answered decision.
+export const DEV_BOT = 'e2e-dev'
 const [mode, a, b] = process.argv.slice(2)
 
 if (mode === 'files') seedFiles(a, b)
@@ -46,7 +48,17 @@ function seedFiles(vault, agents) {
     '  - What can you do?',
     '',
   ].join('\n'))
-  console.log(`[seed] files: ${Object.keys(files).length} pages in ${ws}, bot "${BOT}" in ${agents}`)
+  fs.mkdirSync(path.join(agents, DEV_BOT), { recursive: true })
+  fs.writeFileSync(path.join(agents, DEV_BOT, 'agent.yaml'), [
+    'name: E2E Dev',
+    'description: Seeded demo bot with Full access that owns a card (obj 901277).',
+    'provider: demo',
+    'colour: green',
+    'tools: [get_objective, list_objectives]',
+    'system_prompt: You are a test bot.',
+    '',
+  ].join('\n'))
+  console.log(`[seed] files: ${Object.keys(files).length} pages in ${ws}, bots "${BOT}", "${DEV_BOT}" in ${agents}`)
 }
 
 async function seedDb(dbPath, base) {
@@ -129,6 +141,35 @@ async function seedDb(dbPath, base) {
   await call('POST', `/api/agent-chat/agents/${BOT}/workspaces`, { workspace: WS })
   await call('POST', `/api/agent-chat/agents/${BOT}/messages`, { text: 'Hello from the seed', client_msg_id: 'seed-hello-1' }, [200, 201, 202])
 
+  // obj 901277: a card the Full-access bot owns, held "until the owner approves",
+  // with a decision the admin already answered (option A). Decisions are SQL:
+  // raising one through the API is fine, but answering it would start a real
+  // worker session on the card. The bot must be able to say what was chosen.
+  await call('POST', `/api/agent-chat/agents/${DEV_BOT}/workspaces`, { workspace: WS })
+  await call('PUT', `/api/agent-chat/agents/${DEV_BOT}/full-access/${WS}`, { enabled: true })
+  cards.decided = await card('E2E card with an answered decision')
+  db.prepare("UPDATE objectives SET status = 'working', agent_context = ?, owner_bot = 'E2E Dev', queue_hold = ?, updated_at = datetime('now') WHERE id = ?")
+    .run(DEV_BOT, 'Waiting for the owner decision. Do not start until the owner approves.', cards.decided)
+  const decision = {
+    question: 'Which accent colour should the E2E workspace use?',
+    chosenKey: 'A', chosenLabel: 'Teal, as designed', otherLabel: 'Keep the old orange',
+    note: 'ship it this week',
+  }
+  const options = [
+    { key: 'A', label: decision.chosenLabel, pros: ['Matches the brand'], cons: ['New palette'], next: 'I switch the accent.' },
+    { key: 'B', label: decision.otherLabel, pros: ['No change'], cons: ['Off brand'], next: 'I leave it.' },
+  ]
+  decision.id = Number(db.prepare(
+    `INSERT INTO decisions (objective_id, workspace, agent_slug, source, state, context, question, options, recommended, recommended_why,
+                            chosen, decided_by, decided_at, decision_note, outcome, outcome_text)
+     VALUES (?, ?, ?, 'bot', 'decided', 'The accent colour is the last open design call.', ?, ?, 'A', 'It matches the brand.',
+             'A', ?, datetime('now'), ?, 'sent', ?)`,
+  ).run(cards.decided, WS, DEV_BOT, decision.question, JSON.stringify(options), admin, decision.note,
+    `You chose A: ${decision.chosenLabel}. Card #${cards.decided} restarted with your choice. Next: I switch the accent.`).lastInsertRowid)
+  decision.card = cards.decided
+  decision.bot = DEV_BOT
+  decision.botName = 'E2E Dev'
+
   // Workflow: one saved (never run) okflow/1 definition.
   const flow = await call('POST', '/api/flows', { workspace: WS, definition: {
     apiVersion: 'okflow/1', id: 'e2e-flow', name: 'E2E flow', workspace: WS, version: 1,
@@ -144,7 +185,7 @@ async function seedDb(dbPath, base) {
   // Knowledge base graph view sits behind the knowledge-import pack.
   const pack = await call('POST', '/api/starter-packs/knowledge-import/enable', { workspace: WS }, [200, 201, 409]).catch(e => ({ error: String(e) }))
 
-  const manifest = { workspace: WS, privateWorkspace: 'e2e-private', projectId, cards, bots: [BOT], admin, member,
+  const manifest = { workspace: WS, privateWorkspace: 'e2e-private', projectId, cards, bots: [BOT], decision, admin, member,
     flowSaved: !(flow && flow.error), graphPack: !(pack && pack.error) }
   if (process.env.E2E_SEED_FILE) fs.writeFileSync(process.env.E2E_SEED_FILE, JSON.stringify(manifest, null, 2))
   console.log('[seed] db:', JSON.stringify(manifest))

@@ -1,15 +1,20 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ClipboardEvent, type KeyboardEvent } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ClipboardEvent, type KeyboardEvent, type ReactNode } from 'react'
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
-import { ChevronLeft, Info, Paperclip, Pin, Square, X } from 'lucide-react'
-import { api } from '../../lib/api'
+import { ChevronLeft, Info, MessageSquareReply, Paperclip, Pin, Square, X } from 'lucide-react'
+import { api, isRequestTimeout } from '../../lib/api'
 import { actionErrorMessage } from '../../lib/format'
 import { useAuth } from '../../context/AuthContext'
 import { useFileDrop, filesFromClipboard } from '../../hooks/useFileDrop'
 import { useMediaQuery } from '../../hooks/useMediaQuery'
+import { useOnScreenKeyboard } from '../../hooks/useOnScreenKeyboard'
+import { composerEnterKeyHint, enterSends } from '../../lib/composerKeys'
+import { fitComposerHeight } from '../../lib/composerFit'
 import { Alert, Button, EmptyState, IconButton, Skeleton, SkeletonText, cn, useConfirm } from '../ui'
 import { ThinkingIndicator } from '../design/primitives'
 import { Tabs } from '../ui/Tabs'
-import { AgentAvatar, AssistantBubble, BotThreadLink, CardChip, DraftCard, ErrorLine, ToolLine, UserBubble } from './ChatItems'
+import { AgentAvatar, AssistantBubble, BotThreadLink, CardChip, DraftCard, ErrorLine, FollowupLine, ToolLine, UserBubble, time } from './ChatItems'
+import { ReplyThreadPanel } from './ReplyThreadPanel'
+import { SEND_AGAIN_QUESTION, duplicateNote, mergeThread, newClientMsgId, sendMayHaveLanded, shouldAskSendAgain } from './thread-merge'
 import { FullAccessBadge } from './FullAccessBadge'
 import { BotMessagesPanel } from './BotMessagesPanel'
 import { AgentInfoPanel } from './AgentInfoPanel'
@@ -45,9 +50,12 @@ import {
   type ChatAgentInfo,
   type ChatCard,
   type ChatDraft,
+  type ChatFollowup,
   type ChatMessage,
   type ChatThread,
   type LaneTurn,
+  type ReplyThreadOpenResponse,
+  type ReplyThreadSummary,
   type ThreadResponse,
   type ThreadsResponse,
 } from './types'
@@ -70,6 +78,11 @@ import {
        history, its own context, and it runs CONCURRENTLY — you can set one off
        and keep talking in the main conversation while it works. Closing a side
        thread archives that lane and leaves the main conversation untouched.
+     - a THREAD (obj 901373, "Reply in thread") hangs off ONE message of the
+       main conversation or of a side thread. It opens in a panel beside the
+       conversation; the bot answers a reply there, with that message and the
+       thread's earlier replies as its context, and nothing is posted to the
+       conversation the message sits in.
    The Bots sidebar's "New bot" button (obj 900866) does not create a bot here
    either: it opens the existing create flow (ask the Dev bot, a template, or
    paste a bot file), which writes the agent file on the server. The
@@ -252,6 +265,17 @@ function Conversation({
   // settings, so High Agency sat behind a small inner scroll. The chat stays
   // mounted (draft, scroll position) and comes back when settings close.
   const settingsFull = narrow && settingsOpen && !!meta?.tool_catalog
+  // obj 901376: typing on a phone. With the keyboard up there are ~400px left,
+  // and the header detail, action row and two tab rows took most of it. While
+  // the keyboard is open on a phone-width screen they fold into one slim row
+  // (back, avatar, name, lane) so the conversation keeps the room; they come
+  // back when the keyboard closes. Never true on a desktop.
+  const keyboard = useOnScreenKeyboard()
+  const compact = narrow && keyboard.open && view === 'chat' && !settingsFull
+  // Phone: 6 lines, or 5 when the keyboard leaves under 400px, then the box scrolls inside.
+  const composerMax = !(keyboard.touch && narrow)
+    ? COMPOSER_MAX_PX
+    : composerPhoneMax(keyboard.height !== null && keyboard.height < 400 ? 5 : 6)
   const [images, setImages] = useState<PendingImage[]>([])
   // The message whose turn this tab is waiting on (its POST runs the turn).
   // `id` is the message's client_msg_id (obj 900977): once the server's own row
@@ -263,11 +287,28 @@ function Conversation({
   const outboxSeq = useRef(0)
   const [stopping, setStopping] = useState(false)
   const [sendError, setSendError] = useState<string | null>(null)
+  // obj 901488: a small quiet line ("Already sent, still working") for a retry of the SAME send. Gone after a few seconds.
+  const [notice, setNotice] = useState<string | null>(null)
+  useEffect(() => {
+    if (!notice) return
+    const t = setTimeout(() => setNotice(null), 6000)
+    return () => clearTimeout(t)
+  }, [notice])
+  // obj 901488: the same words were sent again and the server already had them.
+  // Nothing ran; the person is asked before it is sent a second time.
+  const [askAgain, setAskAgain] = useState<{ key: string; text: string } | null>(null)
+  // obj 901488: a send that failed for real keeps its id, so sending the
+  // restored text again is the SAME send to the server, not a second message.
+  const failedSend = useRef<{ key: string; text: string; id: string } | null>(null)
   // null = the main conversation; a number = that side thread (obj 900370).
   const [lane, setLane] = useState<number | null>(null)
   const [laneBusy, setLaneBusy] = useState(false)
   // null = not renaming; a string = the name being edited in the header.
   const [renameTo, setRenameTo] = useState<string | null>(null)
+  // obj 901373: the reply thread open in the panel — its lane id and the message it hangs off.
+  const [replyThread, setReplyThread] = useState<{ threadId: number; parent: ChatMessage } | null>(null)
+  // Phones have no hover: the action sits under each message there (and on long-press).
+  const noHover = useMediaQuery('(hover: none)')
   const scroller = useRef<HTMLDivElement>(null)
   const input = useRef<HTMLTextAreaElement>(null)
   // Autosize the composer: grow with its content (typed, pasted or prefilled)
@@ -276,10 +317,28 @@ function Conversation({
   useLayoutEffect(() => {
     const el = input.current
     if (!el) return
+    // The list is pinned to the composer: when the box grows a line the
+    // newest message must stay in view, not slide under it (obj 901376).
+    const list = scroller.current
+    const atEnd = !!list && list.scrollHeight - list.scrollTop - list.clientHeight < STICK_TO_END_PX
+    // Measuring resets the box's own scroll. Put it back, or at the end when
+    // the caret is on the last line, so the line being typed stays in view.
+    const boxTop = el.scrollTop
+    const caretAtEnd = el.selectionStart === el.value.length
     el.style.height = 'auto'
-    el.style.height = `${Math.min(el.scrollHeight, COMPOSER_MAX_PX)}px`
-    el.style.overflowY = el.scrollHeight > COMPOSER_MAX_PX ? 'auto' : 'hidden'
-  }, [text])
+    let height = Math.min(el.scrollHeight, composerMax)
+    el.style.height = `${height}px`
+    // Keyboard open on a phone: the conversation keeps at least half of the
+    // visible area. Past that the box stops growing and scrolls inside.
+    if (compact && keyboard.height !== null && list) {
+      height = fitComposerHeight(height, list.clientHeight, keyboard.height)
+      el.style.height = `${height}px`
+    }
+    const scrolls = el.scrollHeight > height
+    el.style.overflowY = scrolls ? 'auto' : 'hidden'
+    el.scrollTop = !scrolls ? 0 : caretAtEnd ? el.scrollHeight : boxTop
+    if (list && atEnd) list.scrollTop = list.scrollHeight
+  }, [text, composerMax, compact, keyboard.height, images.length])
   const filePicker = useRef<HTMLInputElement>(null)
   const { confirm, confirmDialog } = useConfirm()
   const slug = agent.slug
@@ -329,10 +388,26 @@ function Conversation({
   }, [thread?.messages])
   const pendingBubble = pending && !storedIds.has(pending.id) ? pending : null
   const outboxBubbles = useMemo(() => outbox.filter(o => !storedIds.has(o.id)), [outbox, storedIds])
-  const queuedCount = queuedRows.length + outboxBubbles.length
+  // obj 901488: queued messages the person stopped in front of. They wait for
+  // the person (Send now / Remove), not for the bot.
+  const heldRows = useMemo(() => queuedRows.filter(m => m.meta?.held), [queuedRows])
+  const readyRows = queuedRows.length - heldRows.length
+  const queuedCount = readyRows + outboxBubbles.length
+  // obj 901488: Continue shows on the newest step-limit answer (or a long
+  // reply's step / time limit report, kind 'turn_limit'), and only while
+  // nothing was sent after it and the bot is not working.
+  const continuableId = useMemo(() => {
+    const all = thread?.messages ?? []
+    for (let i = all.length - 1; i >= 0; i--) {
+      if (all[i].role === 'user') return null
+      if (all[i].role === 'assistant' && (all[i].meta?.kind === 'step_limit' || all[i].meta?.kind === 'turn_limit')) return all[i].id
+    }
+    return null
+  }, [thread?.messages])
   // While the server works through this lane with no request of ours open,
-  // re-read it so replies and picked-up queued messages appear.
-  const serverBusy = !pending && (!!thread?.turn?.running || queuedRows.length > 0)
+  // re-read it so replies and picked-up queued messages appear. Held messages
+  // are not on their way anywhere, so they do not keep the poll going.
+  const serverBusy = !pending && (!!thread?.turn?.running || readyRows > 0)
   useEffect(() => {
     if (!serverBusy) return
     const t = setInterval(() => void load(), TURN_POLL_MS)
@@ -343,6 +418,7 @@ function Conversation({
     setText('')
     setImages([])
     setSendError(null)
+    setNotice(null)
   }, [msgKey])
 
   useEffect(() => {
@@ -394,8 +470,29 @@ function Conversation({
     }
   }
 
-  // Leaving a lane abandons a half-typed rename rather than carrying it over.
-  useEffect(() => { setRenameTo(null) }, [lane])
+  // Leaving a lane abandons a half-typed rename rather than carrying it over,
+  // and closes the thread panel: its parent message is no longer on screen.
+  useEffect(() => { setRenameTo(null); setReplyThread(null) }, [lane])
+
+  /**
+   * obj 901373: open the thread on one message. The server finds the message's
+   * thread or creates it (one per message); a message that already shows
+   * "N replies" opens straight from its known thread id while that is confirmed.
+   */
+  const openReplyThread = async (m: ChatMessage, known?: ReplyThreadSummary) => {
+    setSendError(null)
+    setBotPanel(null)
+    setInfoOpen(false)
+    setSettingsOpen(false)
+    if (known) setReplyThread({ threadId: known.thread_id, parent: m })
+    try {
+      const r = await api.post<ReplyThreadOpenResponse>(`${base}/messages/${m.id}/thread`, {})
+      setReplyThread({ threadId: r.thread.id, parent: m })
+    } catch (e) {
+      setReplyThread(null)
+      setSendError(actionErrorMessage(e, 'Could not open the thread'))
+    }
+  }
 
   // Paste / drop / attach all end up here (obj 900157).
   const addFiles = useCallback(async (files: ArrayLike<File>) => {
@@ -424,6 +521,15 @@ function Conversation({
     const t = setInterval(() => void load(), 15_000)
     return () => clearInterval(t)
   }, [openCards, load])
+
+  // obj 901392: a follow-up the bot set for itself is waiting (or running): keep
+  // re-reading the lane so its answer shows up without the person typing anything.
+  const followupWaiting = thread?.followups?.some(f => f.status === 'pending' || f.status === 'running') ?? false
+  useEffect(() => {
+    if (!followupWaiting) return
+    const t = setInterval(() => void load(), FOLLOWUP_POLL_MS)
+    return () => clearInterval(t)
+  }, [followupWaiting, load])
 
   // obj 900859: a message to another bot whose reply has not landed in this lane
   // yet — re-read the lane every few seconds until it does (bounded).
@@ -474,6 +580,19 @@ function Conversation({
     if (!settingsFull && el) el.scrollTop = el.scrollHeight
   }, [settingsFull])
 
+  // obj 901376: the keyboard opening (or closing) and the attachment row
+  // appearing resize the list. A list that was at the newest message stays
+  // there; one the person scrolled up to read is left alone.
+  const wasAtEnd = useRef(true)
+  const onListScroll = () => {
+    const el = scroller.current
+    if (el) wasAtEnd.current = el.scrollHeight - el.scrollTop - el.clientHeight < STICK_TO_END_PX
+  }
+  useLayoutEffect(() => {
+    const el = scroller.current
+    if (el && wasAtEnd.current) el.scrollTop = el.scrollHeight
+  }, [compact, keyboard.height, images.length])
+
   // obj 900798: what is on screen has been read. Fires when the newest message
   // in view changes (a lane loaded, a reply landed), not on every 15s refresh,
   // so a bot the person just marked unread stays unread until something new.
@@ -490,45 +609,127 @@ function Conversation({
   const sentDraft = useRef<{ text: string; images: PendingImage[] } | null>(null)
   useEffect(() => { sentDraft.current = null }, [text, images, msgKey])
 
-  const send = async (raw: string, attached: PendingImage[] = images) => {
+  /**
+   * `continueFrom` (obj 901488): the person pressed Continue on that step-limit
+   * answer. The server writes the message text; `raw` is only what the local
+   * bubble shows until the stored row arrives.
+   */
+  const send = async (raw: string, attached: PendingImage[] = images, continueFrom?: number, again = false) => {
     const msg = raw.trim()
     // A screenshot on its own is a message: send when there is text OR an image.
     if (!msg && attached.length === 0) return
-    if (sentDraft.current && sentDraft.current.text === raw && sentDraft.current.images === attached) return
-    sentDraft.current = { text: raw, images: attached }
+    if (!continueFrom) {
+      if (sentDraft.current && sentDraft.current.text === raw && sentDraft.current.images === attached) return
+      sentDraft.current = { text: raw, images: attached }
+    }
     const key = msgKey
+    const sentLane = lane
     // obj 900977: the id this message is known by on both sides. The server
     // stores it on the row and answers a repeat with that row, not a second one.
-    const id = newClientMsgId()
+    // obj 901488: the same text sent again after a failed send reuses its id.
+    const retry = failedSend.current
+    const id = !continueFrom && retry && retry.key === key && retry.text === msg && attached.length === 0 ? retry.id : newClientMsgId()
+    failedSend.current = null
     // obj 900949: Send never waits on the bot. While a turn runs, the message
     // goes straight to the server, which queues it (202) and delivers it next.
     const queueIt = working
     const outKey = ++outboxSeq.current
     if (queueIt) setOutbox(cur => [...cur, { key: outKey, id, text: msg, images: attached }])
     else setPending({ id, text: msg, images: attached })
-    setText('')
-    setImages([])
+    if (!continueFrom) {
+      setText('')
+      setImages([])
+    }
     setSendError(null)
+    setNotice(null)
+    setAskAgain(null)
     input.current?.focus()
     try {
       const r = await api.post<ThreadResponse>(
         `${base}/messages`,
-        { text: msg, client_msg_id: id, ...(lane === null ? {} : { thread_id: lane }), ...(attached.length ? { images: toWireImages(attached) } : {}) },
+        {
+          ...(continueFrom ? { continue_from: continueFrom } : { text: msg }),
+          client_msg_id: id,
+          ...(again ? { send_again: true } : {}),
+          ...(sentLane === null ? {} : { thread_id: sentLane }),
+          ...(attached.length ? { images: toWireImages(attached) } : {}),
+        },
         { timeoutMs: 240_000 },
       )
       writeCache<ThreadResponse>(key, t => mergeThread(t ?? null, r))
+      // obj 901488: the server already had this message. Nothing ran twice.
+      // The same words as a NEW send: ask before sending again. A retry of the
+      // same send (same id): say so quietly and keep following the turn.
+      if (shouldAskSendAgain(r)) setAskAgain({ key, text: msg })
+      setNotice(duplicateNote(r))
       // The strip shows per-lane message counts and ordering by last activity.
       void loadThreads()
     } catch (e) {
+      // obj 901329: the 240s timeout is UI-only. The server already holds the
+      // message and keeps working on it (a dropped request is not Stop), so
+      // this is not "not sent": re-read the thread, where the answer lands.
+      if (isRequestTimeout(e)) {
+        void load()
+        void loadThreads()
+        return
+      }
+      // obj 901488: a proxy timeout (524) or a dropped connection is not "not
+      // sent" either when the server has the message. Ask it: if the row with
+      // this id is in the lane, the send went through — the box stays empty and
+      // the turn is followed from the lane, exactly as after a reload.
+      if (sendMayHaveLanded(e)) {
+        try {
+          const t = await fetchMessages(slug, sentLane)
+          if (t.messages.some(m => m.meta?.client_msg_id === id)) {
+            writeCache<ThreadResponse>(key, cur => mergeThread(cur ?? null, t))
+            void loadThreads()
+            return
+          }
+        } catch { /* cannot tell — fall through and hand the text back with its id kept */ }
+      }
+      if (continueFrom) {
+        setSendError(actionErrorMessage(e, 'Could not continue'))
+        void load()
+        return
+      }
       // Nothing typed is lost: put it back unless the person is already typing the next one.
       setText(cur => (cur.trim() ? cur : msg))
       setImages(cur => (cur.length ? cur : attached))
       setSendError(actionErrorMessage(e, 'Message not sent'))
-      // Sending the restored draft again is a deliberate retry, not a double submit.
+      // Sending the restored draft again is a deliberate retry, not a double
+      // submit — and it is the same send, so it keeps its id (obj 901488).
       sentDraft.current = null
+      if (attached.length === 0) failedSend.current = { key, text: msg, id }
     } finally {
       if (queueIt) setOutbox(cur => cur.filter(o => o.key !== outKey))
       else setPending(null)
+    }
+  }
+
+  /** obj 901488: remove ONE queued message before the bot sees it. */
+  const removeQueued = async (id: number) => {
+    const key = msgKey
+    setSendError(null)
+    try {
+      const r = await api.del<{ ok: boolean; turn: LaneTurn }>(`${base}/queued/${id}`)
+      updateThread(key, t => ({ ...t, turn: r.turn, messages: t.messages.filter(m => m.id !== id) }))
+    } catch (e) {
+      // The bot picked it up in the meantime: show the lane as it now is.
+      setSendError(actionErrorMessage(e, 'Could not remove that message'))
+      void load()
+    }
+  }
+
+  /** obj 901488: the person confirms the messages that were held when they pressed Stop. */
+  const sendHeld = async () => {
+    const key = msgKey
+    setSendError(null)
+    try {
+      const r = await api.post<{ released: number; turn: LaneTurn }>(`${base}/queued/release`, lane === null ? {} : { thread_id: lane })
+      updateThread(key, t => ({ ...t, turn: r.turn, messages: t.messages.map(m => (m.meta?.held ? { ...m, meta: { ...m.meta, held: false } } : m)) }))
+      void load()
+    } catch (e) {
+      setSendError(actionErrorMessage(e, 'Could not send the waiting messages'))
     }
   }
 
@@ -549,7 +750,8 @@ function Conversation({
       updateThread(key, t => ({
         ...t,
         turn: r.turn,
-        messages: dropQueued ? t.messages.filter(m => !m.meta?.queued) : t.messages,
+        // obj 901488: after a Stop the queued messages are kept but held for the person.
+        messages: dropQueued ? t.messages.filter(m => !m.meta?.queued) : r.stopped ? t.messages.map(m => (m.meta?.queued ? { ...m, meta: { ...m.meta, held: true } } : m)) : t.messages,
       }))
       if (!pending) void load()
     } catch (e) {
@@ -573,14 +775,18 @@ function Conversation({
   }
 
   const onKey = (e: KeyboardEvent<HTMLTextAreaElement>) => {
-    if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
+    // Desktop: Enter sends. Phone: Return is a new line, Send is the button (obj 901376).
+    if (enterSends(e, keyboard.touch)) {
       e.preventDefault()
       void send(text)
     }
   }
 
-  const draftAction = async (path: string, body?: unknown, method: 'post' | 'put' = 'post') => {
-    const key = msgKey
+  // On a phone, tapping Attach / Stop / Send must not take focus from the box:
+  // that would drop the keyboard and move the button mid-tap (obj 901376).
+  const keepKeyboard = (e: { preventDefault: () => void }) => { if (keyboard.touch) e.preventDefault() }
+
+  const draftAction = async (path: string, body?: unknown, method: 'post' | 'put' = 'post', key: string = msgKey) => {
     setSendError(null)
     try {
       const r = method === 'put' ? await api.put<{ draft: ChatDraft }>(path, body) : await api.post<{ draft: ChatDraft }>(path, body)
@@ -600,7 +806,7 @@ function Conversation({
         // side thread never touches the main conversation.
         message: activeThread
           ? `Only this side thread's messages are deleted. Your main conversation with ${agent.name} is not changed.`
-          : `The messages are deleted from this server. ${agent.name} itself is not deleted — only this conversation is emptied. Side threads, board cards and saved notes stay.`,
+          : `The messages are deleted from this server, with the threads replied under them. ${agent.name} itself is not deleted — only this conversation is emptied. Side threads, board cards and saved notes stay.`,
         confirmLabel: activeThread ? 'Clear side thread' : 'Clear conversation',
         danger: true,
       }))
@@ -608,39 +814,83 @@ function Conversation({
       return
     const key = msgKey
     await api.del(`${base}/messages${laneQuery}`)
-    updateThread(key, t => ({ ...t, messages: [] }))
+    // The threads replied under these messages are cleared with them (obj 901373).
+    setReplyThread(null)
+    updateThread(key, t => ({ ...t, messages: [], reply_threads: {} }))
     await load()
     void loadThreads()
   }
 
+  /** obj 901392: the person's Cancel on a waiting follow-up. */
+  const cancelFollowup = async (f: ChatFollowup) => {
+    const key = msgKey
+    setSendError(null)
+    try {
+      const r = await api.del<{ followup: ChatFollowup }>(`${base}/followups/${f.id}`)
+      updateThread(key, t => ({ ...t, followups: (t.followups ?? []).map(x => (x.id === r.followup.id ? r.followup : x)) }))
+    } catch (e) {
+      setSendError(actionErrorMessage(e, 'That follow-up could not be cancelled'))
+      void load()
+    }
+  }
+  const followups = useMemo(() => new Map((thread?.followups ?? []).map(f => [f.id, f])), [thread?.followups])
   const drafts = useMemo(() => new Map((thread?.drafts ?? []).map(d => [d.id, d])), [thread?.drafts])
   const cards = useMemo(() => new Map((thread?.cards ?? []).map(c => [c.id, c])), [thread?.cards])
+  /** One stored message, drawn the same way in the conversation and in the thread panel. */
+  const renderMessage = (m: ChatMessage, t: ThreadResponse | null, key: string): ReactNode => {
+    if (isNeedsYouMessage(m)) return <NeedsYouMessage m={m} agent={agent} />
+    const own = t === thread
+    const draft = m.meta?.draft_id ? (own ? drafts.get(m.meta.draft_id) : t?.drafts.find(d => d.id === m.meta?.draft_id)) : undefined
+    const card = m.tool_name === 'create_objective' && m.meta?.objective_id ? (own ? cards.get(m.meta.objective_id) : t?.cards.find(c => c.id === m.meta?.objective_id)) : undefined
+    // obj 901392: the Cancel control belongs to the lane the follow-up was set in (this conversation).
+    const followup = own && m.tool_name === 'schedule_followup' && m.meta?.ok !== false && m.meta?.followup_id ? followups.get(m.meta.followup_id) : undefined
+    return (
+      <MessageRow
+        m={m}
+        agent={agent}
+        draft={draft}
+        card={card}
+        followup={followup}
+        onCancelFollowup={cancelFollowup}
+        onSend={d => draftAction(`/agent-chat/drafts/${d.id}/send`, undefined, 'post', key)}
+        onDiscard={d => draftAction(`/agent-chat/drafts/${d.id}/discard`, undefined, 'post', key)}
+        onSave={(d, patch) => draftAction(`/agent-chat/drafts/${d.id}`, patch, 'put', key)}
+        onOpenBotThread={openBotThread}
+        onContinue={own && !working && m.id === continuableId ? () => void send('Continue from where you stopped.', [], m.id) : undefined}
+      />
+    )
+  }
   const answeredBy = `${PROVIDER_LABELS[agent.answered_by.id]}${agent.answered_by.model ? ` · ${friendlyModelName(agent.answered_by.model)}` : ''}`
 
   return (
     <section aria-label={`Conversation with ${agent.name}`} className="flex h-full min-h-0 min-w-0 flex-col">
-      <header className="flex flex-wrap items-center gap-x-2 gap-y-1 border-b border-line bg-surface-1 px-2 py-2 sm:flex-nowrap sm:px-4">
+      <header
+        data-compact={compact ? 'true' : undefined}
+        className={cn('flex flex-wrap items-center gap-x-2 gap-y-1 border-b border-line bg-surface-1 px-2 sm:flex-nowrap sm:px-4', compact ? 'py-0.5' : 'py-2')}
+      >
         <IconButton label="All bots" onClick={onBack} className="md:hidden">
           <ChevronLeft aria-hidden="true" className="h-5 w-5" />
         </IconButton>
-        <AgentAvatar agent={agent} />
+        <AgentAvatar agent={agent} size={compact ? 'sm' : undefined} />
         <div className="min-w-[9rem] flex-1">
           <div className="flex min-w-0 items-center gap-2">
-            <h2 className="min-w-0 truncate font-display text-lg font-semibold tracking-tight text-fg-0">{agent.name}</h2>
+            <h2 className={cn('min-w-0 truncate font-display font-semibold tracking-tight text-fg-0', compact ? 'text-base' : 'text-lg')}>{agent.name}</h2>
             {/* obj 900972: Full access, with the workspace and the expiry when one is set. */}
-            <FullAccessBadge access={agent.full_access} variant="full" />
+            {!compact && <FullAccessBadge access={agent.full_access} variant="full" />}
+            {/* Folded header: the lane tabs are hidden, so name the side thread here. */}
+            {compact && activeThread && <span className="min-w-0 truncate text-xs text-fg-2">· {activeThread.title}</span>}
           </div>
-          <p className="truncate text-xs text-fg-2">
+          <p className={cn('truncate text-xs text-fg-2', compact && 'hidden')}>
             Answers with <span className="text-fg-1" title={agent.answered_by.model ?? undefined}>{answeredBy}</span>
             {agent.version && <span> · v{agent.version}</span>}
             {/* Named only in a side thread: the main conversation is the unlabelled default. */}
             {activeThread && <span> · side thread <span className="text-fg-1">{activeThread.title}</span></span>}
           </p>
-          {live && <BotLiveLine entry={live} className="mt-0.5" />}
+          {live && !compact && <BotLiveLine entry={live} className="mt-0.5" />}
         </div>
         {/* Actions travel as one group: on a phone they wrap under the bot name
             instead of squeezing it to a single letter (obj 900750). */}
-        <div className="ml-auto flex shrink-0 flex-wrap items-center justify-end gap-1">
+        <div className={cn('ml-auto flex shrink-0 flex-wrap items-center justify-end gap-1', compact && renameTo === null && 'hidden')} data-testid="bot-header-actions">
         {activeThread && renameTo !== null && (
           <form
             className="flex items-center gap-1"
@@ -764,7 +1014,7 @@ function Conversation({
       {/* `contents` keeps this wrapper out of the flex layout; `hidden` steps the
           whole chat aside while settings fill a phone screen (obj 901203). */}
       <div className={settingsFull ? 'hidden' : 'contents'}>
-      <div className="flex items-center gap-2 border-b border-line bg-surface-1 px-2 py-1.5 sm:px-4" data-testid="bot-view-tabs">
+      <div className={cn('items-center gap-2 border-b border-line bg-surface-1 px-2 py-1.5 sm:px-4', compact ? 'hidden' : 'flex')} data-testid="bot-view-tabs">
         <Tabs
           label={`${agent.name} views`}
           value={view}
@@ -790,7 +1040,15 @@ function Conversation({
       {view === 'activity' && <div className="relative min-h-0 flex-1 overflow-y-auto"><BotActivityFeed agent={agent} /></div>}
 
       {view === 'chat' && (<>
-      <LaneStrip threads={threads} lane={lane} maxOpen={maxOpen} busy={laneBusy} onPick={setLane} onOpen={() => void openLane()} />
+      <div className={compact ? 'hidden' : 'contents'} data-testid="lane-strip">
+        <LaneStrip threads={threads} lane={lane} maxOpen={maxOpen} busy={laneBusy} onPick={setLane} onOpen={() => void openLane()} />
+      </div>
+
+      {/* obj 901373: the conversation, with the thread panel beside it on a wide
+          screen and over it on a narrow one (the conversation stays mounted
+          underneath: its draft and scroll position are there when the panel closes). */}
+      <div className="relative flex min-h-0 flex-1" data-testid="chat-with-thread">
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col">
 
       {/* While Bot settings is open the panel takes the pane and scrolls itself
           (obj 900864); the message list keeps its place but drops its padding so
@@ -798,6 +1056,7 @@ function Conversation({
           Closing settings brings it back at the same (bottom) scroll position. */}
       <div
         ref={scroller}
+        onScroll={onListScroll}
         data-testid="chat-message-list"
         className={cn('relative min-h-0 flex-1 overflow-y-auto overflow-x-clip px-3 sm:px-6', settingsOpen && meta?.tool_catalog ? 'py-0' : 'py-4')}
         aria-live="polite"
@@ -846,19 +1105,20 @@ function Conversation({
               return <FoldedActivity key={item.key} messages={item.messages} agent={agent} onOpenActivity={() => onView?.('activity')} />
             }
             const m = item.m
-            if (isNeedsYouMessage(m)) return <NeedsYouMessage key={m.id} m={m} agent={agent} />
+            // obj 901373: the person's and the bot's messages can be replied to in a thread.
+            if (m.role !== 'user' && m.role !== 'assistant') return <div key={m.id} className="contents">{renderMessage(m, thread, msgKey)}</div>
+            const summary = thread?.reply_threads?.[String(m.id)]
             return (
-              <MessageRow
+              <ThreadableMessage
                 key={m.id}
                 m={m}
-                agent={agent}
-                draft={m.meta?.draft_id ? drafts.get(m.meta.draft_id) : undefined}
-                card={m.tool_name === 'create_objective' && m.meta?.objective_id ? cards.get(m.meta.objective_id) : undefined}
-                onSend={d => draftAction(`/agent-chat/drafts/${d.id}/send`)}
-                onDiscard={d => draftAction(`/agent-chat/drafts/${d.id}/discard`)}
-                onSave={(d, patch) => draftAction(`/agent-chat/drafts/${d.id}`, patch, 'put')}
-                onOpenBotThread={openBotThread}
-              />
+                summary={summary}
+                open={replyThread?.parent.id === m.id}
+                alwaysShowAction={noHover}
+                onReply={() => void openReplyThread(m, summary)}
+              >
+                {renderMessage(m, thread, msgKey)}
+              </ThreadableMessage>
             )
           })}
           {pendingBubble && (
@@ -872,9 +1132,17 @@ function Conversation({
               <ThinkingIndicator label={`${agent.name} is working…`} tone="fg-2" />
             </div>
           )}
+          {/* obj 901491: a long reply carries on server-side. Say so, so nobody
+              waits on the page or sends the same request again. */}
+          {working && thread?.turn_job?.background && (
+            <p className="ml-9 text-xs text-fg-2" data-testid="background-note">
+              Working in the background: step {Math.min(thread.turn_job.steps + 1, thread.turn_job.max_steps)} of up to {thread.turn_job.max_steps}, {thread.turn_job.max_minutes} minutes at most.
+              You can leave this page. Each action shows here as it happens and the answer is posted in this chat.
+            </p>
+          )}
           {/* obj 900949: messages sent while the bot works wait here, in the
               order they were sent, until the bot picks them up. */}
-          {queuedRows.map(m => <UserBubble key={m.id} m={m} queued />)}
+          {queuedRows.map(m => <UserBubble key={m.id} m={m} queued held={!!m.meta?.held} onRemove={() => void removeQueued(m.id)} />)}
           {outboxBubbles.map(o => (
             <UserBubble
               key={`out-${o.key}`}
@@ -889,12 +1157,28 @@ function Conversation({
                 : `Sending ${queuedCount === 1 ? 'your queued message' : `your ${queuedCount} queued messages`}…`}
             </p>
           )}
+          {/* obj 901488: after a Stop, queued messages wait for the person. */}
+          {heldRows.length > 0 && (
+            <p className="flex flex-wrap items-center justify-end gap-x-2 gap-y-1 self-end text-right text-xs text-fg-2" data-testid="held-note">
+              <span>
+                You stopped the reply, so {heldRows.length === 1 ? 'this message was' : `these ${heldRows.length} messages were`} not sent to {agent.name}.
+              </span>
+              <button
+                type="button"
+                onClick={() => void sendHeld()}
+                className="min-h-[32px] rounded-md border border-line bg-surface-0 px-2.5 py-1 text-sm font-medium text-fg-0 transition-colors duration-fast hover:border-line-strong hover:bg-surface-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/50"
+              >
+                {heldRows.length === 1 ? 'Send it now' : 'Send them now'}
+              </button>
+            </p>
+          )}
         </div>
       </div>
 
       <form
         className={cn(
-          'border-t border-line bg-surface-1 px-3 pb-[max(env(safe-area-inset-bottom),12px)] pt-3 transition-colors duration-fast sm:px-6',
+          'shrink-0 border-t border-line bg-surface-1 px-3 transition-colors duration-fast sm:px-6',
+          compact ? 'pb-2 pt-2' : 'pb-[max(env(safe-area-inset-bottom),12px)] pt-3',
           isDragging && 'bg-accent/5 ring-1 ring-inset ring-accent/40',
         )}
         onSubmit={e => { e.preventDefault(); void send(text) }}
@@ -902,12 +1186,24 @@ function Conversation({
       >
         <div className="mx-auto max-w-[760px]">
           {sendError && <p role="alert" className="mb-2 text-sm text-danger">{sendError}</p>}
+          {notice && <p role="status" data-testid="duplicate-note" className="mb-2 text-xs text-fg-2">{notice}</p>}
+          {askAgain && askAgain.key === msgKey && (
+            <div role="group" aria-label="Send again?" data-testid="send-again-prompt" className="mb-2 flex flex-wrap items-center gap-2 rounded-md border border-line bg-surface-2 px-3 py-2 text-sm text-fg-1">
+              <span className="mr-auto">{SEND_AGAIN_QUESTION}</span>
+              <Button type="button" size="sm" variant="ghost" onClick={() => setAskAgain(null)}>No</Button>
+              <Button type="button" size="sm" variant="primary" onClick={() => { const t = askAgain.text; setAskAgain(null); sentDraft.current = null; void send(t, [], undefined, true) }}>Send again</Button>
+            </div>
+          )}
           {isDragging && <p className="mb-2 text-sm text-accent">Drop the image to attach it</p>}
           {images.length > 0 && (
-            <ul aria-label="Attached images" className="mb-2 flex flex-wrap gap-2">
+            // Phone (obj 901376): one row of small thumbnails that scrolls sideways,
+            // so attachments never push the box off screen. The padding keeps each
+            // remove button inside the scroll box. From sm up: unchanged.
+            // Keyboard open: smaller still, so the conversation keeps half the screen.
+            <ul aria-label="Attached images" className={cn('flex gap-2 overflow-x-auto pr-2 pt-1.5 [scrollbar-width:none] sm:flex-wrap sm:overflow-visible sm:p-0 [&::-webkit-scrollbar]:hidden', compact ? 'mb-1.5' : 'mb-2')}>
               {images.map(i => (
-                <li key={i.key} className="relative">
-                  <img src={i.dataUrl} alt={i.name} title={`${i.name} · ${humanSize(i.size)}`} className="h-16 w-16 rounded-md border border-line object-cover" />
+                <li key={i.key} className="relative shrink-0">
+                  <img src={i.dataUrl} alt={i.name} title={`${i.name} · ${humanSize(i.size)}`} className={cn('rounded-md border border-line object-cover sm:h-16 sm:w-16', compact ? 'h-8 w-8' : 'h-12 w-12')} />
                   <button
                     type="button"
                     aria-label={`Remove ${i.name}`}
@@ -934,7 +1230,7 @@ function Conversation({
                 e.target.value = ''
               }}
             />
-            <IconButton type="button" label="Attach an image" onClick={() => filePicker.current?.click()}>
+            <IconButton type="button" label="Attach an image" onMouseDown={keepKeyboard} onClick={() => filePicker.current?.click()}>
               <Paperclip aria-hidden="true" className="h-5 w-5" />
             </IconButton>
             <label htmlFor="agent-chat-input" className="sr-only">Message {agent.name}</label>
@@ -946,8 +1242,9 @@ function Conversation({
               onChange={e => setText(e.target.value)}
               onKeyDown={onKey}
               onPaste={onPaste}
+              enterKeyHint={composerEnterKeyHint(keyboard.touch)}
               placeholder={narrow ? 'Write a message…' : activeThread ? `Write a message in "${activeThread.title}"` : 'Write a message, or paste a screenshot'}
-              className="max-h-60 min-h-[44px] flex-1 resize-none rounded-lg border border-line bg-surface-0 px-3.5 py-2.5 text-lg text-fg-0 placeholder:text-fg-3 transition-colors duration-fast hover:border-line-strong focus:border-accent focus:outline-none focus:ring-2 focus:ring-accent/30 disabled:opacity-60 sm:text-base"
+              className="max-h-60 min-h-[44px] min-w-0 flex-1 resize-none rounded-lg border border-line bg-surface-0 px-3.5 py-2.5 text-lg text-fg-0 placeholder:text-fg-3 transition-colors duration-fast hover:border-line-strong focus:border-accent focus:outline-none focus:ring-2 focus:ring-accent/30 disabled:opacity-60 sm:text-base"
             />
             {/* obj 900949: Stop is its own small control, shown only while the
                 bot works. Send below never turns into a spinner or locks. */}
@@ -955,22 +1252,23 @@ function Conversation({
               <Button
                 type="button"
                 variant="secondary"
+                onMouseDown={keepKeyboard}
                 onClick={() => void stop()}
                 loading={stopping}
-                aria-label={queuedCount > 0 ? `Stop ${agent.name}'s reply (your queued messages are kept)` : `Stop ${agent.name}'s reply`}
+                aria-label={queuedCount > 0 ? `Stop ${agent.name}'s reply (your queued messages are kept and wait for you)` : `Stop ${agent.name}'s reply`}
                 leftIcon={<Square aria-hidden="true" className="h-3.5 w-3.5 fill-current" />}
                 className="min-h-[44px] sm:min-h-[44px]"
               >
                 Stop
               </Button>
             )}
-            <Button type="submit" variant="primary" disabled={!text.trim() && images.length === 0} className="min-h-[44px] sm:min-h-[44px]">
+            <Button type="submit" variant="primary" onMouseDown={keepKeyboard} disabled={!text.trim() && images.length === 0} className="min-h-[44px] sm:min-h-[44px]">
               Send
             </Button>
           </div>
           {working && queuedCount > 0 && queuedRows.length > 0 && (
             <p className="mt-1.5 text-xs text-fg-2">
-              Stop keeps your queued {queuedRows.length === 1 ? 'message' : 'messages'}.{' '}
+              Stop keeps your queued {queuedRows.length === 1 ? 'message' : 'messages'}; {queuedRows.length === 1 ? 'it waits' : 'they wait'} for you to send {queuedRows.length === 1 ? 'it' : 'them'}.{' '}
               <button
                 type="button"
                 onClick={() => void discardQueued(queuedRows.length)}
@@ -983,6 +1281,21 @@ function Conversation({
           <p className="mt-1.5 hidden text-xs text-fg-2 sm:block">Enter to send · Shift+Enter for a new line · paste, drop or attach a screenshot · Email and calendar are always drafts until you press Send.</p>
         </div>
       </form>
+      </div>
+      {replyThread && (
+        <ReplyThreadPanel
+          key={replyThread.threadId}
+          agent={agent}
+          threadId={replyThread.threadId}
+          parent={replyThread.parent}
+          renderMessage={renderMessage}
+          onClose={() => setReplyThread(null)}
+          onChanged={() => void load()}
+          onActivity={onActivity}
+          className="absolute inset-0 z-10 xl:static xl:z-auto xl:w-[400px] xl:shrink-0 xl:border-l xl:border-line"
+        />
+      )}
+      </div>
       </>)}
       </div>
       {confirmDialog}
@@ -1024,10 +1337,16 @@ function ConversationSkeleton() {
 
 /** Tallest the chat composer grows before it scrolls inside (matches `max-h-60`). */
 const COMPOSER_MAX_PX = 240
+/** On a phone: N lines of 24px text plus the box's padding (20px) and border (2px) (obj 901376). */
+const composerPhoneMax = (lines: number) => lines * 24 + 22
+/** A list this close to its end counts as "at the newest message". */
+const STICK_TO_END_PX = 48
 /** While a bot-to-bot reply is awaited: re-read the lane this often, at most this many times (~5 min). */
 const BOT_REPLY_POLL_MS = 5000
 /** obj 900949: while the bot works through a lane on its own (a queue), re-read the lane this often. */
 const TURN_POLL_MS = 2000
+/** obj 901392: how often a lane with a follow-up waiting is re-read. */
+const FOLLOWUP_POLL_MS = 10_000
 const BOT_REPLY_MAX_POLLS = 60
 const BOT_REPLY_WINDOW_MS = 15 * 60_000
 
@@ -1037,49 +1356,130 @@ function sentAt(iso: string): number {
   return Number.isNaN(t) ? 0 : t
 }
 
-/** A fresh client_msg_id: 8-64 of [A-Za-z0-9_-], the shape the server accepts. */
-function newClientMsgId(): string {
-  const c = globalThis.crypto
-  if (c && typeof c.randomUUID === 'function') return c.randomUUID()
-  return `m-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 12)}`
+export { mergeThread }
+
+/**
+ * obj 901373: one message of the conversation plus its thread affordances — the
+ * "Reply in thread" action (on hover or keyboard focus; always shown, and on
+ * long-press, where there is no hover) and, once the message has replies, the
+ * "N replies" link with the last reply's time.
+ */
+export function ThreadableMessage({
+  m,
+  summary,
+  open,
+  alwaysShowAction,
+  onReply,
+  children,
+}: {
+  m: ChatMessage
+  summary?: ReplyThreadSummary
+  /** This message's thread is the one open in the panel. */
+  open: boolean
+  alwaysShowAction: boolean
+  onReply: () => void
+  children: ReactNode
+}) {
+  const mine = m.role === 'user'
+  const press = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const cancelPress = () => {
+    if (press.current) clearTimeout(press.current)
+    press.current = null
+  }
+  useEffect(() => cancelPress, [])
+  const n = summary?.reply_count ?? 0
+  const last = summary?.last_reply_at ? time(summary.last_reply_at) : ''
+  return (
+    <div
+      data-testid="threadable-message"
+      data-message-id={m.id}
+      className={cn('group/msg relative flex flex-col gap-1 rounded-lg', open && 'bg-accent/5 outline outline-1 outline-offset-4 outline-accent/40')}
+      onTouchStart={() => { cancelPress(); press.current = setTimeout(onReply, LONG_PRESS_MS) }}
+      onTouchEnd={cancelPress}
+      onTouchMove={cancelPress}
+      onTouchCancel={cancelPress}
+    >
+      {children}
+      {(n > 0 || alwaysShowAction) && (
+        <div className={cn('flex flex-wrap items-center gap-x-3 gap-y-1 text-xs', mine ? 'justify-end' : 'ml-9')}>
+          {n > 0 && (
+            <button
+              type="button"
+              data-testid="thread-replies-link"
+              onClick={onReply}
+              aria-label={`${n} ${n === 1 ? 'reply' : 'replies'} in thread${last ? `, last reply ${last}` : ''}. Open thread`}
+              className="inline-flex min-h-[28px] items-center gap-1.5 rounded-md px-1.5 font-medium text-accent-hover underline-offset-2 hover:bg-surface-2 hover:text-accent hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/50"
+            >
+              <MessageSquareReply aria-hidden="true" className="h-3.5 w-3.5" />
+              <span>{n} {n === 1 ? 'reply' : 'replies'}</span>
+              {last && <span className="font-normal text-fg-2">· last reply {last}</span>}
+            </button>
+          )}
+          {alwaysShowAction && n === 0 && (
+            <button
+              type="button"
+              onClick={onReply}
+              className="inline-flex min-h-[28px] items-center gap-1.5 rounded-md px-1.5 text-fg-2 hover:text-fg-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/50"
+            >
+              <MessageSquareReply aria-hidden="true" className="h-3.5 w-3.5" />
+              Reply in thread
+            </button>
+          )}
+        </div>
+      )}
+      {!alwaysShowAction && (
+        <button
+          type="button"
+          onClick={onReply}
+          title="Reply in thread"
+          className={cn(
+            'absolute -top-3 z-[1] inline-flex min-h-[28px] items-center gap-1.5 rounded-md border border-line bg-surface-1 px-2 text-xs text-fg-1 opacity-0 shadow-sm transition-opacity duration-fast',
+            'hover:border-line-strong hover:text-fg-0 focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/50 group-hover/msg:opacity-100',
+            'right-2',
+          )}
+        >
+          <MessageSquareReply aria-hidden="true" className="h-3.5 w-3.5" />
+          Reply in thread
+        </button>
+      )}
+    </div>
+  )
 }
 
-export function mergeThread(t: ThreadResponse | null, r: ThreadResponse): ThreadResponse {
-  const prev = t ?? { messages: [], drafts: [], cards: [] }
-  const byId = <T extends { id: number }>(a: T[], b: T[]) => [...new Map([...a, ...b].map(x => [x.id, x])).values()]
-  // obj 900977: a queued message is re-filed under a NEW row id when the bot
-  // picks it up. A POST answer that lands after a re-read already showed the
-  // delivered row must not add the old queued row back beside it.
-  const delivered = new Set(prev.messages.filter(m => m.meta?.client_msg_id && !m.meta.queued).map(m => m.meta!.client_msg_id!))
-  const incoming = r.messages.filter(m => !(m.meta?.queued && m.meta.client_msg_id && delivered.has(m.meta.client_msg_id)))
-  r = { ...r, messages: incoming }
-  // obj 900949: the newest answer carries the lane's turn state (running, queued count).
-  return { messages: byId(prev.messages, r.messages), drafts: byId(prev.drafts ?? [], r.drafts ?? []), cards: byId(prev.cards ?? [], r.cards ?? []), turn: r.turn ?? prev.turn }
-}
+/** How long a touch is held on a message before its thread opens. */
+const LONG_PRESS_MS = 550
 
 function MessageRow({
   m,
   agent,
   draft,
   card,
+  followup,
+  onCancelFollowup,
   onSend,
   onDiscard,
   onSave,
   onOpenBotThread,
+  onContinue,
 }: {
   m: ChatMessage
   agent: ChatAgentInfo
   draft?: ChatDraft
   card?: ChatCard
+  followup?: ChatFollowup
+  onCancelFollowup?: (f: ChatFollowup) => Promise<void>
   onSend: (d: ChatDraft) => Promise<void>
   onDiscard: (d: ChatDraft) => Promise<void>
   onSave: (d: ChatDraft, patch: Record<string, string>) => Promise<void>
   onOpenBotThread?: (id: number) => void
+  onContinue?: () => void
 }) {
   if (m.role === 'user') return <UserBubble m={m} />
-  if (m.role === 'assistant') return <AssistantBubble m={m} agent={agent} onOpenBotThread={onOpenBotThread} />
+  if (m.role === 'assistant') return <AssistantBubble m={m} agent={agent} onOpenBotThread={onOpenBotThread} onContinue={onContinue} />
   if (m.role === 'error') return <ErrorLine m={m} />
   const botThread = m.meta?.ok !== false ? m.meta?.bot_conversation_id : undefined
+  // obj 901392: a scheduled follow-up renders as its own live line (when it fires, the note, Cancel).
+  if (followup) return <FollowupLine followup={followup} onCancel={onCancelFollowup} />
   return (
     <>
       <ToolLine m={m} />

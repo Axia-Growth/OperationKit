@@ -11,5 +11,8 @@
     "start": "npm run start --workspace=server",
     "test": "npm run test --workspace=server && npm run test --workspace=client",
     "seed": "npm run seed --workspace=server"
+  },
+  "overrides": {
+    "@mapbox/node-pre-gyp": "^2.0.3"
   }
 }

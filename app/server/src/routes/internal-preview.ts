@@ -12,6 +12,7 @@ import { upsertObjectivePR } from '../services/objective-prs.js'
 import { enqueuePreviewDeploy, kickHostDrain } from '../services/preview-spool.js'
 import { isLocalhost } from '../lib/is-localhost.js'
 import { resolvePreviewDomain } from '../lib/install-defaults.js'
+import { isValidBranchName } from '../services/branch-scope.js'
 
 export function registerInternalPreviewRoutes(router: Router): void {
 // Caddy on-demand TLS check — validates preview subdomains
@@ -41,6 +42,14 @@ router.post('/pr-created', withSandboxCardGuard((req, res) => {
   }
   if (!objective_id) {
     res.status(400).json({ error: 'objective_id required' })
+    return
+  }
+  // obj 901542: branch_name is attacker-influenced (any worker session may call this
+  // route for its own card) and downstream code (branch-scope.ts, session-worktree.ts,
+  // governance.ts) puts it into shell/argv git commands. Refuse and store nothing
+  // rather than let an unsafe value reach the objectives row at all.
+  if (branch_name != null && !isValidBranchName(branch_name)) {
+    res.status(400).json({ error: 'invalid branch_name' })
     return
   }
   // Durable correctness: never leave pr_number NULL when pr_url is set. Workers often

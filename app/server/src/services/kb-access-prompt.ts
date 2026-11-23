@@ -17,17 +17,22 @@
 import type { Objective } from '@operationkit/shared'
 import { jailEnabled } from './session-jail.js'
 import { resolveWriteWorkspace } from './workspaces.js'
+import { captureDir, captureLayout, captureSubdir, decisionsDir, MONTH_PLACEHOLDER, type CaptureLayout } from '../lib/vault-layout.js'
 
 export const CC_API = 'http://localhost:3002'
 
-/** Workspace-relative decisions folder, used by both modes. */
-function decisionsRel(workspace: string | null | undefined): string {
-  return !workspace || workspace === 'personal' ? 'personal/decisions' : `workspaces/${workspace}/decisions`
+/** The vault's decisions folder as a NON-jailed session sees it (unchanged). */
+export function vaultDecisionsPath(workspace: string | null | undefined): string {
+  return `~/second-brain/${decisionsDir(workspace)}/`
 }
 
-/** The vault path a NON-jailed session writes decision docs to (unchanged). */
-export function vaultDecisionsPath(workspace: string | null | undefined): string {
-  return `~/second-brain/${decisionsRel(workspace)}/`
+/**
+ * The vault folder a NON-jailed session writes its decision capture to. Same
+ * as `vaultDecisionsPath` unless `settings.kb_capture_layout` says otherwise
+ * (lib/vault-layout.ts); the month is left as a `YYYY-MM` placeholder.
+ */
+export function vaultCapturePath(workspace: string | null | undefined, layout: CaptureLayout = captureLayout()): string {
+  return `~/second-brain/${captureDir(workspace, MONTH_PLACEHOLDER, layout)}/`
 }
 
 /**
@@ -86,9 +91,13 @@ export function buildKbAccessBlock(
 export function buildVaultCaptureBlock(
   objective: Pick<Objective, 'id' | 'workspace'>,
   jailed: boolean = jailEnabled(),
+  layout: CaptureLayout = captureLayout(),
 ): string[] {
   const ws = objective.workspace
-  const rel = decisionsRel(ws)
+  // `decisions`, or `log/YYYY-MM` — the one folder name this block spells out.
+  const sub = captureSubdir(MONTH_PLACEHOLDER, layout)
+  // Jailed: the folder as a JS expression over the file name (argv[2] starts YYYY-MM-DD).
+  const subExpr = layout === 'log-by-month' ? '"/log/"+process.argv[2].slice(0,7)+"/"' : `"/${sub}/"`
   const head = [
     '',
     '## Vault Capture (MANDATORY before you finish)',
@@ -101,12 +110,12 @@ export function buildVaultCaptureBlock(
     'If nothing in this session qualifies (e.g. routine bug fix, mechanical cleanup, no choices',
     'made), explicitly state in your final response: "No vault capture: <one-line reason>".',
     'Do NOT silently skip — the orchestrator now flags `capture-gap` when decisions are claimed',
-    'in the summary but no `/decisions/*.md` write occurred.',
+    `in the summary but no \`/${sub}/*.md\` write occurred.`,
   ]
   if (!jailed) {
     return [
       ...head,
-      `write a decision doc to ${vaultDecisionsPath(ws)}YYYY-MM-DD-<slug>.md before ending the session.`,
+      `write a decision doc to ${vaultCapturePath(ws, layout)}YYYY-MM-DD-<slug>.md before ending the session.`,
       '',
       'Use the template at ~/ai-workspace/protocols/vault-capture.md (frontmatter + Decision /',
       'Context / Rationale / Alternatives / Implications sections).',
@@ -117,13 +126,13 @@ export function buildVaultCaptureBlock(
     ...head,
     `write a decision doc before ending the session. You are sandboxed, so write it through the`,
     `control plane — there is no \`~/second-brain\` on this filesystem. Ask the API where your`,
-    `workspace's knowledge folder is, then PUT the file into its \`${rel.split('/').pop()}/\` subfolder:`,
+    `workspace's knowledge folder is, then PUT the file into its \`${sub}/\` subfolder:`,
     '',
     '```bash',
     'H="X-CC-Session-Token: $CC_SESSION_TOKEN"',
     `KB=$(curl -s "${CC_API}/api/docs/tree" -H "$H" | node -pe 'JSON.parse(require("fs").readFileSync(0,"utf8")).root')`,
     `curl -s -X PUT "${CC_API}/api/docs/file" -H "$H" -H 'Content-Type: application/json' \\`,
-    `  -d "$(node -e 'const fs=require("fs");process.stdout.write(JSON.stringify({path:process.argv[1]+"/decisions/"+process.argv[2],content:fs.readFileSync(process.argv[3],"utf8"),create_dirs:true}))' "$KB" "$(date -u +%F)-<slug>.md" /workspace/decision.md)"`,
+    `  -d "$(node -e 'const fs=require("fs");process.stdout.write(JSON.stringify({path:process.argv[1]+${subExpr}+process.argv[2],content:fs.readFileSync(process.argv[3],"utf8"),create_dirs:true}))' "$KB" "$(date -u +%F)-<slug>.md" /workspace/decision.md)"`,
     '```',
     '',
     'Write the doc body to `/workspace/decision.md` first (frontmatter + Decision / Context /',
@@ -175,6 +184,63 @@ export function buildSandboxedObjectiveMemoryBlock(objectiveId: number): string[
     'The two files have different audiences — keep them separate:',
     '- `NOTES.md` — YOUR private scratch. Hypotheses, dead ends, restart state, self-narration. Write freely; nobody grades it. The AI reviewer is deliberately masked off this file, so nothing you need judged may live only here.',
     '- `ARTIFACT.md` — YOUR final artifact, and the thing consumers actually read. PUT it before you finish: what you delivered, where it lives (branch / PR / file paths), and the evidence for each acceptance criterion. This is what the reviewer reads in place of your scratch, so an unstated deliverable is an ungraded deliverable. If your brief names a different artifact file in another card\'s folder, you cannot write it from this sandbox: put that deliverable in your own ARTIFACT.md and say so in your summary.',
+  ]
+}
+
+/**
+ * The reviewer's knowledge-base block (obj 901525).
+ *
+ * `buildReviewerPrompt` never carried any instruction for reaching the vault —
+ * only the WORKER prompt (`buildPrompt`, via `buildKbAccessBlock` above) did.
+ * A reviewer's spawn env already gets the exact same control-plane credential
+ * a worker gets (`applySessionTrustEnv` is called for every `sessionKind`,
+ * `session-spawn-env.ts`), minted read-only (`readOnly: sessionKind ===
+ * 'reviewer'`) — so `GET /api/docs/file` / `/api/docs/search` already answer a
+ * reviewer's token scoped to the card's own workspace exactly like a worker's
+ * (`sessionFileAuth`, `middleware/session-file-access.ts`). With no prompt
+ * instruction telling it so, a reviewer whose rubric names a file under
+ * `workspaces/<ws>/...` had no way to know that route exists: in jail mode the
+ * vault is not on disk at all (empty `find`/`ls`), and in tmux mode it is
+ * right there read-write for everyone ELSE but the reviewer never thought to
+ * look through the one path that is actually its own. Both read as "the file
+ * does not exist" and FAILED a real deliverable (#901494, #901499, #901519).
+ *
+ * Always emitted (regardless of jail/tmux mode) — the HTTP route is the one
+ * surface guaranteed to behave the same in both, and it is READ-ONLY by
+ * construction for a reviewer's token, so steering the reviewer onto it can
+ * never let it write the knowledge base it is grading.
+ */
+export function buildReviewerKbAccessBlock(objective: Pick<Objective, 'id' | 'workspace'>): string[] {
+  const ws = resolveWriteWorkspace(objective.workspace)
+  return [
+    '',
+    '## Knowledge-base deliverables (READ-ONLY — use this before concluding a file is missing)',
+    '',
+    `When a criterion names a file under \`workspaces/${ws}/...\` (a runbook, a report, a decision doc,`,
+    'any vault page), do NOT rely on finding it on local disk — your sandbox may have no vault mount at',
+    'all, and even where one exists it is not where this card\'s deliverable necessarily lives. Read it',
+    `through the control plane instead, scoped to this card's own workspace (\`${ws}\`) exactly the way`,
+    'the worker that wrote it was scoped:',
+    '',
+    '```bash',
+    'H="X-CC-Session-Token: $CC_SESSION_TOKEN"',
+    `curl -sG "${CC_API}/api/docs/search" -H "$H" --data-urlencode 'q=<words from the criterion>'`,
+    `curl -sG "${CC_API}/api/docs/file" -H "$H" --data-urlencode 'path=<absolute path, e.g. workspaces/${ws}/...>'`,
+    '```',
+    '',
+    'Your token is READ-ONLY here (a write attempt is refused) — that is expected, you are grading, not',
+    'editing. Reading the status code correctly matters MORE than usual, because it changes your VERDICT:',
+    '- **404** — the path is inside your workspace and genuinely does not exist. This IS a real miss:',
+    '  grade the criterion `[FAIL]` (or `[BLOCKED]` only if you need a different file to confirm it).',
+    '- **403, a connection error, or any other failed call** — this is NOT evidence the file is missing.',
+    '  It means you could not reach it from here. Mark that criterion `[BLOCKED]` with the reason',
+    '  "could not check — <status/error>", never `[FAIL]` and never "the deliverable does not exist".',
+    '  If every criterion you can otherwise verify passes and the ONLY open item is a `[BLOCKED]` access',
+    '  problem like this, your OVERALL `<verdict>` is `blocked`, not `fail` — a `fail` here respawns a',
+    '  worker to redo work that was never missing, and burns a review iteration on an access problem',
+    '  that is not the worker\'s fault.',
+    '- **401** — your own token is missing or stale (`echo "${CC_SESSION_TOKEN:+set}"`). Treat the same',
+    '  as a 403: `[BLOCKED]`, not `[FAIL]`.',
   ]
 }
 

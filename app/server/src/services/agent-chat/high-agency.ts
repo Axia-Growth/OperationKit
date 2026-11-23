@@ -50,6 +50,8 @@ import type { ChatAgent } from './agent-defs.js'
 import { botMayUseWorkspace, botWorkspaceAllowlist, narrowToBot } from './bot-workspaces.js'
 import { cardModelForBot } from './bot-card-model.js'
 import { ownerBotName } from './full-access-tools.js'
+import { openLoopsBriefSection } from './open-loops.js'
+import { botMemoryBriefSection } from './bot-memory.js'
 import {
   DEFAULT_INSTALL_TIMEZONE,
   DEFAULT_LEVEL,
@@ -275,7 +277,12 @@ function projectOwnerBot(agent: Pick<ChatAgent, 'slug' | 'name'>): string | null
   }
 }
 
-export function buildHighAgencyBrief(agent: BriefAgent, s: BriefSettings, owner = 'the owner'): string {
+/**
+ * `openLoops` (obj 901382) = the reconcile step for a bot that tracks open loops
+ * (open-loops.ts `openLoopsBriefSection`), placed right after the close-out
+ * commands. Passed in by templateFor so this function stays pure.
+ */
+export function buildHighAgencyBrief(agent: BriefAgent, s: BriefSettings, owner = 'the owner', openLoops: string[] = []): string {
   const ws = s.workspace ?? 'general'
   const persona = agent.system_prompt.trim()
   const snapshot = persona.length > PERSONA_SNAPSHOT_CHARS ? `${persona.slice(0, PERSONA_SNAPSHOT_CHARS)}\n…(truncated)` : persona
@@ -312,10 +319,11 @@ export function buildHighAgencyBrief(agent: BriefAgent, s: BriefSettings, owner 
     '   ```',
     '',
     '**2. Close the loop.** Only on cards you own:',
-    '   - done / cancelled: `curl -s -X PATCH http://localhost:3002/api/internal/objectives/<id>/status -H \'Content-Type: application/json\' -H "X-CC-Session-Token: $CC_SESSION_TOKEN" -d \'{"status":"done"}\'` (or `"cancelled"`). A refused transition is not yours to force — note it in the report.',
+    '   - done / cancelled: `curl -s -X PATCH http://localhost:3002/api/internal/objectives/<id>/status -H \'Content-Type: application/json\' -H "X-CC-Session-Token: $CC_SESSION_TOKEN" -d \'{"status":"done"}\'` (or `"cancelled"`; `"review"` holds a running card for a person; `"working"` starts or restarts one). A card with a pull request and no passing AI review closes as done only with a stated reason: add `"override_reason":"<why>"` (it goes on the audit trail). A refused transition is not yours to force — note it in the report.',
     '   - unblock or steer a running card: `curl -s -X POST http://localhost:3002/api/internal/objectives/<id>/message -H \'Content-Type: application/json\' -H "X-CC-Session-Token: $CC_SESSION_TOKEN" -d \'{"message":"<what to do next>"}\'`',
     '   - learnings: a short note through the knowledge-base API (`PUT http://localhost:3002/api/docs/file` with your session token), in your area\'s folder.',
     '',
+    ...openLoops,
   ]
   if (s.allow_cards) {
     // obj 900957: the project card names this bot as its owner (owner_bot) and is
@@ -384,7 +392,11 @@ export function buildHighAgencyBrief(agent: BriefAgent, s: BriefSettings, owner 
 function templateFor(agent: ChatAgent, s: HighAgencySettings): Record<string, unknown> {
   const tpl: Record<string, unknown> = {
     title: highAgencyTitle(agent),
-    description: buildHighAgencyBrief(agent, s, ownerNameFor(s.run_as_user_id)),
+    description: buildHighAgencyBrief(agent, s, ownerNameFor(s.run_as_user_id), [
+      ...openLoopsBriefSection(agent, s.workspace, ownerNameFor(s.run_as_user_id)),
+      // obj 901500: what a wake writes to the profile and the journal (only for a bot with memory on).
+      ...botMemoryBriefSection(agent, s.workspace, ownerNameFor(s.run_as_user_id)),
+    ]),
     agent_context: agent.slug,
     type: 'task',
     completion_goal:

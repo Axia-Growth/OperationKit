@@ -28,8 +28,7 @@ import { SENDER_MARKER } from '../lib/message-provenance.js'
 import { SESSION_SECRET_ACCESS_FLAG, readSettingFlag, verifiedSenderStampsEnabled } from '../lib/session-trust.js'
 import { listForCaller } from './secrets-broker.js'
 import { resolveSecretNames } from './secrets-store.js'
-import { allowlistedKeys, getSessionEnvMode, sessionSubjects } from './secret-env-policy.js'
-import { githubSessionAccess, resolveActingUserId } from './session-spawn-env.js'
+import { githubSessionAccess, githubUnavailableFix, resolveActingUserId, sessionSecretKeyFilter } from './session-spawn-env.js'
 import { resolveWriteWorkspace } from './workspaces.js'
 import { resolveBrandName } from './branding-config.js'
 import { resolveOwnerName } from '../lib/install-defaults.js'
@@ -107,10 +106,11 @@ export function buildSecretsInventoryBlock(objective: Objective): string[] {
     names = resolveSecretNames({ workspace, userId })
     // D4 (obj 900540): in enforce mode the env holds only allowlisted names, so
     // only those are listed as "already exported". The rest go via the broker.
-    if (getSessionEnvMode() === 'enforce') {
-      const allowed = allowlistedKeys(sessionSubjects(objective, userId))
-      withheld = names.filter(n => !allowed.has(n)).length
-      names = names.filter(n => allowed.has(n))
+    // obj 901330: a scoped bot's session holds only its pack, in either mode.
+    const keep = sessionSecretKeyFilter(objective, userId)
+    if (keep) {
+      withheld = names.filter(n => !keep(n)).length
+      names = names.filter(n => keep(n))
     }
     if (brokerEnabled) {
       for (const item of listForCaller({ userId: userId ?? 0, isAdmin: false, workspaces: [workspace] }, { workspace })) {
@@ -212,20 +212,8 @@ export function buildGithubAccessLines(objective: Objective, secretNames: Set<st
       `${head} connected as \`${access.login}\` through the card owner's GitHub connection (Settings → Connectors). \`GH_TOKEN\` and \`GITHUB_TOKEN\` are already in your env even though they are not in the secrets list above. \`gh pr create\` and \`git push\` over https work as \`${access.login}\` (a git credential helper is pre-configured). Do NOT ask for a \`GH_TOKEN\` secret.`,
     ]
   }
-  const fix: Record<typeof access.reason, string> = {
-    no_owner:
-      'this card has no owner, so nobody\'s GitHub connection applies. Ask on the card for an owner to be assigned (the person whose GitHub should open the PR).',
-    not_connected:
-      'the card owner has not connected GitHub. The fix is Settings → Connectors → GitHub — one connection serves chat and coding sessions alike.',
-    key_connector: `this card was filed by the API key${access.keyLabel ? ` "${access.keyLabel}"` : ''}, which is not allowed to use GitHub. Its owner can add GitHub to that key in Settings → API keys.`,
-    delegated_card:
-      'this card was assigned to its owner by someone else, and the owner has not allowed GitHub on work assigned by others. The owner can turn that on in Settings → Connectors → GitHub.',
-    access_rule:
-      'the owner limited their GitHub connection to other agents or workspaces in Settings → Connectors → GitHub.',
-    cross_user: 'the GitHub connection belongs to someone else.',
-  }
   return [
-    `${head} not available to this session — ${fix[access.reason]} When you report it, name THAT fix. A \`GH_TOKEN\` in Settings → Secrets is only an optional override, not the required path; do not ask for one first. (If \`gh auth status\` succeeds anyway, this install has a shared bot login configured and you may use it.)`,
+    `${head} not available to this session — ${githubUnavailableFix(access.reason, access.keyLabel)} When you report it, name THAT fix. A \`GH_TOKEN\` in Settings → Secrets is only an optional override, not the required path; do not ask for one first. (If \`gh auth status\` succeeds anyway, this install has a shared bot login configured and you may use it.)`,
   ]
 }
 

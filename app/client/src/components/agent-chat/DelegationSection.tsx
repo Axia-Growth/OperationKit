@@ -65,6 +65,8 @@ export function DelegationSection({ agent, isAdmin }: { agent: Pick<ChatAgentInf
   const [workspace, setWorkspace] = useState('')
   const [actions, setActions] = useState<DelegationAction[]>([])
   const [days, setDays] = useState('7')
+  // obj 901388: "Merge without asking me each time" — off unless ticked, merge grants only.
+  const [standing, setStanding] = useState(false)
   const [busy, setBusy] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
@@ -116,16 +118,20 @@ export function DelegationSection({ agent, isAdmin }: { agent: Pick<ChatAgentInf
     }
   }
 
+  const standingOn = standing && actions.includes('merge')
+
   const grant = async () => {
     const expires = new Date(Date.now() + Number(days) * 86_400_000).toISOString()
     const ok = await run(
       'grant',
-      () => api.post<DelegationGrantsResponse>(url, { workspace: chosenWs, actions, expires_at: expires }),
-      `${agent.name} can now approve ${actions.map(a => DELEGATION_ACTION_LABELS[a]).join(', ')} in ${chosenWs} on your behalf.`,
+      () => api.post<DelegationGrantsResponse>(url, { workspace: chosenWs, actions, expires_at: expires, standing_merge: standingOn }),
+      `${agent.name} can now approve ${actions.map(a => DELEGATION_ACTION_LABELS[a]).join(', ')} in ${chosenWs} on your behalf.` +
+        (standingOn ? ` It will merge its own passed PRs there without asking you each time. Deploys stay with you.` : ''),
     )
     if (ok) {
       setFormOpen(false)
       setActions([])
+      setStanding(false)
     }
   }
 
@@ -227,6 +233,9 @@ export function DelegationSection({ agent, isAdmin }: { agent: Pick<ChatAgentInf
                       Grant #{g.id} · {wsLabel(g.workspace)}
                     </span>
                     <ActionChips actions={g.actions} />
+                    {g.standing_merge && (
+                      <span className="text-xs text-fg-1">Merges its own passed PRs without asking you each time</span>
+                    )}
                     <span className="text-xs text-fg-2">Expires {when(g.expires_at)} · granted by {g.granted_by}</span>
                   </span>
                   {canManage && (
@@ -272,6 +281,23 @@ export function DelegationSection({ agent, isAdmin }: { agent: Pick<ChatAgentInf
                   ))}
                 </div>
               </div>
+              {actions.includes('merge') && (
+                <div className="flex flex-col gap-1">
+                  <label className="flex min-h-[44px] items-center gap-2 text-sm text-fg-0">
+                    <input
+                      type="checkbox"
+                      checked={standing}
+                      onChange={e => setStanding(e.target.checked)}
+                      disabled={busy !== null}
+                      aria-describedby={id('standing-help')}
+                    />
+                    Merge without asking me each time
+                  </label>
+                  <p id={id('standing-help')} className="text-xs text-fg-2">
+                    When one of {agent.name}'s own cards passes its AI review and its checks are green, it merges the pull request by itself and tells you in this chat. It never deploys: merged code is not live until you deploy. Reserved and protected PRs are never merged this way.
+                  </p>
+                </div>
+              )}
               <div className="flex flex-wrap items-center gap-2">
                 <Button variant="primary" size="sm" loading={busy === 'grant'} disabled={!chosenWs || actions.length === 0 || busy !== null} onClick={() => void grant()}>
                   Grant
@@ -295,7 +321,7 @@ export function DelegationSection({ agent, isAdmin }: { agent: Pick<ChatAgentInf
               <ul className="mt-2 flex flex-col gap-1">
                 {past.map(g => (
                   <li key={g.id}>
-                    #{g.id} · {g.workspace} · {g.actions.map(a => DELEGATION_ACTION_LABELS[a]).join(', ')} ·{' '}
+                    #{g.id} · {g.workspace} · {g.actions.map(a => DELEGATION_ACTION_LABELS[a]).join(', ')}{g.standing_merge ? ' (without asking)' : ''} ·{' '}
                     {g.state === 'revoked' ? `revoked ${when(g.revoked_at)}${g.revoked_by ? ` by ${g.revoked_by}` : ''}` : `expired ${when(g.expires_at)}`}
                   </li>
                 ))}

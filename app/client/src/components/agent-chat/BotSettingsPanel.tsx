@@ -2,8 +2,13 @@ import { useMemo, useRef, useState } from 'react'
 import { api } from '../../lib/api'
 import { Alert, Button, cn } from '../ui'
 import { HighAgencySection } from './HighAgencySection'
+import { CardWakesSection } from './CardWakesSection'
+import { LongRepliesSection } from './LongRepliesSection'
+import { DevOpsSection } from './DevOpsSection'
+import { RepoRightsSection } from './RepoRightsSection'
 import { WorkspaceAccessSection } from './WorkspaceAccessSection'
 import { FullAccessSection } from './FullAccessSection'
+import { SecretAccessSection } from './SecretAccessSection'
 import { DelegationSection } from './DelegationSection'
 import {
   PROVIDER_LABELS,
@@ -43,10 +48,12 @@ const SECTION_LINKS: Array<{ label: string; idPrefix: string }> = [
   { label: 'Full access', idPrefix: 'bot-full-access-title' },
   { label: 'Approve on my behalf', idPrefix: 'bot-delegation-title' },
   { label: 'High Agency', idPrefix: 'high-agency-title' },
+  { label: 'Card wakes', idPrefix: 'bot-card-wakes-title' },
 ]
 
 const GROUP_LABELS: Record<ToolGroup, string> = {
   web: 'Web',
+  app: 'This app',
   knowledge: 'Knowledge',
   board: 'Board',
   images: 'Images',
@@ -54,9 +61,10 @@ const GROUP_LABELS: Record<ToolGroup, string> = {
   connectors: 'Email & calendar',
   integrations: 'Integrations',
   secrets: 'Secrets',
+  sandbox: 'Card sandbox and browser',
 }
 
-const GROUP_ORDER: ToolGroup[] = ['web', 'knowledge', 'board', 'images', 'bots', 'connectors', 'integrations', 'secrets']
+const GROUP_ORDER: ToolGroup[] = ['web', 'app', 'knowledge', 'board', 'images', 'bots', 'connectors', 'integrations', 'secrets', 'sandbox']
 
 const PROVIDERS: ProviderId[] = ['claude', 'anthropic', 'openai', 'xai', 'openai-compatible', 'demo']
 
@@ -421,9 +429,20 @@ export function BotSettingsPanel({
           onChanged={summary => onSaved({ ...agent, full_access: summary })}
         />
 
+        {/* obj 901484: which secrets this bot may use, on one screen with one Save. */}
+        <SecretAccessSection agent={agent} isAdmin={isAdmin} version={accessVersion + grantVersion} onSaved={onSaved} />
+
         <DelegationSection agent={agent} isAdmin={isAdmin} />
 
         <HighAgencySection agent={agent} isAdmin={isAdmin} accessVersion={accessVersion} onAccessChanged={() => setGrantVersion(v => v + 1)} />
+
+        <CardWakesSection agent={agent} isAdmin={isAdmin} />
+
+        <LongRepliesSection agent={agent} isAdmin={isAdmin} />
+
+        <DevOpsSection agent={agent} isAdmin={isAdmin} />
+
+        <RepoRightsSection agent={agent} isAdmin={isAdmin} />
       </div>
     </section>
   )

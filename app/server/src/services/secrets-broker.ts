@@ -206,6 +206,25 @@ export interface Caller {
    * redactor to recognise, since their replies feed an LLM.
    */
   bot?: boolean
+  /**
+   * obj 901330 — a scoped bot's card session may reach only the names on its
+   * pack through the broker too. Absent = no extra narrowing.
+   */
+  keyFilter?: (key: string) => boolean
+  /**
+   * obj 901484 — per-bot grants for the chat's ONE workspace, by secret name
+   * (services/agent-chat/bot-secret-access.ts). They only ADD to the
+   * workspace-wide policy: a name is usable when the policy entry OR the grant
+   * allows the host and method, and a grant makes a Shared secret visible to
+   * this bot here. Absent = today's behaviour exactly.
+   */
+  botGrants?: Record<string, BotSecretGrant>
+}
+
+/** One bot's permission for one secret: exact hosts and an explicit method list. Never a value. */
+export interface BotSecretGrant {
+  hosts: string[]
+  methods: string[]
 }
 
 interface Row {
@@ -217,11 +236,12 @@ interface Row {
 }
 
 function visibleTo(row: Row, caller: Caller, policy: BrokerPolicy): boolean {
+  if (caller.keyFilter && !caller.keyFilter(row.key)) return false
   if (caller.isAdmin) return true
   const ws = new Set(caller.workspaces)
   switch (row.scope_type) {
     case 'global':
-      return (policy[row.key]?.workspaces ?? []).some(w => ws.has(w))
+      return (policy[row.key]?.workspaces ?? []).some(w => ws.has(w)) || !!caller.botGrants?.[row.key]
     case 'workspace':
       return ws.has(row.workspace)
     case 'user':
@@ -253,15 +273,23 @@ export function listForCaller(caller: Caller, opts: { workspace?: string } = {})
     .filter(r => visibleTo(r, caller, policy))
     .filter(r => !opts.workspace || r.workspace === opts.workspace || r.scope_type === 'global' || r.scope_type === 'user')
     .map(r => {
-      const p = policy[r.key]
+      const g = caller.botGrants?.[r.key]
+      const p = policyAppliesTo(r.scope_type, policy[r.key], caller) ? policy[r.key] : undefined
+      const pHosts = p?.hosts ?? []
+      const hosts = [...new Set([...pHosts, ...(g?.hosts ?? [])])]
+      // null = any method: only when the workspace-wide entry itself says so.
+      const pAny = pHosts.length > 0 && !(p!.methods && p!.methods.length)
+      const methods = pAny || hosts.length === 0
+        ? (pAny ? null : p?.methods ?? null)
+        : [...new Set([...(pHosts.length ? p!.methods ?? [] : []), ...(g?.methods ?? [])])]
       return {
         name: r.key,
-        description: p?.description ?? null,
+        description: policy[r.key]?.description ?? null,
         scope: r.scope_type,
         workspace: r.workspace || null,
-        allowed_hosts: p?.hosts ?? [],
-        allowed_methods: p?.methods ?? null,
-        usable: (p?.hosts?.length ?? 0) > 0,
+        allowed_hosts: hosts,
+        allowed_methods: methods,
+        usable: hosts.length > 0,
       }
     })
 }
@@ -294,6 +322,36 @@ function resolveForUse(name: string, caller: Caller, policy: BrokerPolicy, works
     scope: row.scope_type === 'global' ? 'global' : `${row.scope_type}:${row.workspace || row.user_id}`,
     workspace: row.workspace || null,
   }
+}
+
+/**
+ * Does the workspace-wide policy entry speak for this caller on this row? Always
+ * for a workspace/user row (as before). For a Shared row it must name one of the
+ * caller's workspaces — which was already the visibility rule, and only matters
+ * now that a per-bot grant can make a Shared row visible on its own.
+ */
+function policyAppliesTo(scope: Row['scope_type'], p: BrokerPolicyEntry | undefined, caller: Caller): boolean {
+  if (!p) return false
+  if (scope !== 'global' || caller.isAdmin || !caller.botGrants) return true
+  return (p.workspaces ?? []).some(w => caller.workspaces.includes(w))
+}
+
+/** Why the workspace-wide policy entry refuses this call, or null when it allows it. */
+function policyRefusal(name: string, host: string, method: string, p: BrokerPolicyEntry | undefined): string | null {
+  if (!p || p.hosts.length === 0) return `secret '${name}' has no allowed destination hosts configured`
+  if (isIpLiteral(host) ? !p.hosts.includes(host) : !hostAllowed(host, p.hosts)) {
+    return `destination host '${host}' is not allowed for secret '${name}' (allowed: ${p.hosts.join(', ')})`
+  }
+  if (p.methods && p.methods.length && !p.methods.includes(method)) return `method ${method} is not allowed for secret '${name}'`
+  return null
+}
+
+/** Why a per-bot grant refuses this call, or null. Exact hosts only; an empty method list allows nothing. */
+function grantRefusal(name: string, host: string, method: string, g: BotSecretGrant): string | null {
+  if (g.hosts.length === 0) return `secret '${name}' has no allowed destination hosts configured`
+  if (isIpLiteral(host) || !g.hosts.includes(host)) return `destination host '${host}' is not allowed for secret '${name}' (allowed: ${g.hosts.join(', ')})`
+  if (!g.methods.includes(method)) return `method ${method} is not allowed for secret '${name}' (this bot has: ${g.methods.join(', ') || 'none'})`
+  return null
 }
 
 // ── Execution ───────────────────────────────────────────────────────────────
@@ -466,11 +524,17 @@ export async function executeHttp(req: BrokerHttpRequest, caller: Caller): Promi
     const p = policy[name]
     const resolved = resolveForUse(name, caller, policy, workspace)
     if (!resolved) return reject(404, `secret '${name}' does not exist or is not visible to this key`, audit)
-    if (!p || p.hosts.length === 0) return reject(403, `secret '${name}' has no allowed destination hosts configured`, audit)
-    if (isIpLiteral(host) ? !p.hosts.includes(host) : !hostAllowed(host, p.hosts)) {
-      return reject(403, `destination host '${host}' is not allowed for secret '${name}' (allowed: ${p.hosts.join(', ')})`, audit)
+    // A Shared secret this bot sees only through its own grant gets the grant's
+    // terms, never a host list written for some other workspace.
+    const refusal = policyRefusal(name, host, method, policyAppliesTo(resolved.scope === 'global' ? 'global' : 'workspace', p, caller) ? p : undefined)
+    if (refusal) {
+      // obj 901484: a per-bot grant is a second, independent way in. It never
+      // narrows what the workspace-wide entry already allows.
+      const g = caller.botGrants?.[name]
+      if (!g || grantRefusal(name, host, method, g)) {
+        return reject(403, (g && grantRefusal(name, host, method, g)) || refusal, audit)
+      }
     }
-    if (p.methods && p.methods.length && !p.methods.includes(method)) return reject(403, `method ${method} is not allowed for secret '${name}'`, audit)
     if (caller.bot && resolved.value.length < MIN_SECRET_LEN) {
       return reject(403, `secret '${name}' is too short to be redacted reliably, so bots cannot use it`, audit)
     }

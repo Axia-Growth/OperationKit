@@ -19,6 +19,7 @@ import { AI_WORKSPACE_DIR } from '../../config.js'
 import { parseMiniYaml, splitFrontMatter, type YamlValue } from './mini-yaml.js'
 import { ALL_TOOLS_TOKENS, KNOWN_TOOL_NAMES } from './tool-names.js'
 import type { BotConfig, BotFileDefaults } from './bot-config.js'
+import { DEFAULT_BRAND_NAME, resolveBrandName } from '../branding-config.js'
 
 export const CHAT_PROVIDERS = ['claude', 'anthropic', 'openai', 'xai', 'openai-compatible', 'demo'] as const
 export type ChatProviderId = (typeof CHAT_PROVIDERS)[number]
@@ -56,6 +57,12 @@ export interface ChatAgent {
   file_name?: string
   /** The admin's bot-page overrides, or null when the bot is exactly its file (obj 900671). */
   config?: BotConfig | null
+  /**
+   * Other names this bot still answers to (obj 901033). A built-in bot named
+   * "{brand} Dev" shows as "Acme Ops Dev" under a custom brand, but an
+   * owner_bot or chat reference written as "Operation Kit Dev" keeps resolving.
+   */
+  aliases?: string[]
 }
 
 export type AgentSource = 'file' | 'demo' | 'builtin'
@@ -219,8 +226,22 @@ export function toChatAgent(
   return { agent, errors, warnings }
 }
 
-/** Parse one agent file's text (agent.yaml or agent.md). */
-export function parseAgentText(text: string, file: string, slugHint: string, source: AgentSource = 'file') {
+/**
+ * Parse one agent file's text (agent.yaml or agent.md). A built-in file gets
+ * its `{brand}` tokens filled in (obj 901033): with `brand` when given, else
+ * the install's brand name.
+ */
+export function parseAgentText(text: string, file: string, slugHint: string, source: AgentSource = 'file', brand?: string) {
+  const fill = source === 'builtin' ? (brand ?? resolveBrandName()) : undefined
+  // The initials are letters and digits only, so they are safe to put into the
+  // YAML text before parsing (the avatar is cut to two characters there).
+  if (fill !== undefined) text = text.split(BRAND_INITIALS_TOKEN).join(brandInitials(fill))
+  const r = parseAgentFile(text, file, slugHint, source)
+  // The full name may hold ":" or "#", so it is filled in AFTER parsing.
+  return fill !== undefined && r.agent ? { ...r, agent: brandBuiltinAgent(r.agent, fill) } : r
+}
+
+function parseAgentFile(text: string, file: string, slugHint: string, source: AgentSource) {
   try {
     if (file.endsWith('.md')) {
       const fm = splitFrontMatter(text)
@@ -233,7 +254,50 @@ export function parseAgentText(text: string, file: string, slugHint: string, sou
   }
 }
 
-function readAgentDir(dir: string, slug: string, source: AgentSource) {
+// ── Brand tokens in built-in bots (obj 901033) ──
+//
+// The bots that ship with the app are written with `{brand}` where the product
+// name goes ("{brand} Dev", "author: {brand}"), so a white-label install shows
+// its own name and never the vendor's. Only built-ins are filled in: an
+// install's own agent file is taken exactly as written. The slug never changes.
+
+/** Stands for the install's brand name in a built-in agent file. */
+export const BRAND_TOKEN = '{brand}'
+/** Stands for the brand's initials (the avatar), e.g. "Acme Ops" -> "AO". */
+export const BRAND_INITIALS_TOKEN = '{brand_initials}'
+
+/** Up to two initials of a brand name: "Operation Kit" -> "OK", "Acme" -> "A". */
+export function brandInitials(brand: string): string {
+  const words = brand.split(/[^\p{L}\p{N}]+/u).filter(Boolean)
+  const initials = words.slice(0, 2).map(w => Array.from(w)[0].toUpperCase()).join('')
+  return initials || 'B'
+}
+
+const fillBrand = (v: string, brand: string): string => v.split(BRAND_TOKEN).join(brand)
+
+/**
+ * A built-in agent with `{brand}` filled in on every field a person or the
+ * model reads. When the brand is not the default, the default-brand name is
+ * kept as an alias so references to the old name still resolve.
+ */
+export function brandBuiltinAgent(agent: ChatAgent, brand: string): ChatAgent {
+  const name = fillBrand(agent.name, brand)
+  const defaultName = fillBrand(agent.name, DEFAULT_BRAND_NAME)
+  const aliases = [...(agent.aliases ?? []), ...(defaultName !== name ? [defaultName] : [])]
+  return {
+    ...agent,
+    name,
+    description: fillBrand(agent.description, brand),
+    system_prompt: fillBrand(agent.system_prompt, brand),
+    author: agent.author === null ? null : fillBrand(agent.author, brand),
+    how_to_use: fillBrand(agent.how_to_use, brand),
+    example_prompts: agent.example_prompts.map(p => fillBrand(p, brand)),
+    schedules: agent.schedules.map(s => ({ ...s, name: fillBrand(s.name, brand), prompt: fillBrand(s.prompt, brand) })),
+    ...(aliases.length ? { aliases } : {}),
+  }
+}
+
+function readAgentDir(dir: string, slug: string, source: AgentSource, brand?: string) {
   for (const name of ['agent.yaml', 'agent.yml', 'agent.md']) {
     const file = path.join(dir, name)
     let text: string
@@ -242,7 +306,7 @@ function readAgentDir(dir: string, slug: string, source: AgentSource) {
     } catch {
       continue
     }
-    return parseAgentText(text, file, slug, source)
+    return parseAgentText(text, file, slug, source, brand)
   }
   return null
 }
@@ -290,9 +354,10 @@ export function loadChatAgents(opts: { env?: NodeJS.ProcessEnv; includeDemo?: bo
   if (opts.includeBuiltins) {
     let builtins: fs.Dirent[] = []
     try { builtins = fs.readdirSync(BUILTIN_DIR, { withFileTypes: true }) } catch { /* none shipped */ }
+    const brand = resolveBrandName(opts.env)
     for (const e of builtins.sort((a, b) => a.name.localeCompare(b.name))) {
       if (!e.isDirectory() || !SLUG_RE.test(e.name) || taken(e.name, 'builtin')) continue
-      const r = readAgentDir(path.join(BUILTIN_DIR, e.name), e.name, 'builtin')
+      const r = readAgentDir(path.join(BUILTIN_DIR, e.name), e.name, 'builtin', brand)
       if (r?.agent) agents.push(r.agent)
       else if (r) problems.push({ slug: e.name, file: path.join(BUILTIN_DIR, e.name), errors: r.errors })
     }

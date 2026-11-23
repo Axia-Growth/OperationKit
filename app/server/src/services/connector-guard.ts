@@ -37,6 +37,8 @@ export type ConnectorDenyReason =
   | 'key_connector'
   | 'delegated_card'
   | 'access_rule'
+  | 'bot_scope'
+  | 'no_grant'
 
 /**
  * Who is asking. Every kind carries the user it is ACTING FOR, which is the only
@@ -79,6 +81,12 @@ export interface ConnectorCredentialRequest {
   use?: { agent?: string | null; workspace?: string | null }
   /** True when the work was assigned to the owner by somebody else. */
   delegated?: boolean
+  /**
+   * obj 901330 — the session belongs to a SCOPED bot (services/bot-session-scope.ts).
+   * The connector must be on the bot's pack AND the owner's connector_access rule
+   * must name the bot explicitly; "no rule = everyone" is not a grant here.
+   */
+  botScope?: { slugs: string[]; connectors: ReadonlySet<string> } | null
 }
 
 export type ConnectorDecision =
@@ -197,7 +205,56 @@ export function canUseConnectorCredential(req: ConnectorCredentialRequest): Conn
     }
   }
 
+  // obj 901330 — a scoped bot's session: the pack is the ceiling and the owner's
+  // "Who can use it" list must name the bot. Fails closed on an unreadable rule.
+  if (req.botScope) {
+    if (!req.botScope.connectors.has(connectorId)) {
+      return { allowed: false, reason: 'bot_scope', detail: "this connector is not on the bot's list" }
+    }
+    if (!ownerNamesAgents(connectorId, owner, req.botScope.slugs)) {
+      return {
+        allowed: false,
+        reason: 'no_grant',
+        detail: "the owner's Who can use it list does not name this bot",
+      }
+    }
+  } else if (req.use && (req.use.agent !== undefined || req.use.workspace !== undefined) && connectorDefaultDeny()) {
+    // Enforce-plan step for every other agent (default OFF): with
+    // settings.connector_access_default_deny='1', a connection with no rule is
+    // no longer available to every agent — the rule must name the agent.
+    if (!ownerNamesAgents(connectorId, owner, [String(req.use.agent ?? '')])) {
+      return { allowed: false, reason: 'no_grant', detail: 'no Who can use it rule names this agent' }
+    }
+  }
+
   return { allowed: true }
+}
+
+/** settings.connector_access_default_deny / env CC_CONNECTOR_ACCESS_DEFAULT_DENY. Default OFF (today's behaviour). */
+export const CONNECTOR_DEFAULT_DENY_SETTING = 'connector_access_default_deny'
+export function connectorDefaultDeny(env: NodeJS.ProcessEnv = process.env): boolean {
+  const e = env.CC_CONNECTOR_ACCESS_DEFAULT_DENY?.trim()
+  if (e === '1') return true
+  if (e === '0') return false
+  try {
+    const row = getDb().prepare('SELECT value FROM settings WHERE key = ?').get(CONNECTOR_DEFAULT_DENY_SETTING) as
+      | { value: string }
+      | undefined
+    return row?.value === '1'
+  } catch {
+    return false
+  }
+}
+
+/** Does the owner's rule for this connector list EVERY one of these agents by name? */
+function ownerNamesAgents(connectorId: string, ownerUserId: number, agents: string[]): boolean {
+  try {
+    const listed = getAccess(connectorId, ownerUserId).agents
+    if (listed === null) return false
+    return agents.length > 0 && agents.every(a => !!a && listed.includes(a))
+  } catch {
+    return false
+  }
 }
 
 function ownerAllowsDelegated(connectorId: string, ownerUserId: number): boolean {

@@ -304,9 +304,19 @@ export function evaluateCiGate(input: CiGateInput): CiGateDecision {
 
   const failingRequired: string[] = []
   const missingRequired: string[] = []
+  const stillRunning = checks.filter(c => c.state === 'pending' && !isHarnessOwnStatus(c.name)).length
   for (const ctx of required) {
     const c = findCheck(checks, ctx)
-    if (!c) { missingRequired.push(`${ctx} (never scheduled)`); continue }
+    if (!c) {
+      // obj 901489: an aggregate job (`gate` has `needs:` on every other job) gets NO
+      // check run until its upstream jobs finish, so for the first ~5-12 min of a run
+      // it is absent while the workflow is plainly running. Calling that "never
+      // scheduled" sent the owner hunting for a trigger/billing fault that did not exist.
+      missingRequired.push(stillRunning > 0
+        ? `${ctx} (not started yet: waiting on ${stillRunning} other job(s) still running)`
+        : `${ctx} (never scheduled)`)
+      continue
+    }
     if (c.state === 'failure') { failingRequired.push(ctx); continue }
     if (c.state === 'cancelled') { missingRequired.push(`${ctx} (cancelled)`); continue }
     if (c.state === 'pending') { missingRequired.push(`${ctx} (queued/in progress)`); continue }

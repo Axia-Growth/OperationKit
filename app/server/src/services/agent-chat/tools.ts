@@ -25,7 +25,7 @@ import { cardModelForBot } from './bot-card-model.js'
 import { CHILD_CAP_PER_PARENT, depthForParent, openChildCount } from '../../lib/objective-depth.js'
 import { checkAgentInWorkspacePool, defaultAgentForWorkspace } from '../../routes/objectives-helpers.js'
 import { broadcast } from '../../ws/index.js'
-import { getInitialStatus, validateOwnerBot, type Objective } from '@operationkit/shared'
+import { chatActionWordingErrors, getInitialStatus, validateOwnerBot, type Objective } from '@operationkit/shared'
 import { raiseDecision } from '../decisions.js'
 import type { ChatAgent } from './agent-defs.js'
 import { createDraft, type Connectors, type EmailDraft, type EventDraft } from './connectors.js'
@@ -33,10 +33,15 @@ import { workspaceKbRoot } from '../doc-ingest/kb-paths.js'
 import { ingestEnabled } from '../doc-ingest/service.js'
 import { fileAnswer } from '../kb-wiki/answers.js'
 import { botForAgentSlug, resolveBot } from '../bots/bot-registry.js'
-import { createBotJob } from '../bots/bot-jobs.js'
+import { createBotJob, findJobByIdempotency } from '../bots/bot-jobs.js'
+import { isDuplicateGuardEnabled, recordDedupe } from '../../lib/objective-dedupe.js'
+import { explicitKey, findPossibleDuplicate, NEAR_DUPLICATE_THRESHOLD, parseFilingKey, possibleDuplicateResult, titleSimilarity, type PossibleDuplicate } from './card-filing-guard.js'
+import { composeCardBrief, normalizeDoneWhen } from '../../../../shared/card-brief.js'
+import { CARD_BRIEF_TOOL_HINT, DONE_WHEN_ARG, STOP_CONDITIONS_ARG } from './card-brief-args.js'
 import { buildAttention, oneLine, visibilityClause, type ControlUser } from '../../lib/agent-control.js'
 import { ALL_TOOLS_GRANT, EXPLICIT_ONLY_TOOLS, KNOWN_TOOL_NAMES, listsAllTools } from './tool-names.js'
 import { callerForChat, executeHttp, listForCaller, recordBrokerUse } from '../secrets-broker.js'
+import { botSecretGrants } from './bot-secret-access.js'
 import { rateLimit } from '../file-access.js'
 import { userHasWorkspace } from '../../middleware/workspace.js'
 import { webFetch, webSearch, WebToolError, MAX_SEARCH_RESULTS, DEFAULT_SEARCH_RESULTS, type WebToolDeps } from './web-tools.js'
@@ -44,12 +49,20 @@ import { botMayUseWorkspace, botWorkspaceAllowlist, personaOwnershipBlocked } fr
 import { withResolvedKnowledgeFolders } from './knowledge-folders.js'
 import { containedIn, realpathOrNull, resolveVaultPath, workspaceScopeRoots } from '../../lib/kb-workspace-scope.js'
 import { searchKnowledgeBase } from '../kb-semantic/search.js'
-import { noteKbWrite } from '../kb-semantic/service.js'
+import { noteKbChanged } from '../kb-semantic/service.js'
 import type { ChatLane } from './threads.js'
-import { fullAccessActive, fullAccessAnywhere, protectedCardRefusal, refuseExclusion } from './bot-full-access.js'
+import { fullAccessActive, fullAccessAnywhere, protectedCardRefusal, protectedPrTextRefusal, refuseExclusion } from './bot-full-access.js'
 import { exclusionGate, type OutboundCall } from './full-access-exclusions.js'
+import type { DeployStatus } from '../deploy-waiting.js'
 import { FULL_ACCESS_FNS, fullAccessToolSpecs, runFullAccessTool, withFullAccess, type FullAccessHost } from './full-access-tools.js'
+import { CARD_WAKE_FNS, runCardWakeTool, type CardWakeScope } from './card-wake-tools.js'
+import { beginSelfAction, endSelfAction, SELF_ACTION_TOOLS } from './card-wake-routing.js'
 import { CARD_SANDBOX_FNS, cardSandboxToolSpecs, runCardSandboxTool } from './card-sandbox-tools.js'
+import { GRANT_MERGE_FNS, grantMergeToolSpecs, runGrantMergeTool } from './grant-merge-tool.js'
+import { CHAT_DEPLOY_FNS, chatDeployToolSpecs, runChatDeployTool } from './chat-deploy-tool.js'
+import { DEV_OPS_ALL_FNS, devOpsToolSpecs, runDevOpsTool } from './dev-ops-tools.js'
+import { FOLLOWUP_FNS, followupToolSpecs, runFollowupTool } from './followups.js'
+import { writeDevOpsAudit } from '../dev-ops/audit.js'
 import { CARD_BROWSER_FNS, cardBrowserToolSpecs, runCardBrowserTool } from './card-browser-tools.js'
 import {
   BotMessageRefused,
@@ -63,6 +76,9 @@ import {
 import { ArtifactError, readArtifactImage } from '../live-artifacts.js'
 import { ImageRejected, MAX_IMAGE_BYTES, parseIncomingImages, validateImageBytes, type IncomingImage } from './attachments.js'
 import { publicCardUrl } from '../../lib/public-url.js'
+import { APP_ROUTES_DEFAULT_BOTS, APP_ROUTES_DESCRIPTION, APP_ROUTES_TOOL, appRoutesSummary, searchAppMap } from './app-routes-tool.js'
+import { offsetArg, pageNote, pageText } from './text-page.js'
+import { cardDecisionsForBot, cardOwnerAndGrants, cardThreadForBot, holdView, type BotCardOwner, type BotDecisionView, type BotThreadEntry } from './card-context.js'
 
 export interface ToolSpec {
   type: 'function'
@@ -95,6 +111,37 @@ export interface ToolContext {
   botWake?: { conversationId: number; depth: number }
   /** obj 900972: how a Full access tool starts or messages a card. Tests pass a stub; the host default uses the internal routes. */
   fullAccessHost?: FullAccessHost
+  /** obj 901389: reads the "merged, waiting for deploy" picture for `release_status`; tests pass a stub. */
+  deployStatusReader?: () => DeployStatus
+  /**
+   * obj 901328: set when this turn is a needs_agent CARD WAKE (card-wakes.ts).
+   * With `toolScope: 'chat'` (obj 901394, the default) the turn has the own-card
+   * tools plus this bot's normal chat tools, with the permissions of a normal chat
+   * turn for this person and no more. Otherwise it has ONLY the own-card tools
+   * (card-wake-tools.ts) and runChatTool refuses every other tool name.
+   */
+  cardWake?: CardWakeScope
+  /**
+   * obj 901393: the ids of the person's messages THIS turn delivers (the typed
+   * message plus any queued ones). Set by runTurn only — a wake turn has none.
+   * The chat deploy tool requires the owner's ask to be one of these, so a
+   * say-so never carries over to a later turn.
+   */
+  turnMessageIds?: number[]
+  /**
+   * obj 901392: set when this turn was started by one of the bot's own
+   * follow-ups (followup-wake.ts) rather than a typed message. It changes NO
+   * permission: the turn is an ordinary chat turn. It only carries the chain
+   * length, so schedule_followup can stop a runaway chain. `personSpoke` =
+   * a queued message from the person was delivered in this same turn.
+   */
+  followup?: { id: number; hop: number; personSpoke: boolean }
+  /**
+   * obj 901424: this turn's message came from the person's signed-in browser
+   * (cookie session), not an API key / bearer token / queued drain. Required by
+   * the operator tools (dev-ops-tools.ts).
+   */
+  browserSession?: boolean
 }
 
 /** What the chat UI shows for a tool call (drafts get buttons, cards get a status chip). */
@@ -109,6 +156,8 @@ export interface ToolOutcome {
   bot_conversation_id?: number
   /** obj 901059: a decision this call raised — the chat renders its briefing, Q&A thread and Approve/Deny. */
   decision_id?: number
+  /** obj 901392: a follow-up this call scheduled or cancelled — the chat renders its live state and a Cancel control. */
+  followup_id?: number
   /** obj 901028: an image this tool call attaches to the reply — rendered inline, same as a pasted screenshot. */
   images?: IncomingImage[]
 }
@@ -124,7 +173,8 @@ const OPEN_STATUSES = ['planning', 'queue', 'working', 'ai_review', 'review']
 
 const TEXT_EXT = new Set(['.md', '.txt', '.csv', '.json', '.yaml', '.yml'])
 const WRITE_EXT = new Set(['.md', '.txt', '.csv'])
-const MAX_READ_CHARS = 20_000
+/** One read_file page. A longer file is read page by page (text-page.ts). */
+export const MAX_READ_CHARS = 20_000
 const MAX_WRITE_BYTES = 200_000
 
 function obj(props: Record<string, unknown>, required: string[] = []): Record<string, unknown> {
@@ -142,8 +192,11 @@ const SPECS: Record<string, ToolSpec[]> = {
     }, ['q']))],
   list_folders: [fn('list_folders', 'List the files and folders inside one of your knowledge folders. Omit path to see your top-level folders.',
     obj({ path: { type: 'string', description: 'Folder path relative to the knowledge base, e.g. "notes/clients"' } }))],
-  read_file: [fn('read_file', 'Read one text file from your knowledge folders.',
-    obj({ path: { type: 'string', description: 'File path relative to the knowledge base' } }, ['path']))],
+  read_file: [fn('read_file', `Read one text file from your knowledge folders. A long file comes back one page at a time (about ${MAX_READ_CHARS} characters): when the result has "truncated": true, call again with "offset" set to the "next_offset" it returned, until next_offset is null.`,
+    obj({
+      path: { type: 'string', description: 'File path relative to the knowledge base' },
+      offset: { type: 'integer', minimum: 0, description: 'Character position to start from. Omit for the start of the file; for the next page pass the next_offset of the previous result.' },
+    }, ['path']))],
   write_doc: [fn('write_doc', 'Create or replace one .md/.txt/.csv file in your knowledge folders. Send the FULL new content; read the file first when editing.',
     obj({ path: { type: 'string' }, content: { type: 'string' } }, ['path', 'content']))],
   file_answer: [fn('file_answer', 'Save a good answer into the workspace knowledge base as a wiki page, linked from the pages it used, so later questions can build on it. Only save answers the person found useful.',
@@ -157,14 +210,18 @@ const SPECS: Record<string, ToolSpec[]> = {
       media_type: { type: 'string', description: 'Optional declared type for "data" — checked against the real bytes, never trusted alone.' },
       alt_text: { type: 'string', description: 'Short description of the image, for accessibility and the caption shown under it.' },
     }, ['source']))],
-  create_objective: [fn('create_objective', 'Hand a bigger job to the team board as a card. Coding tools pick it up and do the work; you can check its status later with get_objective. Use for anything that takes more than a few minutes.',
+  create_objective: [fn('create_objective', 'Hand a bigger job to the team board as a card. Coding tools pick it up and do the work; you can check its status later with get_objective. Use for anything that takes more than a few minutes. Look at the board first (list_objectives) so you do not file work that is already there. A retry never means file again: the same request returns the card already filed, and an open card with a near-identical title comes back as "possible duplicate #N" with nothing filed. The result says whether the card will start by itself; a card that did not start still EXISTS, so start or follow that card, never re-create it. ' + CARD_BRIEF_TOOL_HINT,
     obj({
       title: { type: 'string', description: 'Short, specific title' },
-      description: { type: 'string', description: 'What to do, the context, and what "done" looks like' },
+      description: { type: 'string', description: 'What to do and the context. Put what "done" looks like in done_when and the stop cases in stop_conditions, not here.' },
+      done_when: DONE_WHEN_ARG,
+      stop_conditions: STOP_CONDITIONS_ARG,
       workspace: { type: 'string', description: 'Workspace slug to file the card in. Omit for this chat\'s workspace. Only workspaces this bot is granted and the person belongs to are accepted.' },
       parent_id: { type: 'integer', description: 'File this card UNDER another card: that card\'s number. Use it whenever the work belongs to an existing card, instead of writing "Parent: #N" in the text. The parent must be a top-level card you can see; the new card lands in the parent\'s workspace.' },
+      idempotency_key: { type: 'string', description: 'One key per card you intend to file (any short unique string, no spaces). Reuse it word for word if you call again for the SAME card: you get the card already filed, never a second one. Use a new key for a different card.' },
+      file_anyway: { type: 'boolean', description: 'Only after a result said "possible duplicate #N" and you checked that card is different work: true files the new card anyway.' },
     }, ['title', 'description']))],
-  raise_decision: [fn('raise_decision', 'Ask the person to DECIDE something on a board card, with a short briefing. It shows at the top of the card and in this chat with a Q&A thread and Approve/Deny; their choice is sent to the card. Use this instead of asking for a decision in prose. Under about 200 words in total. Refused if the question or options are missing.',
+  raise_decision: [fn('raise_decision', 'Ask the person to DECIDE something on a board card, with a short briefing. It shows at the top of the card and in this chat with a Q&A thread and Approve/Deny; their choice is sent to the card. Use this instead of asking for a decision in prose. Under about 200 words in total. Refused if the question or options are missing. A deploy or merge never runs from the answer: an option that deploys or merges must say in its next that the person types deploy / merge in this chat (e.g. "You type deploy in this chat and I run it.").',
     obj({
       card_id: { type: 'integer', description: 'The card the decision is about' },
       context: { type: 'string', description: '2-3 sentences: where we are, what the decision is for, where it fits in the system' },
@@ -187,7 +244,7 @@ const SPECS: Record<string, ToolSpec[]> = {
       recommended: { type: 'string', description: 'The key of the option you recommend' },
       recommended_why: { type: 'string', description: 'One sentence: why' },
     }, ['card_id', 'context', 'question', 'options', 'recommended', 'recommended_why']))],
-  get_objective: [fn('get_objective', 'Read one board card by number: status, workspace, latest result, AI review verdict, PR link. Works for any card on a board the person can see, not only cards this chat filed.',
+  get_objective: [fn('get_objective', 'Read one board card by number: status, workspace, latest result, AI review verdict, PR link, hold (queue_hold / blocked_by), owner bot, its decisions with what the owner chose (who, when, result) and the recent card thread. Works for any card on a board the person can see, not only cards this chat filed.',
     obj({ id: { type: 'integer' } }, ['id']))],
   list_objectives: [fn('list_objectives', 'List the real board cards the person can see (every workspace they belong to, most recently updated first). Default: the open pipeline (planning, queue, working, ai_review, review — not done/cancelled). Pass workspace to narrow to one board, status for one column ("blocked" = a blocker is raised). counts covers ALL matching cards even when the list is cut short.',
     obj({
@@ -200,6 +257,9 @@ const SPECS: Record<string, ToolSpec[]> = {
       workspace: { type: 'string', description: 'Workspace slug to narrow to. Omit for every workspace the person can see.' },
       limit: { type: 'integer', minimum: 1, maximum: 50, description: 'Most items to return. Default 20' },
     }))],
+  // obj 901493: where a page, tab or setting is in the app, from the generated app map.
+  app_routes: [fn('app_routes', APP_ROUTES_DESCRIPTION,
+    obj({ query: { type: 'string', description: 'A page, panel or setting name, or an old path to check (for example "queue auto-start"). Omit to list every page.' } }))],
   // obj 900671: the public web.
   web_search: [fn('web_search', 'Search the public web for current information (news, prices, docs, companies, people in the news). Returns titles, URLs and snippets; open a result with web_fetch to read it in full. Cite the URLs you use.',
     obj({
@@ -210,7 +270,7 @@ const SPECS: Record<string, ToolSpec[]> = {
     obj({ url: { type: 'string', description: 'The full page URL, e.g. https://example.com/pricing' } }, ['url']))],
   // obj 900749: use a named secret without seeing it (the secrets broker).
   secrets: [
-    fn('secrets_list', 'List the secrets you may USE in this workspace, by NAME, with the hosts each one may be sent to. You never see a value. usable=false means no host is allowed yet (an admin turns on bot access in Settings → Secrets).',
+    fn('secrets_list', 'List the secrets you may USE in this workspace, by NAME, with the hosts each one may be sent to. You never see a value. usable=false means no host is allowed yet (an admin gives this bot the secret under Secret access on the bot settings page).',
       obj({})),
     fn('secret_http', 'Call an HTTPS API with a named secret. Write {{secret:NAME}} where the key goes (a header value, the URL path/query, or a body string), e.g. headers {"Authorization": "Bearer {{secret:STRIPE_KEY}}"}. The server adds the real value only on the outgoing request, only to a host that secret allows, and gives you the reply with the value blanked out. NEVER ask the person to paste a key and never write one into a message.',
       obj({
@@ -266,7 +326,11 @@ const IMPLIED_TOOLS: Record<string, string[]> = {
   // raise_decision only ASKS (a briefing on the card); it never acts, so it is
   // the one "write" implied: without it the bot asks for decisions in prose,
   // which is exactly what left Operator unable to see what he was approving.
-  create_objective: ['raise_decision'],
+  // obj 901392: a bot that can file cards can also set itself a one-off
+  // follow-up to check back on them, instead of asking the person to say
+  // "check". A follow-up turn has exactly a normal turn's permissions, so this
+  // implies no new reach, only a timer (limits: followups.ts).
+  create_objective: ['raise_decision', 'followups'],
 }
 
 /**
@@ -274,16 +338,19 @@ const IMPLIED_TOOLS: Record<string, string[]> = {
  * settings) lists, plus implied reads. `all` / `*` (obj 900671) = every tool
  * this release knows, so an "all tools" bot gains new tools without an edit.
  */
-export function effectiveTools(agent: Pick<ChatAgent, 'tools'>): string[] {
+export function effectiveTools(agent: Pick<ChatAgent, 'tools'> & { slug?: string }): string[] {
   // obj 900749: "all" never includes an explicit-only tool (secret use) — it must be named too.
   if (listsAllTools(agent.tools)) return [...ALL_TOOLS_GRANT, ...agent.tools.filter(t => EXPLICIT_ONLY_TOOLS.has(t))]
   const out = new Set(agent.tools.filter(t => KNOWN_TOOL_NAMES.has(t)))
   for (const t of agent.tools) for (const extra of IMPLIED_TOOLS[t] ?? []) out.add(extra)
+  // obj 901493: the setup bot always has the app map, whatever its file or bot page lists
+  // (an install's own copy of the file was written before the tool existed).
+  if (agent.slug && APP_ROUTES_DEFAULT_BOTS.includes(agent.slug)) out.add(APP_ROUTES_TOOL)
   return [...out]
 }
 
 /** Does this agent have one agent-file tool (e.g. 'mcp', 'web_search')? */
-export function agentHasTool(agent: Pick<ChatAgent, 'tools'>, tool: string): boolean {
+export function agentHasTool(agent: Pick<ChatAgent, 'tools'> & { slug?: string }, tool: string): boolean {
   return effectiveTools(agent).includes(tool)
 }
 
@@ -305,6 +372,15 @@ export function toolSpecsForContext(ctx: ToolContext): ToolSpec[] {
   const elevated = withFullAccess(ctx)
   const out = toolSpecsFor(elevated.agent)
   out.push(...fullAccessToolSpecs(ctx), ...cardSandboxToolSpecs(ctx), ...cardBrowserToolSpecs(ctx))
+  // obj 901347: merge one of the bot's own cards under the person's merge grant.
+  // Offered by the grant, never by Full access or "all tools".
+  out.push(...grantMergeToolSpecs(ctx))
+  // obj 901393: deploy on the owner's word. Offered by its own switch, never by Full access or "all tools".
+  out.push(...chatDeployToolSpecs(ctx))
+  // obj 901392: schedule / list / cancel the bot's own one-off follow-up wakes.
+  out.push(...followupToolSpecs(ctx))
+  // obj 901424: Operation Kit Dev's operator tools, behind their one admin switch.
+  out.push(...devOpsToolSpecs(ctx))
   return out
 }
 
@@ -722,12 +798,85 @@ function cardParent(ctx: ToolContext, parentRaw: unknown, workspaceRaw: unknown)
   return { parentId, workspace }
 }
 
-function createCard(ctx: ToolContext, title: string, description: string, workspaceRaw?: unknown, parentRaw?: unknown): { id: number; status: string; note?: string; workspace: string; parent_id?: number } {
+/** What create_objective did: filed a card (new or the one already filed), or held back on a possible duplicate. */
+export type CreateCardOutcome =
+  | { filed: true; id: number; status: string; reused: boolean; will_start: boolean; note: string; workspace: string; parent_id?: number }
+  | { filed: false; duplicate: Pick<PossibleDuplicate, 'id' | 'title' | 'status'>; workspace: string }
+
+/** How a bot follows an existing card instead of filing a second one, in the words of the tools it has. */
+function followUpHint(ctx: ToolContext, id: number): string {
+  const full = fullAccessToolSpecs(ctx).length > 0
+  return full
+    ? `read it with card_read ${id}, add to it with card_comment, or take it with card_take_over / card_reown.`
+    : `check it with get_objective ${id} and tell the person its number; they can add to it on the card.`
+}
+
+function createCard(
+  ctx: ToolContext,
+  title: string,
+  rawDescription: string,
+  workspaceRaw?: unknown,
+  parentRaw?: unknown,
+  opts: { idempotencyKey?: unknown; fileAnyway?: boolean; doneWhen?: unknown; stopConditions?: unknown } = {},
+): CreateCardOutcome {
   const db = getDb()
+  let given: string | null
+  try {
+    given = parseFilingKey(opts.idempotencyKey)
+  } catch (e) {
+    throw new ToolUseError((e as Error).message)
+  }
+  // obj 901496: the stop conditions become one fixed section of the card text
+  // and "done" goes in the board's existing completion goal. With neither
+  // given, the description and the idempotency key are exactly what they were.
+  const description = composeCardBrief(rawDescription, opts.stopConditions)
+  const doneWhen = normalizeDoneWhen(opts.doneWhen)
   const { parentId, workspace } = cardParent(ctx, parentRaw, workspaceRaw)
+  // The same protected pull request text check as repo_session_start, for every bot.
+  const textRefusal = protectedPrTextRefusal({ slug: ctx.agent.slug, workspace, ability: 'create_objective', title, description, actorUserId: ctx.userId })
+  if (textRefusal) throw new ToolUseError(textRefusal)
   const under = parentId != null ? { parent_id: parentId } : {}
   const worker = chatCardAgent(ctx.agent, workspace)
   const bot = botForAgentSlug(ctx.agent.slug, db)
+  // The same request under a different parent is a different job, not a replay.
+  const fingerprint = botJobIdempotencyKey(title, doneWhen ? `${description}\u0000${doneWhen}` : description) + (parentId != null ? `:p${parentId}` : '')
+
+  // (1) One key per card (obj 901498). The bot's own key wins; the content
+  // fingerprint still catches a retry that dropped the key. A key names ONE
+  // card: the same key with a different title is refused, never answered with
+  // the old card (that would lose the second filing without a word).
+  let key = given ? explicitKey(given) : fingerprint
+  if (given) {
+    const mine = findJobByIdempotency(db, ctx.userId, ctx.agent.slug, key)
+    if (mine) {
+      const prior = db.prepare('SELECT title FROM objectives WHERE id = ?').get(mine.objective_id) as { title: string } | undefined
+      if (prior && titleSimilarity(prior.title, title) < NEAR_DUPLICATE_THRESHOLD) {
+        throw new ToolUseError(`idempotency_key "${given}" already belongs to card #${mine.objective_id} ("${prior.title}"). Use a new key for a different card. The card was NOT filed.`)
+      }
+    } else if (findJobByIdempotency(db, ctx.userId, ctx.agent.slug, fingerprint)) {
+      key = fingerprint
+    }
+  }
+  const replay = !!findJobByIdempotency(db, ctx.userId, ctx.agent.slug, key)
+
+  // (2) Search first: an open card with a near-identical title is handed back
+  // as a possible duplicate and nothing is filed. Said out loud, with the way
+  // through (file_anyway), so it is never a silent block.
+  if (!replay && !opts.fileAnyway && isDuplicateGuardEnabled(db)) {
+    const dup = findPossibleDuplicate(db, {
+      title,
+      workspace,
+      excludeParentId: parentId,
+      visible: id => {
+        try { getBoardCard(ctx, id); return true } catch { return false }
+      },
+    })
+    if (dup) {
+      recordDedupe({ event: 'duplicate_refused', existingId: dup.id, title, workspace, source: 'chat create_objective (possible duplicate)' })
+      return { filed: false, duplicate: dup, workspace }
+    }
+  }
+
   // One guarded path for every bot (obj 900960). A bot in the registry owns the
   // card as itself. A bot outside it passes no owner bot: the card's owner_bot
   // is its name when it works the card itself (obj 900948: chatOwnerBotName
@@ -741,30 +890,38 @@ function createCard(ctx: ToolContext, title: string, description: string, worksp
     workspace,
     title,
     description,
-    // The same request under a different parent is a different job, not a replay.
-    idempotencyKey: botJobIdempotencyKey(title, description) + (parentId != null ? `:p${parentId}` : ''),
+    idempotencyKey: key,
+    completionGoal: doneWhen || null,
     parentId,
     agentContext: worker.agentContext,
     model: chatCardModel(ctx.agent),
+    force: !!opts.fileAnyway,
   })
-  if (!r.ok) throw new ToolUseError(r.error)
+  if (!r.ok) {
+    // The board's own same-title guard found a twin this person cannot be shown
+    // by title (the search above only names cards on their board).
+    if (r.code === 'duplicate' && r.existingId != null) {
+      const twin = db.prepare('SELECT id, status FROM objectives WHERE id = ?').get(r.existingId) as { id: number; status: string } | undefined
+      if (twin) return { filed: false, duplicate: { id: twin.id, title, status: twin.status }, workspace }
+    }
+    throw new ToolUseError(r.error)
+  }
   const row = db.prepare('SELECT * FROM objectives WHERE id = ?').get(r.objectiveId) as Objective
-  try {
-    broadcast({ type: 'objective_updated', payload: row })
-  } catch {
-    /* no WS server in tests */
+  if (!r.reused) {
+    try {
+      broadcast({ type: 'objective_updated', payload: row })
+    } catch {
+      /* no WS server in tests */
+    }
   }
-  return {
-    id: r.objectiveId,
-    status: r.status,
-    workspace,
-    ...under,
-    note: r.reused
-      ? 'This is the card you already filed for that request — not a new one.'
-      : r.start.allowed
-        ? 'Filed and cleared to start.'
-        : `Filed. It will NOT start by itself: ${r.start.reason}`,
-  }
+  const id = r.objectiveId
+  // (3) Filed is not started. Say which, so the bot never re-files to "start" it.
+  const note = r.reused
+    ? `This is card #${id}, which you already filed for this request. It is ${row.status}. NOTHING new was filed. Do not file it again; follow this card.`
+    : r.start.allowed
+      ? `Filed as card #${id} and cleared to start.`
+      : `Card #${id} EXISTS on the board. It will NOT start by itself: ${r.start.reason} Do not file it again. It starts when the person presses Start on the card or the queue picks it up; follow it with get_objective.`
+  return { filed: true, id, status: row.status, reused: r.reused, will_start: !r.reused && r.start.allowed, workspace, ...under, note }
 }
 
 export interface ChatCardStatus { id: number; title: string; status: string; summary: string | null; pr_url: string | null; updated_at: string; url: string }
@@ -971,7 +1128,7 @@ export function listBoardCards(
 export function getBoardCard(
   ctx: Pick<ToolContext, 'userId' | 'agent'>,
   id: number,
-): BoardCard & { summary: string | null; ai_review_findings: string | null } {
+): BoardCard & { summary: string | null; ai_review_findings: string | null } & CardContextExtras {
   const notFound = () => new ToolUseError(`Card #${id} is not on a board you can see.`)
   if (!Number.isInteger(id) || id <= 0) throw new ToolUseError('id must be a card number.')
   const user = boardUser(ctx)
@@ -980,13 +1137,39 @@ export function getBoardCard(
   if (!vis) throw notFound()
   const row = getDb()
     .prepare(
-      `SELECT ${BOARD_ROW_SQL}, substr(o.last_session_summary, 1, 1500) AS summary, substr(o.ai_review_findings, 1, 800) AS ai_review_findings
+      `SELECT ${BOARD_ROW_SQL}, substr(o.last_session_summary, 1, 1500) AS summary, substr(o.ai_review_findings, 1, 800) AS ai_review_findings,
+              o.queue_hold, o.blocked_by, o.owner_bot, o.agent_context, o.session_id
          FROM objectives o WHERE o.id = ? AND o.deleted_at IS NULL AND ${vis.sql}`,
     )
-    .get(ctx.userId, ctx.agent.slug, id, ...vis.params) as (BoardRow & { summary: string | null; ai_review_findings: string | null }) | undefined
+    .get(ctx.userId, ctx.agent.slug, id, ...vis.params) as (BoardRow & CardExtraRow & { summary: string | null; ai_review_findings: string | null }) | undefined
   // A missing card and a card in someone else's workspace read the same.
   if (!row) throw notFound()
-  return { ...toBoardCard(row), summary: row.summary ?? null, ai_review_findings: row.ai_review_findings ?? null }
+  const db = getDb()
+  // obj 901277: enough for ANY bot to answer "what did the owner choose on #N",
+  // "is it still held" and "who owns it" — without Full access.
+  const { owner_bot, owner_grants } = cardOwnerAndGrants(db, { id: row.id, workspace: row.workspace, owner_bot: row.owner_bot, agent_context: row.agent_context })
+  return {
+    ...toBoardCard(row),
+    summary: row.summary ?? null,
+    ai_review_findings: row.ai_review_findings ?? null,
+    ...holdView(row.queue_hold, row.blocked_by),
+    owner_bot,
+    owner_grants,
+    decisions: cardDecisionsForBot(db, row.id, { full: false }),
+    recent_thread: cardThreadForBot(db, { id: row.id, session_id: row.session_id }, { limit: 5, maxChars: 400 }),
+  }
+}
+
+interface CardExtraRow { queue_hold: string | null; blocked_by: number | null; owner_bot: string | null; agent_context: string | null; session_id: string | null }
+
+/** What get_objective adds on top of the board row (obj 901277). */
+export interface CardContextExtras {
+  queue_hold: string | null
+  blocked_by: number | null
+  owner_bot: string | null
+  owner_grants: BotCardOwner['owner_grants']
+  decisions: BotDecisionView[]
+  recent_thread: BotThreadEntry[]
 }
 
 /** Card chips for chat messages: only cards the person can still see on the board, in a workspace the bot may still use. */
@@ -1050,12 +1233,107 @@ function s(args: Record<string, unknown>, key: string, required = false): string
  * tools are network calls and therefore async; everything else is the
  * synchronous runTool below, unchanged.
  */
+/** The mail + calendar tools (obj 901331): async, because a real mailbox is a network call. */
+const MAIL_CALENDAR_FNS = new Set(['email_list_inbox', 'email_read', 'email_create_draft', 'calendar_list_events', 'calendar_draft_event'])
+
+/**
+ * Read the inbox / calendar and save DRAFTS. There is no send and no insert
+ * here, by design: `ctx.connectors` has no such method. Delivery happens only
+ * on the person's own click (routes/agent-chat.ts, the drafts send route).
+ */
+async function runMailCalendarTool(ctx: ToolContext, fnName: string, args: Record<string, unknown>): Promise<ToolOutcome> {
+  const now = ctx.now ?? (() => new Date())
+  switch (fnName) {
+    case 'email_list_inbox': {
+      const mail = ctx.connectors.mail
+      if (!mail) throw new ToolUseError('No email account is connected for this bot. Connect Google at Settings → Account → Google Workspace, and check its "Who can use it" list includes this bot.')
+      const limit = Math.min(50, Math.max(1, Number(args.limit) || 10))
+      const msgs = await mail.listInbox(limit, args.unread_only === true)
+      return { result: { source: mail.label, messages: msgs }, summary: `Checked inbox (${msgs.length} emails)` }
+    }
+    case 'email_read': {
+      const mail = ctx.connectors.mail
+      if (!mail) throw new ToolUseError('No email account is connected for this bot. Connect Google at Settings → Account → Google Workspace, and check its "Who can use it" list includes this bot.')
+      const m = await mail.read(s(args, 'id', true))
+      if (!m) throw new ToolUseError(`No email with id "${args.id}".`)
+      return { result: m, summary: `Read email "${m.subject}"` }
+    }
+    case 'email_create_draft': {
+      const mail = ctx.connectors.mail
+      if (!mail) throw new ToolUseError('No email account is connected for this bot. Connect Google at Settings → Account → Google Workspace, and check its "Who can use it" list includes this bot.')
+      const draft: EmailDraft = { to: s(args, 'to', true), subject: s(args, 'subject', true), body: s(args, 'body', true), in_reply_to: s(args, 'in_reply_to') || null }
+      // obj 901331: a real mailbox also keeps the draft in its own Drafts folder.
+      // saveDraft only ever creates a DRAFT; sending stays the person's click.
+      if (mail.saveDraft) draft.remote_id = (await mail.saveDraft(draft)).remote_id
+      const row = createDraft(ctx.userId, ctx.agent.slug, 'email', mail.id, draft)
+      const where = draft.remote_id ? ' It is also in the Drafts folder of the connected mailbox.' : ''
+      return { result: { draft_id: row.id, status: 'draft', note: `Saved as a draft. It is NOT sent — the person must press Send.${where}` }, summary: `Drafted email to ${draft.to}`, draft_id: row.id }
+    }
+    case 'calendar_list_events': {
+      const cal = ctx.connectors.calendar
+      if (!cal) throw new ToolUseError('No calendar is connected for this bot. Connect Google at Settings → Account → Google Workspace, and check its "Who can use it" list includes this bot.')
+      const from = s(args, 'from') || now().toISOString()
+      const to = s(args, 'to') || new Date(Date.parse(from) + 7 * 86400_000).toISOString()
+      if (Number.isNaN(Date.parse(from)) || Number.isNaN(Date.parse(to))) throw new ToolUseError('from/to must be ISO dates.')
+      const events = await cal.listEvents(from, to)
+      return { result: { source: cal.label, events }, summary: `Checked calendar (${events.length} events)` }
+    }
+    case 'calendar_draft_event': {
+      const cal = ctx.connectors.calendar
+      if (!cal) throw new ToolUseError('No calendar is connected for this bot. Connect Google at Settings → Account → Google Workspace, and check its "Who can use it" list includes this bot.')
+      const start = s(args, 'start', true)
+      const end = s(args, 'end', true)
+      if (Number.isNaN(Date.parse(start)) || Number.isNaN(Date.parse(end))) throw new ToolUseError('start/end must be ISO date-times.')
+      const withList = Array.isArray(args.with) ? args.with.filter((x): x is string => typeof x === 'string') : []
+      const draft: EventDraft = { title: s(args, 'title', true), start, end, with: withList, note: s(args, 'note') || null }
+      const row = createDraft(ctx.userId, ctx.agent.slug, 'event', cal.id, draft)
+      return { result: { draft_id: row.id, status: 'draft', note: 'Saved as a draft. It is NOT on the calendar until the person presses "Add to calendar".' }, summary: `Drafted event "${draft.title}"`, draft_id: row.id }
+    }
+  }
+  throw new ToolUseError(`Unknown tool "${fnName}".`)
+}
+
 export async function runChatTool(ctxIn: ToolContext, fnName: string, args: Record<string, unknown>): Promise<ToolOutcome> {
   // obj 900948: knowledge folders resolved for this KB's layout (workspaces/<ws>/…).
+  // obj 901328: a card wake is confined to the own-card tools, before anything else.
+  // obj 901394: with the `chat` tool scope a card wake is a normal turn of this bot
+  // for this person, plus the own-card tools. Everything below applies unchanged.
+  if (ctxIn.cardWake) {
+    // obj 901424: an operator tool asked for in a card wake is refused, under either
+    // tool scope (a wake is never the person's browser session); audit the attempt.
+    if (DEV_OPS_ALL_FNS.has(fnName)) {
+      writeDevOpsAudit({ bot_slug: ctxIn.agent.slug, user_id: ctxIn.userId, username: ctxIn.username, action: fnName, outcome: 'refused', code: 'wake_turn', detail: 'asked for in a card wake' })
+      return runCardWakeTool(ctxIn, fnName, args)
+    }
+    if (ctxIn.cardWake.toolScope !== 'chat' || CARD_WAKE_FNS.has(fnName)) return withSelfAction(ctxIn, fnName, args, () => runCardWakeTool(ctxIn, fnName, args))
+  }
+  return withSelfAction(ctxIn, fnName, args, () => runChatToolInner(ctxIn, fnName, args))
+}
+
+/**
+ * obj 901394: bracket a tool call that changes a card, so the objective_events it
+ * writes are known to be the bot's own doing and never wake the bot for them.
+ */
+async function withSelfAction(ctx: ToolContext, fnName: string, args: Record<string, unknown>, run: () => Promise<ToolOutcome>): Promise<ToolOutcome> {
+  const cardId = Number(args.id ?? args.objective_id ?? args.card_id)
+  if (!SELF_ACTION_TOOLS.has(fnName) || !Number.isInteger(cardId) || cardId <= 0) return run()
+  const action = beginSelfAction(getDb(), { slug: ctx.agent.slug, objectiveId: cardId, tool: fnName }, ctx.now?.() ?? new Date())
+  try {
+    return await run()
+  } finally {
+    endSelfAction(getDb(), action)
+  }
+}
+
+async function runChatToolInner(ctxIn: ToolContext, fnName: string, args: Record<string, unknown>): Promise<ToolOutcome> {
   const ctx = withKbFolders(ctxIn)
   // obj 900972: the Full access tool family. Checked again inside, on every call.
   if (FULL_ACCESS_FNS.has(fnName)) return runFullAccessTool(ctx, fnName, args)
   if (CARD_SANDBOX_FNS.has(fnName)) return runCardSandboxTool(ctx, fnName, args)
+  if (GRANT_MERGE_FNS.has(fnName)) return runGrantMergeTool(ctx, fnName, args)
+  if (CHAT_DEPLOY_FNS.has(fnName)) return runChatDeployTool(ctx, fnName, args)
+  if (FOLLOWUP_FNS.has(fnName)) return runFollowupTool(ctx, fnName, args)
+  if (DEV_OPS_ALL_FNS.has(fnName)) return runDevOpsTool(ctx, fnName, args)
   if (CARD_BROWSER_FNS.has(fnName)) return runCardBrowserTool(ctx, fnName, args)
   if (BOT_MESSAGE_FNS.has(fnName)) return runBotMessageTool(ctx, fnName, args)
   if (fnName === 'secrets_list' || fnName === 'secret_http') return runSecretTool(ctx, fnName, args)
@@ -1073,6 +1351,11 @@ export async function runChatTool(ctxIn: ToolContext, fnName: string, args: Reco
         + (kw.results.length === 0 ? '; no results here does NOT mean the knowledge base is empty. Tell the person search is not working right now.' : '.')
       return { result: { ...kw, mode_used: 'keyword', warning }, summary: `Searched knowledge for "${q}" (${kw.results.length} found, search index unavailable)` }
     }
+  }
+  if (MAIL_CALENDAR_FNS.has(fnName)) {
+    const tool = owningTool(fnName)
+    if (!tool || !effectiveTools(ctx.agent).includes(tool)) throw new ToolUseError(`Tool "${fnName}" is not allowed for this agent.`)
+    return runMailCalendarTool(ctx, fnName, args)
   }
   if (fnName !== 'web_search' && fnName !== 'web_fetch') return runTool(ctx, fnName, args)
   if (!agentHasTool(ctx.agent, fnName)) throw new ToolUseError(`Tool "${fnName}" is not allowed for this agent.`)
@@ -1225,7 +1508,8 @@ async function runSecretTool(ctx: ToolContext, fnName: 'secrets_list' | 'secret_
   if (role !== 'admin' && !userHasWorkspace(ctx.userId, ctx.workspace)) {
     throw new ToolUseError(`You are not a member of workspace '${ctx.workspace}', so no secrets are available here.`)
   }
-  const caller = callerForChat(ctx.userId, ctx.workspace)
+  // obj 901484: this bot's own grants in this workspace add to the workspace-wide Bot access entries.
+  const caller = { ...callerForChat(ctx.userId, ctx.workspace), botGrants: botSecretGrants(ctx.agent.slug, ctx.workspace) }
   // obj 900972: a bot that has Full access in ANY workspace never reaches a
   // Shared (install-wide) secret, in any chat. Its file's own secrets tool keeps
   // working here for this workspace's secrets only.
@@ -1317,6 +1601,7 @@ export function runTool(ctxIn: ToolContext, fnName: string, args: Record<string,
   const ctx = withKbFolders(ctxIn)
   const tool = owningTool(fnName)
   if (!tool || !effectiveTools(ctx.agent).includes(tool)) throw new ToolUseError(`Tool "${fnName}" is not allowed for this agent.`)
+  if (MAIL_CALENDAR_FNS.has(fnName)) throw new ToolUseError(`Tool "${fnName}" runs through runChatTool (it may call the connected mailbox).`)
   const now = ctx.now ?? (() => new Date())
 
   switch (fnName) {
@@ -1365,8 +1650,20 @@ export function runTool(ctxIn: ToolContext, fnName: string, args: Record<string,
       } catch {
         throw missingPathError(ctx, 'File', rel)
       }
-      const clipped = text.length > MAX_READ_CHARS
-      return { result: { path: rel, content: clipped ? text.slice(0, MAX_READ_CHARS) : text, truncated: clipped }, summary: `Read ${rel}` }
+      // obj 901494: a long file is paged, never silently cut. The result says
+      // where the next page starts, so a bot can read to the end before it writes.
+      const page = pageText(text, offsetArg(args.offset), MAX_READ_CHARS)
+      const note = pageNote(page, rel)
+      const paged = page.truncated || page.offset > 0
+      return {
+        result: {
+          path: rel,
+          content: page.content,
+          truncated: page.truncated,
+          ...(paged ? { offset: page.offset, next_offset: page.next_offset, total_chars: page.total_chars, note } : {}),
+        },
+        summary: paged ? `Read ${rel} (characters ${page.offset} to ${page.offset + page.content.length} of ${page.total_chars})` : `Read ${rel}`,
+      }
     }
     case 'write_doc': {
       const { abs, rel } = resolveKnowledgePath(ctx, s(args, 'path', true))
@@ -1375,7 +1672,7 @@ export function runTool(ctxIn: ToolContext, fnName: string, args: Record<string,
       if (Buffer.byteLength(content) > MAX_WRITE_BYTES) throw new ToolUseError('That file is too large to write from chat.')
       fs.mkdirSync(path.dirname(abs), { recursive: true })
       fs.writeFileSync(abs, content)
-      noteKbWrite(abs) // obj 900816: semantic index
+      noteKbChanged(abs) // semantic index + link graph
       return { result: { saved: rel, bytes: Buffer.byteLength(content) }, summary: `Saved ${rel}` }
     }
     case 'file_answer': {
@@ -1426,13 +1723,32 @@ export function runTool(ctxIn: ToolContext, fnName: string, args: Record<string,
     }
     case 'create_objective': {
       const title = s(args, 'title', true)
-      const card = createCard(ctx, title, s(args, 'description'), args.workspace, args.parent_id)
-      return { result: { id: card.id, status: card.status, workspace: card.workspace, ...(card.parent_id ? { parent_id: card.parent_id } : {}), note: card.note ?? 'Card is on the board. Tell the person its number.' }, summary: `Created card #${card.id}: ${title}`, objective_id: card.id }
+      const card = createCard(ctx, title, s(args, 'description'), args.workspace, args.parent_id, {
+        idempotencyKey: args.idempotency_key,
+        fileAnyway: args.file_anyway === true,
+        doneWhen: args.done_when,
+        stopConditions: args.stop_conditions,
+      })
+      if (!card.filed) {
+        return {
+          result: possibleDuplicateResult(card.duplicate, { tool: 'create_objective', workspace: card.workspace, followUp: followUpHint(ctx, card.duplicate.id) }),
+          summary: `Possible duplicate of card #${card.duplicate.id}: nothing new was filed`,
+        }
+      }
+      return {
+        result: { filed: true, id: card.id, status: card.status, workspace: card.workspace, ...(card.parent_id ? { parent_id: card.parent_id } : {}), reused: card.reused, will_start: card.will_start, note: card.note },
+        summary: card.reused ? `Card #${card.id} was already filed for this request: ${title}` : `Created card #${card.id}: ${title}`,
+        objective_id: card.id,
+      }
     }
     case 'raise_decision': {
       const id = Number(args.card_id)
       // Only a card this person (and this bot) can see — the same rule as get_objective.
       const card = getBoardCard(ctx, id)
+      // obj 901453: an option may not promise a deploy / merge the Approve click
+      // cannot run. Those tools run only from a message the person types here.
+      const wording = chatActionWordingErrors(Array.isArray(args.options) ? (args.options as Array<{ key?: string; label: string; next: string }>) : [])
+      if (wording.length) throw new ToolUseError(`The decision was not raised. Fix these and call raise_decision again: ${wording.join('; ')}`)
       const out = raiseDecision(getDb(), {
         objective_id: card.id,
         workspace: card.workspace ?? '',
@@ -1471,50 +1787,13 @@ export function runTool(ctxIn: ToolContext, fnName: string, args: Record<string,
       const r = listBoardCards(ctx, { workspace: args.workspace, status: args.status, limit: args.limit })
       return { result: r, summary: r.empty ? `Board check: no ${r.scope}` : `Listed ${r.cards.length} of ${r.total} board card(s)` }
     }
+    case 'app_routes': {
+      const r = searchAppMap(args.query)
+      return { result: r, summary: appRoutesSummary(r) }
+    }
     case 'board_briefing': {
       const r = boardBriefing({ ...ctx, now }, { workspace: args.workspace, limit: args.limit })
       return { result: r, summary: r.empty ? 'Board briefing: no open cards' : `Board briefing: ${r.waiting_on_you.length} waiting on you, ${r.open_total} open` }
-    }
-    case 'email_list_inbox': {
-      const mail = ctx.connectors.mail
-      if (!mail) throw new ToolUseError('No email account is connected to this install yet.')
-      const limit = Math.min(50, Math.max(1, Number(args.limit) || 10))
-      const msgs = mail.listInbox(limit, args.unread_only === true)
-      return { result: { source: mail.label, messages: msgs }, summary: `Checked inbox (${msgs.length} emails)` }
-    }
-    case 'email_read': {
-      const mail = ctx.connectors.mail
-      if (!mail) throw new ToolUseError('No email account is connected to this install yet.')
-      const m = mail.read(s(args, 'id', true))
-      if (!m) throw new ToolUseError(`No email with id "${args.id}".`)
-      return { result: m, summary: `Read email "${m.subject}"` }
-    }
-    case 'email_create_draft': {
-      const mail = ctx.connectors.mail
-      if (!mail) throw new ToolUseError('No email account is connected to this install yet.')
-      const draft: EmailDraft = { to: s(args, 'to', true), subject: s(args, 'subject', true), body: s(args, 'body', true), in_reply_to: s(args, 'in_reply_to') || null }
-      const row = createDraft(ctx.userId, ctx.agent.slug, 'email', mail.id, draft)
-      return { result: { draft_id: row.id, status: 'draft', note: 'Saved as a draft. It is NOT sent — the person must press Send.' }, summary: `Drafted email to ${draft.to}`, draft_id: row.id }
-    }
-    case 'calendar_list_events': {
-      const cal = ctx.connectors.calendar
-      if (!cal) throw new ToolUseError('No calendar is connected to this install yet.')
-      const from = s(args, 'from') || now().toISOString()
-      const to = s(args, 'to') || new Date(Date.parse(from) + 7 * 86400_000).toISOString()
-      if (Number.isNaN(Date.parse(from)) || Number.isNaN(Date.parse(to))) throw new ToolUseError('from/to must be ISO dates.')
-      const events = cal.listEvents(from, to)
-      return { result: { source: cal.label, events }, summary: `Checked calendar (${events.length} events)` }
-    }
-    case 'calendar_draft_event': {
-      const cal = ctx.connectors.calendar
-      if (!cal) throw new ToolUseError('No calendar is connected to this install yet.')
-      const start = s(args, 'start', true)
-      const end = s(args, 'end', true)
-      if (Number.isNaN(Date.parse(start)) || Number.isNaN(Date.parse(end))) throw new ToolUseError('start/end must be ISO date-times.')
-      const withList = Array.isArray(args.with) ? args.with.filter((x): x is string => typeof x === 'string') : []
-      const draft: EventDraft = { title: s(args, 'title', true), start, end, with: withList, note: s(args, 'note') || null }
-      const row = createDraft(ctx.userId, ctx.agent.slug, 'event', cal.id, draft)
-      return { result: { draft_id: row.id, status: 'draft', note: 'Saved as a draft. It is NOT on the calendar until the person presses "Add to calendar".' }, summary: `Drafted event "${draft.title}"`, draft_id: row.id }
     }
   }
   throw new ToolUseError(`Unknown tool "${fnName}".`)

@@ -707,11 +707,16 @@ export const WORKSPACE_MCP_ENV = 'CC_WORKSPACE_MCP_SERVERS'
  * is handed out as-is and a background refresh is kicked off; the host
  * refresher keeps tokens fresh ahead of time so this is the rare case.
  */
-export function spawnEnvFor(workspace: string | null | undefined): Record<string, string> {
+export function spawnEnvFor(
+  workspace: string | null | undefined,
+  opts: { allowSlug?: (slug: string) => boolean } = {},
+): Record<string, string> {
   const env: Record<string, string> = {}
   const servers: WorkspaceMcpSpawnServer[] = []
   for (const row of listServerRows(workspace)) {
     if (Number(row.enabled) === 0) continue
+    // obj 901330: a scoped bot receives only the servers on its list.
+    if (opts.allowSlug && !opts.allowSlug(row.slug)) continue
     if (row.status !== 'connected') continue
     const type: 'http' | 'sse' = (row.detected_transport ?? row.transport) === 'sse' ? 'sse' : 'http'
     const spawn: WorkspaceMcpSpawnServer = { key: row.slug, name: row.name, url: row.url, type, headers: {}, disabled_tools: disabledToolsOf(row) }

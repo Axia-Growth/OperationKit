@@ -60,7 +60,7 @@ function mount() {
 const box = () => host.querySelector('#agent-chat-input') as HTMLTextAreaElement
 const sendButton = () => [...host.querySelectorAll('button')].find(b => b.textContent === 'Send' && b.getAttribute('type') === 'submit') as HTMLButtonElement
 const stopButton = () => [...host.querySelectorAll('button')].find(b => (b.textContent ?? '').trim() === 'Stop') as HTMLButtonElement | undefined
-const queuedBubbles = () => [...host.querySelectorAll('[data-testid="queued-bubble"]')].map(b => (b.textContent ?? '').replace(/(Queued|Sending…)$/, ''))
+const queuedBubbles = () => [...host.querySelectorAll('[data-testid="queued-bubble"]')].map(b => (b.textContent ?? '').replace(/(Queued|Sending…|Waiting for you)(Remove)?$/, ''))
 const posts = (suffix: string) => calls.filter(c => c.method === 'POST' && c.url.endsWith(suffix))
 const confirmButton = (label: string) =>
   [...document.body.querySelectorAll('button')].find(b => b.textContent === label && !host.contains(b))
@@ -99,7 +99,11 @@ beforeEach(() => {
         // The first message starts a turn: the request stays open until released.
         const u = row(nextId++, 'user', text, 'client_msg_id' in cid(body) ? cid(body) : null)
         serverThread = { ...serverThread, messages: [...serverThread.messages, u], turn: { running: true, queued: 0 } }
-        return new Promise<Response>(resolve => { finishFirstTurn = b => resolve(json(b)) })
+        return new Promise<Response>((resolve, reject) => {
+          finishFirstTurn = b => resolve(json(b))
+          // The client's own timeout aborts the fetch (obj 901329).
+          init?.signal?.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError')), { once: true })
+        })
       }
       // Mid-turn: the server stores it as queued and answers 202.
       const q = row(nextId++, 'user', text, { queued: true, ...cid(body) })
@@ -217,6 +221,9 @@ describe('composer while the bot is working (obj 900949)', () => {
     expect(posts('/stop')).toHaveLength(1)
     expect(posts('/stop')[0].body?.drop_queued).toBeUndefined()
     expect(queuedBubbles()).toEqual(['keep me'])
+    // obj 901488: kept, but it now waits for the person instead of going to the bot next.
+    expect(host.querySelector('[data-testid="queued-bubble"]')?.textContent).toContain('Waiting for you')
+    expect(host.querySelector('[data-testid="held-note"]')).toBeTruthy()
   })
 
   it('discarding the queue asks first, and only then sends drop_queued', async () => {
@@ -347,5 +354,33 @@ describe('a message is shown once, however the lane is re-read (obj 900977)', ()
     const late = { messages: [row(12, 'user', 'late', { queued: true, client_msg_id: 'abcdefgh-1' })], drafts: [], cards: [], queued: true }
     const merged = mergeThread(shown as never, late as never)
     expect(merged.messages.map(m => m.id)).toEqual([10, 11, 14])
+  })
+})
+
+describe('the 240s client timeout is UI-only (obj 901329)', () => {
+  it('does not say "message not sent" or put the draft back: the server keeps working, the page re-reads the thread', async () => {
+    // Catch the 240s timer the page arms for the POST, and fire it on demand.
+    const realSetTimeout = globalThis.setTimeout
+    let fireTimeout: (() => void) | null = null
+    vi.stubGlobal('setTimeout', ((fn: () => void, ms?: number, ...rest: unknown[]) => {
+      if (ms === 240_000) { fireTimeout = fn; return 0 as unknown as ReturnType<typeof setTimeout> }
+      return realSetTimeout(fn, ms, ...rest)
+    }) as typeof setTimeout)
+    await mount()
+    await settle()
+    await say('a long question')
+    expect(fireTimeout).toBeTruthy()
+    const getsBefore = calls.filter(c => c.method === 'GET' && c.url.includes('/messages')).length
+
+    // The server still has the message and the turn (the request drop is not Stop).
+    fireTimeout!()
+    await settle()
+
+    expect(host.textContent).not.toContain('message not sent')
+    expect(host.textContent).not.toContain('Message not sent')
+    expect(box().value).toBe('')
+    expect(calls.filter(c => c.method === 'GET' && c.url.includes('/messages')).length).toBeGreaterThan(getsBefore)
+    // The stored message shows from the server's copy.
+    expect(host.textContent).toContain('a long question')
   })
 })

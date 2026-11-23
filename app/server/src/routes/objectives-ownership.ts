@@ -5,14 +5,14 @@
  *   POST /:id/bot-approve    — a bot approves an ELIGIBLE Needs You card
  *   POST /:id/claim          — a bot claims a card (owner_bot := that bot)
  *
- * The approval rules live in services/bot-approval.ts; grants are the existing
+ * The approval rules live in services/bot-close-eligibility.ts; grants are the existing
  * delegation grants (obj 900839) — nothing here creates or widens one.
  */
 import type { Router, Response } from 'express'
 import { getDb } from '../db/index.js'
 import type { AuthRequest } from '../middleware/auth.js'
 import type { Objective } from '@operationkit/shared'
-import { botApprovalEligibility, type ApprovalCard } from '../services/bot-approval.js'
+import { botApprovalEligibility, type ApprovalCard } from '../services/bot-close-eligibility.js'
 import { writeDelegationAudit } from '../services/delegated-approvals.js'
 import { resolveBot } from '../services/bots/bot-registry.js'
 import { logObjectiveAudit } from '../services/objective-audit.js'
