@@ -1,12 +1,14 @@
 # God-file split queue
 
-LOC from `origin/main` at catalog time (approx `wc -l`). Split by **moving exports + re-exporting from the original path**. One responsibility per PR. No behavior change.
+**Status: finished.** This page is the record of how the oversized files were split. The `~LOC before split` columns are the sizes when each file joined the queue, not today's. `session-manager.ts` was about 3,800 lines then and is a facade of about 300 lines now; current sizes are in the [importer scan table](#phase-1--phase-2-complete) at the bottom.
+
+Split by **moving exports + re-exporting from the original path**. One responsibility per PR. No behavior change.
 
 Pattern origin already uses: `prompt-builder.ts`, `stream-parser.ts`, `session-lease.ts`, `session-spawn-clock.ts` were pulled out of `session-manager.ts`. Continue that.
 
 ## Server (order = risk)
 
-| # | File | ~LOC | Next extract | Facade remains |
+| # | File | ~LOC before split | Next extract | Facade remains |
 |---|---|---:|---|---|
 | 1 | `app/server/src/services/session-manager.ts` | 3800 | **done** — `session-usage.ts` | `ensureUser`, `ensureObjectiveMemoryDir`, `selectPredecessorsToReap`, `reapPredecessorSessions` + re-exports |
 | 2 | same | | **done** — `session-spawn-env.ts` + `session-spawn-command.ts` | |
@@ -22,7 +24,7 @@ Pattern origin already uses: `prompt-builder.ts`, `stream-parser.ts`, `session-l
 | 11 | `app/server/src/routes/internal.ts` | 1550 | **done** — thin facade (`isLocalhost` re-export + register*). deploy/progress/Hermes/create/preview/gmail/mentor extracted | default router |
 | 12 | `app/server/src/db/index.ts` | 3070 | **done as designed** — CREATE TABLE in schema modules. CHECK probe-INSERT rebuilds + ALTERs stay in `initDb()` (order is interleaved with later `init*Schema` calls) | `initDb`, `getDb` |
 
-Target after the queue: `session-manager.ts` and `state-poller.ts` each under ~400 lines (loop + re-exports).
+Target after the queue: `session-manager.ts` and `state-poller.ts` each under ~400 lines (loop + re-exports). Both are (see the table at the bottom).
 
 ### `session-manager.ts` public exports (group = future files)
 
@@ -60,7 +62,7 @@ Worker-tick helpers now live in `poller-worker.ts`: knowledge/scope scans, limit
 
 ## Client (after server kernel)
 
-| File | ~LOC | Split |
+| File | ~LOC before split | Split |
 |---|---:|---|
 | `ConfigPage.tsx` | 1900 | **done** — tab shell + `config/{Workspaces,Users,AgentsSkills,Assignments,Cron,Tools}Tab.tsx`. Skill Graph stays `SkillGraphTab` |
 | `LoopsPage.tsx` | 1140 | **done** — page shell + `loops/{types,NewLoopModal,LoopDetailModal,LoopCard,Lane,BulkActionBar,Scratchpad,ReviewQueue}`  _(page removed, obj 900543)_ |
@@ -102,25 +104,25 @@ Structure-first extracts of files that were never on the Phase 1 queue. Same rul
 
 The extract queue is done. Original paths stay as **re-export facades** (the public API). Do not delete them in a mega-PR — callers, tests, and the CI-green structural scan still import the original path.
 
-Importer scan (2026-08-23, basename import of the facade file):
+Importer scan (importer counts from 2026-08-23, basename import of the facade file; line counts re-measured 2026-11-17 with `wc -l`):
 
 | Facade | ~LOC now | Importers (excl. self) | Keep? |
 |---|---:|---:|---|
-| `session-manager.ts` | 201 | 30 | yes — kernel public API |
-| `state-poller.ts` | 196 | 12 | yes — `startPoller` / `stopPoller` + test imports |
-| `objectives.ts` | 24 | 1 (`index.ts`) | yes — router mount |
-| `internal.ts` | 22 | 1 (`index.ts` mount) | yes — router compose; `isLocalhost` re-export dropped |
-| `db/index.ts` | 1001 | 110 | yes — `initDb` / `getDb` |
+| `session-manager.ts` | 310 | 30 | yes — kernel public API |
+| `state-poller.ts` | 258 | 12 | yes — `startPoller` / `stopPoller` + test imports |
+| `objectives.ts` | 32 | 1 (`index.ts`) | yes — router mount |
+| `internal.ts` | 52 | 1 (`index.ts` mount) | yes — router compose; `isLocalhost` re-export dropped |
+| `db/index.ts` | 1309 | 110 | yes — `initDb` / `getDb` |
 | `pr-health-watchdog.ts` | 239 | 2 | yes |
 | `external-remediation.ts` | — | 0 | **dropped** — callers import classify/resolve/act directly |
-| `daily-retro.ts` | 409 | 2 | yes |
-| `shared/types.ts` | 26 | 13 | yes — package entry |
-| `prompt-builder.ts` | 567 | 11 | yes |
-| `dev-items.ts` | 87 | 4 | yes |
+| `daily-retro.ts` | 413 | 2 | yes |
+| `shared/types.ts` | 39 | 13 | yes — package entry |
+| `prompt-builder.ts` | 737 | 11 | yes |
+| `dev-items.ts` | 89 | 4 | yes |
 | `session-intel.ts` | — | 0 | **dropped** — callers import parse/summary/pipeline directly |
-| `ci-green-gate.ts` | 120 | 8 | yes — pathway scan of poller/routes |
+| `ci-green-gate.ts` | 122 | 8 | yes — pathway scan of poller/routes |
 | `deterministic-floor.ts` | 59 | 16 | yes |
-| `admin.ts` | 23 | 1 (`index.ts`) | yes — router compose |
+| `admin.ts` | 31 | 1 (`index.ts`) | yes — router compose |
 
 No facade has zero importers. A later PR can retarget individual callers to the extracted module, then drop that one re-export — one facade at a time, with `gate` still green.
 

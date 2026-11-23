@@ -106,9 +106,10 @@ export const COOLDOWN_BASE_MS = 15 * 60 * 1000
 export const COOLDOWN_CEILING_MS = 5 * 60 * 60 * 1000
 
 /** Exponential backoff: base × 2^(failures-1), capped. `failures` counts this one (≥1). */
-export function backoffMs(failures: number): number {
+export function backoffMs(failures: number, baseMs: number = COOLDOWN_BASE_MS): number {
   const n = Math.max(1, Math.floor(failures))
-  return Math.min(COOLDOWN_BASE_MS * 2 ** (n - 1), COOLDOWN_CEILING_MS)
+  const base = Number.isFinite(baseMs) && baseMs > 0 ? baseMs : COOLDOWN_BASE_MS
+  return Math.min(base * 2 ** (n - 1), COOLDOWN_CEILING_MS)
 }
 
 export interface FailureEffect {
@@ -126,7 +127,8 @@ export interface FailureEffect {
 export function applySeatFailure(
   seat: SeatRecord,
   cls: SeatFailureClass,
-  opts: { now: number; resetAt?: Date | null },
+  /** `baseMs` = the first backoff step when no reset time is known (obj 901395: a setting; default COOLDOWN_BASE_MS). */
+  opts: { now: number; resetAt?: Date | null; baseMs?: number },
 ): FailureEffect {
   const nowIso = new Date(opts.now).toISOString()
   switch (cls) {
@@ -134,7 +136,7 @@ export function applySeatFailure(
       const failures = (seat.consecutiveFailures || 0) + 1
       seat.consecutiveFailures = failures
       const stated = opts.resetAt && opts.resetAt.getTime() > opts.now ? opts.resetAt.getTime() : null
-      let until = stated ?? opts.now + backoffMs(failures)
+      let until = stated ?? opts.now + backoffMs(failures, opts.baseMs)
       // Never push recovery later than an already-known sooner reset.
       const existing = seat.rateLimitResetsAt ? Date.parse(seat.rateLimitResetsAt) : NaN
       if (Number.isFinite(existing) && existing > opts.now && existing < until) until = existing

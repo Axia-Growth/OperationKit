@@ -20,6 +20,7 @@ import { SeatDeviceLogin } from './SeatDeviceLogin'
 import { SeatClaudeSignIn } from './SeatClaudeSignIn'
 import { ProvisioningBanner, SeatUsageStats, type ProvisioningHint, type SeatUsage } from './SeatUsage'
 import { ProviderKeysSection } from './ProviderKeysSection'
+import { SeatRotationPanel } from './SeatRotationPanel'
 import { ModelsModule } from '../ModelsModule'
 import { Select } from '../ui/Select'
 
@@ -38,6 +39,8 @@ export interface SeatSummary {
   health: SeatHealth
   available: boolean
   cooldownUntil: string | null
+  /** obj 901395: why it rests. 'limit' = usage limit, 'empty_turn' = a reply came back empty. Absent on older servers. */
+  cooldownReason?: 'limit' | 'empty_turn' | null
   consecutiveFailures: number
   credential: {
     kind: 'setup_token' | 'cli_login'
@@ -103,6 +106,13 @@ function fmtTime(iso: string): string {
   const d = new Date(iso)
   return Number.isNaN(d.getTime()) ? iso : d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
 }
+/** A reset time: the clock time, with the weekday when it is not today (obj 901395). */
+export function fmtResetTime(iso: string, now = new Date()): string {
+  const d = new Date(iso)
+  if (Number.isNaN(d.getTime())) return iso
+  const sameDay = d.toDateString() === now.toDateString()
+  return sameDay ? fmtTime(iso) : `${d.toLocaleDateString([], { weekday: 'short' })} ${fmtTime(iso)}`
+}
 function fmtDate(iso: string | null): string | null {
   if (!iso) return null
   const d = new Date(iso)
@@ -110,11 +120,14 @@ function fmtDate(iso: string | null): string | null {
 }
 const fmtTokens = (n: number) => new Intl.NumberFormat('en', { notation: 'compact', maximumFractionDigits: 1 }).format(n)
 
-export function healthBadge(seat: Pick<SeatSummary, 'health' | 'cooldownUntil'>): { tone: 'verify' | 'amber' | 'alarm' | 'neutral'; text: string } {
+export function healthBadge(seat: Pick<SeatSummary, 'health' | 'cooldownUntil' | 'cooldownReason'>): { tone: 'verify' | 'amber' | 'alarm' | 'neutral'; text: string } {
   switch (seat.health) {
     case 'healthy': return { tone: 'verify', text: 'Healthy' }
-    case 'cooling_down':
-      return { tone: 'amber', text: seat.cooldownUntil ? `Cooling down until ${fmtTime(seat.cooldownUntil)}` : 'Cooling down' }
+    case 'cooling_down': {
+      // obj 901395: say why it rests and when it is back, so a parked seat reads at a glance.
+      const why = seat.cooldownReason === 'empty_turn' ? ' (empty reply)' : seat.cooldownReason === 'limit' ? ' (usage limit)' : ''
+      return { tone: 'amber', text: seat.cooldownUntil ? `Cooling down until ${fmtResetTime(seat.cooldownUntil)}${why}` : `Cooling down${why}` }
+    }
     case 'needs_reconnect': return { tone: 'alarm', text: 'Needs reconnect' }
     case 'needs_admin': return { tone: 'alarm', text: 'Needs admin' }
     case 'credits_exhausted': return { tone: 'amber', text: 'Credits used up' }
@@ -123,7 +136,7 @@ export function healthBadge(seat: Pick<SeatSummary, 'health' | 'cooldownUntil'>)
 }
 
 /** The card's status chip: credential problems first, then pool health. */
-export function seatBadge(seat: Pick<SeatSummary, 'health' | 'cooldownUntil' | 'credential' | 'kind'>): ReturnType<typeof healthBadge> {
+export function seatBadge(seat: Pick<SeatSummary, 'health' | 'cooldownUntil' | 'cooldownReason' | 'credential' | 'kind'>): ReturnType<typeof healthBadge> {
   if (seat.credential.needsClaudeSignIn) return { tone: 'alarm', text: 'Needs Sign in with Claude' }
   if (seat.health === 'healthy' && seat.credential.usable === false) {
     return { tone: 'amber', text: seat.kind === 'claude' ? 'Needs a token' : 'Not signed in' }
@@ -924,6 +937,8 @@ export function SettingsSeats() {
       </p>
 
       <ProviderKeysSection />
+
+      <SeatRotationPanel />
 
       <FailoverPanel onNotice={setNotice} />
 

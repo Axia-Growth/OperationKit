@@ -5,7 +5,7 @@ description: Sets up your knowledge base from the files you already have. Drop i
 avatar: KB
 colour: amber
 version: 1.0.0
-author: Operation Kit
+author: "{brand}"
 knowledge_folders: []
 tools: []
 ---

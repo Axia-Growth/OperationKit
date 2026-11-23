@@ -3,7 +3,10 @@
  *
  *   embeddingConfig()  Settings → Knowledge base search (settings table, see providers.ts)
  *   activeProvider()   the provider for that config (null = off / not configured)
- *   noteKbWrite(path)  THE write hook: every knowledge-base write path calls it
+ *   noteKbChanged(path)  THE write hook: every knowledge-base write, move and delete
+ *                      path calls it. It runs both re-index hooks: semantic search
+ *                      (noteKbWrite) and the link graph (noteKbFileWritten).
+ *   noteKbWrite(path)  the semantic half only; call noteKbChanged instead
  *   startKbSemanticScheduler()  boot (host only): mark interrupted runs, backfill if
  *                      needed, then a reconcile pass every 15 min
  *
@@ -20,6 +23,7 @@ import {
   type EmbeddingConfig, type EmbeddingProvider, type ProviderDeps,
 } from './providers.js'
 import { loadVecExtension, ensureSchema, indexStats } from './store.js'
+import { noteKbFileWritten } from '../kb-wiki/graph-sync.js'
 import { latestJob, markInterruptedJobs, needsBackfill, runBackfill, runningJob, WriteQueue, type IndexerDeps } from './indexer.js'
 
 const RECONCILE_MS = 15 * 60 * 1000
@@ -101,8 +105,8 @@ function indexerDeps(): IndexerDeps | null {
 const queue = new WriteQueue(indexerDeps)
 
 /**
- * THE write hook. Call after any knowledge-base file is written, moved or
- * deleted. Fire-and-forget; never throws; a path outside the knowledge base or
+ * The semantic half of the write hook. Write paths call noteKbChanged, not
+ * this. Fire-and-forget; never throws; a path outside the knowledge base or
  * a non-markdown file is ignored by the indexer.
  */
 export function noteKbWrite(...paths: Array<string | null | undefined>): void {
@@ -111,6 +115,27 @@ export function noteKbWrite(...paths: Array<string | null | undefined>): void {
   try {
     for (const p of paths) if (typeof p === 'string' && p) queue.enqueue(p)
   } catch { /* never break a write */ }
+}
+
+/**
+ * THE write hook (obj 900965). Call after any knowledge-base file is written,
+ * moved or deleted, with every path that changed (a move passes the old and the
+ * new path). It queues the file for the semantic index and, after the current
+ * tick so the write never waits, reindexes it in its workspace's link graph.
+ * Never throws; a path outside the knowledge base is ignored by both.
+ *
+ * kb-write-hook.guard.test.ts fails when a write path calls one half directly
+ * or a listed module writes a file without calling this.
+ */
+export function noteKbChanged(...paths: Array<string | null | undefined>): void {
+  const changed = paths.filter((p): p is string => typeof p === 'string' && p.length > 0)
+  if (!changed.length) return
+  noteKbWrite(...changed)
+  setImmediate(() => {
+    for (const p of changed) {
+      try { noteKbFileWritten(p) } catch { /* never break a write */ }
+    }
+  })
 }
 
 /** Tests: wait for queued writes to be embedded. */

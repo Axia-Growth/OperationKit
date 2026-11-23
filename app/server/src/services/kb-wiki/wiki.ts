@@ -2,7 +2,7 @@ import fs from 'fs'
 import path from 'path'
 import { ENTITY_TYPES, FOLDER_FOR, parseNote, relLink, slugify } from '../doc-ingest/notes.js'
 import { ANSWERS_DIR, CONVERSATION_SOURCES_DIR, GENERATED_BY, INDEX_PAGE, LINT_REPORT_PAGE, LOG_PAGE, isProtectedPath } from './paths.js'
-import { noteKbWrite } from '../kb-semantic/service.js'
+import { noteKbChanged } from '../kb-semantic/service.js'
 
 /**
  * Compiled wiki (obj 720117): page scan, [[wikilinks]] + automatic backlinks,
@@ -353,7 +353,7 @@ export function withBacklinks(text: string, backlinks: Array<{ rel: string; titl
 function writeIfUnchanged(abs: string, text: string, mtimeMs: number): boolean {
   try { if (fs.statSync(abs).mtimeMs !== mtimeMs) return false } catch { return false }
   fs.writeFileSync(abs, text)
-  noteKbWrite(abs) // obj 900816: semantic index
+  noteKbChanged(abs) // semantic index + link graph
   return true
 }
 

@@ -74,6 +74,12 @@ export interface CreateBotJobInput {
   workspace: unknown
   title: string
   description: string
+  /**
+   * ONE checkable statement of what done looks like (obj 901496). Written to
+   * the card's existing `completion_goal`, which the worker prompt already
+   * renders as its hard requirement. Omitted → NULL, as before.
+   */
+  completionGoal?: string | null
   /** Caller-stable key. A retry MUST reuse it; that is what makes G2 work. */
   idempotencyKey: string
   /** Who filled the card in (defaults to the requesting person). */
@@ -195,8 +201,8 @@ export function createBotJob(db: Database, input: CreateBotJobInput): CreateBotJ
     const status = getInitialStatus('task')
     const info = db
       .prepare(
-        `INSERT INTO objectives (title, description, agent_context, workspace, category, parent_id, depth, assigned_user_id, created_by, type, status, origin, owner_bot, model)
-         VALUES (?, ?, ?, ?, 'general', ?, ?, ?, ?, 'task', ?, 'agent_chat', ?, ?)`,
+        `INSERT INTO objectives (title, description, agent_context, workspace, category, parent_id, depth, assigned_user_id, created_by, type, status, origin, owner_bot, model, completion_goal)
+         VALUES (?, ?, ?, ?, 'general', ?, ?, ?, ?, 'task', ?, 'agent_chat', ?, ?, ?)`,
       )
       .run(
         title,
@@ -210,6 +216,7 @@ export function createBotJob(db: Database, input: CreateBotJobInput): CreateBotJ
         status,
         cardOwnerBot,
         (input.model && input.model.trim()) || defaultModelIdIn(db),
+        trimmed(input.completionGoal, 2000) || null,
       )
     const id = Number(info.lastInsertRowid)
     // The thread linkage the existing chat UI already reads.

@@ -332,6 +332,41 @@ describe('Git Workflow — evidence gate on completion (both integration modes)'
   })
 })
 
+// obj 901348 — CI cost: every push to a branch with an open PR runs the full
+// gate (~16 jobs). Both integration modes must tell the worker to commit often
+// and push ONCE, while keeping the final push so required checks still run.
+describe('Git Workflow — push once per session (obj 901348)', () => {
+  it('emits the push-batching block in `pr` mode, before the push command', () => {
+    const prompt = buildPrompt(makeObjective({ id: 901348001, create_pr: true, project: 'operationkit' }))
+    expect(prompt).toContain('### Push once per session')
+    expect(prompt).toContain('Do NOT `git push` after each commit.')
+    expect(prompt).toContain('Never push to "see what CI says"')
+    expect(prompt).toContain('Do not skip the final push')
+    expect(prompt).toContain('commit, push ONCE, and open a PR')
+    expect(prompt.indexOf('### Push once per session')).toBeLessThan(prompt.indexOf('git push -u origin'))
+    // Exactly one push command is handed to the worker.
+    expect(prompt.match(/^git push -u origin /gm)?.length).toBe(1)
+  })
+
+  it('emits it in `merge-back` mode too', () => {
+    const parentId = 901348900
+    getDb()
+      .prepare(
+        `INSERT OR REPLACE INTO objectives (id, title, status, agent_context, workspace, project, create_pr)
+         VALUES (?, 'Parent delegator', 'working', 'cto', 'example', 'operationkit', 1)`,
+      )
+      .run(parentId)
+    const prompt = buildPrompt(makeObjective({ id: 901348901, create_pr: false, parent_id: parentId, project: 'operationkit' }))
+    expect(prompt).toContain('### Push once per session')
+    expect(prompt).toContain('one push for the whole session')
+  })
+
+  it('is absent when there is no git workflow (no project)', () => {
+    const prompt = buildPrompt(makeObjective({ create_pr: false, project: null }))
+    expect(prompt).not.toContain('### Push once per session')
+  })
+})
+
 // obj 1451 — resolveWorkdir must search EVERY workspace for a project-linked
 // objective and FAIL CLOSED (never the bare projects root) when it can't resolve.
 describe('resolveWorkdir — obj 1451 (cross-workspace resolution + fail-closed)', () => {

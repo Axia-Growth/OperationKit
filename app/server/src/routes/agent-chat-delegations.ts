@@ -4,6 +4,8 @@
  *
  *   GET    /api/agent-chat/agents/:slug/delegations       admin: list + options
  *   POST   /api/agent-chat/agents/:slug/delegations       owner: issue a grant
+ *          body: { workspace, actions, expires_at, standing_merge? } — standing_merge
+ *          (obj 901388) = "Merge without asking me each time", merge grants only
  *   DELETE /api/agent-chat/agents/:slug/delegations/:id   owner: revoke
  *   POST   /api/agent-chat/agents/:slug/registry          owner: register this bot (obj 900862)
  *
@@ -54,7 +56,7 @@ export function isOwnerBrowserSession(req: AuthRequest): boolean {
 function ownerOr403(req: AuthRequest, res: Response): boolean {
   if (isOwnerBrowserSession(req)) return true
   res.status(403).json({
-    error: 'Only the owner, signed in to Command Center in the browser, can issue or revoke an approval grant. A bot or an API key can never grant itself approvals.',
+    error: 'Only the owner, signed in to the app in the browser, can issue or revoke an approval grant. A bot or an API key can never grant itself approvals.',
     code: 'owner_only',
   })
   return false
@@ -148,6 +150,7 @@ router.post('/agents/:slug/delegations', (req: AuthRequest, res) => {
       workspace: body.workspace,
       actions: body.actions,
       expiresAt: body.expires_at,
+      standingMerge: body.standing_merge,
       allowedWorkspaces: workspaceOptions().map(w => w.slug),
     })
     try {
@@ -155,9 +158,10 @@ router.post('/agents/:slug/delegations', (req: AuthRequest, res) => {
         project: 'operationkit',
         workspace: grant.workspace,
         event_type: 'decision',
-        title: `${req.user!.username} let ${bot.name} approve ${grant.actions.join(', ')} in ${grant.workspace} on their behalf (grant #${grant.id})`,
+        title: `${req.user!.username} let ${bot.name} approve ${grant.actions.join(', ')} in ${grant.workspace} on their behalf (grant #${grant.id})` +
+          (grant.standing_merge ? ', and merge its own passed PRs without asking each time' : ''),
         detail: `Expires ${grant.expires_at} UTC`,
-        metadata: { kind: 'delegation_grant_created', grant_id: grant.id, bot: bot.id, slug: a.slug, actions: grant.actions, actor: req.user!.username },
+        metadata: { kind: 'delegation_grant_created', grant_id: grant.id, bot: bot.id, slug: a.slug, actions: grant.actions, standing_merge: grant.standing_merge, actor: req.user!.username },
       })
     } catch { /* the activity feed is best-effort; the audit table already has it */ }
     res.status(201).json({ ...payload(req, a), created: grant })

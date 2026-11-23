@@ -87,6 +87,34 @@ export function demoReply(req: CompletionRequest): CompletionResult {
     if (e) return say(`I couldn't do that: ${e}`)
   }
 
+  // ── what was decided on a card (obj 901277) ──
+  // "what did Operator choose on #901231" — reads the card through the same tool a
+  // real model would (card_read with Full access, else get_objective) and
+  // answers ONLY from what that tool returned. If the read carries no decided
+  // decision, it says it cannot see one: the e2e check relies on that.
+  const offered = (n: string) => req.tools.some(t => t.function.name === n)
+  const decisionAsk = userText.match(/#\s*(\d+)/)
+  if (decisionAsk && /\b(choose|chose|chosen|choice|decide|decided|decision|pick|picked|answer(ed)?)\b/.test(q) && (offered('card_read') || offered('get_objective'))) {
+    const id = Number(decisionAsk[1])
+    const tool = offered('card_read') ? 'card_read' : 'get_objective'
+    const r = called.get(tool)
+    if (!r) return call(tool, { id })
+    const decisions = Array.isArray(r.decisions) ? (r.decisions as Json[]) : []
+    const d = decisions.find(x => x.state === 'decided' && x.chosen)
+    if (!d) {
+      const open = decisions.find(x => x.state === 'open')
+      return say(open
+        ? `Nothing has been chosen on card #${id} yet: decision #${open.id} ("${open.question}") is still waiting on the owner.`
+        : `I can't see which option was chosen on card #${id}: the card read has no decided decision.`)
+    }
+    const label = d.chosen_label ? `${d.chosen}: ${d.chosen_label}` : String(d.answer ?? d.chosen)
+    const lines = [`On card #${id}, **${d.decided_by ?? 'the owner'}** chose **${label}** (decision #${d.id}, "${d.question}", ${d.decided_at}).`]
+    if (d.decision_note) lines.push(`Their note: "${d.decision_note}".`)
+    if (d.outcome_text) lines.push(`Result: ${d.outcome_text}`)
+    if (r.queue_hold) lines.push(`The card still has a hold: "${r.queue_hold}".`)
+    return say(lines.join('\n\n'))
+  }
+
   // ── card status ──
   if (has('list_objectives') && /\b(status|progress|how('s| is| are)|update)\b/.test(q) && /\bcards?\b|\bboard\b|\bjobs?\b/.test(q)) {
     const r = called.get('list_objectives')

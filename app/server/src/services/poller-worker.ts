@@ -7,6 +7,7 @@ import fs from 'fs'
 import path from 'path'
 import type { Objective, ObjectiveStatus } from '@operationkit/shared'
 import { getDb } from '../db/index.js'
+import { captureLayout, isCapturePath, knowledgePathMarkers } from '../lib/vault-layout.js'
 import {
   getSessionState,
   autoResumeOnLimit,
@@ -33,7 +34,8 @@ import { broadcast } from '../ws/index.js'
 import { runMachineStatusUpdate } from '../lib/status-lock.js'
 import { TRANSCRIPT_DIR, PROJECTS_DIR } from '../config.js'
 import { deliverQueuedFollowUps, listPendingFollowUps } from './followup-queue.js'
-import { handleUnansweredFollowUp } from './unanswered-followup.js'
+import { handleUnansweredFollowUp, readUnansweredFollowUps, resendUnanswered } from './unanswered-followup.js'
+import { bootResumeInterrupted, BOOT_RESUME_START_REASON, type BootResumeBudget, type BootResumeOutcome } from './boot-resume.js'
 import { noteStartReason } from './session-start-reasons.js'
 
 // Track JSONL byte offsets for incremental knowledge capture scanning
@@ -41,7 +43,6 @@ export const knowledgeScanOffsets = new Map<string, number>()
 // obj 994 — per-session byte offset for the incremental scope-bleed scan.
 export const scopeScanOffsets = new Map<string, number>()
 const SCOPE_EDIT_TOOLS = new Set(['Edit', 'Write', 'MultiEdit', 'NotebookEdit'])
-const KNOWLEDGE_PATHS = ['second-brain/personal/decisions/', 'second-brain/workspaces/', 'second-brain/personal/insights/']
 const KNOWLEDGE_TOOLS = new Set(['Write', 'Edit', 'MultiEdit', 'NotebookEdit'])
 
 /**
@@ -68,6 +69,9 @@ export function scanForKnowledgeWrites(sessionId: string, objectiveId: number): 
   knowledgeScanOffsets.set(sessionId, stat.size)
 
   const db = getDb()
+  // Folder names come from the vault layout registry (obj 900967).
+  const layout = captureLayout(db)
+  const knowledgePaths = knowledgePathMarkers(layout)
   const newLines = buf.toString('utf-8').split('\n')
 
   for (const line of newLines) {
@@ -88,11 +92,11 @@ export function scanForKnowledgeWrites(sessionId: string, objectiveId: number): 
       if (!filePath) continue
 
       // Check if this write targets a knowledge path
-      const isKnowledge = KNOWLEDGE_PATHS.some(kp => filePath.includes(kp))
+      const isKnowledge = knowledgePaths.some(kp => filePath.includes(kp))
       if (!isKnowledge) continue
 
       // Determine event type from path
-      const isDecision = filePath.includes('/decisions/')
+      const isDecision = isCapturePath(filePath, layout)
       const isInsight = filePath.includes('/insights/')
       const eventType = isDecision ? 'decision' : isInsight ? 'milestone' : 'milestone'
       const fileName = path.basename(filePath)
@@ -500,6 +504,53 @@ export function handleQueuedFollowUps(objective: Objective): boolean {
     broadcast({ type: 'objective_updated', payload: updated })
   } catch {}
   return true
+}
+
+/**
+ * obj 901459 — boot-sweep wiring: give a card a restart cut off the same single
+ * resume the live loop would (queued messages → unanswered message → abnormal-end
+ * retry), attributed `boot_resume` so it spends, and never re-arms, the shared
+ * stall budget. `abnormalEnd` is the live loop's own handler, passed in to avoid
+ * an import cycle with poller-loop.ts. See services/boot-resume.ts.
+ */
+export function bootResumeProd(
+  objective: Objective,
+  budget: BootResumeBudget,
+  abnormalEnd: (objective: Objective) => boolean,
+): BootResumeOutcome {
+  const db = getDb()
+  const noteStart = (detail: string) => (id: number) => noteStartReason(id, BOOT_RESUME_START_REASON, 'state-poller', detail)
+  try {
+    const outcome = bootResumeInterrupted(objective, budget, {
+      db,
+      hasQueued: obj => listPendingFollowUps(db, obj.id).length > 0,
+      deliverQueued: obj => deliverQueuedFollowUps(obj, {
+        db,
+        deliver: (sid, msg, o, opts) => sendFollowUp(sid, msg, o, opts),
+        stamp: (m, sender) => followUpSessionText(m, sender),
+        jsonlPathFor: sid => transcriptPathFor(sid),
+        noteStart: noteStart('queued'),
+      }),
+      hasUnanswered: obj => readUnansweredFollowUps(obj, sid => transcriptPathFor(sid)).length > 0,
+      resendUnanswered: obj => resendUnanswered(obj, readUnansweredFollowUps(obj, sid => transcriptPathFor(sid)), {
+        jsonlPathFor: sid => transcriptPathFor(sid),
+        deliver: (sid, msg, o, opts) => sendFollowUp(sid, msg, o, opts),
+        stamp: (m, sender) => followUpSessionText(m, sender),
+        noteStart: noteStart('unanswered'),
+      }),
+      abnormalEnd,
+    })
+    if (outcome === 'queued' || outcome === 'unanswered') {
+      try {
+        const updated = db.prepare('SELECT * FROM objectives WHERE id = ?').get(objective.id) as Objective
+        broadcast({ type: 'objective_updated', payload: updated })
+      } catch {}
+    }
+    return outcome
+  } catch (err) {
+    console.error(`[boot-resume] failed for obj ${objective.id} (parking it as before):`, err)
+    return 'none'
+  }
 }
 
 // ── Deterministic floor (ST1 / P1+P2) helpers ──────────────────────────────

@@ -224,7 +224,8 @@ describe('agent chat on the seat pool while card sessions run (obj 900624)', () 
     expect(seatRouter.listSeatRecords().reduce((n, s) => n + s.activeSessions.length, 0)).toBe(CARD_SESSIONS.length)
 
     // Three bots, two rounds, all in flight at the same time.
-    const turns = await Promise.all(BOTS.flatMap(slug => [say(slug, 'status?'), say(slug, 'status?').catch(e => e)]))
+    // (obj 901488: the same text twice in a row is ONE message, so the second differs.)
+    const turns = await Promise.all(BOTS.flatMap(slug => [say(slug, 'status?'), say(slug, 'status now?').catch(e => e)]))
     const ok = turns.filter(t => t.status === 200)
     // A second message to the same bot while the first is running
     // is queued (202, obj 900949) — but nothing may come back "Not logged in".
@@ -259,8 +260,10 @@ describe('agent chat on the seat pool while card sessions run (obj 900624)', () 
     for (const slug of BOTS) {
       const r = await say(slug, 'hello')
       expect(r.status).toBe(200)
-      expect(r.json.messages.map((m: any) => m.role)).toEqual(['user', 'assistant'])
-      expect(r.json.messages[1].content).not.toMatch(/seat-1/)
+      // obj 901395: when the reply had to move, one quiet 'seat_moved' line sits before the answer.
+      const rows = r.json.messages.filter((m: any) => m.meta?.kind !== 'seat_moved')
+      expect(rows.map((m: any) => m.role)).toEqual(['user', 'assistant'])
+      expect(rows[1].content).not.toMatch(/seat-1/)
     }
     const s1 = seatRouter.getAccountById(seats[0].id)!
     expect(s1.authFailedAt ?? null).toBeNull()
@@ -270,7 +273,9 @@ describe('agent chat on the seat pool while card sessions run (obj 900624)', () 
     behave({ rateLimited: ['seat-1', 'seat-2'] })
     const r = await say(BOTS[0], 'hello')
     expect(r.status).toBe(200)
-    expect(r.json.messages[1].content).toBe('Answered by server')
+    expect(r.json.messages.map((m: any) => m.role)).toEqual(['user', 'error', 'assistant'])
+    expect(r.json.messages[1].meta.kind).toBe('seat_moved')
+    expect(r.json.messages[2].content).toBe('Answered by server')
     expect(calls().map(c => c.outcome)).toEqual(['rate-limited', 'rate-limited', 'ok'])
   })
 
@@ -280,7 +285,7 @@ describe('agent chat on the seat pool while card sessions run (obj 900624)', () 
     expect(r.status).toBe(503)
     expect(r.retryAfter).toBe('30')
     expect(r.json.code).toBe('ai_unavailable')
-    expect(r.json.error).toMatch(/No Claude seat could sign in/)
+    expect(r.json.error).toMatch(/No Claude account could sign in/)
     expect(r.json.error).not.toMatch(/claude exited|\/login/)
     expect(r.json.messages).toEqual([])
     expect(await history(BOTS[1])).toEqual([])

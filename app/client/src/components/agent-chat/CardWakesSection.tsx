@@ -4,10 +4,12 @@ import { Alert, cn } from '../ui'
 import { Switch } from '../ui/Switch'
 import type { ChatAgentInfo } from './types'
 
-/* needs_agent card wakes (obj 901328). When a card this bot owns needs it, the
-   server runs one turn of the bot in its pinned "Card wakes" side thread, with
-   only its own-card tools. ON by default, nothing to set up: this switch is only
-   for turning a bot's card wakes off (its cards then go to the webhook path). */
+/* Card wakes (obj 901328, widened by obj 901394). When a card this bot owns
+   finishes or needs it, the server runs one turn of the bot in its pinned
+   "Card wakes" thread and posts its short answer in the person's main chat. The
+   turn has the tools and permissions of a normal chat turn, plus the bot's
+   own-card tools. ON by default, nothing to set up: this switch is only for
+   turning a bot's card wakes off (its cards then go to the webhook path). */
 
 export interface CardWakesResponse {
   card_wakes: {
@@ -17,6 +19,8 @@ export interface CardWakesResponse {
     updated_at: string | null
     install_enabled: boolean
     thread_title: string
+    /** obj 901394: install-wide limits (settings rows). Absent on an older server. */
+    limits?: { debounce_seconds: number; max_per_hour: number; window_minutes: number; tools: 'chat' | 'own_cards'; posts_to_chat: boolean }
   }
   recent: Array<{
     id: number
@@ -71,6 +75,7 @@ export function CardWakesSection({ agent, isAdmin }: { agent: ChatAgentInfo; isA
   const on = info?.card_wakes.enabled ?? true
   const installOff = info ? !info.card_wakes.install_enabled : false
   const last = info?.recent[0]
+  const limits = info?.card_wakes.limits
 
   return (
     <section aria-labelledby={id('title')} className="flex flex-col gap-3 border-t border-line pt-4">
@@ -81,10 +86,21 @@ export function CardWakesSection({ agent, isAdmin }: { agent: ChatAgentInfo; isA
         </span>
       </div>
       <p className="text-xs text-fg-2">
-        When a card this bot owns needs it (blocked, failed review, waiting in review, needs a secret, done), the bot gets one turn in its
-        pinned &ldquo;{info?.card_wakes.thread_title ?? 'Card wakes'}&rdquo; thread to act on it. In that turn it can only list, read, start,
-        hold, close and message its own cards in the card&apos;s workspace. Repeats for the same card are held back for a few minutes. On by default.
+        When a card this bot owns finishes or needs it (waiting in review, passed or failed review, blocked, stalled, needs a secret, a
+        decision asked or answered, signed off, pull request merged), the bot gets one turn in its pinned
+        &ldquo;{info?.card_wakes.thread_title ?? 'Card wakes'}&rdquo; thread to close the card out
+        {limits?.posts_to_chat === false ? '.' : ', and its short answer is posted in your chat with it.'}{' '}
+        {limits?.tools === 'own_cards'
+          ? 'In that turn it can only list, read, start, hold, close and message its own cards.'
+          : 'The turn can do what the bot can do in a normal chat with you, no more. A wake is never an approval.'}{' '}
+        A change the bot made itself does not wake it. On by default.
       </p>
+      {limits && (
+        <p className="text-xs text-fg-2" data-testid="card-wake-limits">
+          Changes within {limits.debounce_seconds} seconds are answered in one turn. At most {limits.max_per_hour} wake turns an hour for
+          this bot, and one per card every {limits.window_minutes} minutes. Over the limit, the bot says so in chat.
+        </p>
+      )}
       {error && <Alert tone="alarm">{error}</Alert>}
       <div className="flex items-start gap-2 rounded-md border border-line bg-surface-0 px-3 py-1">
         <Switch

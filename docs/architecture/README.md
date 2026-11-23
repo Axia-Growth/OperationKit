@@ -6,6 +6,7 @@ Living map of OperationKit as of `origin/main`. Refactor PRs update these files 
 
 | Doc | What it is |
 |---|---|
+| [OVERVIEW.md](./OVERVIEW.md) | **Start here.** Life of a card, directory map by file prefix, "where do I add X" |
 | [SYSTEM.md](./SYSTEM.md) | What the app is, the execute loop, in-process vs siblings |
 | [CONTRACTS.md](./CONTRACTS.md) | Frozen HTTP / WS / status / spawn / DB surface |
 | [MODULES.md](./MODULES.md) | Every route, service, scheduler, client page |

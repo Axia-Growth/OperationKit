@@ -105,16 +105,9 @@ export interface BotConfigInfo {
   updated_at: string
 }
 
-export type ToolGroup = 'web' | 'knowledge' | 'board' | 'bots' | 'connectors' | 'integrations' | 'secrets' | 'images'
-
-export interface ToolCatalogEntry {
-  name: string
-  label: string
-  description: string
-  group: ToolGroup
-  /** Not granted by "All tools"; must be ticked on its own (obj 900749 — secret use). */
-  explicit_only?: boolean
-}
+// The tool catalogue's shape comes from the shared list (obj 900966).
+export type { ToolGroup, ToolCatalogEntry } from '../../../../shared/bot-tools'
+import type { ToolCatalogEntry } from '../../../../shared/bot-tools'
 
 export interface AgentsResponse {
   agents: ChatAgentInfo[]
@@ -246,8 +239,18 @@ export interface ChatMessage {
     bot_job?: number
     /** obj 900949: sent while the bot was working; it has not been delivered to the bot yet. */
     queued?: boolean
+    /** obj 901488: a queued message that was waiting when the person pressed Stop; it runs only once they confirm. */
+    held?: boolean
+    /** obj 901488 (kind 'step_limit'): the turn ran out of steps; this answer is its summary. `steps` = the limit. */
+    steps?: number
+    /** obj 901491 (kind 'turn_limit'): which budget ended the long reply. */
+    limit?: 'steps' | 'time'
+    /** obj 901488 (kind 'continue'): the step-limit answer this Continue press resumes. */
+    continue_from?: number
     /** obj 900977: the id this client gave the message when it sent it; the server stores it and never stores the same id twice in a lane. */
     client_msg_id?: string
+    /** obj 901392: the follow-up this row scheduled or cancelled, or (kind 'followup_fired') was started by. */
+    followup_id?: number
   } | null
   images?: ChatImage[]
   created_at: string
@@ -279,10 +282,35 @@ export interface ChatCard {
   url: string
 }
 
+/**
+ * obj 901392: a one-off follow-up the bot set for itself in this chat ("check
+ * back in 10 minutes"). Times are ISO 8601. The person can cancel it while it
+ * is still `pending`.
+ */
+export interface ChatFollowup {
+  id: number
+  status: 'pending' | 'running' | 'fired' | 'failed' | 'cancelled' | 'dropped'
+  note: string
+  card_id: number | null
+  when_card_changes: boolean
+  due_at: string
+  hop: number
+  thread_id: number | null
+  /** 'due' | 'card_changed' once it fired. */
+  fire_reason: string | null
+  /** Why it was dropped or failed; 'person' / 'bot' for a cancelled one. */
+  end_reason: string | null
+  created_at: string
+  fired_at: string | null
+  finished_at: string | null
+}
+
 export interface ThreadResponse {
   messages: ChatMessage[]
   drafts: ChatDraft[]
   cards: ChatCard[]
+  /** obj 901392: live state of each follow-up a line in view points at. Absent on an older server. */
+  followups?: ChatFollowup[]
   /**
    * obj 900949: the lane's turn state — is the bot working, and how many of the
    * person's messages wait for it. Absent on an older server (treated as idle).
@@ -290,12 +318,62 @@ export interface ThreadResponse {
   turn?: LaneTurn
   /** obj 900949: set on a POST answered 202 — the message was queued, not run. */
   queued?: boolean
+  /**
+   * obj 900977 / 901488: set on a POST for a message the server already had
+   * (same id, or the same text again with nothing in between). Nothing new was
+   * stored or run; `duplicate_state` says where the first one stands.
+   */
+  duplicate?: boolean
+  duplicate_state?: 'queued' | 'running' | 'answered'
+  /** obj 901488: how it was matched. 'text' = the same words as a new send: the page asks before sending again. */
+  duplicate_by?: 'id' | 'text' | 'continue'
+  /**
+   * obj 901491: the job of the reply running in this lane (how far it is, the
+   * budget it runs under), or null when the lane is idle. Absent on an older server.
+   */
+  turn_job?: LaneTurnJob | null
+  /** obj 901491: set on a POST answered 202 — the reply is still working and carries on in the background. */
+  background?: boolean
+  /**
+   * obj 901373: the reply threads on this lane's messages, keyed by the parent
+   * message's id — only threads that hold at least one reply. Absent on an older server.
+   */
+  reply_threads?: Record<string, ReplyThreadSummary>
+}
+
+/** obj 901373: "N replies" under a message that has a thread. */
+export interface ReplyThreadSummary {
+  thread_id: number
+  reply_count: number
+  last_reply_at: string | null
+}
+
+/** obj 901373: POST /agents/:slug/messages/:id/thread — the thread on one message, created on first use. */
+export interface ReplyThreadOpenResponse {
+  thread: ChatThread
+  parent: ChatMessage
+  drafts?: ChatDraft[]
+  cards?: ChatCard[]
 }
 
 /** obj 900949: what the composer needs to know about one lane. */
 export interface LaneTurn {
   running: boolean
   queued: number
+  /** obj 901488: how many of the queued messages are held after a Stop, waiting for the person to confirm. Absent on an older server. */
+  held?: number
+}
+
+/** obj 901491: one long reply, as the server records it while it runs. */
+export interface LaneTurnJob {
+  id: number
+  /** true once the request that started it was answered "working on it". */
+  background: boolean
+  steps: number
+  tool_calls: number
+  max_steps: number
+  max_minutes: number
+  started_at: string
 }
 
 /**
@@ -312,6 +390,8 @@ export interface ChatThread {
   created_at: string
   updated_at: string
   message_count: number
+  /** obj 901373: set on a reply thread — the message it hangs off. Never set on a thread in the lane strip. */
+  parent_message_id?: number | null
 }
 
 export interface ThreadsResponse {

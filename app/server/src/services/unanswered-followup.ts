@@ -177,15 +177,42 @@ export function handleUnansweredFollowUp(objective: Objective, deps: UnansweredD
     return false
   }
 
+  if (resendUnanswered(objective, decision.messages, deps)) {
+    log(`[unanswered-followup] obj ${objective.id} (${sessionId}): message had no reply and the worker is gone — re-sent (attempt ${decision.attempt}/${MAX_RETRIES}).`)
+  } else {
+    const st = retryState.get(objective.id)
+    log(`[unanswered-followup] obj ${objective.id} (${sessionId}): re-send attempt ${decision.attempt} failed: ${st?.lastError ?? 'unknown error'}`)
+  }
+  return true
+}
+
+/**
+ * obj 901459 — the boot sweep's read: the messages still waiting for a reply in
+ * this card's transcript, with no age gate and no in-memory retry ledger (both
+ * are meaningless right after a restart; the boot path bounds itself with the
+ * durable stall budget instead). Empty on any read error.
+ */
+export function readUnansweredFollowUps(objective: Objective, jsonlPathFor: (sessionId: string) => string): UnansweredMessage[] {
+  if (!objective.session_id || objective.delegate_mode || objective.status !== 'working') return []
+  try {
+    return findUnansweredFollowUps(readJsonlTail(jsonlPathFor(objective.session_id), 256_000).split('\n'))
+  } catch {
+    return []
+  }
+}
+
+/** Re-send `messages` to the card's session in one batch. True when the send went out. */
+export function resendUnanswered(objective: Objective, messages: UnansweredMessage[], deps: UnansweredDeps): boolean {
+  const sessionId = objective.session_id
+  if (!sessionId || messages.length === 0) return false
   const sender = batchSender(messages.map(m => ({ sender: m.sender })))
   const text = combineQueuedFollowUps(messages.map(m => ({ message: m.text, sender: m.sender })), deps.stamp)
   try {
     deps.noteStart(objective.id, sender?.username ?? null)
     deps.deliver(sessionId, messages.map(m => m.text).join('\n\n'), objective, { skipJsonl: true, sender, sessionTextOverride: text })
-    log(`[unanswered-followup] obj ${objective.id} (${sessionId}): message had no reply and the worker is gone — re-sent (attempt ${decision.attempt}/${MAX_RETRIES}).`)
+    return true
   } catch (err) {
     noteRetryError(objective.id, err)
-    log(`[unanswered-followup] obj ${objective.id} (${sessionId}): re-send attempt ${decision.attempt} failed: ${(err as Error)?.message ?? err}`)
+    return false
   }
-  return true
 }

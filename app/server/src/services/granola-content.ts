@@ -19,6 +19,7 @@
 import fs from 'fs'
 import path from 'path'
 import { getDb } from '../db/index.js'
+import { noteKbChanged } from './kb-semantic/service.js'
 import { fireRoutine, type RoutineRow, type FireResult } from './routine-scheduler.js'
 import { chownToVaultUser } from './vault-fs.js'
 import { ownerPaths, type ContentOwner } from './content-owners.js'
@@ -209,6 +210,7 @@ export function patchDraftStatus(
     return { ok: false, error: 'status rewrite produced no change' }
   }
   fs.writeFileSync(abs, newRaw, 'utf8')
+  noteKbChanged(abs) // semantic index + link graph
   chownToVaultUser(abs)
 
   const { data, body } = parseFrontmatter(newRaw)
@@ -238,6 +240,7 @@ export function patchDraftBody(owner: ContentOwner, file: string, newBody: strin
   const normalizedBody = newBody.replace(/\r\n/g, '\n').replace(/\s+$/, '')
   const newRaw = `${fmBlock}\n\n${normalizedBody}\n`
   fs.writeFileSync(abs, newRaw, 'utf8')
+  noteKbChanged(abs) // semantic index + link graph
   chownToVaultUser(abs)
 
   const { data, body } = parseFrontmatter(newRaw)
@@ -362,6 +365,7 @@ function writeHookVideos(abs: string, file: string, videos: VideoMeta[]): HookPa
   }
   const newRaw = `${open}${newFmBody}${close}${rest}`
   fs.writeFileSync(abs, newRaw, 'utf8')
+  noteKbChanged(abs) // semantic index + link graph
   chownToVaultUser(abs)
   return { ok: true, hook: parseHookDoc(file, newRaw) }
 }

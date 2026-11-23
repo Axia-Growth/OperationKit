@@ -213,6 +213,7 @@ Errors are `{ "error": "…" }` with 400 / 401 / 403 / 404 / 409 / 422 / 429. A 
 | `events`, `total_events`, `next_before` | Newest-first event list; pass `?before=<next_before>` for the next page (`?limit=` 1–100, default 20) |
 | `progress_source` | `worker` (it wrote snapshots), `transcript` (it didn't — use `transcript`), or `none` |
 | `transcript` | Derived from the live transcript: `last_tool` {name, summary}, `last_assistant_message`, `assistant_turns`, `tool_calls`, `num_turns`, `elapsed_seconds`, `last_event_at` |
+| `tree` | One status for the card and **everything below it, at any depth**: `state` (`failed` / `needs_you` / `running` / `incomplete` / `finished`), `settled` (true only when the card and every descendant have ended), `closed_early` (the card is done while parts are still open), counts, the ids behind each count, and a one-sentence `reason`. `null` when nothing is below the card. A part that failed review keeps the tree at `failed`, never `finished` |
 | `children` | For a parent that fanned out: each child's status, latest snapshot and (once past working) final `result`, plus `by_status` counts |
 | `fanout` | The parallel group: `max_concurrency`, `child_ids`, `completed_at` |
 | `session_starts` | Newest 10 spawns/resumes: `kind` (`spawn` / `resume` / `attach` = a second start folded into the live session / `rejected`), `reason` (`board`, `agent`, `follow_up`, `ci_failure_followup`, `resume_after_limit`, `routine`, `fanout`, …), `actor` |
@@ -272,6 +273,10 @@ Fan-out creates the children through `POST /api/internal/objectives` (every dele
 ```
 
 Ordered most-urgent first: `failed_review` → `blocked` → `review` → `stuck` (working with no activity ≥ `stale_min`).
+A card in the review stage is listed only when it waits on a person (obj 901387): its AI review passed, its AI review
+failed or was blocked and nobody is on the card, no AI review applies (no pull request, or `skip_ai_review`), or it
+carries an open decision. A review card that has a pull request and no AI review verdict yet, or one with an agent
+still on it, is left out. This is the same rule as the Bots page "Needs you" count (`reviewStageOf` in `shared/bot-work.ts`).
 Titles ≤70 chars, `why` one line ≤140 chars. `counts` are complete even when `items` is truncated. Without `?workspace=`,
 each item carries `ws`. Needs `board:read`; a pinned key's items and counts cover only its workspaces. A typical
 workspace is about 1–4 KB, against tens to hundreds of KB for `/api/briefing/briefing` + `/api/objectives`.

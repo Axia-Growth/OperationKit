@@ -38,7 +38,7 @@
  */
 import fs from 'node:fs'
 import path from 'node:path'
-import { HOME_DIR } from '../config.js'
+import { HOME_DIR, LEGACY_APP_HOME } from '../config.js'
 
 /** Host root holding one scratch `/workspace` per card. Sibling of JAIL_HOME_ROOT. */
 export const JAIL_SCRATCH_ROOT = process.env.CC_JAIL_SCRATCH_ROOT || '/tmp/cc-jail-scratch'
@@ -57,7 +57,9 @@ function norm(p: string): string {
  * time so a test can move `USER_HOME` via env without a module reload.
  */
 export function bareRoots(): string[] {
-  return [HOME_DIR, '/', '/home', '/root', '/tmp', '/opt', '/srv']
+  // LEGACY_APP_HOME too (obj 901032): it was HOME_DIR's hard-wired default, so a
+  // card row can still name it as a workdir after the install home moved.
+  return [HOME_DIR, LEGACY_APP_HOME, '/', '/home', '/root', '/tmp', '/opt', '/srv']
     .filter(Boolean)
     .map(norm)
 }

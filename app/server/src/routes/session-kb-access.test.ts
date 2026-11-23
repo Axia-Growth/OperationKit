@@ -98,8 +98,8 @@ async function get(p: string, headers: Record<string, string> = {}) {
   return fetch(`${baseUrl}${p}`, { headers })
 }
 
-function tok(objectiveId: number, workspace: string, actingUserId: number | null): string {
-  return mintSessionToken({ objectiveId, workspace, actingUserId })
+function tok(objectiveId: number, workspace: string, actingUserId: number | null, opts: { readOnly?: boolean } = {}): string {
+  return mintSessionToken({ objectiveId, workspace, actingUserId, readOnly: opts.readOnly })
 }
 
 let exampleToken: string
@@ -231,6 +231,63 @@ describe('authorized same-workspace reads', () => {
     expect(await res.json()).toMatchObject({ ok: true })
     expect(fs.readFileSync(target, 'utf8')).toBe('# decision\n')
     fs.rmSync(F.exampleDecisionsDir, { recursive: true, force: true })
+  })
+})
+
+// ── 1b. The AI REVIEWER's read-only token (obj 901525) ──────────────────────
+// A reviewer's session token is minted with `readOnly: true`. It reads its
+// own workspace exactly like a worker's token (same scoping rules apply —
+// denial for another workspace is covered in section 2 below with the same
+// token), but it must NEVER be able to write the knowledge base it grades.
+
+describe("the reviewer's read-only token", () => {
+  // exampleObj/mikeId are assigned in the outer beforeAll, which has already run
+  // by the time THIS describe's beforeAll fires (vitest runs outer hooks
+  // first) — unlike a bare `const`, which would evaluate during collection,
+  // before the outer beforeAll ever sets them.
+  let reviewerToken: string
+  beforeAll(() => {
+    reviewerToken = tok(exampleObj, 'example', mikeId, { readOnly: true })
+  })
+
+  it('reads a file in its own workspace exactly like a worker token would', async () => {
+    const res = await get(`/api/docs/file?path=${encodeURIComponent(F.exampleNote)}`, hdr(reviewerToken))
+    expect(res.status).toBe(200)
+    expect((await res.json() as { content: string }).content).toBe('# playbook\n')
+  })
+
+  it('searches and lists its own workspace exactly like a worker token would', async () => {
+    const search = await get('/api/docs/search?q=playbook', hdr(reviewerToken))
+    expect(search.status).toBe(200)
+    const tree = await get('/api/docs/tree', hdr(reviewerToken))
+    expect(tree.status).toBe(200)
+  })
+
+  it('is STILL refused for another workspace, same as a worker token', async () => {
+    expect((await get(`/api/docs/file?path=${encodeURIComponent(F.example2Note)}`, hdr(reviewerToken))).status).toBe(403)
+  })
+
+  it('is refused on a WRITE to its own workspace — read-only beats same-workspace scope', async () => {
+    const res = await fetch(`${baseUrl}/api/docs/file`, {
+      method: 'PUT',
+      headers: { ...hdr(reviewerToken), 'Content-Type': 'application/json' },
+      body: JSON.stringify({ path: F.exampleNote, content: 'overwritten by a reviewer', create_dirs: false }),
+    })
+    expect(res.status).toBe(403)
+    expect((await res.json() as { code: string }).code).toBe('session_read_only')
+    // The file on disk is untouched.
+    expect(fs.readFileSync(F.exampleNote, 'utf8')).toBe('# playbook\n')
+  })
+
+  it('is refused even writing a BRAND NEW decision doc a worker token could create', async () => {
+    const target = path.join(F.exampleDecisionsDir, '2026-11-19-reviewer-should-not-write.md')
+    const res = await fetch(`${baseUrl}/api/docs/file`, {
+      method: 'PUT',
+      headers: { ...hdr(reviewerToken), 'Content-Type': 'application/json' },
+      body: JSON.stringify({ path: target, content: '# nope\n', create_dirs: true }),
+    })
+    expect(res.status).toBe(403)
+    expect(fs.existsSync(target)).toBe(false)
   })
 })
 
