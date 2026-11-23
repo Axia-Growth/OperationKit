@@ -7,6 +7,7 @@ import { describe, it, expect, beforeAll, afterAll, afterEach } from 'vitest'
 import fs from 'fs'
 import os from 'os'
 import path from 'path'
+import { fileURLToPath } from 'url'
 
 const TMP_DB = path.join(os.tmpdir(), `cc-assistant-persona-test-${process.pid}-${Date.now()}.db`)
 process.env.DB_PATH = TMP_DB
@@ -44,7 +45,7 @@ describe('the tracked default seed is a blank slate', () => {
   })
 
   it('the tracked example seed file matches the built-in defaults', () => {
-    const here = path.dirname(new URL(import.meta.url).pathname)
+    const here = path.dirname(fileURLToPath(import.meta.url))
     const file = path.resolve(here, '..', '..', 'seed.agents.example.json')
     const rows = JSON.parse(fs.readFileSync(file, 'utf-8')) as { slug: string }[]
     expect(rows.map(r => r.slug).sort()).toEqual(['cfo', 'cmo', 'coo', 'cto', 'general'])

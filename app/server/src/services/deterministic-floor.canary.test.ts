@@ -86,7 +86,7 @@ describe.skipIf(!tscBin)('CANARY PROOF — pilot armed via DB row, global defaul
     // Seed ONLY the per-project opt-in row. Do NOT touch the global flag.
     db.prepare('INSERT OR REPLACE INTO settings (key,value) VALUES (?,?)').run(
       `floor_config:${PILOT}`,
-      JSON.stringify({ enabled: true, commands: [`node ${tscBin} --noEmit`] }),
+      JSON.stringify({ enabled: true, commands: [`node ${JSON.stringify(tscBin)} --noEmit`] }),
     )
     expect(isFloorEnabled(db)).toBe(false)                       // global default UNTOUCHED
     expect(isFloorActiveForProject(db, PILOT)).toBe(true)        // pilot armed

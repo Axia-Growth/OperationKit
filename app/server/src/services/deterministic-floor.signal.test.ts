@@ -93,12 +93,12 @@ describe.skipIf(!tscBin)('VERIFIER SIGNAL — deterministic floor catches a real
     db.prepare("INSERT OR REPLACE INTO settings (key, value) VALUES ('deterministic_floor_enabled','1')").run()
     db.prepare("INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)").run(
       'floor_config:demo',
-      JSON.stringify({ enabled: true, commands: [`node ${tscBin} --noEmit`] }),
+      JSON.stringify({ enabled: true, commands: [`node ${JSON.stringify(tscBin)} --noEmit`] }),
     )
     expect(isFloorEnabled(db)).toBe(true)
     const cfg = getFloorConfig(db, 'demo')
     expect(cfg).not.toBeNull()
-    expect(cfg!.commands[0]).toContain('tsc --noEmit')
+    expect(cfg!.commands[0]).toMatch(/tsc"? --noEmit$/)
   })
 
   it('BROKEN build → floor FAIL, real TS error captured & routed; catch-count recorded; LLM verdict overridden', () => {
