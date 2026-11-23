@@ -73,15 +73,15 @@ export interface SourceRef {
 }
 
 export function slugify(name: string): string {
-  const s = name
-    .normalize('NFKD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .toLowerCase()
-    .replace(/&/g, ' and ')
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-+|-+$/g, '')
-    .slice(0, 80)
-  return s || 'untitled'
+  const normalized = name.normalize('NFKD').replace(/[\u0300-\u036f]/g, '').toLowerCase()
+  const readable = normalized.replace(/&/g, ' and ').replace(/[^\p{L}\p{N}]+/gu, '-').replace(/^-+|-+$/g, '')
+  const ascii = normalized.replace(/&/g, ' and ').replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '')
+  const stem = readable || 'untitled'
+  // Preserve legacy ASCII filenames, while making Unicode-only (and empty) slugs
+  // readable and unique. The original input keeps the digest stable per entity.
+  if (readable && readable === ascii) return stem.slice(0, 80)
+  const digest = crypto.createHash('sha1').update(name).digest('hex').slice(0, 6)
+  return `${stem.slice(0, 73)}-${digest}`
 }
 
 export function notePathFor(type: EntityType, name: string): string {
