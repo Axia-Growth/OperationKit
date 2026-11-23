@@ -10,8 +10,10 @@
 //                      healthy Claude seat (each signed in with ITS OWN credential,
 //                      in a private per-turn HOME), then the installer's
 //                      SESSION_JAIL_CLAUDE_OAUTH_TOKEN as the last resort. A seat
-//                      that is rate-limited, rejected or "Not logged in" is skipped
-//                      and the next one answers.
+//                      that is rate-limited, rejected, "Not logged in" or comes
+//                      back empty (obj 901395) is skipped and the next one
+//                      answers the SAME model call; tools never run twice
+//                      because they run in this server between model calls.
 //   anthropic          Anthropic API key (ANTHROPIC_API_KEY or SESSION_JAIL_ANTHROPIC_API_KEY)
 //   openai             OPENAI_API_KEY
 //   xai                Grok — XAI_API_KEY
@@ -31,8 +33,9 @@ import {
   type OAIToolCall,
   type OAITool,
 } from '../llm-gateway/translate.js'
-import { BackendError, createClaudeCliBackend, gatewaySlotFilter, type LlmBackend, type TokenCandidate } from '../llm-gateway/claude-cli-backend.js'
-import { pickAccount, type AccountSlot } from '../account-router.js'
+import { BackendError, createClaudeCliBackend, gatewaySlotFilter, type LlmBackend, type SeatAttempt, type TokenCandidate } from '../llm-gateway/claude-cli-backend.js'
+import { claudePoolSummary, pickAccount, type AccountSlot, type ClaudePoolSummary } from '../account-router.js'
+import { seatDisplayTimeZone, seatRotationSettings } from '../seat-rotation-settings.js'
 import { CHAT_PROVIDERS, type ChatAgent, type ChatProviderId } from './agent-defs.js'
 import type { ToolSpec } from './tools.js'
 import { demoReply } from './demo-provider.js'
@@ -50,6 +53,33 @@ export interface CompletionRequest {
 export interface CompletionResult {
   content: string | null
   toolCalls: OAIToolCall[]
+  /** obj 901395: set when this answer came from a different account than the one first tried. */
+  seatMove?: SeatMove
+}
+
+/** A reply that was moved to another Claude account mid-turn (obj 901395). Labels only: no email, no credential. */
+export interface SeatMove {
+  /** Seats left behind, in order. */
+  from: { label: string; reason: 'limit' | 'empty' | 'sign_in' }[]
+  /** The seat that answered. */
+  to: string
+}
+
+/** The one line the chat shows for a moved reply. */
+export function seatMoveLine(m: SeatMove): string {
+  const why = (r: SeatMove['from'][number]['reason']) =>
+    r === 'limit' ? 'reached its usage limit' : r === 'empty' ? 'returned nothing' : 'could not sign in'
+  const parts = m.from.map(f => `${f.label} ${why(f.reason)}`)
+  const left = parts.length === 1 ? parts[0] : `${parts.slice(0, -1).join(', ')} and ${parts[parts.length - 1]}`
+  return `${left}, so this reply moved to ${m.to}. Nothing was run twice.`
+}
+
+function seatMoveFrom(moved: SeatAttempt[] | undefined, toLabel: string | undefined, toSlot: string): SeatMove | undefined {
+  if (!moved || moved.length === 0) return undefined
+  return {
+    from: moved.map(t => ({ label: t.label, reason: t.kind === 'rate_limit' ? 'limit' as const : t.kind === 'empty' ? 'empty' as const : 'sign_in' as const })),
+    to: toLabel || toSlot,
+  }
 }
 
 export interface ChatProvider {
@@ -122,7 +152,7 @@ export class ProviderError extends Error {}
  * "try again" and their message is not stored half-answered.
  */
 export class ProviderUnavailableError extends ProviderError {
-  constructor(message: string, readonly reason: 'no_seat' | 'rate_limited' | 'signed_out') {
+  constructor(message: string, readonly reason: 'no_seat' | 'rate_limited' | 'signed_out' | 'empty') {
     super(message)
   }
 }
@@ -258,7 +288,7 @@ export function createProvider(id: ChatProviderId, agent: ChatAgent, deps: Provi
     }
     case 'claude': {
       const backend = deps.claudeBackend ?? claudeBackendFor(env)
-      return { id, label, model, supportsImages: claudeImagesEnabled(env), complete: req => claudeComplete(backend, model, req) }
+      return { id, label, model, supportsImages: claudeImagesEnabled(env), complete: req => claudeComplete(backend, model, req, env) }
     }
   }
 }
@@ -277,8 +307,11 @@ export function createProvider(id: ChatProviderId, agent: ChatAgent, deps: Provi
 export function chatClaudeBackendOptions(env: NodeJS.ProcessEnv): Parameters<typeof createClaudeCliBackend>[0] {
   const tok = (n: string): TokenCandidate[] => {
     const v = env1(env, n)
-    return v ? [{ id: n === 'AGENT_CHAT_CLAUDE_OAUTH_TOKEN' ? 'agent-chat-token' : 'server-token', token: v }] : []
+    const chat = n === 'AGENT_CHAT_CLAUDE_OAUTH_TOKEN'
+    return v ? [{ id: chat ? 'agent-chat-token' : 'server-token', token: v, label: chat ? 'the chat account' : 'the server account' }] : []
   }
+  // AGENT_CHAT_MAX_SEAT_ATTEMPTS (env) wins; else the operator setting
+  // seat_rotation_max_seats_per_turn, read per turn (obj 901395); default 4.
   const attempts = Number(env.AGENT_CHAT_MAX_SEAT_ATTEMPTS)
   const timeout = Number(env.AGENT_CHAT_TIMEOUT_MS)
   return {
@@ -288,7 +321,7 @@ export function chatClaudeBackendOptions(env: NodeJS.ProcessEnv): Parameters<typ
     preferTokens: tok('AGENT_CHAT_CLAUDE_OAUTH_TOKEN'),
     // The installer's single server token: last resort when no seat answers.
     fallbackTokens: tok('SESSION_JAIL_CLAUDE_OAUTH_TOKEN'),
-    maxAttempts: attempts > 0 ? attempts : 4,
+    maxAttempts: attempts > 0 ? attempts : () => seatRotationSettings(env).maxSeatsPerTurn,
     timeoutMs: timeout > 0 ? timeout : 180_000,
     homeLabel: 'cc-agent-chat',
   }
@@ -298,19 +331,108 @@ function claudeBackendFor(env: NodeJS.ProcessEnv): LlmBackend {
   return createClaudeCliBackend(chatClaudeBackendOptions(env))
 }
 
-/** A backend failure that means "no seat could answer" → a clear, retryable error. */
-export function unavailableFromBackend(err: unknown): ProviderUnavailableError | null {
+/** What the "nobody could answer" message is built from (obj 901395). Tests pass it; production reads the pool. */
+export interface UnavailableInfo {
+  pool: ClaudePoolSummary | null
+  /** Healthy seats this reply did NOT try (the per-reply cap ran out first). */
+  freeUntried: number
+  timeZone: string
+  now: Date
+}
+
+const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`
+
+/** "9:40 PM EST (in about 35 minutes)" — with the weekday when it is not today. */
+export function formatResetTime(iso: string, now: Date, timeZone: string): string {
+  const at = new Date(iso)
+  const mins = Math.max(1, Math.round((at.getTime() - now.getTime()) / 60_000))
+  const rel = mins < 90 ? `in about ${plural(mins, 'minute')}` : `in about ${plural(Math.round(mins / 60), 'hour')}`
+  const day = (d: Date) => new Intl.DateTimeFormat('en-CA', { timeZone, year: 'numeric', month: '2-digit', day: '2-digit' }).format(d)
+  const clock = new Intl.DateTimeFormat('en-US', {
+    timeZone, hour: 'numeric', minute: '2-digit', timeZoneName: 'short', ...(day(at) !== day(now) ? { weekday: 'long' as const } : {}),
+  }).format(at)
+  return `${clock} (${rel})`
+}
+
+function poolInfo(env: NodeJS.ProcessEnv, tried: SeatAttempt[]): UnavailableInfo {
+  let pool: ClaudePoolSummary | null = null
+  let freeUntried = 0
+  try {
+    const allowed = poolFilter(env)
+    const triedIds = new Set(tried.map(t => t.slot))
+    pool = claudePoolSummary(allowed)
+    freeUntried = claudePoolSummary(a => allowed(a) && !triedIds.has(a.id)).available
+  } catch { /* no pool state → the generic wording */ }
+  return { pool, freeUntried, timeZone: seatDisplayTimeZone(env), now: new Date() }
+}
+
+/**
+ * A backend failure that means "no seat could answer" → a clear, retryable
+ * error. obj 901395: it says in plain words how many accounts there are, how
+ * many are limited and when the first one resets. It never shows an empty
+ * reason, an account email or a credential.
+ */
+export function unavailableFromBackend(err: unknown, info?: UnavailableInfo, env: NodeJS.ProcessEnv = process.env): ProviderUnavailableError | null {
   if (!(err instanceof BackendError) || err.emitted) return null
-  if (err.kind === 'no_account') {
-    return new ProviderUnavailableError('No Claude seat is free to answer right now: every seat is cooling down, parked, or not set up. Try again in a few minutes; an admin can check Settings → Seats.', 'no_seat')
+  if (!['no_account', 'rate_limit', 'auth', 'empty'].includes(err.kind)) return null
+  const tried = err.tried ?? []
+  const { pool, freeUntried, timeZone, now } = info ?? poolInfo(env, tried)
+  const admin = 'An admin can see each account in Settings → Seats.'
+  const reset = pool?.earliestReset ? ` The first one resets at ${formatResetTime(pool.earliestReset, now, timeZone)}.` : ''
+
+  // Every seat tried came back empty: not one account's limit.
+  if (err.kind === 'empty' && tried.every(t => t.kind === 'empty')) {
+    if (tried.length >= 2) {
+      return new ProviderUnavailableError(
+        `The AI returned nothing on ${tried.length} accounts in a row (${tried.map(t => t.label).join(', ')}), so this is not one account's usage limit. Send your message again. ${admin}`,
+        'empty',
+      )
+    }
+    const others = pool ? pool.total - 1 : 0
+    return new ProviderUnavailableError(
+      pool && pool.limited > 0 && pool.available === 0
+        ? `The AI returned nothing, and the other ${plural(others, 'Claude account')} ${others === 1 ? 'is' : 'are'} at ${others === 1 ? 'its' : 'their'} usage limit, so there was no account to move this reply to.${reset} ${admin}`
+        : `The AI returned nothing and there was no other Claude account to move this reply to. Send your message again. ${admin}`,
+      'empty',
+    )
   }
-  if (err.kind === 'rate_limit') {
-    return new ProviderUnavailableError('Every Claude seat is at its usage limit right now. Try again in a few minutes.', 'rate_limited')
+
+  const reason: ProviderUnavailableError['reason'] =
+    err.kind === 'no_account' ? 'no_seat' : err.kind === 'auth' ? 'signed_out' : 'rate_limited'
+
+  if (pool && pool.total > 0 && pool.available === 0) {
+    if (pool.limited === pool.total) {
+      return new ProviderUnavailableError(
+        `${pool.total === 1 ? 'The only Claude account is' : `All ${pool.total} Claude accounts are`} at ${pool.total === 1 ? 'its' : 'their'} usage limit.${(pool.total === 1 ? reset.replace('The first one resets', 'It resets') : reset) || ' No reset time was given.'} Try again then, or add another account in Settings → Seats.`,
+        'rate_limited',
+      )
+    }
+    if (pool.signedOut === pool.total) {
+      return new ProviderUnavailableError(
+        `${pool.total === 1 ? 'The only Claude account needs' : `All ${pool.total} Claude accounts need`} to be signed in again. An admin can reconnect ${pool.total === 1 ? 'it' : 'them'} in Settings → Seats.`,
+        'signed_out',
+      )
+    }
+    return new ProviderUnavailableError(
+      `None of the ${pool.total} Claude accounts can answer right now: ${pool.limited} at ${pool.limited === 1 ? 'its' : 'their'} usage limit, ${pool.signedOut} ${pool.signedOut === 1 ? 'needs' : 'need'} to be signed in again.${reset} ${admin}`,
+      pool.limited > 0 ? 'rate_limited' : reason,
+    )
+  }
+  if (freeUntried > 0 && tried.length > 0) {
+    // The per-reply cap (seat_rotation_max_seats_per_turn) ran out before the pool did.
+    return new ProviderUnavailableError(
+      `This reply tried ${plural(tried.length, 'Claude account')} and none could answer. ${plural(freeUntried, 'more account')} ${freeUntried === 1 ? 'is' : 'are'} free: send your message again.`,
+      reason,
+    )
+  }
+  // No pool state to count (a token-only install, or the state could not be read).
+  if (err.kind === 'no_account') {
+    return new ProviderUnavailableError('No Claude account is free to answer right now: every account is cooling down, parked, or not set up. Try again in a few minutes; an admin can check Settings → Seats.', 'no_seat')
   }
   if (err.kind === 'auth') {
-    return new ProviderUnavailableError('No Claude seat could sign in to answer this message. Try again in a minute; if it keeps happening, an admin should check Settings → Seats.', 'signed_out')
+    return new ProviderUnavailableError('No Claude account could sign in to answer this message. Try again in a minute; if it keeps happening, an admin should check Settings → Seats.', 'signed_out')
   }
-  return null
+  return new ProviderUnavailableError(`Every Claude account that was tried is at its usage limit right now.${reset} Try again in a few minutes.`, 'rate_limited')
 }
 
 /**
@@ -328,7 +450,7 @@ export function claudeImagesEnabled(env: NodeJS.ProcessEnv = process.env): boole
 /** Keep the prompt bounded: the most recent images are the ones being asked about. */
 export const CLAUDE_MAX_IMAGES = 4
 
-async function claudeComplete(backend: LlmBackend, model: string, req: CompletionRequest): Promise<CompletionResult> {
+async function claudeComplete(backend: LlmBackend, model: string, req: CompletionRequest, env: NodeJS.ProcessEnv = process.env): Promise<CompletionResult> {
   // The CLI transcript is plain text, so image parts come out of the messages
   // (as "[attached image N]" markers) and ride along out of band instead of
   // being stringified into the prompt.
@@ -348,10 +470,11 @@ async function claudeComplete(backend: LlmBackend, model: string, req: Completio
       signal: req.signal,
     })
   } catch (err) {
-    throw unavailableFromBackend(err) ?? err
+    throw unavailableFromBackend(err, undefined, env) ?? err
   }
   const parsed = parseAssistantOutput(r.text, t.toolNames)
-  return { content: parsed.content, toolCalls: parsed.toolCalls }
+  const seatMove = seatMoveFrom(r.moved, r.slotLabel, r.slot)
+  return { content: parsed.content, toolCalls: parsed.toolCalls, ...(seatMove ? { seatMove } : {}) }
 }
 
 // ── OpenAI-style (OpenAI, xAI Grok, LiteLLM, …) ──

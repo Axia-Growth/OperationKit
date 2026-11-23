@@ -8,6 +8,7 @@ import { AcceptanceCriteriaResults } from '../AcceptanceCriteriaResults'
 import { Card, Badge, cn } from '../ui'
 import { formatCost, formatDateTime, humanize } from '../../lib/format'
 import { SpendPanel } from './SpendPanel'
+import { parseCardBrief } from '../../../../shared/card-brief'
 
 /** Who closed it, in plain words, from the audit actor. */
 function closedBy(by: string | null): string {
@@ -31,6 +32,10 @@ export function BriefPanel({
   reviews: ObjectiveReview[]
   prs: ObjectivePR[]
 }) {
+  // obj 901496: "done" and the stop conditions are their own sections, not
+  // lines buried in the description.
+  const brief = parseCardBrief(objective.description)
+  const doneWhen = objective.completion_goal?.trim() || ''
   return (
     <div className="border-b border-line bg-surface-2/40">
       <div className="mx-auto max-w-4xl space-y-3 px-4 py-3">
@@ -175,13 +180,29 @@ export function BriefPanel({
           </Card>
         )}
 
+        {doneWhen && (
+          <div data-testid="brief-done-when">
+            <div className="mb-1 text-xs uppercase text-fg-3 font-semibold tracking-eyebrow">Done when</div>
+            <p className="whitespace-pre-wrap rounded-lg border border-success/30 bg-success/[0.07] px-3 py-2 text-base leading-relaxed text-fg-1">{doneWhen}</p>
+          </div>
+        )}
+
+        {brief.stopConditions.length > 0 && (
+          <div data-testid="brief-stop-conditions">
+            <div className="mb-1 text-xs uppercase text-fg-3 font-semibold tracking-eyebrow">Stop and report if</div>
+            <ul className="list-disc space-y-1 rounded-lg border border-warning/30 bg-warning/[0.07] py-2 pl-7 pr-3 text-base leading-relaxed text-fg-1">
+              {brief.stopConditions.map(c => <li key={c}>{c}</li>)}
+            </ul>
+          </div>
+        )}
+
         {/* Description */}
-        {objective.description ? (
+        {brief.body.trim() ? (
           <div>
             <div className="mb-1 text-xs uppercase text-fg-3 font-semibold tracking-eyebrow">Description</div>
             <div
               className="max-h-64 overflow-y-auto whitespace-pre-wrap rounded-lg bg-surface-0/50 px-3 py-2 font-mono text-base leading-relaxed text-fg-1"
-              dangerouslySetInnerHTML={{ __html: renderMarkdown(objective.description) }}
+              dangerouslySetInnerHTML={{ __html: renderMarkdown(brief.body) }}
             />
           </div>
         ) : (

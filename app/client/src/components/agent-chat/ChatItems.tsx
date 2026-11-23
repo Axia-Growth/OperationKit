@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { ChatDecision } from '../decisions/ChatDecision'
-import { ArrowRight, BookOpen, CalendarDays, Clock, Download, LayoutGrid, Mail, X, type LucideIcon } from 'lucide-react'
+import { AlarmClock, ArrowRight, BookOpen, CalendarDays, Clock, Download, LayoutGrid, Mail, X, type LucideIcon } from 'lucide-react'
 import { Badge, Button, Modal, cn } from '../ui'
 import { StatusDot } from '../design/primitives'
 import { renderMarkdown } from '../../lib/markdown'
@@ -9,6 +9,7 @@ import {
   type ChatAgentInfo,
   type ChatCard,
   type ChatDraft,
+  type ChatFollowup,
   type ChatImage,
   type ChatMessage,
   type EmailDraftPayload,
@@ -52,7 +53,7 @@ export function AgentAvatar({
   )
 }
 
-function time(iso: string): string {
+export function time(iso: string): string {
   const d = new Date(iso.includes('T') ? iso : `${iso.replace(' ', 'T')}Z`)
   return Number.isNaN(d.getTime()) ? '' : d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })
 }
@@ -124,7 +125,21 @@ export function ChatImageGallery({ images, className }: { images: ChatImage[]; c
  * working and not delivered to it yet — the bubble is quieter and carries a
  * small "Queued" chip until the bot picks it up. `sending` = not yet stored.
  */
-export function UserBubble({ m, queued, sending }: { m: Pick<ChatMessage, 'content' | 'images' | 'created_at'>; queued?: boolean; sending?: boolean }) {
+export function UserBubble({
+  m,
+  queued,
+  sending,
+  held,
+  onRemove,
+}: {
+  m: Pick<ChatMessage, 'content' | 'images' | 'created_at'>
+  queued?: boolean
+  sending?: boolean
+  /** obj 901488: queued when the person pressed Stop — it waits for them, not for the bot. */
+  held?: boolean
+  /** obj 901488: take this queued message back before the bot sees it. */
+  onRemove?: () => void
+}) {
   const images = m.images ?? []
   const waiting = queued || sending
   return (
@@ -141,13 +156,23 @@ export function UserBubble({ m, queued, sending }: { m: Pick<ChatMessage, 'conte
           <p className="mt-1 flex justify-end">
             <Badge tone="accent">
               <Clock aria-hidden="true" className="h-3 w-3" />
-              {sending ? 'Sending…' : 'Queued'}
+              {sending ? 'Sending…' : held ? 'Waiting for you' : 'Queued'}
             </Badge>
           </p>
         ) : (
           <p className="mt-1 text-right text-xs text-fg-2">{time(m.created_at)}</p>
         )}
       </div>
+      {queued && onRemove && (
+        <button
+          type="button"
+          onClick={onRemove}
+          aria-label={`Remove queued message: ${(m.content || 'image').slice(0, 60)}`}
+          className="min-h-[28px] px-1 text-xs text-fg-2 underline-offset-2 transition-colors duration-fast hover:text-fg-0 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/50"
+        >
+          Remove
+        </button>
+      )}
     </div>
   )
 }
@@ -165,7 +190,23 @@ export function BotThreadLink({ id, onOpen, className }: { id: number; onOpen: (
   )
 }
 
-export function AssistantBubble({ m, agent, onOpenBotThread }: { m: ChatMessage; agent: ChatAgentInfo; onOpenBotThread?: (id: number) => void }) {
+export function AssistantBubble({
+  m,
+  agent,
+  onOpenBotThread,
+  onContinue,
+}: {
+  m: ChatMessage
+  agent: ChatAgentInfo
+  onOpenBotThread?: (id: number) => void
+  /** obj 901488: set on the newest step-limit answer while nothing was sent after it — resumes from where it stopped. */
+  onContinue?: () => void
+}) {
+  // obj 901488: the turn ran out of steps and wrote this summary instead of failing.
+  const stepLimit = m.meta?.kind === 'step_limit'
+  // A long reply that used up its step or time budget (obj 901491). Its text is
+  // already the report, so it only gets the Continue button.
+  const turnLimit = m.meta?.kind === 'turn_limit'
   const by = m.meta?.provider_label ?? m.provider ?? 'unknown'
   // A line the server relayed from a bot-to-bot thread (obj 900859): no model
   // answered it in THIS chat, so say where it came from instead of "Answered by".
@@ -197,6 +238,24 @@ export function AssistantBubble({ m, agent, onOpenBotThread }: { m: ChatMessage;
             </>
           )}
         </p>
+        {(stepLimit || turnLimit) && (
+          <p className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 px-1 text-xs text-fg-2" data-testid="step-limit-note">
+            <span>
+              {turnLimit
+                ? `Stopped at the ${m.meta?.limit === 'time' ? 'time' : 'step'} limit.`
+                : `Stopped at the step limit${m.meta?.steps ? ` (${m.meta.steps} steps)` : ''}. This is a summary of what was done.`}
+            </span>
+            {onContinue && (
+              <button
+                type="button"
+                onClick={onContinue}
+                className="min-h-[32px] rounded-md border border-line bg-surface-0 px-2.5 py-1 text-sm font-medium text-fg-0 transition-colors duration-fast hover:border-line-strong hover:bg-surface-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/50"
+              >
+                Continue
+              </button>
+            )}
+          </p>
+        )}
       </div>
     </div>
   )
@@ -209,6 +268,16 @@ export function ErrorLine({ m }: { m: ChatMessage }) {
     return (
       <p className="mx-auto max-w-[90%] text-center text-sm text-fg-2" data-testid="stopped-line">
         {m.content || 'Stopped.'}
+      </p>
+    )
+  }
+  // obj 901395: the reply was moved to another Claude account. Not a failure:
+  // one small, quiet line with the seat labels (never an email or a credential).
+  if (m.meta?.kind === 'seat_moved') {
+    return (
+      <p className="mx-auto max-w-[90%] text-center text-xs text-fg-2" data-testid="seat-moved-line">
+        <span aria-hidden="true">↻ </span>
+        {m.content}
       </p>
     )
   }
@@ -250,6 +319,49 @@ export function ToolLine({ m }: { m: ChatMessage }) {
       {images.length > 0 && <ChatImageGallery images={images} />}
       {/* obj 901059: a raise_decision call renders the briefing itself, with its Q&A thread and Choose/Deny. */}
       {!failed && typeof m.meta?.decision_id === 'number' && <ChatDecision id={m.meta.decision_id} />}
+    </div>
+  )
+}
+
+/**
+ * obj 901392: a follow-up the bot set for itself ("check back in 10 minutes").
+ * While it waits the line says when it fires and what for, with Cancel; after
+ * that it says what became of it. The times are the viewer's local time.
+ */
+export function FollowupLine({ followup: f, onCancel }: { followup: ChatFollowup; onCancel?: (f: ChatFollowup) => Promise<void> }) {
+  const [busy, setBusy] = useState(false)
+  const waiting = f.status === 'pending'
+  let label: string
+  if (waiting) label = `Follow-up scheduled for ${time(f.due_at)}${f.when_card_changes && f.card_id ? ` (or sooner if card #${f.card_id} changes)` : ''}:`
+  else if (f.status === 'running') label = 'Follow-up running now:'
+  else if (f.status === 'fired') label = `Follow-up ran at ${time(f.fired_at ?? f.due_at)}${f.fire_reason === 'card_changed' ? ' (the card changed)' : ''}:`
+  else if (f.status === 'cancelled') label = `Follow-up cancelled${f.end_reason === 'person' ? ' by you' : f.end_reason === 'bot' ? ' by the bot' : ''}:`
+  else if (f.status === 'dropped') label = `Follow-up dropped (${f.end_reason ?? 'no longer possible'}):`
+  else label = `Follow-up could not run (${f.end_reason ?? 'error'}):`
+  return (
+    <div
+      data-testid="followup-line"
+      data-status={f.status}
+      className={cn('ml-9 flex max-w-[560px] items-start gap-2 rounded-lg border px-3 py-2 text-sm', waiting ? 'border-line bg-surface-2 text-fg-0' : 'border-line-soft bg-surface-1 text-fg-2')}
+    >
+      <AlarmClock aria-hidden="true" className={cn('mt-0.5 h-4 w-4 shrink-0', waiting ? 'text-accent' : 'text-fg-3')} />
+      <p className="min-w-0 flex-1 break-words">
+        <span className="font-medium">{label}</span> <span className={waiting ? 'text-fg-1' : undefined}>{f.note}</span>
+      </p>
+      {waiting && onCancel && (
+        <Button
+          variant="ghost"
+          size="sm"
+          loading={busy}
+          aria-label={`Cancel follow-up scheduled for ${time(f.due_at)}`}
+          onClick={async () => {
+            setBusy(true)
+            try { await onCancel(f) } finally { setBusy(false) }
+          }}
+        >
+          Cancel
+        </Button>
+      )}
     </div>
   )
 }

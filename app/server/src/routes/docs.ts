@@ -2,14 +2,13 @@ import { Router, type Response } from 'express'
 import fs from 'fs'
 import path from 'path'
 import { type AuthRequest } from '../middleware/auth.js'
-import { sessionFileWorkspace, sessionOrRequireAuth } from '../middleware/session-file-access.js'
+import { sessionFileReadOnly, sessionFileWorkspace, sessionOrRequireAuth } from '../middleware/session-file-access.js'
 import { getUserWorkspaces } from '../middleware/workspace.js'
 import { getDocRoots, getWorkspaceSlugs } from '../services/workspaces.js'
 import { parseSearchMode, relatedDocs, searchKnowledgeBase } from '../services/kb-semantic/search.js'
-import { noteKbWrite, semanticAvailability } from '../services/kb-semantic/service.js'
+import { noteKbChanged, semanticAvailability } from '../services/kb-semantic/service.js'
 import { allWorkspaceKbRoots, knowledgeBaseRoot, workspaceKbRoot } from '../services/doc-ingest/kb-paths.js'
 import { pathWorkspaceResolver, workspaceOfPath, type PathWorkspace } from '../lib/doc-path-workspace.js'
-import { noteKbFileWritten } from '../services/kb-wiki/graph-sync.js'
 
 const router = Router()
 // obj 900204: card sessions authenticate with their objective-scoped
@@ -473,6 +472,13 @@ router.get('/file', (req: AuthRequest, res) => {
 
 // PUT /api/docs/file  body: { path, content }
 router.put('/file', (req: AuthRequest, res) => {
+  // obj 901525 — a reviewer's session token is minted read-only: it may GRADE
+  // the knowledge base, never write it. Checked before any root resolution so
+  // a read-only token can never learn whether a write root exists either.
+  if (sessionFileReadOnly(req)) {
+    res.status(403).json({ error: 'This session holds a read-only knowledge-base token and may not write', code: 'session_read_only' })
+    return
+  }
   const writeRoots = getWriteRoots(req)
   const { path: filePath, content, create_dirs: createDirs } = req.body as {
     path?: string
@@ -509,12 +515,10 @@ router.put('/file', (req: AuthRequest, res) => {
       fs.mkdirSync(dir, { recursive: true })
     }
     fs.writeFileSync(resolved, content, 'utf-8')
-    noteKbWrite(resolved) // obj 900816: embed the new content (async, never blocks the write)
+    // A plain write (the editor, MCP write_doc, a card session): semantic index + link graph, off the request path.
+    noteKbChanged(resolved)
     const stat = fs.statSync(resolved)
     res.json({ ok: true, path: resolved, size: stat.size, modifiedAt: stat.mtime.toISOString() })
-    // obj 900815: a plain write (the editor, MCP write_doc, a card session) reindexes that
-    // one page in its workspace's link graph — after the response, so the save never waits.
-    setImmediate(() => { noteKbFileWritten(resolved) })
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Write failed'
     res.status(500).json({ error: message })

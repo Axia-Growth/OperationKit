@@ -30,7 +30,9 @@ export function slugifyTitle(title: string): string {
  * fall back to the deterministic derivation used at first spawn.
  */
 export function deriveBranchName(objective: Pick<Objective, 'id' | 'title' | 'project' | 'create_pr' | 'branch_name'>): string | null {
-  if (objective.branch_name && objective.branch_name.trim()) return objective.branch_name.trim()
+  if (objective.branch_name && objective.branch_name.trim() && isValidBranchName(objective.branch_name.trim())) {
+    return objective.branch_name.trim()
+  }
   if (!objective.create_pr || !objective.project) return null
   return `cc/obj-${objective.id}-${slugifyTitle(objective.title)}`
 }
@@ -48,12 +50,32 @@ export function deriveBranchName(objective: Pick<Objective, 'id' | 'title' | 'pr
  * stay byte-identical for non-PR sessions (they take no lease).
  */
 export function deriveWorktreeBranchName(objective: Pick<Objective, 'id' | 'title' | 'project' | 'create_pr' | 'branch_name'>): string | null {
-  if (objective.branch_name && objective.branch_name.trim()) return objective.branch_name.trim()
+  if (objective.branch_name && objective.branch_name.trim() && isValidBranchName(objective.branch_name.trim())) {
+    return objective.branch_name.trim()
+  }
   if (!objective.project) return null
   return `cc/obj-${objective.id}-${slugifyTitle(objective.title)}`
 }
 
 const BRANCH_CHARS = '[A-Za-z0-9._\\/-]+'
+
+/**
+ * Whether `name` is safe to hand to a shell-interpolated or argv git command as
+ * a branch/ref (obj 901542 — closes CodeQL js/shell-command-injection-from-environment
+ * alerts 664/667/671/672/673). `branch_name` is attacker-influenced: any worker
+ * session can POST it via `/api/internal/pr-created` for its own card, and it was
+ * previously trusted verbatim into `execSync` template strings elsewhere
+ * (session-worktree.ts, governance.ts) where `JSON.stringify()` quoting does not
+ * neutralise `$()`/backticks inside double quotes. This is the single allowlist
+ * gate: only the BRANCH_CHARS charset, no leading `-` (would be parsed as a git
+ * flag), no `..` (ref-range syntax / path traversal), capped at 200 chars.
+ */
+export function isValidBranchName(name: string): boolean {
+  if (!name || name.length > 200) return false
+  if (name.startsWith('-')) return false
+  if (name.includes('..')) return false
+  return new RegExp(`^${BRANCH_CHARS}$`).test(name)
+}
 
 /**
  * The objective id embedded in a branch name (`cc/obj-<id>-…`, `cto/<id>-…`,

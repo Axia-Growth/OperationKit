@@ -6,6 +6,7 @@ import { useRoutines, isAutoPaused, type RoutineSummary, type StrategyOption, ty
 import { RoutineAutoPauseBanner } from './RoutineAutoPauseBanner'
 import { HostCronJobs } from './jobs/HostCronJobs'
 import { QueueAutostartPanel } from './settings/QueueAutostartPanel'
+import { DeployWaitingPanel } from './settings/DeployWaitingPanel'
 import { KnowledgeIndexPanel } from './jobs/KnowledgeIndexPanel'
 import { useAuth } from '../context/AuthContext'
 import { ExecutionsPanel, type ExecutionsTarget } from './jobs/ExecutionsPanel'
@@ -14,7 +15,7 @@ import { countForWorkspace } from './jobs/workspaceTabCounts'
 import { useFlows } from '../hooks/useFlows'
 import { flowRunLane } from '../../../shared/flow/run-status'
 import type { FlowRunSummary } from '../../../shared/flow/api'
-import { HOST_CRON_ANCHOR } from '../lib/routes'
+import { HOST_CRON_ANCHOR, QUEUE_AUTOSTART_ANCHOR } from '../lib/routes'
 import { useWorkspaces } from '../hooks/useWorkspaces'
 import { SessionViewer } from './SessionViewer'
 import { describeCron, formatCost, formatDateTime, formatRelativeTime, friendlyError, humanize } from '../lib/format'
@@ -89,7 +90,7 @@ export function readQuery(): { view: JobsView; kind: KindFilter; flow: number | 
   const view: JobsView =
     v === 'workflows' ? 'workflows'
     : v === 'runs' || v === 'jobs' ? 'runs'
-    : q.has('kind') || hash === '#' + HOST_CRON_ANCHOR ? 'runs'
+    : q.has('kind') || hash === '#' + HOST_CRON_ANCHOR || hash === '#' + QUEUE_AUTOSTART_ANCHOR ? 'runs'
     : 'workflows'
   return { view, kind, flow: Number.isInteger(flow) && flow > 0 ? flow : null }
 }
@@ -149,9 +150,19 @@ export function JobsBoard(_props: JobsBoardProps) {
   const [executions, setExecutions] = useState<ExecutionsTarget | null>(null)
 
   // /settings/platform redirects to /jobs#host-cron (obj 900495): land on that section.
+  // /jobs#queue-auto-start (obj 901490) lands on the Queue auto-start card the same way;
+  // that card renders after an admin fetch, so retry briefly until it is in the page.
   useEffect(() => {
-    if (window.location.hash !== '#' + HOST_CRON_ANCHOR) return
-    const t = setTimeout(() => document.getElementById(HOST_CRON_ANCHOR)?.scrollIntoView({ block: 'start' }), 50)
+    const anchor = window.location.hash.slice(1)
+    if (anchor !== HOST_CRON_ANCHOR && anchor !== QUEUE_AUTOSTART_ANCHOR) return
+    let tries = 0
+    let t: ReturnType<typeof setTimeout>
+    const go = () => {
+      const el = document.getElementById(anchor)
+      if (el) { el.scrollIntoView({ block: 'start' }); return }
+      if (++tries < 20) t = setTimeout(go, 100)
+    }
+    t = setTimeout(go, 50)
     return () => clearTimeout(t)
   }, [])
 
@@ -628,6 +639,9 @@ export function JobsBoard(_props: JobsBoardProps) {
 
       {/* ── Queue auto-start (obj 900686; the last thing that was on Settings → Platform). Admin API. ── */}
       {kindFilter !== 'flow' && isAdmin && <QueueAutostartPanel />}
+
+      {/* ── Merged, waiting for deploy (obj 901389). Read-only, admin API. ── */}
+      {kindFilter !== 'flow' && isAdmin && <DeployWaitingPanel />}
 
       {/* ── Knowledge index for hybrid search (embedding backfill / re-embed jobs). Admin API. ── */}
       {kindFilter !== 'flow' && isAdmin && <KnowledgeIndexPanel />}

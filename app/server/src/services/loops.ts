@@ -27,6 +27,7 @@
 import fs from 'fs'
 import path from 'path'
 import { knowledgeBaseRoot } from '../lib/knowledge-base-root.js'
+import { noteKbChanged } from './kb-semantic/service.js'
 
 export const LOOPS_WORKSPACE = process.env.GRANOLA_WORKSPACE || 'operator'
 // Resolved per call from the install's ONE knowledge base root (VAULT_PATH is an accepted alias there).
@@ -275,6 +276,7 @@ export function migrateLoopFiles(): { scanned: number; rewritten: number } {
     if (next !== raw) {
       try {
         fs.writeFileSync(abs, next, 'utf8')
+        noteKbChanged(abs) // semantic index + link graph
         rewritten++
       } catch {
         /* leave the file as-is on a write error; reads still migrate in-memory */
@@ -365,6 +367,7 @@ export function createLoop(input: {
     body: '',
   }
   fs.writeFileSync(abs, serializeLoop(loop), 'utf8')
+  noteKbChanged(abs) // semantic index + link graph
   return { ok: true, loop }
 }
 
@@ -376,6 +379,7 @@ export function patchLoopBody(slug: string, newBody: string): LoopResult {
   const abs = resolveLoopPath(slug)!
   const next = { ...loop, body: newBody }
   fs.writeFileSync(abs, serializeLoop(next), 'utf8')
+  noteKbChanged(abs) // semantic index + link graph
   return { ok: true, loop: next }
 }
 
@@ -395,6 +399,7 @@ export function patchLoopStatus(slug: string, newStatus: string): LoopResult {
     closed: status === 'done' ? loop.closed || todayISO() : '',
   }
   fs.writeFileSync(abs, serializeLoop(next), 'utf8')
+  noteKbChanged(abs) // semantic index + link graph
   return { ok: true, loop: next }
 }
 
@@ -427,6 +432,7 @@ export function patchLoopMeta(
   // NOTE: party change does NOT rename the file (slug is stable post-creation) — the
   // slug is an opaque id once created; the displayed party comes from frontmatter.
   fs.writeFileSync(abs, serializeLoop(next), 'utf8')
+  noteKbChanged(abs) // semantic index + link graph
   return { ok: true, loop: next }
 }
 
@@ -447,5 +453,6 @@ export function archiveLoop(slug: string): LoopResult {
     dest = path.join(loopsArchiveDir(), path.basename(abs).replace(/\.md$/, `-${Date.now()}.md`))
   }
   fs.renameSync(abs, dest)
+  noteKbChanged(abs, dest) // a move: the old path leaves the indexes, the new one joins
   return { ok: true, loop: loop ?? undefined }
 }

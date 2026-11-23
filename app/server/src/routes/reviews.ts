@@ -37,6 +37,7 @@ import type {
 } from '@operationkit/shared'
 import { isLocalhost } from '../lib/is-localhost.js'
 import { withSandboxCardGuard } from '../lib/card-session-scope.js'
+import { ensureReviewRubric, hasLockedCriteria, parseLockedCriteria } from '../services/review-rubric.js'
 
 interface ObjectiveReviewRow {
   id: number
@@ -188,11 +189,16 @@ internalReviewsRouter.post('/:id/criteria', withSandboxCardGuard((req, res) => {
     res.status(404).json({ error: 'Objective not found' })
     return
   }
-  if (row.acceptance_criteria) {
-    // Already locked — return existing payload so the reviewer can proceed.
-    let existing: AcceptanceCriterion[] = []
-    try { existing = JSON.parse(row.acceptance_criteria) } catch {}
-    res.status(409).json({ error: 'criteria already locked', criteria: existing })
+  if (hasLockedCriteria(row.acceptance_criteria)) {
+    // Already locked — return existing payload so the reviewer can proceed. A stored
+    // empty/unparseable value is NOT a lock (obj 901460), so the POST may replace it.
+    res.status(409).json({ error: 'criteria already locked', criteria: parseLockedCriteria(row.acceptance_criteria) })
+    return
+  }
+
+  if (criteria.length === 0) {
+    // An empty rubric is not a lock — it would make every later GET answer "nothing to grade".
+    res.status(400).json({ error: 'criteria must contain at least one criterion' })
     return
   }
 
@@ -228,21 +234,22 @@ internalReviewsRouter.get('/:id/criteria', withSandboxCardGuard(async (req, res)
   const db = getDb()
   const row = db
     .prepare(
-      'SELECT id, acceptance_criteria, session_id, pr_url, pr_number, project FROM objectives WHERE id = ?',
+      'SELECT id, session_id, pr_url, pr_number, project FROM objectives WHERE id = ?',
     )
-    .get(req.params.id) as
-    | (FilesTouchedObjective & { acceptance_criteria: string | null })
-    | undefined
+    .get(req.params.id) as FilesTouchedObjective | undefined
   if (!row) {
     res.status(404).json({ error: 'Objective not found' })
     return
   }
-  if (!row.acceptance_criteria) {
-    res.json({ criteria: null })
+  // No locked rubric (never posted, or stored empty) ⇒ derive one from the card's own
+  // title / description / completion goal and lock it, or say plainly why not (obj 901460).
+  // A bare `{criteria: null}` used to send the reviewer to a no-verdict `blocked` (#901330).
+  const rubric = ensureReviewRubric(db, String(req.params.id))
+  if (!rubric || !rubric.criteria) {
+    res.json({ criteria: null, rubric_source: 'none', reason: rubric?.reason ?? 'objective not found' })
     return
   }
-  let criteria: AcceptanceCriterion[] = []
-  try { criteria = JSON.parse(row.acceptance_criteria) } catch {}
+  const criteria: AcceptanceCriterion[] = rubric.criteria
 
   const { files: filesTouched, source } = await resolveFilesTouched(db, row, { ghExec: realGhExec })
 
@@ -258,5 +265,6 @@ internalReviewsRouter.get('/:id/criteria', withSandboxCardGuard(async (req, res)
     criteria: effective,
     backend_only: isBackendOnlyChange(filesTouched),
     files_touched_source: source,
+    rubric_source: rubric.source,
   })
 }))

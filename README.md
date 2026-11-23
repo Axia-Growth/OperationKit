@@ -11,6 +11,8 @@ optional chat with ready-made agents, and a secure connection for the AI apps th
 use (Claude, ChatGPT, Grok). The consultant starts every engagement 80 to 90 percent of the way
 there and spends their time on the client's actual workflows.
 
+**Website:** [operationkit.com](https://operationkit.com) · **Guides and articles:** [operationkit.com/blog](https://operationkit.com/blog/)
+
 ## Why the client owns the install
 
 - **Their server, their data.** Every client has its own copy on its own server. There is no shared
@@ -87,6 +89,7 @@ list and keep both locks:
 
 | For | Read |
 |---|---|
+| Guides and articles on running AI inside a business | [operationkit.com/blog](https://operationkit.com/blog/) |
 | Setting up from nothing: server size, OVH, Cloudflare, B2 backups, seats, GitHub, updates | [docs/RECOMMENDED-STACK.md](./docs/RECOMMENDED-STACK.md) |
 | Installing for a client | [INSTALL.md](./INSTALL.md) |
 | Connecting Claude, ChatGPT, Grok or another AI app | [docs/CONNECT-YOUR-AGENT.md](./docs/CONNECT-YOUR-AGENT.md) |
@@ -98,6 +101,7 @@ list and keep both locks:
 | Writing agent files | [docs/agents/agent-file-format.md](./docs/agents/agent-file-format.md) |
 | Agent / HTTP / MCP API reference | [docs/api/README.md](./docs/api/README.md) |
 | Model choice and portability | [docs/product/08-model-portability.md](./docs/product/08-model-portability.md) |
+| Engineers: how the code is laid out (start here) | [docs/architecture/OVERVIEW.md](./docs/architecture/OVERVIEW.md) |
 | Engineers: architecture and threat model | [docs/architecture/README.md](./docs/architecture/README.md) · [SECURITY.md](./SECURITY.md) |
 
 ## Status
@@ -117,4 +121,5 @@ Copyright 2026 Axia Growth LLC and contributors.
 ## Contributing
 
 Contributions are welcome. A signed Contributor License Agreement is required before a pull request
-can be merged; see [CONTRIBUTING.md](./CONTRIBUTING.md).
+can be merged; see [CONTRIBUTING.md](./CONTRIBUTING.md) for local setup, the checks CI runs and the
+test rules, and the [architecture overview](./docs/architecture/OVERVIEW.md) for a map of the code.

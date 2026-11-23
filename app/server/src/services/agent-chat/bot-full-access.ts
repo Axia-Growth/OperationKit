@@ -25,7 +25,7 @@
 //   - A card that carries a protected pull request (FULL_ACCESS_PROTECTED_PRS)
 //     is out of reach of every ability (`protectedCardRefusal`), logged.
 //   - Merge, prod-migration and deploy approvals are NOT here. They are decided
-//     only by services/delegated-approvals.ts and services/bot-approval.ts,
+//     only by services/delegated-approvals.ts and services/bot-close-eligibility.ts,
 //     which read `delegation_grants` and nothing in this file.
 //   - Only an admin's browser session may change a row (the route enforces
 //     that). No API key scope is widened: nothing here is reachable with a key.
@@ -477,6 +477,50 @@ export function protectedPrInText(text: string): number | null {
     if (new RegExp(`(?:\\bPR\\s*#?\\s*|\\bpull\\/|\\bpull request\\s*#?\\s*|#)${n}\\b`, 'i').test(text)) return n
   }
   return null
+}
+
+/**
+ * The plain refusal for card text that names a protected pull request. One
+ * sentence on why, one on how to file without it. Shared by both filing tools.
+ */
+export function protectedPrTextMessage(pr: number): string {
+  return (
+    `Refused: card text may not name pull request ${pr}, because it is protected, and this applies even to a mention like "do not touch PR ${pr}". ` +
+    `To file this card, take the number out of the title and description (write "the protected pull request" if you must refer to it) and send it again. This refusal was logged.`
+  )
+}
+
+/**
+ * The ONE text check for every tool that files a card from chat
+ * (`create_objective`, `repo_session_start`). Returns the refusal, ALREADY
+ * written to the audit log, or null when the title and description name no
+ * protected pull request.
+ *
+ * A negated mention ("do not touch PR 645") is refused too, on purpose: telling
+ * "do not touch 645" from "do touch 645, not 646" reliably is not possible with
+ * a pattern, and the wall must not depend on phrasing. Leaving the number out
+ * costs the bot nothing — a card that never names it cannot be pointed at it.
+ */
+export function protectedPrTextRefusal(input: {
+  slug: string
+  workspace: string | null
+  ability: string
+  title: string
+  description: string
+  actorUserId?: number | null
+}): string | null {
+  const pr = protectedPrInText(`${input.title}\n${input.description}`)
+  if (pr === null) return null
+  writeFullAccessAudit({
+    event: 'protected_refused',
+    slug: input.slug,
+    workspace: input.workspace,
+    actor: `bot:${input.slug}`,
+    actor_user_id: input.actorUserId ?? null,
+    ability: input.ability,
+    detail: `card text names protected PR ${pr}`,
+  })
+  return protectedPrTextMessage(pr)
 }
 
 /**

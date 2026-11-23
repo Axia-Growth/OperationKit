@@ -629,6 +629,24 @@ export function classifyCompletion(ev: CompletionSource): AgentNeed | null {
 }
 
 /**
+ * obj 901394, in-product card wakes only: the card left `review` for `done` (a
+ * person accepted it, or it was closed). classifyCompletion() leaves this out on
+ * purpose for webhook receivers; a chat bot that owns the card still has a side
+ * to close out, and is woken once per card for it (the same `completed` event id).
+ */
+export function classifySignedOff(ev: CompletionSource): AgentNeed | null {
+  if (ev.deleted_at) return null
+  if (ev.kind === 'status' && ev.to_value === 'done' && ev.from_value === 'review') {
+    return {
+      kind: 'completed',
+      category: 'completed',
+      why: 'Signed off and closed — close out your side: follow-ups, open loops, anything merged that is not live yet',
+    }
+  }
+  return null
+}
+
+/**
  * A completion wake, shaped EXACTLY like a `needs_agent` delivery.
  *
  * This is deliberate and is the whole reason the event name is not new: the Chief of
@@ -835,11 +853,15 @@ export function enqueueAgentWebhookEvents(db: Database.Database = getDb(), now =
       setNeed.run(row.objective_id, need.kind, wake ? null : row.key_id)
       if (prev && NEED_ORDER.indexOf(need.kind) > NEED_ORDER.indexOf(prev)) return 0
       // obj 901328: the same one-wake-per-need ladder, delivered in-product.
-      if (wake) return queueCardWake(row, wake, need, `cc_wake_${row.objective_id}_e${row.id}_${need.kind}`)
+      // The need is read from the card's state NOW, which the card's NEWEST event in
+      // this page produced: that is the event the self-action check must look at.
+      if (wake) return queueCardWake(row, wake, need, `cc_wake_${row.objective_id}_e${row.id}_${need.kind}`, lastEventOf.get(row.objective_id) ?? row.id)
       const payload = buildNeedPayload(row, need)
       return insert.run(payload.event_id, row.key_id, row.objective_id, row.id, 'needs_agent', JSON.stringify(payload), sqliteNow(now)).changes
     }
-    const queueCardWake = (row: EventJoinRow, wake: CardWakeRoute & { ok: true }, need: AgentNeed, eventId: string): number => {
+    const lastEventOf = new Map<number, number>()
+    for (const r of page) if ((lastEventOf.get(r.objective_id) ?? 0) < r.id) lastEventOf.set(r.objective_id, r.id)
+    const queueCardWake = (row: EventJoinRow, wake: CardWakeRoute & { ok: true }, need: AgentNeed, eventId: string, causeEventId: number = row.id): number => {
       const r = enqueueCardWake(db, {
         event_id: eventId,
         slug: wake.slug,
@@ -847,6 +869,7 @@ export function enqueueAgentWebhookEvents(db: Database.Database = getDb(), now =
         workspace: wake.workspace,
         user_id: wake.userId,
         source_event_id: row.id,
+        source_objective_event_id: causeEventId,
         need_kind: need.kind,
         need_why: need.why,
       }, now)
@@ -862,12 +885,17 @@ export function enqueueAgentWebhookEvents(db: Database.Database = getDb(), now =
      * cannot produce a duplicate. Returns rows queued (0 or 1).
      */
     const enqueueCompletion = (row: EventJoinRow, wake?: CardWakeRoute & { ok: true }): number => {
-      const need = classifyCompletion({
+      let need = classifyCompletion({
         kind: row.kind,
         from_value: row.from_value,
         to_value: row.to_value,
         deleted_at: row.deleted_at,
       })
+      // obj 901394: an in-product chat bot is ALSO woken when its card is signed off
+      // out of review, so it can close out its side (follow-ups, open loops, a merge
+      // that is not live yet). Webhook receivers keep the obj 900309 rule above. A
+      // close the bot made itself is dropped as self-caused in enqueueCardWake.
+      if (!need && wake) need = classifySignedOff(row)
       if (!need) return 0
       // Deterministic per card (no key): a second done/merge for the card is a no-op.
       if (wake) return queueCardWake(row, wake, need, `cc_wake_${need.kind}_${row.objective_id}`)

@@ -291,4 +291,17 @@ describe('buildSpawnEnv — session_kb_access (obj 900204)', () => {
     expect(env.CC_OBJECTIVE_ID).toBeUndefined()
     expect(env.CC_STRIP_SIGNING_SECRETS).toBeUndefined()
   })
+
+  // obj 901525 — the AI reviewer may read its workspace's knowledge base
+  // through this token (to check a deliverable that lives there) but must
+  // never write it: sessionKind='reviewer' mints a READ-ONLY token.
+  it("a reviewer's token is minted read-only; a worker's is not", async () => {
+    const { verifySessionToken } = await import('../lib/session-trust.js')
+    process.env.CC_SESSION_KB_ACCESS = '1'
+    const reviewerEnv = buildSpawnEnv({ objective: fakeObjective(), homeDir: '/home/ccuser-a', sessionKind: 'reviewer', isAdminSpawn: true })
+    const workerEnv = buildSpawnEnv({ objective: fakeObjective(), homeDir: '/home/ccuser-a', sessionKind: 'worker', isAdminSpawn: true })
+    expect(verifySessionToken(reviewerEnv.CC_SESSION_TOKEN)).toMatchObject({ objectiveId: 42, workspace: 'example', readOnly: true })
+    expect(verifySessionToken(workerEnv.CC_SESSION_TOKEN)).toMatchObject({ objectiveId: 42, workspace: 'example' })
+    expect(verifySessionToken(workerEnv.CC_SESSION_TOKEN)?.readOnly).toBeUndefined()
+  })
 })

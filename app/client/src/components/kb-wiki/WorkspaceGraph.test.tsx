@@ -191,10 +191,31 @@ describe('WorkspaceGraph — return visits', () => {
       truncated: false,
     }
     vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify(big), { status: 200 })))
-    flushSync(() => root.render(<WorkspaceGraph workspace="big" onOpenNote={() => {}} />))
-    await flush()
-    expect(host.querySelector('[aria-busy="true"]')?.textContent).toContain(`Arranging ${n} pages`)
-    for (let i = 0; i < 400 && !host.querySelector('g[data-rel]'); i++) await flush()
+    // Record every text the graph panel ever shows (obj 901523). Sampling the DOM after a
+    // fixed number of ticks was load-dependent: the main-thread layout runs in 8 ms
+    // slices, so on a fast or a starved runner it could finish (or the fetch could still
+    // be pending) at the moment we looked, and the skeleton read as undefined.
+    // React reuses the "Loading" skeleton and only swaps its text, so text edits are
+    // recorded with their old value, and removed nodes keep the text they had.
+    const shown: string[] = []
+    const record = (records: MutationRecord[]) => {
+      for (const r of records) {
+        if (r.type === 'characterData') shown.push(r.oldValue ?? '', r.target.textContent ?? '')
+        r.addedNodes.forEach(nd => shown.push(nd.textContent ?? ''))
+        r.removedNodes.forEach(nd => shown.push(nd.textContent ?? ''))
+      }
+    }
+    const mo = new MutationObserver(record)
+    mo.observe(host, { childList: true, subtree: true, characterData: true, characterDataOldValue: true })
+    try {
+      flushSync(() => root.render(<WorkspaceGraph workspace="big" onOpenNote={() => {}} />))
+      for (let i = 0; i < 400 && !host.querySelector('g[data-rel]'); i++) await flush()
+      record(mo.takeRecords())
+    } finally {
+      mo.disconnect()
+    }
+    // A skeleton first (never a half-drawn graph), then every page.
+    expect(shown.some(t => t.includes(`Arranging ${n} pages`))).toBe(true)
     expect(host.querySelectorAll('g[data-rel]')).toHaveLength(n)
   })
 })

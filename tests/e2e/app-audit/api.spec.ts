@@ -70,19 +70,16 @@ test('api: a card that does not exist is a JSON 404', async ({ request }) => {
   expect(await r.json()).toHaveProperty('error')
 })
 
-// Known bug, fix card #901031: unknown /api paths return 200 text/html (the app
-// shell) instead of a JSON 404. Remove test.fail when that card ships.
+// Fixed by card #901031: unknown /api paths are a JSON 404, not the app shell
+// (app/server/src/lib/spa-fallback.ts).
 test('api: unknown /api path returns a JSON 404', async ({ request }) => {
-  test.fail(true, 'Known bug — fix card #901031 (app/server/src/index.ts catch-all serves index.html for /api/*)')
   const r = await request.get('/api/does-not-exist-e2e')
   expect(r.status()).toBe(404)
   expect(r.headers()['content-type'] || '').toContain('application/json')
 })
 
-// Known bug, fix card #901033: built-in bots carry the vendor name whatever the
-// brand is. Remove test.fail when that card ships.
+// Card #901033: built-in bots follow the install's brand ({brand} token).
 test('api: bot names and descriptions carry no vendor name under a custom brand', async ({ request }) => {
-  test.fail(true, 'Known bug — fix card #901033 (built-in bot "Operation Kit Dev", author "Operation Kit")')
   await signIn(request, ADMIN)
   const body = await (await request.get('/api/agent-chat/agents')).text()
   expect(body).not.toMatch(/Operation Kit/)

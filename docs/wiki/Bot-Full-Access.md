@@ -15,16 +15,19 @@ In the workspace where it is on, and nowhere else, the bot may:
 
 | Ability | How the bot does it |
 |---|---|
+| See where it has Full access, the expiry and whether Billing is on | `full_access_status` |
 | Read any card in full, whoever owns it | `card_read` |
 | Take a card over (become its worker and owner) | `card_take_over` |
 | Hand a card to another owner | `card_reown` (an agent or bot that may work there, and/or a person in the workspace) |
 | Comment on any card | `card_comment` (the worker is woken to read it) |
 | Restart any card | `card_restart` |
+| Ask for an AI review of its OWN card (obj 901457) | `card_request_review`: only a card the bot owns (`cardOwnerBot`), in review with a PR and no verdict, inside the review bounce cap (`AI_REVIEW_ITERATION_CAP`, 2 rounds). Same service as `POST /api/internal/ai-review/request` (`requestAiReview`); the work is not re-run |
 | Read and write the whole workspace knowledge base | the ordinary `search`, `list_folders`, `read_file`, `write_doc`, now over the workspace's whole folder, not just the bot's `knowledge_folders` |
 | Read and edit workflows | `workflow_list`, `workflow_read`, `workflow_save_draft` (a draft; publishing stays the owner's click) |
 | Read and edit scheduled tasks | `routine_list`, `routine_read`, `routine_update` (schedule, on/off, an AI task's title and brief) |
 | Read bot settings and run history | `bot_list`, `bot_read`, `bot_run_history` (bots that may work in that workspace) |
 | Get a repo checkout from chat | `repo_session_start` files a card on one of the workspace's projects, owned by the bot, and starts it; the card session runs in its own git worktree |
+| See what is merged but not live yet (read-only) | `release_status`: the merged pull requests on this install's `main` that the live checkout does not have, each with PR number, title, card, who merged it and a database-migration flag, plus the two "merged is not deployed" checks (checkout at `origin/main`; server started after the last merge). It never deploys or restarts anything, and it is named without "deploy" because no tool a bot is offered names merge, deploy, approve or migrate |
 | File and own cards past the workspace agent pool | `create_objective`; the bot's slug passes the pool through the one helper from obj 900948 (`botGrantedWorkspace` inside `checkAgentInWorkspacePool`). There is no second bypass. |
 
 ### In a card session (a High Agency wake)
@@ -112,6 +115,14 @@ What a call is aimed at is decided in one place,
 `services/agent-chat/full-access-exclusions.ts` (`classifyOutbound`). It errs
 toward refusing. A bot without Full access in that workspace is not touched.
 
+The gate (`exclusionGate`) is called from exactly those two doors today: the
+secrets tools in `services/agent-chat/tools.ts` and MCP calls in
+`services/agent-chat/mcp-tools.ts`. Other chat tools that reach outside (for
+example `email` / `calendar` drafts, or the Operation Kit Dev operator tools,
+which have their own rules) do not go through it. A new outward door that
+should honour these walls must call `exclusionGate` itself; nothing applies it
+automatically.
+
 Not covered by these walls, by design: a card session's own environment.
 Cards the bot files run like any other card, under the normal card-session
 secret rules (the D4 allowlist). Key minting inside Operation Kit itself (agent
@@ -121,12 +132,15 @@ keys in Settings) has no bot path at all: it stays a signed-in person's action.
 
 `FULL_ACCESS_PROTECTED_PRS` (`app/shared/full-access.ts`) lists pull requests no
 Full access ability may touch. It contains **645**. A card whose `pr_number` is
-on the list, or whose PR link ends in that number, is refused with a
-`protected_refused` audit row in:
+on the list, or whose PR link ends in that number, is refused by
+`protectedCardRefusal` with a `protected_refused` audit row in these places
+(and only these):
 
 - every Full access chat tool that takes a card (`card_read`, `card_take_over`,
-  `card_reown`, `card_comment`, `card_restart`), and `get_objective` for a bot
+  `card_reown`, `card_comment`, `card_restart`, `card_request_review`), and `get_objective` for a bot
   with Full access in the card's workspace;
+- the `card_sandbox` tools (`card-sandbox-tools.ts`), which also log it to their
+  own sandbox audit;
 - `repo_session_start`, when the title or brief names the pull request
   (`PR 645`, `#645`, `pull/645`);
 - `POST /api/internal/full-access/cards/:id/take-over` (`403`, `code:
@@ -135,15 +149,66 @@ on the list, or whose PR link ends in that number, is refused with a
   same code). The ordinary one-hop relations (parent, child, sibling) are not
   changed by this.
 
+`repo_session_start` checks the title and brief text (`protectedPrInText`)
+rather than a card. This is not a check on every card path: `list_objectives`,
+`board_briefing`, `create_objective`, `get_objective` for a bot without Full
+access in that workspace, and one-hop `/message` do not consult the list.
+Separately, the card-wake own-card tools refuse a protected card
+(`isProtectedCard`, `card-wake-tools.ts`), and merging or closing (grant merge,
+`dev_merge_pr`, `dev_close_card`) refuses the grant-merge reserved list
+(`GRANT_MERGE_RESERVED_SEED` in `services/grant-merge.ts`: PR 645 in both
+`operationkit` and `operationkit`, plus the `grant_merge_reserved_prs`
+setting / `CC_GRANT_MERGE_RESERVED_PRS` env).
+
 Adding a pull request to the list is a code change.
 
 ## Merge and deploy
 
 Full access never approves a merge, a prod migration or a deploy. Those are
-decided only by `services/delegated-approvals.ts` and `services/bot-approval.ts`,
+decided only by `services/delegated-approvals.ts` and `services/bot-close-eligibility.ts`,
 which read `delegation_grants` ("Approve on my behalf") and nothing else. A
 comment a bot posts with Full access reaches the card as an unverified relay
 and says in its first line that it is not an approval.
+
+**A merge is not a deploy (obj 901389).** Under autonomy level A (decision #29)
+a bot may merge its own passed pull request under a MERGE grant
+(`merge_approved_pr`, `services/grant-merge.ts`); the owner deploys:
+
+- **A grant merge never auto-deploys itself.** When `settings.auto_deploy_enabled`
+  is on, the merged-PR webhook (`routes/github-webhook.ts`) asks
+  `decideMergeAutoDeploy` (`services/merge-deploy-gate.ts`). A PR merged under a
+  merge grant is recognised by a marker set just before `gh pr merge` (the webhook
+  can beat the audit row) or by its `delegation_audit` `approval_used` row. It is
+  NOT deployed, and the log says why (`[auto-deploy] SKIPPED — … merged by bot … under
+  merge grant #N …`), unless an active `deploy` grant (`delegation_grants.allow_deploy`)
+  from the same admin covers that bot in that workspace. A person's merge and the
+  background auto-merge deploy exactly as before; auto-deploy off is the same dry-run.
+- **The merge line says so.** The `grant_merge` card line and the bot's chat line
+  end with "Merged, not live until deployed: the owner deploys." and add
+  "⚠ Database migration: this PR changes …" when the PR touches
+  `app/server/src/db/**` or any `migrations/` folder (`lib/migration-paths.ts`;
+  test files do not count).
+- **The owner sees what is waiting.** Jobs page (where Settings → Platform
+  redirects), admins only: **Merged, waiting for deploy** (`GET /api/admin/deploy-status`,
+  `services/deploy-waiting.ts`). Read-only, no deploy or restart button. A Full
+  access bot talking to an admin reads the same list with `release_status`.
+- Nothing here changes who may deploy. `POST /api/internal/deploy` and
+  `scripts/self-deploy.sh` stay behind the server secret.
+- **Deploy on your word (obj 901393)** is separate from Full access: Operation Kit Dev may
+  hot-deploy from chat only when the owner asks in that chat, each time, behind its own
+  owner switch (off by default). Full access never adds that tool and never stands in for
+  the owner's ask. See [Deploy on your word](Deploy-On-Your-Word.md).
+
+**Standing merge (obj 901388).** A merge grant can carry one more switch,
+**Merge without asking me each time** (`delegation_grants.standing_merge`, off by
+default, set only when the grant is issued, merge grants only). With it on, the
+server merges the bot's OWN cards that reach review with AI review `pass` and a PR
+(`services/standing-merge.ts`), through the same `runGrantApprovedMerge` →
+`mergeUnderGrant` path and guards as a chat merge, and posts one line in the bot's
+chat ("merged, not live until you deploy"). Full access plays no part in it: the
+switch lives on the grant, and Full access neither turns it on nor stands in for it.
+Deploys, production migrations, secrets, keys, DNS and Cloudflare Access, billing and
+protected PRs stay out of reach either way.
 
 ## Who can change it
 
@@ -197,5 +262,6 @@ Settings changes also appear in the activity feed
 | Tables | `app/server/src/db/schema/agent-chat.ts` |
 | Shared types | `app/shared/full-access.ts` |
 | UI | `app/client/src/components/agent-chat/FullAccessSection.tsx`, `FullAccessBadge.tsx` |
-| Tests | `bot-full-access.test.ts`, `agent-chat-full-access.test.ts` (server); `FullAccessSection.test.tsx`, `BotSidebar.test.tsx` (client) |
+| Merged, waiting for deploy (obj 901389) | `services/merge-deploy-gate.ts` (grant merge never auto-deploys), `services/deploy-waiting.ts`, `routes/admin-deploy-status.ts`, `client/.../settings/DeployWaitingPanel.tsx` |
+| Tests | `bot-full-access.test.ts`, `agent-chat-full-access.test.ts`, `github-webhook-grant-deploy.test.ts`, `deploy-waiting.test.ts` (server); `FullAccessSection.test.tsx`, `BotSidebar.test.tsx`, `DeployWaitingPanel.test.tsx` (client) |
 | Screenshots | `tests/smoke/bot-full-access/` |

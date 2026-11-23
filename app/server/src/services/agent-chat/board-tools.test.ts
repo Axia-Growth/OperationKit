@@ -402,6 +402,41 @@ describe('chat create_objective files a card under a parent (obj 900958)', () =>
     expect(spec.function.parameters.required).toEqual(['title', 'description'])
   })
 
+  // obj 901496 — done_when and stop_conditions on a card filed from chat.
+  it('the tool spec offers done_when and stop_conditions, both optional, and tells the bot to fill them', () => {
+    const spec = toolSpecsFor(filer).find(s => s.function.name === 'create_objective') as Loose
+    expect(spec.function.parameters.properties.done_when).toMatchObject({ type: 'string' })
+    expect(spec.function.parameters.properties.stop_conditions).toMatchObject({ type: 'array', items: { type: 'string' } })
+    expect(spec.function.parameters.required).toEqual(['title', 'description'])
+    expect(spec.function.description).toMatch(/done_when/)
+    expect(spec.function.description).toMatch(/stop_conditions/)
+  })
+
+  it('done_when lands in completion_goal and stop_conditions as one section of the card text, for both kinds of bot', () => {
+    const brief = (card: Loose) => getDb().prepare('SELECT description, completion_goal FROM objectives WHERE id = ?').get(card.id) as Loose
+    for (const [who, title] of [[filer, 'p1496 brief legacy'], [registered, 'p1496 brief bot job']] as const) {
+      const r = runTool(ctx(ALICE, who), 'create_objective', {
+        title, description: 'Add the export button.', done_when: 'One open PR, CI green.', stop_conditions: ['it needs a database migration', ' ', 'the button already exists'],
+      }).result as Loose
+      const got = brief(r)
+      expect(got.completion_goal).toBe('One open PR, CI green.')
+      expect(got.description).toContain('Add the export button.\n\n## Stop and report if\n- it needs a database migration\n- the button already exists\n\n— ')
+    }
+  })
+
+  it('neither field = unchanged: no completion goal and no section', () => {
+    const r = runTool(ctx(ALICE, filer), 'create_objective', { title: 'p1496 plain card', description: 'd' }).result as Loose
+    const got = getDb().prepare('SELECT description, completion_goal FROM objectives WHERE id = ?').get(r.id) as Loose
+    expect(got.completion_goal).toBeNull()
+    expect(got.description).not.toContain('Stop and report if')
+  })
+
+  it('the same ask with a different done_when is a different card, and an exact repeat is the same one', () => {
+    const args = { title: 'p1496 replay', description: 'd', done_when: 'A', stop_conditions: ['x'] }
+    const a = runTool(ctx(ALICE, filer), 'create_objective', args).result as Loose
+    expect((runTool(ctx(ALICE, filer), 'create_objective', args).result as Loose).id).toBe(a.id)
+  })
+
   it('no parent_id = unchanged: a top-level card at depth 0, and no parent_id in the result', () => {
     const r = runTool(ctx(ALICE, filer), 'create_objective', { title: 'p958 top-level legacy', description: 'd' }).result as Loose
     expect(row(r.id)).toMatchObject({ parent_id: null, depth: 0, workspace: GROWTH, origin: 'agent_chat' })
@@ -426,7 +461,9 @@ describe('chat create_objective files a card under a parent (obj 900958)', () =>
     expect(retry.id).toBe(r.id)
     // The same request under ANOTHER parent is never answered with the first card
     // (which sits under the wrong parent): the board's duplicate guard says so.
-    refused(() => runTool(ctx(ALICE, registered), 'create_objective', { title: 'p958 child bot job', description: 'd', parent_id: ids['growth-review-1'] }), new RegExp(`already exists in growth \\(#${r.id},`))
+    // obj 901498: it comes back as a possible duplicate, with nothing filed.
+    const other = runTool(ctx(ALICE, registered), 'create_objective', { title: 'p958 child bot job', description: 'd', parent_id: ids['growth-review-1'] }).result as Loose
+    expect(other).toMatchObject({ filed: false, possible_duplicate: { id: r.id } })
     expect(row(r.id).parent_id).toBe(ids['growth-queue'])
   })
 
@@ -491,10 +528,10 @@ describe('chat create_objective: one guarded path for every bot (obj 900960)', (
   it('an unregistered bot calling twice with the same title and description gets ONE card; the second call returns the first card\'s number', () => {
     const before = count()
     const first = file(custom, { title: 'p960 retry me', description: 'same ask' })
-    expect(first.note).toMatch(/^Filed/)
+    expect(first.note).toMatch(/^Card #\d+ EXISTS on the board/)
     const second = file(custom, { title: 'p960 retry me', description: 'same ask' })
     expect(second.id).toBe(first.id)
-    expect(second.note).toBe('This is the card you already filed for that request — not a new one.')
+    expect(second.note).toMatch(/already filed for this request.*NOTHING new was filed/)
     expect(count()).toBe(before + 1)
     // Surrounding whitespace is not a different request.
     expect(file(custom, { title: '  p960 retry me ', description: 'same ask\n' }).id).toBe(first.id)
@@ -535,13 +572,13 @@ describe('chat create_objective: one guarded path for every bot (obj 900960)', (
     expect(['queue', 'backlog']).toContain(a.status)
   })
 
-  it('same title with a different description is refused by the board duplicate guard, naming the open card', () => {
+  it('same title with a different description is held back as a possible duplicate, naming the open card', () => {
     const first = file(custom, { title: 'p960 twin title', description: 'one' })
     const before = count()
-    let err: unknown
-    try { file(custom, { title: 'p960 twin title', description: 'two' }) } catch (e) { err = e }
-    expect(err).toBeInstanceOf(ToolUseError)
-    expect((err as Error).message).toMatch(new RegExp(`already exists in growth \\(#${first.id},`))
+    // obj 901498: said in the result ("possible duplicate #N"), not thrown, and nothing is filed.
+    const second = file(custom, { title: 'p960 twin title', description: 'two' })
+    expect(second).toMatchObject({ filed: false, possible_duplicate: { id: first.id } })
+    expect(second.note).toMatch(new RegExp(`Possible duplicate #${first.id}.*NOTHING was filed`))
     expect(count()).toBe(before)
   })
 
@@ -550,11 +587,8 @@ describe('chat create_objective: one guarded path for every bot (obj 900960)', (
     expect(file(custom, { title: 'p960 under parent', description: 'd', parent_id: ids['growth-queue'] }).id).toBe(child.id)
     // Same words under ANOTHER parent: not a replay of the first card (the key
     // carries the parent). Exactly as for a registered bot, the board's
-    // duplicate guard then refuses the second open card with that title.
-    let err: unknown
-    try { file(custom, { title: 'p960 under parent', description: 'd', parent_id: ids['growth-review-1'] }) } catch (e) { err = e }
-    expect(err).toBeInstanceOf(ToolUseError)
-    expect((err as Error).message).toMatch(new RegExp(`already exists in growth \\(#${child.id},`))
+    // duplicate search then holds the second open card with that title back.
+    expect(file(custom, { title: 'p960 under parent', description: 'd', parent_id: ids['growth-review-1'] })).toMatchObject({ filed: false, possible_duplicate: { id: child.id } })
     expect(card960(child.id).parent_id).toBe(ids['growth-queue'])
   })
 
@@ -581,7 +615,7 @@ describe('chat create_objective: one guarded path for every bot (obj 900960)', (
     expect(c).toMatchObject({ origin: 'agent_chat', category: 'general', workspace: GROWTH, parent_id: null, depth: 0 })
     const retry = file(registered, { title: 'p960 registered', description: 'the body' })
     expect(retry.id).toBe(r.id)
-    expect(retry.note).toBe('This is the card you already filed for that request — not a new one.')
+    expect(retry.note).toMatch(/already filed for this request.*NOTHING new was filed/)
     expect(count()).toBe(before + 1)
     expect(chatRows(r.id)).toEqual([{ user_id: ALICE, agent_slug: registered.slug }])
   })

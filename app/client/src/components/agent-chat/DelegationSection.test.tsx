@@ -29,7 +29,7 @@ function g(over: Partial<DelegationGrant>): DelegationGrant {
   return {
     id: nextId++, granting_user_id: 1, granted_by: 'owner', bot_name: 'Grok: CTO', agent_slug: 'acme-cto',
     workspace: 'growth', actions: ['merge'], created_at: '2026-11-14 12:00:00', expires_at: '2026-11-21 12:00:00',
-    revoked_at: null, revoked_by: null, created_by: 'owner', state: 'active', ...over,
+    revoked_at: null, revoked_by: null, created_by: 'owner', state: 'active', standing_merge: false, ...over,
   }
 }
 
@@ -62,7 +62,7 @@ beforeEach(() => {
     const method = init?.method ?? 'GET'
     requests.push({ url, method, body })
     if (method === 'POST' && url.endsWith('/registry')) registered = true
-    else if (method === 'POST') grants = [g({ workspace: body.workspace, actions: body.actions, expires_at: body.expires_at }), ...grants]
+    else if (method === 'POST') grants = [g({ workspace: body.workspace, actions: body.actions, expires_at: body.expires_at, standing_merge: body.standing_merge === true }), ...grants]
     if (method === 'DELETE') {
       const id = Number(url.split('/').pop())
       grants = grants.map(x => (x.id === id ? { ...x, state: 'revoked', revoked_at: '2026-11-14 13:00:00', revoked_by: 'owner' } : x))
@@ -119,6 +119,44 @@ describe('DelegationSection', () => {
     expect(days).toBeLessThan(30.1)
     expect(host.textContent).toContain('1 active')
     expect(host.textContent).toContain('CTO can now approve merge, deploy in ops on your behalf.')
+  })
+
+  // obj 901388 — "Merge without asking me each time": shown only with Merge
+  // ticked, off by default, sent as standing_merge, and shown on the grant.
+  it('the standing-merge checkbox appears only with Merge ticked, is off by default, and is sent as standing_merge', async () => {
+    await render()
+    await click(theSwitch())
+    const label = 'Merge without asking me each time'
+    expect(checkbox(label)).toBeUndefined()
+    await click(checkbox('Deploy'))
+    expect(checkbox(label)).toBeUndefined() // deploy alone: never offered
+    await click(checkbox('Merge'))
+    expect(checkbox(label).checked).toBe(false) // off by default
+    expect(host.textContent).toContain('It never deploys')
+    await click(checkbox(label))
+    await click(button('Grant')!)
+    const post = requests.find(r => r.method === 'POST')!
+    expect(post.body).toMatchObject({ actions: ['deploy', 'merge'], standing_merge: true })
+    expect(host.textContent).toContain('without asking you each time')
+    const row = host.querySelector('ul[aria-label="Active grants for CTO"] li')!
+    expect(row.textContent).toContain('Merges its own passed PRs without asking you each time')
+  })
+
+  it('unticking Merge drops the standing switch: a deploy-only grant is sent with standing_merge false', async () => {
+    await render()
+    await click(theSwitch())
+    await click(checkbox('Merge'))
+    await click(checkbox('Merge without asking me each time'))
+    await click(checkbox('Merge')) // untick merge
+    await click(checkbox('Deploy'))
+    await click(button('Grant')!)
+    expect(requests.find(r => r.method === 'POST')!.body).toMatchObject({ actions: ['deploy'], standing_merge: false })
+  })
+
+  it('an existing grant without the switch shows no standing line', async () => {
+    grants = [g({ id: 8 })]
+    await render()
+    expect(host.textContent).not.toContain('without asking you each time')
   })
 
   it('lists active grants with a one-click Revoke, and ended grants under history', async () => {

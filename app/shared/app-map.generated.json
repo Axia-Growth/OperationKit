@@ -1,0 +1,1418 @@
+{
+  "pages": [
+    {
+      "path": "/",
+      "title": "Board",
+      "click_path": [
+        "Board"
+      ],
+      "audience": "everyone",
+      "tabs": [],
+      "panels": []
+    },
+    {
+      "path": "/w/:ws",
+      "title": "Board (one workspace)",
+      "click_path": [
+        "Board"
+      ],
+      "audience": "everyone",
+      "tabs": [],
+      "panels": [],
+      "how": "Pick one workspace in the workspace switcher at the top of the Board."
+    },
+    {
+      "path": "/archive",
+      "title": "Archive",
+      "click_path": [
+        "Board"
+      ],
+      "audience": "everyone",
+      "tabs": [],
+      "panels": [],
+      "how": "On the Board, press Archive to see finished and cancelled cards."
+    },
+    {
+      "path": "/o/:id",
+      "title": "Card",
+      "click_path": [
+        "Board"
+      ],
+      "audience": "everyone",
+      "tabs": [
+        {
+          "label": "Mobile",
+          "trail": [],
+          "audience": "everyone"
+        },
+        {
+          "label": "Desktop",
+          "trail": [],
+          "audience": "everyone"
+        }
+      ],
+      "panels": [
+        {
+          "name": "Links in this decision",
+          "trail": [],
+          "audience": "everyone"
+        }
+      ],
+      "how": "Open a card on the Board (or paste its number into search)."
+    },
+    {
+      "path": "/system",
+      "title": "System",
+      "click_path": [
+        "Avatar menu (top right)",
+        "System"
+      ],
+      "audience": "admin",
+      "tabs": [],
+      "panels": [
+        {
+          "name": "Estimated cost",
+          "trail": [],
+          "audience": "admin"
+        },
+        {
+          "name": "Host",
+          "trail": [],
+          "audience": "admin"
+        }
+      ]
+    },
+    {
+      "path": "/chat",
+      "title": "Bots",
+      "click_path": [
+        "Bots"
+      ],
+      "audience": "everyone",
+      "tabs": [],
+      "panels": [
+        {
+          "name": "Needs fixing",
+          "trail": [],
+          "audience": "admin"
+        },
+        {
+          "name": "Links in this decision",
+          "trail": [],
+          "audience": "everyone"
+        },
+        {
+          "name": "Bot settings",
+          "trail": [],
+          "audience": "everyone"
+        },
+        {
+          "name": "Model and tools",
+          "trail": [],
+          "under": [
+            "Bot settings"
+          ],
+          "audience": "everyone",
+          "settings": [
+            "Default model",
+            "AI provider",
+            "Tools",
+            "Workspace",
+            "All secrets in this workspace",
+            "Read only (GET, HEAD)",
+            "Read and write (also POST, PUT, PATCH, DELETE)"
+          ]
+        },
+        {
+          "name": "Workspace access",
+          "trail": [],
+          "under": [
+            "Bot settings"
+          ],
+          "audience": "everyone",
+          "settings": [
+            "Grant a workspace"
+          ]
+        },
+        {
+          "name": "Full access",
+          "trail": [],
+          "under": [
+            "Bot settings"
+          ],
+          "audience": "everyone",
+          "settings": [
+            "Full access",
+            "Expires",
+            "Not included unless you switch it on"
+          ]
+        },
+        {
+          "name": "Secret access",
+          "trail": [],
+          "under": [
+            "Bot settings"
+          ],
+          "audience": "admin"
+        },
+        {
+          "name": "Approve on my behalf",
+          "trail": [],
+          "under": [
+            "Bot settings"
+          ],
+          "audience": "everyone",
+          "settings": [
+            "Register as",
+            "Approve on my behalf",
+            "New grant",
+            "Workspace",
+            "Expires after",
+            "Merge without asking me each time"
+          ]
+        },
+        {
+          "name": "High Agency",
+          "trail": [],
+          "under": [
+            "Bot settings"
+          ],
+          "audience": "everyone",
+          "settings": [
+            "High Agency settings",
+            "High Agency on",
+            "High Agency level",
+            "Wake cards go to",
+            "File and run its next project"
+          ]
+        },
+        {
+          "name": "Card wakes",
+          "trail": [],
+          "under": [
+            "Bot settings"
+          ],
+          "audience": "everyone",
+          "settings": [
+            "Wake this bot for its cards"
+          ]
+        },
+        {
+          "name": "Long replies",
+          "trail": [],
+          "under": [
+            "Bot settings"
+          ],
+          "audience": "everyone",
+          "settings": [
+            "Steps per reply",
+            "Minutes per reply"
+          ]
+        },
+        {
+          "name": "Operator tools",
+          "trail": [],
+          "under": [
+            "Bot settings"
+          ],
+          "audience": "everyone",
+          "settings": [
+            "Let this bot merge, deploy, close cards and change Cloudflare"
+          ]
+        },
+        {
+          "name": "GitHub repo rights",
+          "trail": [],
+          "under": [
+            "Bot settings"
+          ],
+          "audience": "everyone",
+          "settings": [
+            "Add a repo (owner/name)"
+          ]
+        },
+        {
+          "name": "How to use",
+          "trail": [],
+          "audience": "everyone"
+        },
+        {
+          "name": "Example prompts",
+          "trail": [],
+          "audience": "everyone"
+        },
+        {
+          "name": "What it can reach",
+          "trail": [],
+          "audience": "everyone"
+        },
+        {
+          "name": "Instructions",
+          "trail": [],
+          "audience": "everyone"
+        },
+        {
+          "name": "Last 24 hours",
+          "trail": [],
+          "audience": "everyone"
+        },
+        {
+          "name": "Follow-ups in your chat",
+          "trail": [],
+          "audience": "everyone"
+        },
+        {
+          "name": "Report",
+          "trail": [],
+          "audience": "everyone"
+        },
+        {
+          "name": "Full run summary",
+          "trail": [],
+          "audience": "everyone"
+        },
+        {
+          "name": "Cards this wake filed",
+          "trail": [],
+          "audience": "everyone"
+        },
+        {
+          "name": "Thread",
+          "trail": [],
+          "audience": "everyone",
+          "settings": [
+            "Reply in this thread"
+          ]
+        }
+      ],
+      "how": "Pick a bot in the list. Bot settings (model and tools, workspace access, Full access, approvals, High Agency, card wakes) open with the Settings button in the header of that bot's chat."
+    },
+    {
+      "path": "/chat/:slug",
+      "title": "Bots (one bot)",
+      "click_path": [
+        "Bots"
+      ],
+      "audience": "everyone",
+      "tabs": [],
+      "panels": [],
+      "how": "Pick a bot in the list on the Bots page. Its settings are behind the Settings button of that bot.",
+      "same_as": "/chat"
+    },
+    {
+      "path": "/knowledge",
+      "title": "Context",
+      "click_path": [
+        "Context"
+      ],
+      "audience": "everyone",
+      "tabs": [],
+      "panels": [
+        {
+          "name": "Ask about your files",
+          "trail": [],
+          "audience": "everyone",
+          "settings": [
+            "Question"
+          ]
+        },
+        {
+          "name": "Your Context",
+          "trail": [],
+          "audience": "everyone",
+          "settings": [
+            "Unconnected pages",
+            "From",
+            "To",
+            "Status",
+            "Length"
+          ]
+        },
+        {
+          "name": "Recent changes",
+          "trail": [],
+          "under": [
+            "Your Context"
+          ],
+          "audience": "everyone"
+        },
+        {
+          "name": "Needs a look",
+          "trail": [],
+          "under": [
+            "Your Context"
+          ],
+          "audience": "everyone"
+        },
+        {
+          "name": "Fixed automatically",
+          "trail": [],
+          "under": [
+            "Your Context"
+          ],
+          "audience": "everyone"
+        },
+        {
+          "name": "Schedule",
+          "trail": [],
+          "under": [
+            "Your Context"
+          ],
+          "audience": "everyone",
+          "settings": [
+            "How often",
+            "At"
+          ]
+        },
+        {
+          "name": "Start over",
+          "trail": [],
+          "under": [
+            "Your Context"
+          ],
+          "audience": "admin"
+        },
+        {
+          "name": "How your Context connects",
+          "trail": [],
+          "audience": "everyone",
+          "settings": [
+            "Workspace",
+            "Unconnected pages"
+          ]
+        }
+      ]
+    },
+    {
+      "path": "/knowledge/setup",
+      "title": "Set up your Context",
+      "click_path": [
+        "Context"
+      ],
+      "audience": "everyone",
+      "tabs": [],
+      "panels": [
+        {
+          "name": "What gets read",
+          "trail": [],
+          "audience": "everyone"
+        },
+        {
+          "name": "Reading your files",
+          "trail": [],
+          "audience": "everyone"
+        },
+        {
+          "name": "Files",
+          "trail": [],
+          "audience": "everyone"
+        },
+        {
+          "name": "Where things went",
+          "trail": [],
+          "audience": "everyone"
+        },
+        {
+          "name": "Open questions",
+          "trail": [],
+          "audience": "everyone"
+        },
+        {
+          "name": "Skipped or failed",
+          "trail": [],
+          "audience": "everyone"
+        }
+      ],
+      "how": "On the Context page, press Set up."
+    },
+    {
+      "path": "/jobs",
+      "title": "Workflows",
+      "click_path": [
+        "Workflows"
+      ],
+      "audience": "admin",
+      "tabs": [
+        {
+          "label": "Workflows",
+          "trail": [],
+          "audience": "admin",
+          "url": "?view=workflows"
+        },
+        {
+          "label": "Runs",
+          "trail": [],
+          "audience": "admin",
+          "url": "?view=runs"
+        },
+        {
+          "label": "Bot runs",
+          "trail": [],
+          "audience": "admin"
+        },
+        {
+          "label": "Mermaid",
+          "trail": [
+            "Workflows"
+          ],
+          "audience": "admin"
+        },
+        {
+          "label": "Canvas",
+          "trail": [
+            "Workflows"
+          ],
+          "audience": "admin"
+        }
+      ],
+      "panels": [
+        {
+          "name": "Workflows",
+          "trail": [
+            "Workflows"
+          ],
+          "audience": "admin"
+        },
+        {
+          "name": "About this workflow",
+          "trail": [
+            "Workflows"
+          ],
+          "audience": "admin",
+          "settings": [
+            "Notes",
+            "Tools"
+          ]
+        },
+        {
+          "name": "Recent runs",
+          "trail": [
+            "Workflows"
+          ],
+          "audience": "admin"
+        },
+        {
+          "name": "Scheduled tasks",
+          "trail": [
+            "Runs"
+          ],
+          "audience": "admin"
+        },
+        {
+          "name": "Server schedules",
+          "trail": [
+            "Runs"
+          ],
+          "audience": "admin"
+        },
+        {
+          "name": "Queue auto-start",
+          "trail": [
+            "Runs"
+          ],
+          "audience": "admin",
+          "settings": [
+            "Job time limit (minutes)"
+          ]
+        },
+        {
+          "name": "Merged, waiting for deploy",
+          "trail": [
+            "Runs"
+          ],
+          "audience": "admin"
+        },
+        {
+          "name": "Deploy on your word",
+          "trail": [
+            "Runs"
+          ],
+          "under": [
+            "Merged, waiting for deploy"
+          ],
+          "audience": "admin"
+        },
+        {
+          "name": "Knowledge index (semantic search)",
+          "trail": [
+            "Runs"
+          ],
+          "audience": "admin"
+        }
+      ]
+    },
+    {
+      "path": "/needs-you",
+      "title": "Needs you",
+      "click_path": [],
+      "audience": "everyone",
+      "tabs": [],
+      "panels": [
+        {
+          "name": "Your recent decisions",
+          "trail": [],
+          "audience": "everyone",
+          "settings": [
+            "Ask a question about this decision",
+            "Why not (optional)",
+            "Or answer in your own words"
+          ]
+        },
+        {
+          "name": "Links in this decision",
+          "trail": [],
+          "under": [
+            "Your recent decisions"
+          ],
+          "audience": "everyone"
+        },
+        {
+          "name": "Where things stand",
+          "trail": [],
+          "audience": "everyone"
+        },
+        {
+          "name": "The decision",
+          "trail": [],
+          "audience": "everyone"
+        },
+        {
+          "name": "Links in this decision",
+          "trail": [],
+          "audience": "everyone"
+        }
+      ],
+      "how": "Press the Needs you badge in the top bar."
+    },
+    {
+      "path": "/agents",
+      "title": "Bots & skills",
+      "click_path": [
+        "Avatar menu (top right)",
+        "Bots & skills"
+      ],
+      "audience": "admin",
+      "tabs": [
+        {
+          "label": "Registry",
+          "trail": [],
+          "audience": "admin",
+          "url": "?tab=registry"
+        },
+        {
+          "label": "Assignments",
+          "trail": [],
+          "audience": "admin",
+          "url": "?tab=assignments"
+        },
+        {
+          "label": "Skill graph",
+          "trail": [],
+          "audience": "admin",
+          "url": "?tab=graph"
+        },
+        {
+          "label": "By project",
+          "trail": [],
+          "audience": "admin",
+          "url": "?tab=board"
+        },
+        {
+          "label": "Templates",
+          "trail": [],
+          "audience": "admin",
+          "url": "?tab=templates"
+        },
+        {
+          "label": "Layers",
+          "trail": [
+            "By project"
+          ],
+          "audience": "admin"
+        },
+        {
+          "label": "Graph",
+          "trail": [
+            "By project"
+          ],
+          "audience": "admin"
+        }
+      ],
+      "panels": [
+        {
+          "name": "Make a new bot or skill",
+          "trail": [],
+          "audience": "admin"
+        },
+        {
+          "name": "Ask an assistant",
+          "trail": [],
+          "under": [
+            "Make a new bot or skill"
+          ],
+          "audience": "admin"
+        },
+        {
+          "name": "Add a starter bot",
+          "trail": [],
+          "under": [
+            "Make a new bot or skill"
+          ],
+          "audience": "admin"
+        },
+        {
+          "name": "Paste or import it",
+          "trail": [],
+          "under": [
+            "Make a new bot or skill"
+          ],
+          "audience": "admin"
+        },
+        {
+          "name": "Assign agent / skill to a scope",
+          "trail": [
+            "Registry"
+          ],
+          "audience": "admin",
+          "settings": [
+            "Scope",
+            "Workspace",
+            "Project / repo",
+            "User ID"
+          ]
+        },
+        {
+          "name": "Assign agent / skill to a scope",
+          "trail": [
+            "Assignments"
+          ],
+          "audience": "admin",
+          "settings": [
+            "Scope",
+            "Workspace",
+            "Project / repo",
+            "User ID"
+          ]
+        },
+        {
+          "name": "Skill graph",
+          "trail": [
+            "Skill graph"
+          ],
+          "audience": "admin"
+        },
+        {
+          "name": "Available templates",
+          "trail": [
+            "Templates"
+          ],
+          "audience": "admin"
+        },
+        {
+          "name": "Agents on this install",
+          "trail": [
+            "Templates"
+          ],
+          "audience": "admin"
+        },
+        {
+          "name": "Import from a folder on the server",
+          "trail": [
+            "Templates"
+          ],
+          "audience": "admin",
+          "settings": [
+            "Path to an agent file or folder"
+          ]
+        }
+      ]
+    },
+    {
+      "path": "/setup",
+      "title": "Setup",
+      "click_path": [],
+      "audience": "admin",
+      "tabs": [],
+      "panels": [
+        {
+          "name": "Set up your workspace",
+          "trail": [],
+          "audience": "admin"
+        }
+      ],
+      "how": "First-run checklist. Open /setup directly; admins only."
+    },
+    {
+      "path": "/setup/email",
+      "title": "Setup",
+      "click_path": [],
+      "audience": "admin",
+      "tabs": [],
+      "panels": [],
+      "how": "The email step of the first-run checklist. Open /setup/email directly; admins only.",
+      "same_as": "/setup"
+    },
+    {
+      "path": "/settings/models",
+      "title": "Models",
+      "click_path": [
+        "Avatar menu (top right)",
+        "Settings",
+        "Models"
+      ],
+      "audience": "admin",
+      "tabs": [],
+      "panels": [
+        {
+          "name": "Subscription seats",
+          "trail": [],
+          "audience": "admin",
+          "description": "Subscriptions sessions run on. Each card uses the healthy seat with the lowest priority number for its engine; a seat that hits a limit cools down and the next…",
+          "settings": [
+            "Label",
+            "2. Claude shows an Authentication code . Copy it and paste it here.",
+            "Setup token",
+            "Expires",
+            "Priority",
+            "New setup token"
+          ]
+        },
+        {
+          "name": "API key providers",
+          "trail": [],
+          "audience": "admin",
+          "description": "Bring your own key for Anthropic, OpenAI, xAI, or any OpenAI-compatible endpoint, stored the same way as every other secret here — encrypted, write-only, never…",
+          "settings": [
+            "Provider",
+            "Name",
+            "Base URL",
+            "API key"
+          ]
+        },
+        {
+          "name": "When an account is limited",
+          "trail": [],
+          "audience": "admin",
+          "description": "A limited account rests until its reset time and the reply moves to the next account on its own. Tools that already ran are not run again."
+        },
+        {
+          "name": "Engine failover",
+          "trail": [],
+          "audience": "admin",
+          "settings": [
+            "Workspace",
+            "If every seat of a card's engine is down, run it on another engine"
+          ]
+        },
+        {
+          "name": "Models",
+          "trail": [],
+          "audience": "admin",
+          "description": "Pick the global default (new cards) and planner (planning step), and enable or disable models per provider. Applies across all accounts."
+        },
+        {
+          "name": "Provider model lists",
+          "trail": [],
+          "under": [
+            "Models"
+          ],
+          "audience": "admin"
+        }
+      ]
+    },
+    {
+      "path": "/settings/api-mcp",
+      "title": "API & MCP",
+      "click_path": [
+        "Avatar menu (top right)",
+        "Settings",
+        "API & MCP"
+      ],
+      "audience": "everyone",
+      "tabs": [],
+      "panels": [
+        {
+          "name": "Agent keys",
+          "trail": [],
+          "audience": "everyone",
+          "description": "One key per bot (MCP). Each is its own identity — cards it creates say who made them — and it can only do what you tick. Done and delete stay with you unless y…",
+          "settings": [
+            "Label",
+            "What it can do",
+            "Workspaces",
+            "Your connected accounts it may use"
+          ]
+        },
+        {
+          "name": "Agent webhooks",
+          "trail": [],
+          "audience": "everyone",
+          "description": "Wake a bot when a card it created or started changes status, instead of it polling. Each POST carries the card id, title, status, PR and link — never a secret…",
+          "settings": [
+            "Webhook URL",
+            "Sender key",
+            "Header name",
+            "Value prefix",
+            "Send these events",
+            "Enabled"
+          ]
+        },
+        {
+          "name": "Recent deliveries",
+          "trail": [],
+          "under": [
+            "Agent webhooks"
+          ],
+          "audience": "everyone"
+        },
+        {
+          "name": "API key",
+          "trail": [],
+          "audience": "everyone",
+          "description": "For your own scripts: full REST access that acts as you everywhere. Paste as Authorization: Bearer … . We only show the full key once. Do not give it to a bot…",
+          "settings": [
+            "Copy this now — it will not be shown again"
+          ]
+        },
+        {
+          "name": "Connect a coding agent",
+          "trail": [],
+          "audience": "everyone"
+        },
+        {
+          "name": "API docs",
+          "trail": [],
+          "audience": "everyone"
+        },
+        {
+          "name": "REST — copy-paste curl example",
+          "trail": [],
+          "under": [
+            "API docs"
+          ],
+          "audience": "everyone"
+        }
+      ]
+    },
+    {
+      "path": "/settings/secrets",
+      "title": "Secrets",
+      "click_path": [
+        "Avatar menu (top right)",
+        "Settings",
+        "Secrets"
+      ],
+      "audience": "everyone",
+      "tabs": [
+        {
+          "label": "Mine",
+          "trail": [],
+          "audience": "everyone",
+          "url": "?view=mine"
+        },
+        {
+          "label": "Shared",
+          "trail": [],
+          "audience": "admin",
+          "url": "?view=shared"
+        },
+        {
+          "label": "Test credentials",
+          "trail": [],
+          "audience": "admin",
+          "url": "?view=test"
+        }
+      ],
+      "panels": [
+        {
+          "name": "My secrets",
+          "trail": [
+            "Mine"
+          ],
+          "audience": "everyone",
+          "description": "Personal secrets scoped to you. Stored encrypted; the value is never shown again after you save it."
+        },
+        {
+          "name": "Audit log",
+          "trail": [
+            "Shared"
+          ],
+          "audience": "admin",
+          "description": "Who created, rotated, deleted, used or tried to reveal a secret."
+        }
+      ]
+    },
+    {
+      "path": "/settings/integrations",
+      "title": "Integrations",
+      "click_path": [
+        "Avatar menu (top right)",
+        "Settings",
+        "Integrations"
+      ],
+      "audience": "everyone",
+      "tabs": [],
+      "panels": [
+        {
+          "name": "Make my own with the Integrations bot",
+          "trail": [],
+          "audience": "everyone",
+          "description": "For anything not in the list. The bot works in a chat on its own board card:",
+          "settings": [
+            "What do you want to connect?",
+            "API docs",
+            "Workspace"
+          ]
+        },
+        {
+          "name": "Accounts",
+          "trail": [],
+          "audience": "everyone",
+          "settings": [
+            "Work assigned by others",
+            "Let cards someone else assigned to me use this connection."
+          ]
+        },
+        {
+          "name": "MCP servers",
+          "trail": [],
+          "audience": "everyone",
+          "description": "Remote MCP servers give agents and chat bots extra tools. Each server belongs to one workspace.",
+          "settings": [
+            "Workspace"
+          ]
+        },
+        {
+          "name": "Built with the Integrations bot",
+          "trail": [],
+          "audience": "everyone",
+          "description": "Tools agents in this workspace can use. Keys live in Settings → Secrets under the names shown."
+        }
+      ]
+    },
+    {
+      "path": "/settings/workspaces",
+      "title": "Workspaces",
+      "click_path": [
+        "Avatar menu (top right)",
+        "Settings",
+        "Workspaces"
+      ],
+      "audience": "admin",
+      "tabs": [
+        {
+          "label": "Workspaces",
+          "trail": [],
+          "audience": "admin"
+        },
+        {
+          "label": "Users",
+          "trail": [],
+          "audience": "admin"
+        }
+      ],
+      "panels": [
+        {
+          "name": "Workspaces",
+          "trail": [
+            "Workspaces"
+          ],
+          "audience": "admin",
+          "settings": [
+            "Name",
+            "Slug"
+          ]
+        },
+        {
+          "name": "Knowledge",
+          "trail": [
+            "Workspaces"
+          ],
+          "audience": "admin"
+        },
+        {
+          "name": "Agent pool",
+          "trail": [
+            "Workspaces"
+          ],
+          "audience": "admin"
+        },
+        {
+          "name": "Repos & projects",
+          "trail": [
+            "Workspaces"
+          ],
+          "audience": "admin",
+          "settings": [
+            "Repo name",
+            "GitHub repo",
+            "Stack, comma-separated"
+          ]
+        },
+        {
+          "name": "Connections",
+          "trail": [
+            "Workspaces"
+          ],
+          "audience": "admin",
+          "settings": [
+            "GitHub organization",
+            "Personal access token",
+            "PostHog host",
+            "Self-hosted URL",
+            "Project API key",
+            "Personal API key"
+          ]
+        },
+        {
+          "name": "Context file",
+          "trail": [
+            "Workspaces"
+          ],
+          "audience": "admin"
+        },
+        {
+          "name": "Create user",
+          "trail": [
+            "Users"
+          ],
+          "audience": "admin",
+          "settings": [
+            "Username",
+            "Temporary password",
+            "Sign-in email",
+            "Role"
+          ]
+        },
+        {
+          "name": "Cloudflare sign-in sync",
+          "trail": [
+            "Users"
+          ],
+          "audience": "admin"
+        },
+        {
+          "name": "Workspace access",
+          "trail": [
+            "Users"
+          ],
+          "audience": "admin",
+          "settings": [
+            "Role",
+            "Sees"
+          ]
+        },
+        {
+          "name": "Delete user",
+          "trail": [
+            "Users"
+          ],
+          "audience": "admin"
+        }
+      ]
+    },
+    {
+      "path": "/settings/branding",
+      "title": "Branding",
+      "click_path": [
+        "Avatar menu (top right)",
+        "Settings",
+        "Branding"
+      ],
+      "audience": "admin",
+      "tabs": [],
+      "panels": [
+        {
+          "name": "Brand",
+          "trail": [],
+          "audience": "admin",
+          "settings": [
+            "Product name",
+            "Show a small “Powered by” credit for the underlying platform on the sign-in page",
+            "Accent color",
+            "Auto (from accent)"
+          ]
+        },
+        {
+          "name": "Live preview",
+          "trail": [],
+          "audience": "admin"
+        },
+        {
+          "name": "Logos & favicon",
+          "trail": [],
+          "audience": "admin"
+        },
+        {
+          "name": "Set this up with your coding agent",
+          "trail": [],
+          "audience": "admin",
+          "settings": [
+            "Company website"
+          ]
+        },
+        {
+          "name": "Reset branding",
+          "trail": [],
+          "audience": "admin",
+          "description": "Puts the product name, every color and the “Powered by” setting back to the defaults. Uploaded logos are kept."
+        }
+      ]
+    },
+    {
+      "path": "/settings/email",
+      "title": "Email",
+      "click_path": [
+        "Avatar menu (top right)",
+        "Settings",
+        "Email"
+      ],
+      "audience": "admin",
+      "tabs": [],
+      "panels": [
+        {
+          "name": "Email",
+          "trail": [],
+          "audience": "admin"
+        },
+        {
+          "name": "Provider",
+          "trail": [],
+          "audience": "admin"
+        },
+        {
+          "name": "Sender and credentials",
+          "trail": [],
+          "audience": "admin",
+          "settings": [
+            "From name",
+            "From address",
+            "Reply-to",
+            "This site's address",
+            "SMTP host",
+            "Security",
+            "Port",
+            "Username"
+          ]
+        },
+        {
+          "name": "Send a test email",
+          "trail": [],
+          "audience": "admin",
+          "settings": [
+            "Send a test to"
+          ]
+        },
+        {
+          "name": "Turn off email",
+          "trail": [],
+          "audience": "admin",
+          "description": "Deletes the stored email credentials. Invites and password resets go back to showing the password on screen."
+        }
+      ]
+    },
+    {
+      "path": "/settings/knowledge-search",
+      "title": "Knowledge search",
+      "click_path": [
+        "Avatar menu (top right)",
+        "Settings",
+        "Knowledge search"
+      ],
+      "audience": "admin",
+      "tabs": [],
+      "panels": [
+        {
+          "name": "Embedding provider",
+          "trail": [],
+          "audience": "admin",
+          "description": "Knowledge search combines keyword matching with meaning (semantic) matching. The provider below turns each page into embeddings. Changing the model re-embeds a…",
+          "settings": [
+            "Provider",
+            "Model",
+            "Base URL",
+            "API key secret",
+            "Dimensions"
+          ]
+        },
+        {
+          "name": "Status",
+          "trail": [],
+          "audience": "admin"
+        },
+        {
+          "name": "Index job",
+          "trail": [],
+          "under": [
+            "Status"
+          ],
+          "audience": "admin"
+        }
+      ]
+    }
+  ],
+  "redirects": [
+    {
+      "from": "/preview",
+      "to": "/"
+    },
+    {
+      "from": "/preview/*",
+      "to": "/"
+    },
+    {
+      "from": "/dashboard",
+      "to": "/system"
+    },
+    {
+      "from": "/costs",
+      "to": "/system"
+    },
+    {
+      "from": "/agent-templates",
+      "to": "/agents?tab=templates"
+    },
+    {
+      "from": "/settings/agents",
+      "to": "/agents?tab=registry"
+    },
+    {
+      "from": "/settings/agents-skills",
+      "to": "/agents?tab=registry"
+    },
+    {
+      "from": "/settings/platform",
+      "to": "/jobs#host-cron"
+    },
+    {
+      "from": "/loops",
+      "to": "/"
+    },
+    {
+      "from": "/feed",
+      "to": "/"
+    },
+    {
+      "from": "/strategies",
+      "to": "/"
+    },
+    {
+      "from": "/strategy/*",
+      "to": "/"
+    },
+    {
+      "from": "/development/*",
+      "to": "/"
+    },
+    {
+      "from": "/feedback",
+      "to": "/"
+    },
+    {
+      "from": "/status",
+      "to": "/"
+    },
+    {
+      "from": "/contacts",
+      "to": "/"
+    },
+    {
+      "from": "/config",
+      "to": "/settings/workspaces"
+    },
+    {
+      "from": "/assistant",
+      "to": "/chat"
+    },
+    {
+      "from": "/mentor",
+      "to": "/chat"
+    },
+    {
+      "from": "/assistant",
+      "to": "/chat"
+    },
+    {
+      "from": "/docs",
+      "to": "/knowledge"
+    },
+    {
+      "from": "/granola",
+      "to": "/"
+    },
+    {
+      "from": "/login",
+      "to": "/"
+    },
+    {
+      "from": "/settings",
+      "to": "/settings/api-mcp"
+    },
+    {
+      "from": "/settings/you",
+      "to": "/settings/api-mcp"
+    },
+    {
+      "from": "/settings/connectors",
+      "to": "/settings/integrations"
+    },
+    {
+      "from": "/settings/seats",
+      "to": "/settings/models"
+    },
+    {
+      "from": "/settings/account",
+      "to": "/settings/api-mcp"
+    },
+    {
+      "from": "/settings/test-credentials",
+      "to": "/settings/secrets"
+    },
+    {
+      "from": "/settings/org",
+      "to": "/settings/workspaces"
+    }
+  ],
+  "undescribed": [
+    "App.tsx: /preview/o/:id redirects to a computed address (PreviewObjectiveRedirect)",
+    "components/AgentTemplatesPage.tsx: a <h2> heading whose text is computed ({pending.result.agent.name} <span className=\"font-mono text-)",
+    "components/AgentTemplatesPage.tsx: a <h3> heading whose text is computed ({t.name})",
+    "components/JobsBoard.tsx: a <h3> heading whose text is computed (<Icon className={cn('h-3.5 w-3.5', lane === 'running' && 'an)",
+    "components/KnowledgeImport.tsx: a section whose title is computed (title={status ? `${files.length} file${files.length === 1 ? '' : 's'} · ${noteCo)",
+    "components/ModelsModule.tsx: a section whose title is computed (title={g.label})",
+    "components/account-settings/CodingAgentSetup.tsx: a section whose title is computed (title={`Setup prompt for ${agentLabel}`})",
+    "components/agent-chat/AgentChatPage.tsx: a <h2> heading whose text is computed ({agent.name})",
+    "components/agent-chat/AgentInfoPanel.tsx: a <h3> heading whose text is computed (About {agent.name})",
+    "components/agent-chat/BotMessagesPanel.tsx: a <h3> heading whose text is computed ({c && other ? ( <span className=\"inline-flex items-center ga)",
+    "components/agent-chat/BotSidebar.tsx: a <h2> heading whose text is computed ({g.title})",
+    "components/agent-chat/BotWorkTab.tsx: a <h3> heading whose text is computed ({WORK_GROUP_LABELS[g]} <span className=\"font-mono text-fg-3\")",
+    "components/agents/CreateAgentGuide.tsx: a <h3> heading whose text is computed (Ask {devBotName})",
+    "components/config/AgentsSkillsTab.tsx: a <h3> heading whose text is computed ({agent?.label || formatName(selected.key)})",
+    "components/config/AgentsSkillsTab.tsx: a <h3> heading whose text is computed ({formatName(selected.key)})",
+    "components/config/AssignmentsTab.tsx: a <h3> heading whose text is computed ({resourceType} assignments)",
+    "components/config/WorkspacesTab.tsx: a <h3> heading whose text is computed ({r.name || r.slug})",
+    "components/config/WorkspacesTab.tsx: a <h3> heading whose text is computed ({ws.name})",
+    "components/config/WorkspacesTab.tsx: a section whose title is computed (title={`Archived workspaces (${archivedWorkspaces.length})`})",
+    "components/connectors/BuiltIntegrationsSection.tsx: a <h4> heading whose text is computed ({b.name})",
+    "components/connectors/ConnectorCard.tsx: a <h3> heading whose text is computed ({c.name})",
+    "components/connectors/McpServersSection.tsx: a <h4> heading whose text is computed ({s.name})",
+    "components/connectors/NewIntegrationPanel.tsx: a <h4> heading whose text is computed ({e.name})",
+    "components/connectors/NewIntegrationPanel.tsx: a section whose title is computed (title={step === 'browse' ? 'Browse integrations' : step === 'make' ? 'Make my ow)",
+    "components/decisions/DecisionBriefing.tsx: a <h3> heading whose text is computed ({b.question ? <LinkedText text={b.question} /> : 'What is be)",
+    "components/decisions/NeedsYouPage.tsx: a <h2> heading whose text is computed ({b.question ? <LinkedText text={b.question} /> : 'What is be)",
+    "components/email/EmailSettingsPanel.tsx: a section whose title is computed (title={<>What {check.domain} publishes now</>})",
+    "components/email/EmailSettingsPanel.tsx: a section whose title is computed (title={`Records for ${dns.domain}`})",
+    "components/jobs/FlowRunWaitsPanel.tsx: a <h4> heading whose text is computed (Run #{runId} is waiting for)",
+    "components/jobs/FlowSelfTestPanel.tsx: a <h4> heading whose text is computed (<FlaskConical className=\"h-3.5 w-3.5\" /> Self-test &amp; pub)",
+    "components/jobs/HostCronJobs.tsx: a <h4> heading whose text is computed ({formatName(job.name)})",
+    "components/jobs/WorkflowsPanel.tsx: a <h3> heading whose text is computed ({flow.name})",
+    "components/jobs/WorkflowsPanel.tsx: a <h4> heading whose text is computed (Steps of run #{runDetail.run.id}{runDetail.run.mode !== 'liv)",
+    "components/kb-setup/KbSetupPage.tsx: a section whose title is computed (title={title})",
+    "components/kb-wiki/WikiBrowser.tsx: a <h4> heading whose text is computed ({g.label} <span className=\"font-mono text-xs font-normal tex)",
+    "components/secrets/RotationFlagsPanel.tsx: a section whose title is computed (title={<span className=\"text-status-review\">Rotate later · {flags.length}</span>)",
+    "components/session-viewer/ViewerHeader.tsx: a <h3> heading whose text is computed ({objective.title})",
+    "components/settings/SeatDeviceLogin.tsx: a section whose title is computed (title={`Sign in to ${engine}`})",
+    "components/settings/SettingsSeats.tsx: a <h4> heading whose text is computed ({name})",
+    "components/settings/SettingsSeats.tsx: a section whose title is computed (title={<>{name} <span className=\"font-mono text-xs font-normal text-fg-3\">{seats)"
+  ]
+}

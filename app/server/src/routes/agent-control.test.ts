@@ -234,6 +234,45 @@ describe('GET /api/agent/changes', () => {
 })
 
 describe('GET /api/agent/attention', () => {
+  it('a working card parked on a question for the person is "waiting on you", not stuck or stalled (obj 901519)', async () => {
+    const db = getDb()
+    const { raiseDecision, withdrawDecision } = await import('../services/decisions.js')
+    const briefing = {
+      context: 'The batch is drafted and checked. Sending is the last step.',
+      question: 'Send the 40-lead batch today?',
+      options: [
+        { key: 'A', label: 'Send today', pros: ['Replies land sooner'], cons: ['No second look'], next: 'I send it.' },
+        { key: 'B', label: 'Hold', pros: ['Second look'], cons: ['A day later'], next: 'I wait.' },
+      ],
+      recommended: 'A',
+      recommended_why: 'It matches last month.',
+    }
+    // Quiet for 95 minutes AND flagged by the watchdog AND carrying a blocker:
+    // every "stuck" signal there is. The open decision still wins.
+    const parked = insertCard('Parked on a question', { status: 'working' })
+    db.prepare("UPDATE objectives SET last_activity_at = datetime('now', '-95 minutes'), stalled_at = datetime('now'), stall_reason = 'hung_no_heartbeat', has_blockers = 1 WHERE id = ?").run(parked)
+    const raised = raiseDecision(db, { objective_id: parked, workspace: WS, source: 'worker', briefing })
+    if (!raised.ok) throw new Error(raised.errors.join('; '))
+    // Same silence, no question: this one really is stuck.
+    const quiet = insertCard('Quiet with no question', { status: 'working' })
+    db.prepare("UPDATE objectives SET last_activity_at = datetime('now', '-95 minutes') WHERE id = ?").run(quiet)
+
+    const res = await call('GET', `/api/agent/attention?workspace=${WS}&limit=50`)
+    const byId = Object.fromEntries(res.json.items.map((i: any) => [i.id, i]))
+    expect(byId[parked]).toMatchObject({ kind: 'review', why: 'Decision waiting on you: Send the 40-lead batch today?' })
+    expect(byId[quiet]).toMatchObject({ kind: 'stuck' })
+    // It sorts with the things the person acts on, ahead of every stuck card.
+    const order = res.json.items.map((i: any) => i.id)
+    expect(order.indexOf(parked)).toBeLessThan(order.indexOf(quiet))
+
+    // Once the question is answered or withdrawn, the ordinary rules apply again.
+    withdrawDecision(db, raised.decision.id, 'answered in test')
+    const after = await call('GET', `/api/agent/attention?workspace=${WS}&limit=50`)
+    expect(after.json.items.find((i: any) => i.id === parked)).toMatchObject({ kind: 'stuck' })
+    db.prepare('DELETE FROM decisions WHERE objective_id = ?').run(parked)
+    db.prepare('DELETE FROM objectives WHERE id IN (?, ?)').run(parked, quiet)
+  })
+
   it('lists failed-review, blocked, review and stuck cards with a one-line why, under 4KB', async () => {
     const db = getDb()
     const longText = `${'This is a long paragraph of worker narration. '.repeat(40)}\nline two\nline three`

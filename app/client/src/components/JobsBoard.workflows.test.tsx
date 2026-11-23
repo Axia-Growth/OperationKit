@@ -175,7 +175,7 @@ describe('JobsBoard — opens on the flow-chart view (obj 900675)', () => {
     expect(container.textContent).not.toMatch(/strategy workflow/i)
   })
 
-  it.each([['/jobs?view=jobs'], ['/jobs?kind=agent'], ['/jobs#host-cron']])('%s still lands on the lanes', async url => {
+  it.each([['/jobs?view=jobs'], ['/jobs?kind=agent'], ['/jobs#host-cron'], ['/jobs#queue-auto-start']])('%s still lands on the lanes', async url => {
     window.history.replaceState(null, '', url)
     await mount()
     expect(container.querySelector('[data-testid="workflows-panel"]')).toBeNull()

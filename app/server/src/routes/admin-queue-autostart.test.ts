@@ -7,8 +7,8 @@ import express from 'express'
 import cookieParser from 'cookie-parser'
 import jwt from 'jsonwebtoken'
 
-// obj 901375 — the per-workspace job time limit (minutes) field on Settings →
-// Platform → Queue auto-start. Mounts ONLY the admin-queue-autostart router (not
+// obj 901375 — the per-workspace job time limit (minutes) field on Workflows →
+// Runs → Queue auto-start. Mounts ONLY the admin-queue-autostart router (not
 // objectives.js / session-manager), so this suite never touches node-pty.
 const TMP_DB = path.join(os.tmpdir(), `cc-queue-autostart-time-limit-${process.pid}-${Date.now()}.db`)
 process.env.DB_PATH = TMP_DB

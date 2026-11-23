@@ -51,6 +51,7 @@ import { botMayUseWorkspace, botWorkspaceAllowlist, narrowToBot } from './bot-wo
 import { cardModelForBot } from './bot-card-model.js'
 import { ownerBotName } from './full-access-tools.js'
 import { openLoopsBriefSection } from './open-loops.js'
+import { botMemoryBriefSection } from './bot-memory.js'
 import {
   DEFAULT_INSTALL_TIMEZONE,
   DEFAULT_LEVEL,
@@ -391,7 +392,11 @@ export function buildHighAgencyBrief(agent: BriefAgent, s: BriefSettings, owner 
 function templateFor(agent: ChatAgent, s: HighAgencySettings): Record<string, unknown> {
   const tpl: Record<string, unknown> = {
     title: highAgencyTitle(agent),
-    description: buildHighAgencyBrief(agent, s, ownerNameFor(s.run_as_user_id), openLoopsBriefSection(agent, s.workspace, ownerNameFor(s.run_as_user_id))),
+    description: buildHighAgencyBrief(agent, s, ownerNameFor(s.run_as_user_id), [
+      ...openLoopsBriefSection(agent, s.workspace, ownerNameFor(s.run_as_user_id)),
+      // obj 901500: what a wake writes to the profile and the journal (only for a bot with memory on).
+      ...botMemoryBriefSection(agent, s.workspace, ownerNameFor(s.run_as_user_id)),
+    ]),
     agent_context: agent.slug,
     type: 'task',
     completion_goal:

@@ -141,8 +141,12 @@ beforeEach(() => {
      DELETE FROM agent_chat_card_wakes;
      DELETE FROM agent_chat_messages;
      DELETE FROM agent_chat_threads;
-     DELETE FROM settings WHERE key IN ('${wh.CURSOR_SETTING}', '${routing.CARD_WAKES_ENABLED_SETTING}');`,
+     DELETE FROM bot_card_wake_self_actions;
+     DELETE FROM settings WHERE key IN ('${wh.CURSOR_SETTING}', '${routing.CARD_WAKES_ENABLED_SETTING}', '${routing.CARD_WAKE_DEBOUNCE_SETTING}', '${routing.CARD_WAKE_TOOLS_SETTING}');`,
   )
+  // obj 901394 added a debounce and widened the tool scope (card-wakes-closeout.test.ts).
+  // This file keeps proving the obj 901328 scope: no wait, own-card tools only.
+  getDb().prepare("INSERT INTO settings (key, value) VALUES (?, '0'), (?, 'own_cards')").run(routing.CARD_WAKE_DEBOUNCE_SETTING, routing.CARD_WAKE_TOOLS_SETTING)
   hostCalls.length = 0
   enqueue() // anchor the cursor at head
 })
@@ -175,7 +179,7 @@ describe('1. routing match — an owned card wakes its chat bot in the Card wake
     expect(deliveriesFor(id)).toHaveLength(0)
   })
 
-  it('runs ONE scoped turn in the pinned "Card wakes" thread — own-card tools only, nothing in the main chat', async () => {
+  it('runs ONE scoped turn in the pinned "Card wakes" thread — own-card tools only; the main chat gets only the answer', async () => {
     const id = card({ ownerBot: 'Example CTO' })
     setStatus(id, 'review')
     enqueue()
@@ -191,7 +195,11 @@ describe('1. routing match — an owned card wakes its chat bot in the Card wake
     // The lane: a pinned side thread named "Card wakes"; the main chat is untouched.
     const thread = one("SELECT * FROM agent_chat_threads WHERE user_id = ? AND agent_slug = 'example-cto'", OPERATOR)
     expect(thread).toMatchObject({ title: 'Card wakes', pinned: 1, archived: 0 })
-    expect(listMessages(OPERATOR, 'example-cto')).toHaveLength(0) // main lane
+    // obj 901394: the main chat gets the bot's answer (one row), never the turn itself.
+    const main = listMessages(OPERATOR, 'example-cto')
+    expect(main).toHaveLength(1)
+    expect(main[0]).toMatchObject({ role: 'assistant', meta: expect.objectContaining({ kind: 'card_wake_reply', objective_id: id, thread_id: thread.id }) })
+    expect(main[0].content).toContain('Steered the worker.')
     const lane = listMessages(OPERATOR, 'example-cto', { lane: { kind: 'thread', id: thread.id } })
     expect(lane.map(m => m.tool_name ?? m.role)).toEqual(['card_wake', 'my_card_read', 'my_card_message', 'assistant'])
     expect(lane[3].content).toBe('Steered the worker.')
@@ -277,7 +285,7 @@ describe('3. dedupe and rate limit — a burst never stacks turns', () => {
     expect(w[1].skip_reason).toMatch(/^coalesced: wake #\d+/)
   })
 
-  it('a second need within the window after the wake RAN is rate-limited: still one turn', async () => {
+  it('a second need within the window after the wake RAN waits for the window to end: still one turn now, and nothing is lost', async () => {
     const id = card({ ownerBot: 'Example CTO' })
     setStatus(id, 'review')
     enqueue()
@@ -290,15 +298,24 @@ describe('3. dedupe and rate limit — a burst never stacks turns', () => {
     enqueue()
     expect(await drainCardWakes({ env: ENV, host: stubHost, deps: { fetch: f } })).toBe(0)
     const w = wakesFor(id)
-    expect(w.map(r => r.status)).toEqual(['done', 'skipped'])
-    expect(w[1].skip_reason).toMatch(/^rate_limited:/)
+    expect(w.map(r => r.status)).toEqual(['done', 'pending'])
+    // Deferred to the end of the 10-minute window that started when the first turn did.
+    const gapMin = (Date.parse(`${w[1].next_attempt_at.replace(' ', 'T')}Z`) - Date.parse(`${w[0].started_at.replace(' ', 'T')}Z`)) / 60_000
+    expect(gapMin).toBeCloseTo(10, 0)
     expect(seen).toHaveLength(1) // one model call: one turn
+    // When the window is over it runs, once.
+    const later = () => new Date(Date.now() + 11 * 60_000)
+    expect(await drainCardWakes({ env: ENV, host: stubHost, deps: { fetch: f }, now: later })).toBe(1)
+    expect(await drainCardWakes({ env: ENV, host: stubHost, deps: { fetch: f }, now: later })).toBe(0)
+    expect(seen).toHaveLength(2)
   })
 
   it('a replayed event id never queues twice, and the per-bot hourly cap holds', () => {
     const input = { event_id: 'cc_wake_test_1', slug: 'example-cto', objective_id: 999001, workspace: 'operationkit', user_id: OPERATOR, source_event_id: null, need_kind: 'review', need_why: 'x' }
     expect(routing.enqueueCardWake(getDb(), input)?.status).toBe('pending')
     expect(routing.enqueueCardWake(getDb(), input)).toBeNull()
+    // The cap counts wake TURNS (rows that started), so mark the first as run.
+    getDb().prepare("UPDATE bot_card_wakes SET status = 'done', started_at = datetime('now') WHERE event_id = 'cc_wake_test_1'").run()
     getDb().prepare("INSERT INTO settings (key, value) VALUES (?, '1')").run(routing.CARD_WAKE_HOURLY_CAP_SETTING)
     try {
       const r = routing.enqueueCardWake(getDb(), { ...input, event_id: 'cc_wake_test_2', objective_id: 999002 })

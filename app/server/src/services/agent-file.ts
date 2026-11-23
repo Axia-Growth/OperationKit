@@ -13,6 +13,7 @@
  * Anything outside that subset is reported as a clear error, never guessed at.
  */
 import { PATTERN_RULES } from './secret-redaction.js'
+import { AGENT_FILE_TOOL_NAMES, ALL_TOOLS_TOKENS } from '../../../shared/bot-tools.js'
 
 export const AGENT_FILE_FORMAT_VERSION = 1
 
@@ -69,24 +70,13 @@ export const AGENT_PROVIDERS = ['claude', 'anthropic', 'openai', 'xai', 'openai-
 export type AgentProvider = (typeof AGENT_PROVIDERS)[number]
 
 /**
- * Tool names the platform knows today (agreed with obj 719987). Anything else is
- * a WARNING, not an error: a client may add their own MCP connectors, and a
- * template written for a newer install must still import on an older one.
+ * Tool names the platform knows today: the shared list (app/shared/bot-tools.ts)
+ * plus `all` and `*` (obj 900966; it was a hand-kept copy that had fallen
+ * behind). Anything else is a WARNING, not an error: a client may add their own
+ * MCP connectors, and a template written for a newer install must still import
+ * on an older one.
  */
-export const KNOWN_AGENT_TOOLS = [
-  // knowledge base (scoped to knowledge_folders)
-  'search', 'list_folders', 'read_file', 'write_doc', 'file_answer',
-  // board
-  'create_objective', 'get_objective', 'list_objectives', 'board_briefing',
-  // connectors (drafts only — a person presses Send)
-  'email', 'calendar',
-  // the workspace's connected remote MCP servers (obj 900620)
-  'mcp',
-  // the public web (obj 900671)
-  'web_search', 'web_fetch',
-  // every tool above, including tools added later (obj 900671)
-  'all',
-] as const
+export const KNOWN_AGENT_TOOLS: readonly string[] = AGENT_FILE_TOOL_NAMES
 
 export const AGENT_SLUG_RE = /^[a-z0-9][a-z0-9-]{1,40}$/
 const TOOL_RE = /^[a-z0-9][a-z0-9_.:-]{0,63}$/
@@ -496,8 +486,10 @@ export function parseAgentFile(src: string, opts: ParseOptions = {}): ParseAgent
 
   const tools = asStringList(o.tools, 'tools', errors)
   tools.forEach((t, i) => {
+    // `all` / `*` = "All tools" (the chat engine accepts both, any case).
+    if (ALL_TOOLS_TOKENS.has(t.toLowerCase())) return
     if (!TOOL_RE.test(t)) errors.push({ field: `tools[${i}]`, message: `"${t}" is not a valid tool name (lowercase letters, numbers, "_", "-", ".", ":")` })
-    else if (!(KNOWN_AGENT_TOOLS as readonly string[]).includes(t)) {
+    else if (!KNOWN_AGENT_TOOLS.includes(t)) {
       warnings.push({ field: `tools[${i}]`, message: `"${t}" is not a built-in tool; it only works if a connector with that name is installed` })
     }
   })
