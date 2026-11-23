@@ -3,9 +3,10 @@ import fs from 'fs'
 import os from 'os'
 import path from 'path'
 import zlib from 'zlib'
+import { parse as parseYaml } from 'yaml'
 import { writeZip, readZip } from './zip.js'
 import { extractDocument, kindForFile, UnsupportedFileError } from './extract.js'
-import { upsertEntityNote, notePathFor, relLink, slugify, loadEntityIndex, sameOrganization, writeOrganized, type Entity, type SourceRef } from './notes.js'
+import { upsertEntityNote, notePathFor, relLink, slugify, loadEntityIndex, sameOrganization, writeOrganized, renderFrontmatter, parseNote, type Entity, type SourceRef } from './notes.js'
 import { applyNameGroups, claimInbox, drainQueue, ingestOne, mergeOrganized, reconcileNames, parseOrganizeReply, readManifest, recoverInterrupted, requeue, splitForOrganize } from './ingest.js'
 import { askKnowledgeBase, rankNotes, terms } from './ask.js'
 import { createIngestLlm, credentialSource } from './llm.js'
@@ -149,6 +150,31 @@ describe('notes', () => {
     expect(again).toContain('Founder wants to retire')
     expect(again.match(/## From: Price List.xlsx/g)).toHaveLength(1)
     expect(again.match(/Dana Ruiz/g)).toHaveLength(1)
+  })
+})
+
+describe('frontmatter', () => {
+  // The vault is meant to open in Obsidian and other editors, which read frontmatter as real YAML.
+  it('writes titles and aliases that a YAML reader returns unchanged', () => {
+    const names = [
+      "'47 Brand", '& Partners', '2024', '2024-01-15', '1.5', '0x1F', '.5', 'true', 'No', 'null', '~', 'y',
+      'Acme & Sons', 'Acme, Inc. (2024)', 'Q3 plan', '3M Company', 'Dana Ruiz',
+    ]
+    for (const title of names) {
+      const text = `${renderFrontmatter({ title, type: 'organization', aliases: [title], tags: [title], sources: [], updated: '2026-11-18' })}\n`
+      const yaml = parseYaml(text.replace(/^---\n|---\n$/g, '')) as Record<string, unknown>
+      expect(yaml.title, title).toBe(title)
+      expect(yaml.aliases, title).toEqual([title])
+      expect(yaml.tags, title).toEqual([title])
+      // ...and this app still reads back what it wrote.
+      expect(parseNote(text).fm?.title, title).toBe(title)
+      expect(parseNote(text).fm?.aliases, title).toEqual([title])
+    }
+  })
+
+  it('leaves ordinary names unquoted', () => {
+    expect(renderFrontmatter({ title: 'Acme & Sons', type: 'organization', aliases: ['3M Company'], tags: [], sources: [], updated: '2026-11-18' }))
+      .toContain('title: Acme & Sons\ntype: organization\naliases: [3M Company]')
   })
 })
 
