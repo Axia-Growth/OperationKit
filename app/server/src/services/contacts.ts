@@ -9,6 +9,7 @@
 import fs from 'fs'
 import path from 'path'
 import type Database from 'better-sqlite3'
+import { noteKbChanged } from './kb-semantic/service.js'
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -622,6 +623,7 @@ export function createContact(
 
   fs.mkdirSync(path.dirname(absolute), { recursive: true })
   fs.writeFileSync(absolute, fileContents, 'utf-8')
+  noteKbChanged(absolute) // semantic index + link graph
 
   // Reindex this single row so subsequent reads see it without a full rebuild.
   const row = parseContactFile(vaultRoot, absolute)
@@ -667,6 +669,7 @@ export function patchContact(
   const newContent = `${serializeFrontmatter(frontmatter)}\n${newBody.startsWith('\n') ? newBody : '\n' + newBody}`
 
   fs.writeFileSync(file.absolute, newContent, 'utf-8')
+  noteKbChanged(file.absolute) // semantic index + link graph
 
   const row = parseContactFile(vaultRoot, file.absolute)
   if (!row) throw new Error('Patched file failed to parse — rolling back is your job')

@@ -27,6 +27,10 @@
 //   - bots: read the settings and run history of the bots that work here;
 //   - a repo checkout: file a card on a project of this workspace, owned by the
 //     bot, and start it — the card session gets its own git worktree;
+//   - ask for an AI review of a card the bot OWNS (cardOwnerBot) that sits in
+//     review with a pull request and no verdict, through the same service the
+//     operator's /api/internal/ai-review/request route uses, inside the review
+//     bounce cap (obj 901457);
 //   - file and own cards: create_objective, with the bot's slug passing the
 //     workspace agent pool through the obj 900948 helper (`botGrantedWorkspace`
 //     inside `checkAgentInWorkspacePool`). There is no second bypass here.
@@ -49,17 +53,32 @@ import { broadcast } from '../../ws/index.js'
 import { workspaceKbRoot } from '../doc-ingest/kb-paths.js'
 import { userHasWorkspace } from '../../middleware/workspace.js'
 import type { ChatAgent } from './agent-defs.js'
-import { fullAccessActive, getFullAccess, listFullAccess, protectedCardRefusal, protectedPrInText, writeFullAccessAudit } from './bot-full-access.js'
+import { fullAccessActive, getFullAccess, listFullAccess, protectedCardRefusal, protectedPrTextRefusal, writeFullAccessAudit } from './bot-full-access.js'
 import { botGrantedWorkspace, botMayUseWorkspace, highAgencyRoutineSlug, personaOwnershipBlocked } from './bot-workspaces.js'
 import { chatCardModel, chatOwnerBotName, ToolUseError, type ToolContext, type ToolOutcome, type ToolSpec } from './tools.js'
 import { agentExists } from '../agent-registry.js'
 import { botForAgentSlug } from '../bots/bot-registry.js'
 import { publicCardUrl } from '../../lib/public-url.js'
+import { isDuplicateGuardEnabled, recordDedupe } from '../../lib/objective-dedupe.js'
+import { explicitKey, filingFingerprint, findFiledByKey, findPossibleDuplicate, NEAR_DUPLICATE_THRESHOLD, parseFilingKey, possibleDuplicateResult, recordFiledKeys, titleSimilarity } from './card-filing-guard.js'
+import { composeCardBrief, normalizeDoneWhen } from '../../../../shared/card-brief.js'
+import { CARD_BRIEF_TOOL_HINT, DONE_WHEN_ARG, STOP_CONDITIONS_ARG } from './card-brief-args.js'
+import { collectDeployStatus, type DeployStatus } from '../deploy-waiting.js'
+import { cardDecisionsForBot, cardOwnerAndGrants, cardThreadForBot, holdView } from './card-context.js'
+import { cardOwnerBot, ownerHasSlug } from '../bots/card-owner.js'
+import { requestAiReview, type RequestReviewResult } from '../ai-review-backfill.js'
+import { AI_REVIEW_ITERATION_CAP } from '../poller-decisions.js'
 
 /** Starts and messages a card. The host uses the same loopback routes the scheduler does; tests pass a stub. */
 export interface FullAccessHost {
   startCard(objectiveId: number, actor: string): Promise<{ ok: boolean; status?: string; reason?: string }>
   messageCard(objectiveId: number, message: string): Promise<{ ok: boolean; status?: string; reason?: string }>
+  /**
+   * Spawn an AI reviewer for a card in review (obj 901457). The host runs the
+   * same `requestAiReview` the operator route does, behind the session cap;
+   * tests pass a stub reviewer spawn. Optional only so older stubs still type.
+   */
+  requestReview?(objectiveId: number, opts: { requestedBy: string; maxIteration: number }): Promise<RequestReviewResult>
 }
 
 function port(): number {
@@ -107,9 +126,20 @@ export const hostFullAccessHost: FullAccessHost = {
       return { ok: false, reason: `message request failed: ${err instanceof Error ? err.message : String(err)}` }
     }
   },
+  async requestReview(objectiveId, opts) {
+    const db = getDb()
+    const { sessionCapReached, SESSION_CAP_ERROR } = await import('../../lib/session-cap.js')
+    if (sessionCapReached(db)) return { id: objectiveId, ok: false, code: 'spawn_failed', detail: SESSION_CAP_ERROR }
+    const { defaultAiReviewDeps } = await import('../../routes/internal-ai-review.js')
+    return requestAiReview(db, objectiveId, defaultAiReviewDeps(), opts)
+  },
 }
 
-type FaCtx = Pick<ToolContext, 'userId' | 'agent' | 'workspace'> & Partial<Pick<ToolContext, 'botWake' | 'username' | 'kbRoot' | 'now'>> & { fullAccessHost?: FullAccessHost }
+type FaCtx = Pick<ToolContext, 'userId' | 'agent' | 'workspace'> & Partial<Pick<ToolContext, 'botWake' | 'username' | 'kbRoot' | 'now'>> & {
+  fullAccessHost?: FullAccessHost
+  /** Reads the "merged, waiting for deploy" picture (obj 901389); tests pass a stub. */
+  deployStatusReader?: () => DeployStatus
+}
 
 function personIsAdmin(userId: number): boolean {
   try {
@@ -205,7 +235,7 @@ const WS_ARG = { type: 'string', description: 'Workspace slug. Omit for this cha
 
 const FULL_ACCESS_SPECS: ToolSpec[] = [
   fn('full_access_status', 'Where you have Full access right now, when it expires, and whether an admin switched Billing on. Secret values, keys and DNS / Cloudflare Access are never part of Full access.', obj({})),
-  fn('card_read', 'Full access: read ANY card in the workspace in full, whoever owns it — description, success criteria, owner, worker, status, latest result, AI review, PR link.', obj({ id: { type: 'integer' } }, ['id'])),
+  fn('card_read', 'Full access: read ANY card in the workspace in full, whoever owns it — description, success criteria, owner, worker, status, latest result, AI review, PR link, holds (queue_hold / blocked_by), active approve-on-my-behalf grants of the owner bot, every decision with its briefing and what the owner chose (option, note, who, when, result), and the recent card thread.', obj({ id: { type: 'integer' } }, ['id'])),
   fn('card_take_over', 'Full access: take a card over — you become its worker and owner, whoever had it. It does not restart the card; use card_restart or card_comment for that.',
     obj({ id: { type: 'integer' }, note: { type: 'string', description: 'Why you are taking it (kept in the log).' } }, ['id'])),
   fn('card_reown', 'Full access: hand a card to another owner — an agent or bot that may work in this workspace (agent), and/or a person in this workspace (assign_to, a username).',
@@ -214,6 +244,8 @@ const FULL_ACCESS_SPECS: ToolSpec[] = [
     obj({ id: { type: 'integer' }, message: { type: 'string', description: 'What the worker should know or do next.' } }, ['id', 'message'])),
   fn('card_restart', 'Full access: restart any card in the workspace (move it back to working, which starts its worker). The board\'s own rules still apply: a locked or human-closed card is not reopened.',
     obj({ id: { type: 'integer' }, message: { type: 'string', description: 'Optional instruction to restart it with.' } }, ['id'])),
+  fn('card_request_review', 'Full access: ask for an AI review of YOUR OWN card (one you own) when it sits in review with a pull request and no review verdict. It does not re-run the work. Refused for another bot\'s card, a protected card, a card that already has a verdict, and once the card has used its review rounds.',
+    obj({ id: { type: 'integer' }, note: { type: 'string', description: 'Why it needs a review now (kept in the log).' } }, ['id'])),
   fn('workflow_list', 'Full access: list the workspace\'s workflows (id, name, status, published and latest version).', obj({ workspace: WS_ARG })),
   fn('workflow_read', 'Full access: read one workflow: its details and the latest version\'s definition.', obj({ id: { type: 'integer' } }, ['id'])),
   fn('workflow_save_draft', 'Full access: save an edited workflow definition as a new DRAFT version. Read it first and send the FULL definition. A draft never runs: publishing is the owner\'s click in the app.',
@@ -232,20 +264,29 @@ const FULL_ACCESS_SPECS: ToolSpec[] = [
   fn('bot_read', 'Full access: one bot\'s settings in full: instructions, model, tools, knowledge folders, High Agency.', obj({ slug: { type: 'string' }, workspace: WS_ARG }, ['slug'])),
   fn('bot_run_history', 'Full access: a bot\'s recent runs in this workspace: its High Agency wakes and the cards it worked.',
     obj({ slug: { type: 'string' }, workspace: WS_ARG, limit: { type: 'integer', minimum: 1, maximum: 50, description: 'Default 20' } }, ['slug'])),
-  fn('repo_session_start', 'Full access: get a repo checkout. Files a card on one of this workspace\'s projects (repos), owned by you, and starts it: the card\'s session runs in its own git worktree of that repo and reports back on the card. Use for code changes and anything that needs the files.',
+  fn('repo_session_start', 'Full access: get a repo checkout. Files a card on one of this workspace\'s projects (repos), owned by you, and starts it: the card\'s session runs in its own git worktree of that repo and reports back on the card. Use for code changes and anything that needs the files. Look at the board first so you do not start work that is already there. A retry never means file again: the same request returns the card already filed, and an open card with a near-identical title comes back as "possible duplicate #N" with nothing filed (comment on it or take it over instead). If the result says the card exists but did not start, start THAT card later with card_restart; never re-create it. ' + CARD_BRIEF_TOOL_HINT,
     obj({
       project: { type: 'string', description: 'The project (repo) name, as it appears on this workspace\'s cards.' },
       title: { type: 'string' },
-      description: { type: 'string', description: 'What to do in the repo, and what "done" looks like.' },
+      description: { type: 'string', description: 'What to do in the repo and why. Put what "done" looks like in done_when and the stop cases in stop_conditions, not here.' },
+      done_when: DONE_WHEN_ARG,
+      stop_conditions: STOP_CONDITIONS_ARG,
       workspace: WS_ARG,
+      idempotency_key: { type: 'string', description: 'One key per session you intend to start (any short unique string, no spaces). Reuse it word for word if you call again for the SAME work: you get the card already filed, never a second one.' },
+      file_anyway: { type: 'boolean', description: 'Only after a result said "possible duplicate #N" and you checked that card is different work: true files the new card anyway.' },
     }, ['project', 'title', 'description'])),
+  // obj 901389. Named without "deploy" on purpose: no tool a bot is offered names
+  // merge / deploy / approve / migrate (bot-full-access.test.ts pins that), and
+  // this one only READS. It never deploys, restarts or migrates anything.
+  fn('release_status', 'Full access, read-only: which merged pull requests on this install\'s own main are NOT live yet (each with PR number, title, card number, who merged it, and a database-migration flag), and the two "merged is not deployed" checks: is the live checkout at origin/main, and did the running server start after the last merge. It never deploys or restarts anything: the owner deploys.',
+    obj({ workspace: WS_ARG })),
 ]
 
 export const FULL_ACCESS_FNS: ReadonlySet<string> = new Set(FULL_ACCESS_SPECS.map(s => s.function.name))
 
 /** Abilities that change something. Each successful use is one audit row. */
 const WRITE_ABILITIES: ReadonlySet<string> = new Set([
-  'card_take_over', 'card_reown', 'card_comment', 'card_restart', 'workflow_save_draft', 'routine_update', 'repo_session_start',
+  'card_take_over', 'card_reown', 'card_comment', 'card_restart', 'card_request_review', 'workflow_save_draft', 'routine_update', 'repo_session_start',
 ])
 
 /** The Full access tool specs, only while Full access counts for this turn. */
@@ -463,6 +504,35 @@ export async function runFullAccessTool(ctx: FaCtx & { username: string }, fnNam
   const me = botLabel(ctx)
 
   switch (fnName) {
+    case 'release_status': {
+      // Admin + Full access in this workspace, or a logged refusal. Read-only: not a WRITE_ABILITY.
+      requireWorkspace(ctx, fnName, args.workspace)
+      const st = (ctx.deployStatusReader ?? (() => collectDeployStatus(db)))()
+      return {
+        result: {
+          ok: st.ok,
+          ...(st.error ? { error: st.error } : {}),
+          summary: st.summary,
+          live: st.live,
+          checkout_at_origin_main: st.checkout_at_origin_main,
+          server_started_after_last_merge: st.server_started_after_last_merge,
+          server_started_at: st.server_started_at,
+          last_merge_at: st.last_merge_at,
+          waiting_for_deploy: (st.waiting ?? []).map(w => ({
+            pr: w.pr_number,
+            title: w.title,
+            card: w.card_id,
+            merged_by: w.merged_by_label,
+            migration: w.migration,
+            ...(w.migration ? { migration_paths: w.migration_paths } : {}),
+            sha: w.short_sha,
+          })),
+          migrations_waiting: st.migrations_waiting ?? 0,
+          note: 'Read-only. You cannot deploy: tell the person what is waiting; the owner deploys.',
+        },
+        summary: st.summary,
+      }
+    }
     case 'full_access_status': {
       if (!personIsAdmin(ctx.userId)) requireWorkspace(ctx, fnName, ctx.workspace)
       const on = fullAccessWorkspaces(ctx)
@@ -496,7 +566,6 @@ export async function runFullAccessTool(ctx: FaCtx & { username: string }, fnNam
           project: c.project ?? null,
           type: c.type,
           worker_agent: c.agent_context,
-          owner_bot: r.owner_bot ?? null,
           assigned_to: assignee,
           parent_id: c.parent_id ?? null,
           has_blockers: Number(c.has_blockers) > 0,
@@ -507,6 +576,15 @@ export async function runFullAccessTool(ctx: FaCtx & { username: string }, fnNam
           completion_goal: clip(r.completion_goal, 3000),
           acceptance_criteria: clip(typeof r.acceptance_criteria === 'string' ? r.acceptance_criteria : JSON.stringify(r.acceptance_criteria ?? null), 3000),
           latest_result: clip(c.last_session_summary, 6000),
+          // obj 901277: what the bot needs to say where the card REALLY stands —
+          // the holds, who owns it (and what that bot may approve here), every
+          // decision with the answer, and the recent thread incl. the follow-up
+          // that applied the answer. The description can be stale; these are not.
+          ...holdView(r.queue_hold, r.blocked_by),
+          ...cardOwnerAndGrants(db, { id: c.id, workspace: c.workspace, owner_bot: (r.owner_bot as string | null) ?? null, agent_context: c.agent_context }, now),
+          decisions: cardDecisionsForBot(db, c.id, { full: true }),
+          recent_thread: cardThreadForBot(db, { id: c.id, session_id: c.session_id ?? null }, { limit: 12, maxChars: 800 }),
+          note: 'decisions[].answer / chosen_label is what the owner chose; recent_thread shows what reached the worker. When they disagree with the description (e.g. "held until approved"), they are newer.',
           updated_at: c.updated_at,
           url: publicCardUrl(c.id),
         },
@@ -604,6 +682,46 @@ export async function runFullAccessTool(ctx: FaCtx & { username: string }, fnNam
       if (!r.ok) throw new ToolUseError(`Card #${c.id} was not restarted: ${r.reason ?? 'unknown reason'}`)
       used(ctx, fnName, c.workspace, `restarted card #${c.id}`, c.id)
       return { result: { id: c.id, restarted: true, status: r.status ?? 'working' }, summary: `Restarted card #${c.id}`, objective_id: c.id }
+    }
+
+    case 'card_request_review': {
+      const c = requireCard(ctx, fnName, args.id)
+      // Own card only: the one ownership rule (obj 900956). Taking a card over
+      // first is a separate, logged act; this tool never reaches past it.
+      if (!ownerHasSlug(cardOwnerBot(c, db), ctx.agent.slug)) {
+        refuse(ctx, fnName, c.workspace, 'card is not owned by this bot',
+          `Card #${c.id} is not ${me}'s card, so ${me} cannot ask for its review. Its owner, or a person, can.`, c.id)
+      }
+      const iteration = Number((c as unknown as { ai_review_iteration?: number | null }).ai_review_iteration) || 0
+      if (iteration >= AI_REVIEW_ITERATION_CAP) {
+        refuse(ctx, fnName, c.workspace, `review cap reached (${iteration}/${AI_REVIEW_ITERATION_CAP})`,
+          `Card #${c.id} has used its ${AI_REVIEW_ITERATION_CAP} AI review rounds. Another review needs a person: raise a decision for the owner.`, c.id)
+      }
+      const doReview = host.requestReview ?? hostFullAccessHost.requestReview!
+      const r = await doReview(c.id, { requestedBy: `bot:${ctx.agent.slug}`, maxIteration: AI_REVIEW_ITERATION_CAP })
+      if (!r.ok) {
+        const why: Record<string, string> = {
+          not_in_review: `it is ${c.status}, not in review`,
+          has_verdict: `it already has a review verdict (${c.ai_review_verdict})`,
+          no_pr: 'it has no pull request linked',
+          pr_not_open: `its pull request is ${r.detail ?? 'not open'}`,
+          delegator: 'it is a delegator card', strategy: 'it is a Strategy', routine: 'it is a scheduled-task run',
+          skip_ai_review: 'AI review is switched off for it',
+          iteration_cap: `it has used its ${AI_REVIEW_ITERATION_CAP} AI review rounds`,
+          spawn_failed: `the reviewer did not start (${r.detail ?? 'unknown reason'})`,
+          raced: 'the card moved while the reviewer started',
+        }
+        const reason = why[r.code] ?? r.code
+        refuse(ctx, fnName, c.workspace, `review not requested: ${r.code}`, `No review was started for card #${c.id}: ${reason}.`, c.id)
+      }
+      broadcastCard(c.id)
+      const note = str(args, 'note')
+      used(ctx, fnName, c.workspace, `asked for an AI review of card #${c.id} (round ${r.iteration} of ${AI_REVIEW_ITERATION_CAP})${note ? ` — ${note.slice(0, 200)}` : ''}`, c.id)
+      return {
+        result: { id: c.id, status: 'ai_review', review_round: r.iteration, review_cap: AI_REVIEW_ITERATION_CAP, note: 'The AI reviewer is reading the pull request now. The verdict lands on the card; the work was not re-run.' },
+        summary: `Asked for an AI review of card #${c.id}`,
+        objective_id: c.id,
+      }
     }
 
     case 'workflow_list': {
@@ -805,7 +923,9 @@ export async function runFullAccessTool(ctx: FaCtx & { username: string }, fnNam
       const ws = requireWorkspace(ctx, fnName, args.workspace)
       const project = str(args, 'project', true)
       const title = str(args, 'title', true).slice(0, 200)
-      const description = str(args, 'description', true)
+      // obj 901496: same card brief as create_objective (one composer, one column).
+      const description = composeCardBrief(str(args, 'description', true), args.stop_conditions)
+      const doneWhen = normalizeDoneWhen(args.done_when)
       const known = (db
         .prepare("SELECT DISTINCT project FROM objectives WHERE workspace = ? AND project IS NOT NULL AND project != '' AND deleted_at IS NULL ORDER BY project")
         .all(ws) as { project: string }[]).map(r => r.project)
@@ -817,43 +937,96 @@ export async function runFullAccessTool(ctx: FaCtx & { username: string }, fnNam
       const poolError = botOwnershipRefusal(ctx.agent.slug, ws, project)
       if (poolError) refuse(ctx, fnName, ws, poolError, poolError)
       // A new session must not be pointed at a protected pull request either.
-      const protectedPr = protectedPrInText(`${title}\n${description}`)
-      if (protectedPr !== null) {
-        writeFullAccessAudit({
-          event: 'protected_refused', slug: ctx.agent.slug, workspace: ws, actor: `bot:${ctx.agent.slug}`, actor_user_id: ctx.userId,
-          ability: fnName, detail: `repo session brief names protected PR ${protectedPr}`,
-        })
-        throw new ToolUseError(`Refused: pull request ${protectedPr} is protected. Full access never starts a session to work on it. This refusal was logged.`)
+      // Same check, same message as create_objective (protectedPrTextRefusal);
+      // `doneWhen` is folded into the description text so it is covered too.
+      const textRefusal = protectedPrTextRefusal({ slug: ctx.agent.slug, workspace: ws, ability: fnName, title, description: `${description}\n${doneWhen}`, actorUserId: ctx.userId })
+      if (textRefusal) throw new ToolUseError(textRefusal)
+      // One card per intended session (obj 901498). The bot's own key, else a
+      // fingerprint of the request; both are remembered, so a retry that drops
+      // or keeps the key lands on the same card.
+      let given: string | null
+      try {
+        given = parseFilingKey(args.idempotency_key)
+      } catch (e) {
+        throw new ToolUseError((e as Error).message)
+      }
+      const who = { userId: ctx.userId, agentSlug: ctx.agent.slug, tool: fnName, workspace: ws }
+      const fingerprint = filingFingerprint(project, title, description)
+      const byKey = given ? findFiledByKey(db, who, explicitKey(given)) : null
+      if (byKey && titleSimilarity(byKey.title, title) < NEAR_DUPLICATE_THRESHOLD) {
+        throw new ToolUseError(`idempotency_key "${given}" already belongs to card #${byKey.cardId} ("${byKey.title}"). Use a new key for a different session. Nothing was filed.`)
+      }
+      const filed = byKey ?? findFiledByKey(db, who, fingerprint)
+      if (filed) {
+        const running = filed.status !== 'queue'
+        return {
+          result: {
+            filed: true,
+            id: filed.cardId,
+            project,
+            workspace: ws,
+            status: filed.status,
+            reused: true,
+            started: running,
+            note: running
+              ? `This is card #${filed.cardId}, which you already filed for this request. It is ${filed.status}. NOTHING new was filed and nothing was started twice. Follow it with card_read.`
+              : `This is card #${filed.cardId}, which you already filed for this request. It EXISTS and has NOT started. NOTHING new was filed. Start it with card_restart ${filed.cardId}; never file it again.`,
+          },
+          summary: `Card #${filed.cardId} was already filed for this request`,
+          objective_id: filed.cardId,
+        }
+      }
+      // Search first: an open card with a near-identical title is handed back, not doubled.
+      if (args.file_anyway !== true && isDuplicateGuardEnabled(db)) {
+        const dup = findPossibleDuplicate(db, { title, workspace: ws })
+        if (dup) {
+          recordDedupe({ event: 'duplicate_refused', existingId: dup.id, title, workspace: ws, project, source: 'chat repo_session_start (possible duplicate)' })
+          return {
+            result: possibleDuplicateResult(dup, {
+              tool: fnName,
+              workspace: ws,
+              followUp: `read it with card_read ${dup.id}, add to it with card_comment, or take it with card_take_over / card_reown.`,
+            }),
+            summary: `Possible duplicate of card #${dup.id}: nothing new was filed`,
+          }
+        }
       }
       const body = [
         description,
         '',
         `— Repo session started from chat by the bot "${me}" (Full access in ${ws}), acting for ${ctx.username}. It runs in its own git worktree and reports on this card.`,
       ].join('\n')
-      const info = db
-        .prepare(
-          `INSERT INTO objectives (title, description, agent_context, workspace, project, category, depth, assigned_user_id, created_by, type, status, origin, owner_bot, model)
-           VALUES (?, ?, ?, ?, ?, 'general', ?, ?, ?, 'task', ?, 'agent_chat', ?, ?)`,
-        )
-        .run(title, body, ctx.agent.slug, ws, project, depthForParent(db, null), ctx.userId, ctx.userId, getInitialStatus('task'), ownerBotName(ctx.agent), chatCardModel(ctx.agent))
-      const cardId = Number(info.lastInsertRowid)
-      db.prepare('INSERT INTO agent_chat_cards (objective_id, user_id, agent_slug) VALUES (?, ?, ?)').run(cardId, ctx.userId, ctx.agent.slug)
+      // The card and its key land together: no await between the lookups above and this.
+      const cardId = db.transaction((): number => {
+        const info = db
+          .prepare(
+            `INSERT INTO objectives (title, description, agent_context, workspace, project, category, depth, assigned_user_id, created_by, type, status, origin, owner_bot, model, completion_goal)
+             VALUES (?, ?, ?, ?, ?, 'general', ?, ?, ?, 'task', ?, 'agent_chat', ?, ?, ?)`,
+          )
+          .run(title, body, ctx.agent.slug, ws, project, depthForParent(db, null), ctx.userId, ctx.userId, getInitialStatus('task'), ownerBotName(ctx.agent), chatCardModel(ctx.agent), doneWhen || null)
+        const id = Number(info.lastInsertRowid)
+        db.prepare('INSERT INTO agent_chat_cards (objective_id, user_id, agent_slug) VALUES (?, ?, ?)').run(id, ctx.userId, ctx.agent.slug)
+        recordFiledKeys(db, who, [fingerprint, ...(given ? [explicitKey(given)] : [])], id, fingerprint)
+        return id
+      })()
       broadcastCard(cardId)
       const started = await host.startCard(cardId, `bot:${ctx.agent.slug}`)
       const row = broadcastCard(cardId)
-      used(ctx, fnName, ws, `started a repo session on ${project}: card #${cardId}`, cardId)
+      used(ctx, fnName, ws, `${started.ok ? 'started' : 'filed (not started)'} a repo session on ${project}: card #${cardId}`, cardId)
       return {
         result: {
+          filed: true,
           id: cardId,
           project,
           workspace: ws,
           status: row?.status ?? 'queue',
+          reused: false,
           started: started.ok,
           note: started.ok
             ? `Card #${cardId} is running in its own checkout of ${project}. Check it with card_read; steer it with card_comment.`
-            : `Card #${cardId} is filed but did not start: ${started.reason ?? 'unknown reason'}. It is yours; card_restart tries again.`,
+            : `Card #${cardId} EXISTS on the board and has NOT started: ${started.reason ?? 'unknown reason'}. It is yours. Do not file it again: start it later with card_restart ${cardId}.`,
         },
-        summary: `Started a repo session on ${project}: card #${cardId}`,
+        summary: started.ok ? `Started a repo session on ${project}: card #${cardId}` : `Filed card #${cardId} on ${project}; it has not started yet`,
         objective_id: cardId,
       }
     }

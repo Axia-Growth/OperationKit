@@ -33,8 +33,10 @@ export interface Seed {
   workspace: string
   privateWorkspace: string
   projectId: number
-  cards: Record<"queue" | "working" | "aiReview" | "reviewPass" | "reviewFail" | "reviewBlocked" | "done" | "parent" | "child1" | "child2" | "longTitle" | "private", number>
+  cards: Record<"queue" | "working" | "decided" | "aiReview" | "reviewPass" | "reviewFail" | "reviewBlocked" | "done" | "parent" | "child1" | "child2" | "longTitle" | "private", number>
   bots: string[]
+  /** obj 901277: an answered decision on a card the Full-access bot `bot` owns. */
+  decision: { id: number; card: number; bot: string; botName: string; question: string; chosenKey: string; chosenLabel: string; otherLabel: string; note: string }
   admin: string
   member: string
   flowSaved: boolean

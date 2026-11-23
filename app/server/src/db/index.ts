@@ -35,6 +35,10 @@ import { initAgentChatSchema } from './schema/agent-chat.js'
 import { initBotJobsSchema } from './schema/bot-jobs.js'
 import { initBotMessagesSchema } from './schema/bot-messages.js'
 import { initBotCardWakesSchema } from './schema/bot-card-wakes.js'
+import { initBotSecretAccessSchema } from './schema/bot-secret-access.js'
+import { initChatTurnJobsSchema } from './schema/chat-turn-jobs.js'
+import { initBotFollowupsSchema } from './schema/bot-followups.js'
+import { initDevOpsSchema } from './schema/dev-ops.js'
 import { initAgentWebhooksSchema } from './schema/agent-webhooks.js'
 import { initEmailSchema } from './schema/email.js'
 import { initAccountabilitySchema } from './schema/accountability.js'
@@ -46,6 +50,7 @@ import { initFlowSchema, enableFlowsOnce } from './schema/flow.js'
 import { initRoutineRunsSchema } from './schema/routine-runs.js'
 import { initKbEmbeddingsSchema } from './schema/kb-embeddings.js'
 import { initDelegationGrantsSchema } from './schema/delegation-grants.js'
+import { initChatDeploysSchema } from './schema/chat-deploys.js'
 import { initBotAttentionSchema } from './schema/bot-attention.js'
 import { initDecisionSchema } from './schema/decisions.js'
 import { initBoardTriageSchema } from './schema/board-triage.js'
@@ -310,6 +315,13 @@ export function initDb(): Database.Database {
   // are inert until the flag is on. See services/governance.ts.
   if (!colNames.has('rejected_tree_sha')) {
     db.exec("ALTER TABLE objectives ADD COLUMN rejected_tree_sha TEXT")
+  }
+  // obj 901455 — the PR head commit the AI reviewer read (recorded at reviewer
+  // spawn, filled at verdict time if that read failed). The grant merge refuses
+  // a pass whose commit is not the PR head unless only GitHub update-branch
+  // merges came after it. Additive, nullable: NULL = a review from before this.
+  if (!colNames.has('ai_review_head_sha')) {
+    db.exec("ALTER TABLE objectives ADD COLUMN ai_review_head_sha TEXT")
   }
   if (!colNames.has('not_mergeable')) {
     db.exec("ALTER TABLE objectives ADD COLUMN not_mergeable INTEGER NOT NULL DEFAULT 0")
@@ -1110,6 +1122,14 @@ export function initDb(): Database.Database {
   initAgentWebhooksSchema(db)
   // needs_agent card wakes for in-product chat bots (obj 901328). Additive only.
   initBotCardWakesSchema(db)
+  // Per-bot secret grants (obj 901484). Additive CREATE TABLE only.
+  initBotSecretAccessSchema(db)
+  // Long chat turns as background jobs (obj 901491): the turn record + per-bot budget. Additive only.
+  initChatTurnJobsSchema(db)
+  // One-off follow-up wakes a chat bot sets for itself (obj 901392). Additive only.
+  initBotFollowupsSchema(db)
+  // Operation Kit Dev operator tools (obj 901424): switch, audit, pending merges, deploys.
+  initDevOpsSchema(db)
   // One-time email sign-in links (obj 900497). Additive CREATE TABLE only.
   initEmailSchema(db)
   // Accountability record + the one decision queue (obj 900367, Stage 1).
@@ -1145,6 +1165,8 @@ export function initDb(): Database.Database {
   // Delegated approvals (obj 900839): owner-issued bot grants + their audit log.
   // Additive tables only; no rows = the approval gate is unchanged (default deny).
   initDelegationGrantsSchema(db)
+  // obj 901393: audit of the chat deploy tool ("deploy on your word").
+  initChatDeploysSchema(db)
   // Needs You bulk triage audit (obj 900869): one batch row + one row per card.
   initBoardTriageSchema(db)
   // Bot visibility (obj 900947): one row per (card, reason) a bot told a person

@@ -9,6 +9,7 @@ import { useMediaQuery } from '../../hooks/useMediaQuery'
 import { detectSecrets, redactValue, type SecretCandidate } from '../../lib/secretDetect'
 import { SecretForm } from './ChatSecretRequest'
 import { formatFileSize, type UploadedFile } from './types'
+import { enterSends } from '../../lib/composerKeys'
 
 /**
  * obj 719065 → 900670: the composer's only secret affordance is the paste
@@ -187,7 +188,9 @@ export function Composer({
             value={message}
             onChange={e => setMessage(e.target.value)}
             onKeyDown={e => {
-              if (e.key === 'Enter' && !e.shiftKey) {
+              // One rule for every chat box (obj 901376): Enter sends on a
+              // desktop; on a phone Return is a new line and Send is the button.
+              if (enterSends(e)) {
                 e.preventDefault()
                 handleSendMessage()
               }

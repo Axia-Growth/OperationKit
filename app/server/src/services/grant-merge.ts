@@ -8,11 +8,14 @@
  * squash-merges the PR and only after that marks the card done.
  *
  * This is NOT auto-merge. `settings.auto_merge_enabled` is never read or
- * written here, a passing review on its own still merges nothing, and nothing
- * runs in the background: the merge happens only inside the request of a bot
- * that explicitly sent `approval: merge` and whose grant was checked by
- * `decideDelegatedApproval` (services/delegated-approvals.ts) — the same one
- * grant system the DELEGATED stamp and bot-approve use.
+ * written here, and a passing review on its own still merges nothing: the merge
+ * happens only inside the request of a bot that explicitly sent
+ * `approval: merge` and whose grant was checked by `decideDelegatedApproval`
+ * (services/delegated-approvals.ts) — the same one grant system the DELEGATED
+ * stamp and bot-approve use — or from a chat turn (grant-merge-tool.ts), or,
+ * since obj 901388, by the server itself for a bot's OWN passed card under a
+ * grant whose owner ticked "Merge without asking me each time"
+ * (services/standing-merge.ts). All three doors run this file unchanged.
  *
  * The merge policy is the auto-merge policy, reused rather than restated:
  * `decideAutoMerge` (services/auto-merge.ts) with its owner switch forced on,
@@ -36,14 +39,19 @@
  *    card cannot edit it, and the seed cannot be removed by configuration.
  *  - An empty or unreadable head SHA refuses: the merge is never sent without
  *    `--match-head-commit`.
+ *  - The pass must be for the code being merged (obj 901455). The reviewer's
+ *    commit (`ai_review_head_sha`, services/review-head.ts) must be the PR head,
+ *    or only GitHub update-branch merges from the base may follow it. Otherwise
+ *    `review_stale`: the pass is cleared and a fresh AI review is requested.
  *
  * Every refusal returns a code + a sentence and writes an `approval_denied`
  * delegation audit row; nothing is merged and the card does not move.
  */
 import type { Objective } from '@operationkit/shared'
+import { updateBehindBranch } from './grant-merge-update-branch.js'
 import { decideAutoMerge } from './auto-merge.js'
 import { isMoneyPath } from './merge-lane.js'
-import { defaultExec, fetchPrCheckState, fetchRequiredChecks } from './ci-green-gate-github.js'
+import { fetchPrCheckState, fetchRequiredChecks } from './ci-green-gate-github.js'
 import {
   DEFAULT_CONFIG,
   evaluateCiGate,
@@ -54,7 +62,18 @@ import {
   type RollupEntry,
 } from './ci-green-gate-decide.js'
 import { repoFromPrUrl } from './ci-green-gate-run.js'
+import {
+  isGhCredentialRejected,
+  isGhNotLoggedIn,
+  NO_MERGE_CREDENTIAL_MESSAGE,
+  resolveMergeGithubAuth,
+  type MergeGithubAuth,
+  type MergeGithubAuthQuery,
+} from './grant-merge-github-auth.js'
 import { getDb } from '../db/index.js'
+import { noteGrantMergeInFlight } from './merge-deploy-gate.js'
+import { migrationPaths } from '../lib/migration-paths.js'
+import { classifyHeadMove, isSha, requestReReviewForStalePass } from './review-head.js'
 
 export type GrantMergeRefusal =
   | 'no_pr'
@@ -70,11 +89,16 @@ export type GrantMergeRefusal =
   | 'pr_state_unreadable'
   | 'head_sha_unreadable'
   | 'merge_failed'
+  | 'github_credential_missing'
+  | 'github_credential_rejected'
+  | 'branch_updated_ci_pending'
+  | 'branch_update_failed'
+  | 'review_stale'
 
 export type GrantMergeCard = Pick<
   Objective,
   'id' | 'title' | 'description' | 'status' | 'type' | 'workspace' | 'project' | 'pr_url' | 'pr_number' | 'is_strategy'
-> & { ai_review_verdict?: string | null }
+> & { ai_review_verdict?: string | null; ai_review_head_sha?: string | null }
 
 /** True when this card's `approval: merge` goes down the server-side merge path. */
 export function cardHasPr(card: Pick<Objective, 'pr_url' | 'pr_number'>): boolean {
@@ -86,6 +110,13 @@ export interface Refusal {
   status: number
   code: GrantMergeRefusal
   error: string
+  /**
+   * obj 901388: set on `ci_not_green` when CI has not FINISHED (checks still
+   * running, none reported yet, a required check not in). Informational only:
+   * the refusal is identical. The standing merge reads it as "wait and look
+   * again", where red CI is a final refusal.
+   */
+  pending?: boolean
 }
 
 /** One reserved-PR rule: `repo` is `owner/name`, `name`, or null for "any repo". */
@@ -165,6 +196,11 @@ export function reservedPrMatch(card: Pick<Objective, 'pr_url' | 'pr_number'>, r
   return null
 }
 
+async function defaultOnStaleReview(card: GrantMergeCard, info: { reviewedSha: string; headSha: string }): Promise<{ reviewerSessionId: string | null }> {
+  const r = await requestReReviewForStalePass(getDb(), card, info)
+  return { reviewerSessionId: r.reviewerSessionId }
+}
+
 const refuse = (status: number, code: GrantMergeRefusal, error: string): Refusal => ({ ok: false, status, code, error })
 
 /**
@@ -208,6 +244,8 @@ export function precheckGrantMerge(card: GrantMergeCard, reserved: readonly Rese
 export interface CiGreenResult {
   green: boolean
   reason: string
+  /** obj 901388: not green only because CI has not finished yet (never set with red). */
+  pending?: boolean
 }
 
 /**
@@ -220,15 +258,15 @@ export function ciGreenForMerge(required: RequiredChecks, rollup: RollupEntry[] 
     return { green: false, reason: `the branch's required checks could not be read (${required.error ?? 'unknown error'})` }
   }
   const checks = normaliseRollup(rollup).filter(c => !isHarnessOwnStatus(c.name))
-  if (checks.length === 0) return { green: false, reason: 'the PR has no CI checks yet' }
+  if (checks.length === 0) return { green: false, reason: 'the PR has no CI checks yet', pending: true }
   const gate = evaluateCiGate({ requiredChecks: required, rollup, holdCount: 0, waitedMinutes: 0, mode: 'enforce', config: DEFAULT_CONFIG })
   if (gate.failingRequired.length) return { green: false, reason: `required check(s) failing: ${gate.failingRequired.join(', ')}` }
-  if (gate.missingRequired.length) return { green: false, reason: `required check(s) not finished: ${gate.missingRequired.join(', ')}` }
-  if (gate.action !== 'allow') return { green: false, reason: gate.reason }
+  if (gate.missingRequired.length) return { green: false, reason: `required check(s) not finished: ${gate.missingRequired.join(', ')}`, pending: true }
+  if (gate.action !== 'allow') return { green: false, reason: gate.reason, ...(gate.action === 'hold' ? { pending: true } : {}) }
   const red = checks.filter(c => c.state === 'failure' || c.state === 'cancelled').map(c => c.name)
   if (red.length) return { green: false, reason: `check(s) red: ${red.join(', ')}` }
   const pending = checks.filter(c => c.state === 'pending').map(c => c.name)
-  if (pending.length) return { green: false, reason: `check(s) still running: ${pending.join(', ')}` }
+  if (pending.length) return { green: false, reason: `check(s) still running: ${pending.join(', ')}`, pending: true }
   return { green: true, reason: `all ${checks.length} check(s) green` }
 }
 
@@ -239,12 +277,41 @@ export interface GrantMergeOk {
   prUrl: string
   headSha: string
   ci: string
+  /**
+   * Schema / migration paths the PR touches (lib/migration-paths.ts), [] when
+   * none, or null when GitHub would not list the PR's files (unknown — never
+   * read as "no migration").
+   */
+  migrationPaths: string[] | null
+  /**
+   * obj 901454: the PR was already merged on GitHub (by hand) when the approval
+   * arrived. Nothing was merged here; the caller still closes the card.
+   */
+  alreadyMerged?: boolean
 }
 
 export interface GrantMergeDeps {
+  /** A ready `gh` runner (tests). When given, no credential is resolved. */
   exec?: ExecFn
+  /** Who the merge is for, so a GitHub credential can be found at call time (obj 901372). */
+  auth?: MergeGithubAuthQuery
+  /** Credential resolver; defaults to `resolveMergeGithubAuth`. */
+  resolveAuth?: (q: MergeGithubAuthQuery) => MergeGithubAuth | null
   /** Reserved PRs; defaults to `loadReservedPrs()` (seed + server-side setting/env). */
   reserved?: readonly ReservedPr[]
+  /**
+   * The merge grant this merge runs under (obj 901389). When set, the PR is
+   * marked as a grant merge just before `gh pr merge`, so the merged-PR webhook
+   * — which can arrive before the audit row is written — never auto-deploys it
+   * without a deploy grant (services/merge-deploy-gate.ts).
+   */
+  grantId?: number
+  /**
+   * obj 901455 — the pass read an older commit and the PR changed since by more
+   * than a GitHub update-branch merge. Defaults to clearing the pass and
+   * requesting a fresh AI review (`requestReReviewForStalePass`).
+   */
+  onStaleReview?: (card: GrantMergeCard, info: { reviewedSha: string; headSha: string; reason: string }) => Promise<{ reviewerSessionId: string | null }>
 }
 
 /**
@@ -254,20 +321,39 @@ export interface GrantMergeDeps {
 export async function mergeUnderGrant(card: GrantMergeCard, deps: GrantMergeDeps = {}): Promise<GrantMergeOk | Refusal> {
   const pre = precheckGrantMerge(card, deps.reserved ?? loadReservedPrs())
   if (pre) return pre
-  const exec = deps.exec ?? defaultExec
   const prNumber = Number(card.pr_number)
   const repo = repoFromPrUrl(card.pr_url)
   if (!repo) return refuse(409, 'pr_state_unreadable', `Card #${card.id} has PR #${prNumber} but no GitHub PR link to read its repo from. Nothing was merged.`)
+
+  // obj 901372 — find a GitHub credential before the first call. The server's own
+  // login when it has one, else the grantor's connected GitHub account, else the
+  // workspace integration. None → a plain refusal, never gh's "run gh auth login".
+  let exec = deps.exec
+  if (!exec) {
+    const auth = (deps.resolveAuth ?? resolveMergeGithubAuth)({ workspace: card.workspace, ...deps.auth })
+    if (!auth) return refuse(503, 'github_credential_missing', `${NO_MERGE_CREDENTIAL_MESSAGE} Nothing was merged and the card was not closed.`)
+    exec = auth.exec
+  }
+  const authRefusal = (err: unknown): Refusal | null => {
+    const m = (err as Error)?.message ?? ''
+    if (isGhNotLoggedIn(m)) return refuse(503, 'github_credential_missing', `${NO_MERGE_CREDENTIAL_MESSAGE} Nothing was merged and the card was not closed.`)
+    if (isGhCredentialRejected(m)) {
+      return refuse(502, 'github_credential_rejected', `GitHub rejected the credential the server used for this merge (expired, revoked, or not authorised for ${repo}). Reconnect GitHub in Settings → Integrations. Nothing was merged and the card was not closed.`)
+    }
+    return null
+  }
 
   let headSha = ''
   let prUrl = card.pr_url ?? ''
   let ci: CiGreenResult
   let mergeState = ''
   let prState = ''
+  let baseRef = ''
   try {
     const pr = await fetchPrCheckState(repo, prNumber, exec)
     headSha = typeof pr.headSha === 'string' ? pr.headSha.trim() : ''
     prUrl = pr.url || prUrl
+    baseRef = pr.baseRef ?? ''
     const required = await fetchRequiredChecks(repo, pr.baseRef, exec)
     ci = ciGreenForMerge(required, pr.rollup)
     const raw = await exec('gh', ['pr', 'view', String(prNumber), '--repo', repo, '--json', 'state,mergeStateStatus'])
@@ -275,15 +361,50 @@ export async function mergeUnderGrant(card: GrantMergeCard, deps: GrantMergeDeps
     prState = String(j.state ?? '').toUpperCase()
     mergeState = String(j.mergeStateStatus ?? '').toUpperCase()
   } catch (err) {
+    const a = authRefusal(err)
+    if (a) return a
     return refuse(502, 'pr_state_unreadable', `Could not read PR #${prNumber} on ${repo} from GitHub (${(err as Error).message}). Nothing was merged and the card was not closed.`)
   }
 
+  // obj 901454: merged by hand on GitHub. The merge — the irreversible part — has
+  // already happened, so there is nothing to check or merge; the card just closes.
+  if (prState === 'MERGED') {
+    return { ok: true, repo, prNumber, prUrl, headSha, ci: 'PR was already merged on GitHub', alreadyMerged: true, migrationPaths: null }
+  }
   if (prState && prState !== 'OPEN') {
     return refuse(409, 'pr_not_open', `PR #${prNumber} on ${repo} is ${prState.toLowerCase()}, not open. Nothing was merged and the card was not closed.`)
   }
-  if (!ci.green) {
-    return refuse(409, 'ci_not_green', `CI is not green on PR #${prNumber}: ${ci.reason}. Nothing was merged and the card was not closed.`)
+
+  // obj 901455: the pass must be for the code being merged. The reviewer's commit
+  // is the PR head, or only GitHub update-branch merges from the base came after it
+  // (PR 896's update-branch writes those). Otherwise refuse and review again.
+  // A pass with no recorded commit predates this check and is merged as before.
+  const reviewedSha = (card.ai_review_head_sha ?? '').trim()
+  if (isSha(reviewedSha) && isSha(headSha)) {
+    let move: Awaited<ReturnType<typeof classifyHeadMove>>
+    try {
+      move = await classifyHeadMove({ repo, reviewedSha, headSha, baseRef, exec })
+    } catch (err) {
+      move = { kind: 'moved', reason: (err as Error).message }
+    }
+    if (move.kind === 'moved') {
+      let rereview = 'A fresh AI review could not be started; request one before merging.'
+      try {
+        const r = await (deps.onStaleReview ?? defaultOnStaleReview)(card, { reviewedSha, headSha, reason: move.reason })
+        if (r.reviewerSessionId) rereview = 'A fresh AI review of the new head has been started; approve the merge again once it passes.'
+      } catch (err) {
+        console.warn(`[grant-merge] card #${card.id}: re-review request failed:`, (err as Error).message)
+      }
+      return refuse(409, 'review_stale', `The AI review passed commit ${reviewedSha.slice(0, 12)}, but PR #${prNumber} is now at ${headSha.slice(0, 12)} (${move.reason}). ${rereview} Nothing was merged and the card was not closed.`)
+    }
   }
+  if (!ci.green) {
+    const r = refuse(409, 'ci_not_green', `CI is not green on PR #${prNumber}: ${ci.reason}. Nothing was merged and the card was not closed.`)
+    return ci.pending ? { ...r, pending: true } : r
+  }
+  // obj 901412: everything else passed and the ONLY problem is BEHIND → update the
+  // branch from its base (GitHub update-branch, pinned to this head); never merges.
+  if (mergeState === 'BEHIND') return updateBehindBranch({ exec, repo, prNumber, headSha, baseRef, card })
   // Same rule as auto-merge's prUnsafeToAutoMerge: only CLEAN / HAS_HOOKS merge.
   const unsafe = mergeState !== 'CLEAN' && mergeState !== 'HAS_HOOKS'
   if (unsafe) {
@@ -296,10 +417,64 @@ export async function mergeUnderGrant(card: GrantMergeCard, deps: GrantMergeDeps
     return refuse(502, 'head_sha_unreadable', `GitHub did not return a readable head commit for PR #${prNumber} on ${repo}, so the merge cannot be pinned to the commit CI checked. Nothing was merged and the card was not closed.`)
   }
 
+  // Marked BEFORE the merge and kept even if `gh` reports an error: a merge that
+  // landed but timed out must still not auto-deploy (fail toward the owner step).
+  if (deps.grantId != null) noteGrantMergeInFlight(repo, prNumber, deps.grantId, card.id)
   try {
     await exec('gh', ['pr', 'merge', String(prNumber), '--squash', '--delete-branch', '--repo', repo, '--match-head-commit', headSha])
   } catch (err) {
+    const a = authRefusal(err)
+    if (a) return a
     return refuse(502, 'merge_failed', `GitHub refused the squash-merge of PR #${prNumber} (${(err as Error).message}). The card was not closed.`)
   }
-  return { ok: true, repo, prNumber, prUrl, headSha, ci: ci.reason }
+  return { ok: true, repo, prNumber, prUrl, headSha, ci: ci.reason, migrationPaths: await prMigrationPaths(exec, repo, prNumber) }
+}
+
+/** The PR's migration / schema paths, read with the same `gh` access the merge used. Null = unreadable. */
+async function prMigrationPaths(exec: ExecFn, repo: string, prNumber: number): Promise<string[] | null> {
+  try {
+    const raw = await exec('gh', ['pr', 'view', String(prNumber), '--repo', repo, '--json', 'files'])
+    const j = JSON.parse(raw) as { files?: Array<{ path?: string }> }
+    if (!Array.isArray(j.files)) return null
+    return migrationPaths(j.files.map(f => String(f?.path ?? '')).filter(Boolean))
+  } catch {
+    return null
+  }
+}
+
+/**
+ * obj 901388: a READ-ONLY look at a PR's CI for the standing merge, so it can
+ * tell "CI still running" (wait) from everything else (attempt the merge, and
+ * let `mergeUnderGrant` decide) without writing a refusal on every look. Same
+ * credential resolution (obj 901372), the same reads and the same
+ * `ciGreenForMerge` rule as `mergeUnderGrant`; it decides nothing by itself — a
+ * merge is only ever made by `mergeUnderGrant`, which re-reads everything.
+ * Callers must run `precheckGrantMerge` first, so a reserved PR is never read
+ * from GitHub.
+ *
+ * `unreadable` = a transient read failure (worth waiting on). No credential,
+ * or a credential GitHub rejects, is NOT unreadable: the merge path turns it
+ * into its own plain refusal at once.
+ */
+export async function readMergeCi(
+  card: GrantMergeCard,
+  deps: Pick<GrantMergeDeps, 'exec' | 'auth' | 'resolveAuth'> = {},
+): Promise<CiGreenResult | { green: false; reason: string; unreadable?: boolean }> {
+  const repo = repoFromPrUrl(card.pr_url)
+  if (!repo) return { green: false, reason: 'no GitHub PR link' }
+  let exec = deps.exec
+  if (!exec) {
+    const auth = (deps.resolveAuth ?? resolveMergeGithubAuth)({ workspace: card.workspace, ...deps.auth })
+    if (!auth) return { green: false, reason: NO_MERGE_CREDENTIAL_MESSAGE }
+    exec = auth.exec
+  }
+  try {
+    const pr = await fetchPrCheckState(repo, Number(card.pr_number), exec)
+    const required = await fetchRequiredChecks(repo, pr.baseRef, exec)
+    return ciGreenForMerge(required, pr.rollup)
+  } catch (err) {
+    const m = (err as Error).message ?? ''
+    if (isGhNotLoggedIn(m) || isGhCredentialRejected(m)) return { green: false, reason: m }
+    return { green: false, reason: m, unreadable: true }
+  }
 }

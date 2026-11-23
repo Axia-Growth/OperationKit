@@ -352,11 +352,21 @@ describe('delivery reliability', () => {
     responder = () => new Error('hang')
     const id = seedCard(keyA.id)
     const start = Date.now()
-    setStatus(id, 'working')
-    setStatus(id, 'review')
     // Writes are pure SQLite; the network only happens in the separate deliver tick.
-    expect(Date.now() - start).toBeLessThan(200)
+    // The guarantee is structural, not a stopwatch (obj 901523): each write returns
+    // synchronously (no Promise to await on a receiver) and reaches no receiver at all.
+    // The old `< 200` ms bound failed on loaded CI runners (311 ms, 439 ms) while the
+    // write path itself was unchanged.
+    const r1 = setStatus(id, 'working')
+    const r2 = setStatus(id, 'review')
+    for (const r of [r1, r2]) {
+      expect(r).not.toBeInstanceOf(Promise)
+      expect(r.changes).toBe(1)
+    }
     expect(sent).toHaveLength(0)
+    // Coarse sanity bound only: a write that waited on a receiver would wait up to the
+    // 10 s delivery timeout; CI load spikes (hundreds of ms) stay far under half of it.
+    expect(Date.now() - start).toBeLessThan(wh.REQUEST_TIMEOUT_MS / 2)
     expect((getDb().prepare('SELECT status FROM objectives WHERE id = ?').get(id) as { status: string }).status).toBe('review')
   })
 })

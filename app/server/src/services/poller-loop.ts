@@ -24,6 +24,7 @@ import { sweepOrphanJailHomesThrottled } from './jail-home.js'
 import { activeSessions } from './session-registry.js'
 import { detectStartupFailure, describeStartupFailure, type StartupFailure } from './session-startup-failure.js'
 import { authParkReason, isAuthFailureMessage, recordAuthFailure } from './account-router.js'
+import { restSeatAfterNoOpSpawn } from './noop-seat-rest.js'
 import {
   isFloorActiveForProject,
   getFloorConfig,
@@ -59,6 +60,7 @@ import {
   isPrAutolinkKilled,
 } from './pr-linkage.js'
 import { sweepPreviewInfraResurrect } from './preview-infra-resurrect.js'
+import { sweepMergedPrHolds, holdForOpenPr } from './pr-merge-hold.js'
 import { relinkPrFromTranscript } from './pr-transcript-link.js'
 import { insertAlert } from './notifier.js'
 import { runCompletionGate, applyGateHandback } from './ci-green-gate.js'
@@ -67,7 +69,7 @@ import { queueExtraction } from './session-intel-pipeline.js'
 import { hasArenaCohort } from './arena-lifecycle.js'
 import { broadcast } from '../ws/index.js'
 import { mustRouteToHumanReview } from '../lib/human-tracked.js'
-import { classifyMergeLane, isRedLaneText, GREEN_LANE_FINDINGS, type MergeLane } from './merge-lane.js'
+import { isRedLaneText, GREEN_LANE_FINDINGS, type MergeLane } from './merge-lane.js'
 import { isBackendOnlyChange } from './design-context.js'
 import { resolveFilesTouched } from './files-touched.js'
 import { skipMachineStatusWrite, runMachineStatusUpdate } from '../lib/status-lock.js'
@@ -82,7 +84,7 @@ import {
   type NoOpDecision,
   decideDeadSessionRepark,
   classifyNoOpSpawn,
-  resolveWorkerEndStatus,
+  decideWorkerEndRoute,
   watchdogDecision,
   planReviewSessionSweep,
 } from './poller-decisions.js'
@@ -139,6 +141,7 @@ import { runSpendProjectionGuard } from './spend-guard.js'
 import { computeLiveObjectiveSpend } from './session-usage.js'
 import { teardownObjectiveJob } from './job-teardown.js'
 import { releaseBranchLeasesForObjective } from './branch-lease.js'
+import { captureReviewHeadSha } from './review-head.js'
 
 /** obj 900372 — how long a still-running session keeps its session_id after its card
  *  is moved to review (it is finishing its turn), before the sweep clears it anyway. */
@@ -173,7 +176,7 @@ function workerTranscriptPath(sessionId: string): string {
 }
 
 /** obj 900547 — production wiring for the abnormal-end auto-retry. */
-function handleAbnormalEndProd(objective: Objective): boolean {
+export function handleAbnormalEndProd(objective: Objective): boolean {
   const db = getDb()
   try {
     return handleAbnormalEnd(objective, {
@@ -393,6 +396,17 @@ export async function pollActiveSessions(): Promise<void> {
     await sweepPRLinkageAndHarness()
   } catch (err) {
     console.error('[state-poller] sweepPRLinkageAndHarness failed:', err)
+  }
+
+  // obj 901456 — passed cards held in review for an open PR close once it merges.
+  // Internally throttled; one gh call per held card at most every 5 minutes.
+  try {
+    await sweepMergedPrHolds(getDb(), {
+      gh: realGhExec,
+      onUpdated: (row) => broadcast({ type: 'objective_updated', payload: row }),
+    })
+  } catch (err) {
+    console.error('[state-poller] sweepMergedPrHolds failed:', err)
   }
 
   // Auto-re-review for preview-infra-blocked PRs (obj 719328). A SIBLING sweep,
@@ -1028,6 +1042,12 @@ export async function pollActiveSessions(): Promise<void> {
           // No-op spawn re-queued — NOT a deliverable, do NOT spawn a reviewer.
           noopRespawnCounts.set(objective.id, decision.attempt!)
           bumpAttempt(db, objective.id, 'noop_respawn') // durable twin of the line above (obj 900322)
+          // obj 901395: a spawn that produced nothing is the card-session twin of
+          // chat's empty turn. Rest the seat it ran on for the short empty-turn
+          // window so the respawn below is picked onto ANOTHER seat (before, the
+          // respawn could land on the same seat and reproduce the no-op).
+          const restedSeat = restSeatAfterNoOpSpawn(db, objective.session_id)
+          if (restedSeat) console.warn(`[state-poller] No-op spawn for objective ${objective.id}: seat ${restedSeat} rests briefly so the respawn moves to another seat.`)
           console.warn(
             `[state-poller] No-op spawn detected for objective ${objective.id} (0 tool calls / 0 file changes, attempt ${decision.attempt}/${MAX_NOOP_RESPAWNS}) — re-spawning worker, no reviewer.`
           )
@@ -1121,7 +1141,6 @@ export async function pollActiveSessions(): Promise<void> {
       let resolvedStatus: ObjectiveStatus = newStatus
       let mergeLane: MergeLane | undefined
       if (newStatus === 'review' && objective.status === 'working') {
-        const skipAi = !!(objective as Objective & { skip_ai_review?: boolean | number }).skip_ai_review
         let filesKnown = false
         let uiTouched = false
         if (objective.create_pr) {
@@ -1133,27 +1152,21 @@ export async function pollActiveSessions(): Promise<void> {
             console.warn(`[state-poller] merge-lane file list failed for obj ${objective.id}:`, (err as Error).message)
           }
         }
-        mergeLane = classifyMergeLane({
-          type: objective.type,
-          createPr: !!objective.create_pr,
-          delegateMode: !!objective.delegate_mode,
+        // obj 901381 — one routing decision from the row (poller-decisions.ts
+        // decideWorkerEndRoute): a linked PR counts as a PR even when the card
+        // was filed with create_pr = 0, so it reaches the AI reviewer.
+        const route = decideWorkerEndRoute(objective as Objective & { skip_ai_review?: boolean | number }, {
           redPath: isRedLaneText(objective),
           filesKnown,
           uiTouched,
-        })
-        resolvedStatus = resolveWorkerEndStatus({
-          type: objective.type,
-          delegateMode: !!objective.delegate_mode,
-          createPr: !!objective.create_pr,
-          skipAi,
           hasDelegatorParent: delegatorParentOf(objective) != null,
-          isRoutine: objective.routine_id != null,
-          lane: mergeLane,
           // obj 900322 — a routine card whose session refused (or produced
           // nothing) must not auto-complete to `done`. `decision` is the
           // no-op classifier already computed above for this same session.
           producedNothing: decisionProducedNothing,
         })
+        mergeLane = route.lane
+        resolvedStatus = route.status
         if (mergeLane === 'green') {
           console.log(`[state-poller] Green lane obj ${objective.id} (${objective.type}) — skip LLM reviewer → ${resolvedStatus}`)
         }
@@ -1181,7 +1194,10 @@ export async function pollActiveSessions(): Promise<void> {
         if (alreadyPassed || atAbsoluteCap) {
           // Forward status mirrors the reviewer PASS branch: project → human
           // review gate, everything else → done.
-          const forwardStatus: ObjectiveStatus = objective.type === 'project' ? 'review' : 'done'
+          let forwardStatus: ObjectiveStatus = objective.type === 'project' ? 'review' : 'done'
+          // obj 901456 — a passed card whose PR is still open waits in review
+          // until the PR merges (sweepMergedPrHolds then closes it).
+          if (alreadyPassed) forwardStatus = holdForOpenPr(db, objective, forwardStatus, 'rereview-skip-already-passed')
           const why = alreadyPassed
             ? `already passed AI review (verdict=pass, iteration ${objective.ai_review_iteration})`
             : `hit absolute AI-review cap (${MAX_AI_REVIEW_ITERATIONS} iterations)`
@@ -1530,12 +1546,15 @@ export async function pollActiveSessions(): Promise<void> {
                ai_review_verdict = NULL,
                ai_review_findings = NULL,
                ai_review_iteration = ?,
+               ai_review_head_sha = NULL,
                updated_at = datetime('now')
              WHERE id = ?`,
             reviewerSessionId,
             nextIteration,
             objective.id,
           )
+          // obj 901455: record the PR commit this reviewer reads (best-effort, async).
+          void captureReviewHeadSha(db, objective, reviewerSessionId)
           console.log(`[state-poller] Spawned reviewer ${reviewerSessionId} for objective ${objective.id} (${objective.type}) iteration ${nextIteration}`)
         } catch (err) {
           // If reviewer can't spawn (account exhausted etc.), leave in review for human triage.

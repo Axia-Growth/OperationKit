@@ -31,6 +31,8 @@ import {
 } from './secrets-store.js'
 import { credentialHint, expiryStatus, seatHealth, seatKind, type SeatHealth, type SeatKind } from './seat-pool.js'
 import type { SeatUsage } from './seat-usage.js'
+// Registers the operator's cool-down settings with the account router (obj 901395).
+import './seat-rotation-settings.js'
 
 const GLOBAL: SecretScope = { scopeType: 'global' }
 
@@ -129,6 +131,8 @@ export interface SeatSummary {
   health: SeatHealth
   available: boolean
   cooldownUntil: string | null
+  /** obj 901395: 'limit' = usage/rate limit, 'empty_turn' = a turn came back empty. Null unless cooling down. */
+  cooldownReason: 'limit' | 'empty_turn' | null
   consecutiveFailures: number
   credential: {
     kind: 'setup_token' | 'cli_login'
@@ -183,6 +187,8 @@ export function maskSeat(
     health,
     available: seat.available ?? health === 'healthy',
     cooldownUntil: health === 'cooling_down' ? seat.rateLimitResetsAt : null,
+    // obj 901395: why it rests. Older records carry no reason; they were all limits.
+    cooldownReason: health === 'cooling_down' ? (seat.cooldownReason === 'empty_turn' ? 'empty_turn' : 'limit') : null,
     consecutiveFailures: seat.consecutiveFailures || 0,
     credential: {
       kind: seat.credentialKind === 'setup_token' ? 'setup_token' : 'cli_login',

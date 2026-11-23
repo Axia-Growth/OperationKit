@@ -8,6 +8,9 @@
  * away when the dedupe / rate limit swallowed it (the row stays so the reason
  * is visible). `event_id` is UNIQUE, so the same event can never queue twice.
  *
+ * `bot_card_wake_self_actions` (obj 901394) records each change a bot made to a
+ * card itself, as an objective_events id range, so those events never wake it.
+ *
  * `agent_chat_card_wakes` is the per-bot switch. NO ROW = ON: the feature needs
  * no setup. A row with enabled = 0 turns the bot's card wakes off; its
  * needs_agent events then go to the webhook path exactly as before.
@@ -47,7 +50,25 @@ export function initBotCardWakesSchema(db: Database.Database): void {
       updated_by INTEGER,
       updated_at TEXT NOT NULL DEFAULT (datetime('now'))
     );
+
+    -- obj 901394: the objective_events id range of each change a bot made to a card
+    -- in a turn of its own, so the events it caused never wake it (no loops).
+    CREATE TABLE IF NOT EXISTS bot_card_wake_self_actions (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      slug TEXT NOT NULL,
+      objective_id INTEGER NOT NULL,
+      tool TEXT NOT NULL DEFAULT '',
+      from_event_id INTEGER NOT NULL DEFAULT 0,
+      to_event_id INTEGER,
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+    CREATE INDEX IF NOT EXISTS idx_bot_card_wake_self_actions ON bot_card_wake_self_actions(slug, objective_id, from_event_id);
   `)
+  try {
+    db.prepare("DELETE FROM bot_card_wake_self_actions WHERE created_at < datetime('now', '-7 days')").run()
+  } catch (err) {
+    console.error('[card-wakes] self-action prune failed:', (err as Error).message)
+  }
   try {
     db.prepare("DELETE FROM bot_card_wakes WHERE created_at < datetime('now', '-30 days')").run()
   } catch (err) {

@@ -5,6 +5,7 @@
  * Classify lives in external-remediation-classify.ts; owner matching in
  * external-remediation-resolve.ts. This file is the webhook act-path.
  */
+import { PUSH_ONCE_FIX_LINE } from '../lib/push-batching.js'
 import { execFile } from 'child_process'
 import type { Database } from 'better-sqlite3'
 import type { Objective, ServerMessage } from '@operationkit/shared'
@@ -236,6 +237,7 @@ export function buildRemediationPrompt(args: {
     `**(c) State the fix** — one or two sentences on the root cause and what you'll change.`,
     `**(d) Apply it IN THE WORKTREE** (\`/tmp/cc-worktree-${args.objective.id}/\`, absolute paths only),`,
     `   commit, and \`git push\` to your PR branch. Do NOT edit the live checkout.`,
+    `   ${PUSH_ONCE_FIX_LINE}`,
     `**(e) Confirm the check re-runs green.** If it fails again you'll get another automated`,
     `   nudge (bounded at ${maxAttempts} attempts). Do NOT merge — Operator merges.`,
     ``,

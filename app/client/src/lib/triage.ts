@@ -1,6 +1,7 @@
 import {
   TRIAGE_MAX_BATCH,
   type TriageAction,
+  type TriageBatchPreview,
   type TriageBatchRequest,
   type TriageBatchResponse,
   type TriageItemOutcome,
@@ -94,6 +95,33 @@ export async function runTriage(
     onProgress?.(done, req.objective_ids.length)
   }
   return { result: mergeBatchResults(req.action, results), error: null }
+}
+
+/** Dry run over the whole selection, chunk by chunk (obj 901519). Asks the
+ *  server what the action WOULD do to each card; nothing is changed. A chunk
+ *  that errors fails the whole preview, so a partial list is never shown as
+ *  if it were complete. */
+export async function previewTriage(
+  post: (body: TriageBatchRequest) => Promise<TriageBatchPreview>,
+  req: Omit<TriageBatchRequest, 'objective_ids' | 'dry_run'> & { objective_ids: readonly number[] },
+): Promise<TriageBatchPreview> {
+  const parts: TriageBatchPreview[] = []
+  for (const ids of chunkIds(req.objective_ids)) {
+    const part = await post({ ...req, objective_ids: ids, dry_run: true })
+    // An older server ignores dry_run and RUNS the action; never read that as a preview.
+    if (part.dry_run !== true) throw new Error('The server did not return a preview')
+    parts.push(part)
+  }
+  return {
+    dry_run: true,
+    action: req.action,
+    requested: parts.reduce((n, r) => n + r.requested, 0),
+    would_change: parts.reduce((n, r) => n + r.would_change, 0),
+    skipped: parts.reduce((n, r) => n + r.skipped, 0),
+    failed: parts.reduce((n, r) => n + r.failed, 0),
+    items: parts.flatMap(r => r.items),
+    note: parts[0]?.note ?? '',
+  }
 }
 
 export const TRIAGE_VERB: Record<TriageAction, { label: string; past: string; effect: string }> = {

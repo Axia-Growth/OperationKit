@@ -17,6 +17,12 @@ on:
 permissions:
   contents: read
 
+# obj 901348 (CI cost): one run per PR. A new push cancels the previous run
+# for the same PR (or ref, for workflow_dispatch). Never a repo-wide group.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 jobs:
   install:
     runs-on: ubuntu-24.04

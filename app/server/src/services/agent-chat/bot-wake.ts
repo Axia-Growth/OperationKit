@@ -23,6 +23,8 @@
 import { withResolvedKnowledgeFolders } from './knowledge-folders.js'
 import { getDb } from '../../db/index.js'
 import { frameAndScan } from '../injection-telemetry.js'
+import { openLoopsPromptBlock } from './open-loops.js'
+import { botMemoryPromptBlock } from './bot-memory.js'
 import { findAgent, installDefaultProvider, knowledgeRoot, runModelLoop, systemPromptFor, type LoopRecord } from './engine.js'
 import type { ChatAgent } from './agent-defs.js'
 import { resolveConnectors } from './connectors.js'
@@ -275,6 +277,9 @@ async function wake(msg: BotMessage, conversation: BotConversation, opts: DrainO
   const system =
     systemPromptFor(withFullAccess({ ...ctx, agent: withResolvedKnowledgeFolders(recipient, ctx.kbRoot, kbWorkspacesForChat(ctx.userId, recipient.slug)) }).agent, {
       fullAccess: fullAccessPromptLine(ctx),
+      // obj 901382: a bot that tracks open loops knows them when another bot wakes it too.
+      openLoops: openLoopsPromptBlock({ agent: withResolvedKnowledgeFolders(recipient, ctx.kbRoot, kbWorkspacesForChat(ctx.userId, recipient.slug)), kbRoot: ctx.kbRoot, userId, workspace: conversation.workspace, username: person }),
+      botMemory: botMemoryPromptBlock({ agent: withResolvedKnowledgeFolders(recipient, ctx.kbRoot, kbWorkspacesForChat(ctx.userId, recipient.slug)), kbRoot: ctx.kbRoot, userId, workspace: conversation.workspace, username: person }),
       username: person,
       now: now(),
       connectors: [connectors.mail?.label, connectors.calendar?.label].filter((x): x is string => !!x),
@@ -323,6 +328,9 @@ async function wake(msg: BotMessage, conversation: BotConversation, opts: DrainO
         meta: m.meta ? { ok: m.meta.ok !== false, ...(m.meta.objective_id ? { objective_id: m.meta.objective_id } : {}), ...(m.meta.bot_conversation_id ? { bot_conversation_id: m.meta.bot_conversation_id } : {}) } : null,
       })
     } else if (m.role === 'error') {
+      // obj 901395: a reply moved to another account is not a failure, and a bot
+      // thread is not where a person watches seats: leave it out of the thread.
+      if (m.meta?.kind === 'seat_moved') return
       insertEntry({ conversation, kind: 'error', from_slug: recipient.slug, to_slug: null, body: m.content, in_reply_to: msg.id, depth: msg.depth, provider: m.provider, model: m.model })
     }
   }

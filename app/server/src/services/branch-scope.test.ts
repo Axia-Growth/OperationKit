@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { deriveBranchName, deriveWorktreeBranchName, slugifyTitle, detectBranchBleed, detectProjectBleed } from './branch-scope.js'
+import { deriveBranchName, deriveWorktreeBranchName, slugifyTitle, detectBranchBleed, detectProjectBleed, isValidBranchName } from './branch-scope.js'
 import type { Objective } from '@operationkit/shared'
 
 function obj(p: Partial<Objective>): Pick<Objective, 'id' | 'title' | 'project' | 'create_pr' | 'branch_name'> {
@@ -22,6 +22,45 @@ describe('deriveBranchName', () => {
   it('slug matches the prompt block derivation', () => {
     expect(slugifyTitle('Fix the Thing!! (now)')).toBe('fix-the-thing-now')
   })
+  // obj 901542: a row written before the /pr-created validator existed (or one
+  // written some other way) can hold an unsafe branch_name. deriveBranchName must
+  // never hand that value to a caller that shells out — fall back to the derived slug.
+  it('ignores a stored branch_name that fails the validator and falls back to the derived slug', () => {
+    expect(deriveBranchName(obj({ branch_name: 'cc/obj-994-$(whoami)' }))).toBe('cc/obj-994-guardrail-thing')
+    expect(deriveBranchName(obj({ branch_name: '`id`' }))).toBe('cc/obj-994-guardrail-thing')
+    expect(deriveBranchName(obj({ branch_name: '-rf' }))).toBe('cc/obj-994-guardrail-thing')
+  })
+})
+
+describe('isValidBranchName (obj 901542)', () => {
+  it('accepts ordinary worker/cc branch names', () => {
+    expect(isValidBranchName('worker/901541-some-slug')).toBe(true)
+    expect(isValidBranchName('cc/obj-994-guardrail-thing')).toBe(true)
+    expect(isValidBranchName('feature/x.y_z-1')).toBe(true)
+  })
+  it('rejects shell metacharacters', () => {
+    expect(isValidBranchName('cc/obj-1-$(whoami)')).toBe(false)
+    expect(isValidBranchName('cc/obj-1-`id`')).toBe(false)
+    expect(isValidBranchName('cc/obj-1-"quoted"')).toBe(false)
+    expect(isValidBranchName('cc/obj-1-;rm -rf /')).toBe(false)
+    expect(isValidBranchName('cc/obj-1 with space')).toBe(false)
+    expect(isValidBranchName('cc/obj-1-with\nnewline')).toBe(false)
+  })
+  it('rejects a leading dash (would be parsed as a git flag)', () => {
+    expect(isValidBranchName('-rf')).toBe(false)
+    expect(isValidBranchName('--force')).toBe(false)
+  })
+  it('rejects .. (ref-range / traversal syntax)', () => {
+    expect(isValidBranchName('a..b')).toBe(false)
+    expect(isValidBranchName('../../etc/passwd')).toBe(false)
+  })
+  it('rejects names over 200 characters', () => {
+    expect(isValidBranchName('a'.repeat(201))).toBe(false)
+    expect(isValidBranchName('a'.repeat(200))).toBe(true)
+  })
+  it('rejects empty string', () => {
+    expect(isValidBranchName('')).toBe(false)
+  })
 })
 
 describe('deriveWorktreeBranchName (obj 1059 — isolation, create_pr-independent)', () => {
@@ -37,6 +76,9 @@ describe('deriveWorktreeBranchName (obj 1059 — isolation, create_pr-independen
   })
   it('prefers a persisted branch_name', () => {
     expect(deriveWorktreeBranchName(obj({ create_pr: 0 as never, branch_name: 'cc/obj-994-existing' }))).toBe('cc/obj-994-existing')
+  })
+  it('ignores a stored branch_name that fails the validator and falls back to the derived slug', () => {
+    expect(deriveWorktreeBranchName(obj({ branch_name: 'cc/obj-994-$(whoami)' }))).toBe('cc/obj-994-guardrail-thing')
   })
 })
 

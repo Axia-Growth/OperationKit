@@ -32,8 +32,31 @@ export function selfRepo(): string {
 }
 const REPO_DIR = process.env.CC_REPO_DIR || '/home/operator/projects/operationkit'
 const SELF_DEPLOY_SH = `${REPO_DIR}/scripts/self-deploy.sh`
-const LOCK = '/tmp/cc-auto-deploy.lock'
+const LOCK = process.env.CC_AUTO_DEPLOY_LOCK || '/tmp/cc-auto-deploy.lock'
 const DEBOUNCE_MS = 180_000 // a burst of merges within ~3min coalesces to one deploy
+
+/** obj 901393: the chat deploy tool runs the SAME script and shares this lock + window. */
+export const SELF_DEPLOY_SCRIPT = SELF_DEPLOY_SH
+export const SELF_DEPLOY_REPO_DIR = REPO_DIR
+export const DEPLOY_DEBOUNCE_MS = DEBOUNCE_MS
+
+/** How long ago the shared deploy lock was written (ms), or null when there is none. */
+export function deployLockAgeMs(now: number = Date.now()): number | null {
+  try {
+    return Math.max(0, now - fs.statSync(LOCK).mtimeMs)
+  } catch {
+    return null
+  }
+}
+
+/** Write the shared deploy lock (best-effort), so auto-deploy and chat deploy debounce each other. */
+export function writeDeployLock(reason: string, now: number = Date.now()): void {
+  try {
+    fs.writeFileSync(LOCK, `${now}\n${reason}\n`)
+  } catch {
+    /* lock is best-effort */
+  }
+}
 
 /** Owner switch — settings.auto_deploy_enabled='1' OR env CC_AUTO_DEPLOY. Default OFF.
  *  Read at call time so it arms/disarms instantly. Fail-safe: unreadable → off. */

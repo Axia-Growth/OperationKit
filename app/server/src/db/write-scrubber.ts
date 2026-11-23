@@ -36,6 +36,8 @@ export const SCRUBBED_TABLES = [
   // model-written text that may quote a key pasted into a chat.
   'bot_messages',
   'bot_conversations',
+  // obj 901392: a follow-up note is model-written text, shown to the person.
+  'bot_followups',
   // obj 900869: a bulk-triage batch carries a person-typed note.
   'board_triage_batches',
   // obj 901059: decision briefings are bot/worker-written (context, options,

@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import fs from 'fs'
 import os from 'os'
 import path from 'path'
+import { HOME_DIR, PROJECTS_DIR, SECOND_BRAIN_DIR } from '../config.js'
 import {
   buildVisionRubricBlock,
   buildReviewerDesignContextBlock,
@@ -113,9 +114,10 @@ describe('buildVisionRubricBlock — active modes inject the rubric', () => {
 })
 
 describe('buildReviewerDesignContextBlock — absolute paths (the ~-home fix)', () => {
-  it('resolves the token source to an absolute /home/operator path, never ~-relative', () => {
+  it('resolves the token source to an absolute path under PROJECTS_DIR, never ~-relative', () => {
     const block = buildReviewerDesignContextBlock(uiObjective)
-    expect(block).toContain('/home/operator/projects/example-project-platform/src/design-system/tokens.css')
+    expect(path.isAbsolute(PROJECTS_DIR)).toBe(true)
+    expect(block).toContain(`${PROJECTS_DIR}/example-project-platform/src/design-system/tokens.css`)
     expect(block).not.toMatch(/~\//)
   })
 })
@@ -139,12 +141,15 @@ describe('getUiGateMode — defaults to off (typo-safe)', () => {
   })
 })
 
-describe('canonicalRootEnv — injects the real /home/operator roots', () => {
+describe('canonicalRootEnv — injects the real install roots', () => {
+  // obj 901032: the roots come from config.ts (env var, else the install home),
+  // so assert against config rather than one operator's literal home.
   it('exposes the vault + projects roots so sessions can avoid ~ expansion', () => {
     const env = canonicalRootEnv()
-    expect(env.SECOND_BRAIN_DIR).toBe('/home/operator/second-brain')
-    expect(env.PROJECTS_DIR).toBe('/home/operator/projects')
-    expect(env.OPERATOR_HOME).toBe('/home/operator')
+    expect(env.SECOND_BRAIN_DIR).toBe(SECOND_BRAIN_DIR)
+    expect(env.PROJECTS_DIR).toBe(PROJECTS_DIR)
+    expect(env.OPERATOR_HOME).toBe(HOME_DIR)
+    for (const v of [env.SECOND_BRAIN_DIR, env.PROJECTS_DIR, env.OPERATOR_HOME]) expect(path.isAbsolute(v)).toBe(true)
   })
 })
 

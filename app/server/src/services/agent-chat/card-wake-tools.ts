@@ -47,6 +47,14 @@ export interface CardWakeScope {
   objectiveId: number
   /** The wake's ONE workspace: the card's. */
   workspace: string
+  /**
+   * obj 901394. `chat` = the turn also has the bot's normal chat tools, with the
+   * permissions of a normal chat turn by this bot for this person (no more).
+   * Unset / `own_cards` = the own-card tools only.
+   */
+  toolScope?: 'chat' | 'own_cards'
+  /** Every card this turn was woken for (a batch). The first is `objectiveId`. */
+  objectiveIds?: number[]
   host?: CardWakeHost
 }
 

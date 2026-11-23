@@ -1,0 +1,60 @@
+name: e2e decision answers
+
+# Card #901277: run the Playwright check that a Full-access bot, asked "what did
+# the owner choose on #N", names the chosen option. It boots a throwaway scratch
+# server (tests/e2e/app-audit/run.sh: env -i, temp DB, demo chat provider, no AI
+# account) and runs ONLY decision-answers.spec.ts in light-desktop.
+#
+# Kept out of `gate` on purpose: whether the app-audit Playwright suite gates
+# merges is the owner's call (tests/e2e/app-audit/README.md, "CI"). This job is
+# a visible, separate check on every PR.
+on:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: e2e-decision-answers-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  decision-answers:
+    name: e2e (decision answers)
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install app deps
+        working-directory: app
+        run: npm ci --include=dev
+      - name: Build client
+        working-directory: app
+        run: npm run build --workspace=client
+      - name: Install Playwright (same version as the app's playwright-core)
+        run: |
+          PW_VER=$(node -p "require('./app/node_modules/playwright-core/package.json').version")
+          npm i -g "@playwright/test@$PW_VER"
+          playwright install --with-deps chromium
+      - name: Run decision-answers.spec.ts
+        env:
+          E2E_WORK_ROOT: ${{ runner.temp }}
+          E2E_SHOTS_DIR: ${{ runner.temp }}/shots
+          E2E_OUTPUT_DIR: ${{ runner.temp }}/pw-out
+          E2E_REPORT_JSON: ${{ runner.temp }}/pw-out/report.json
+        run: |
+          PW_NODE_PATH="$(npm root -g)" bash tests/e2e/app-audit/run.sh decision-answers.spec.ts --project=light-desktop
+      - name: Upload screenshots and traces
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-decision-answers
+          path: |
+            ${{ runner.temp }}/shots
+            ${{ runner.temp }}/pw-out
+          if-no-files-found: ignore

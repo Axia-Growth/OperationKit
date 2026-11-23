@@ -39,10 +39,22 @@ export function classifyMergeLane(input: {
   filesKnown: boolean
   /** True when that list includes frontend/UI files. */
   uiTouched: boolean
+  /**
+   * obj 901381 — the card carries a linked PR (`pr_number` / `pr_url`) at
+   * session end. Optional: omitted = false = the pre-901381 table.
+   */
+  prLinked?: boolean
 }): MergeLane {
   if (input.delegateMode) return 'red'
   if (input.type === 'project') return 'red'
   if (input.redPath) return 'red'
+  // obj 901381 — an UNPLANNED PR: the card was filed without create_pr (chat
+  // create_objective, the internal create route) but its session opened a PR
+  // anyway. Nobody scoped it as a PR at creation, so it fails closed to the
+  // reviewer instead of falling through to `green` below — green would send it
+  // to `review` with no verdict, and both auto-merge and grant-merge need a
+  // `pass` verdict, so the PR could only ever be judged by hand.
+  if (!input.createPr && input.prLinked) return 'yellow'
   // UI PRs still get the Playwright reviewer. Unknown file lists fail closed
   // to yellow so a genuine UI change never skips the browser path.
   if (input.createPr && (!input.filesKnown || input.uiTouched)) return 'yellow'

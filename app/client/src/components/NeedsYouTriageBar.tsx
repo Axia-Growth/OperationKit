@@ -3,19 +3,22 @@ import { Check, History, UserRoundCog, X } from 'lucide-react'
 import type {
   Objective,
   TriageAction,
+  TriageBatchPreview,
   TriageBatchRequest,
   TriageBatchResponse,
   TriageBatchSummary,
   TriageOwnerOptions,
 } from '@operationkit/shared'
 import { api } from '../lib/api'
-import { runTriage, TRIAGE_VERB, type TriageRunResult } from '../lib/triage'
+import { previewTriage, runTriage, TRIAGE_VERB, type TriageRunResult } from '../lib/triage'
 import { Button, Modal, Select, useConfirm } from './ui'
 
 /**
  * Needs You bulk triage (obj 900869). Shown under the board header while
  * "Select" is on in the Needs You column. Every action:
- *  1. asks for confirmation, naming how many cards and what will happen;
+ *  1. asks the server for a dry run (obj 901519) and shows it in the
+ *     confirmation: exactly which cards would change and which would be
+ *     skipped, and why. The dry run changes nothing;
  *  2. runs as audited batches (POST /api/board-triage/batches, ≤100 cards
  *     each), one audit row per card, viewable under History;
  *  3. reports what changed, and which cards were skipped or failed and why.
@@ -24,6 +27,9 @@ import { Button, Modal, Select, useConfirm } from './ui'
 
 const postBatch = (body: TriageBatchRequest) =>
   api.post<TriageBatchResponse>('/board-triage/batches', body, { timeoutMs: 120_000 })
+
+const postPreview = (body: TriageBatchRequest) =>
+  api.post<TriageBatchPreview>('/board-triage/batches', body, { timeoutMs: 60_000 })
 
 function titleList(cards: Objective[], max = 5): string {
   const shown = cards.slice(0, max).map(c => `#${c.id} ${c.title}`)
@@ -70,22 +76,62 @@ export function NeedsYouTriageBar({
 
   const confirmAndRun = useCallback(async (action: Exclude<TriageAction, 'reassign'>) => {
     const verb = TRIAGE_VERB[action]
+    // Dry run first: the server says what it would touch. It changes nothing.
+    let preview: TriageBatchPreview | null = null
+    setBusy({ done: 0, total: n })
+    try {
+      preview = await previewTriage(postPreview, { action, objective_ids: selected.map(c => c.id) })
+    } catch {
+      preview = null // fall back to the plain list below; the real run still reports every skip
+    } finally {
+      setBusy(null)
+    }
+    const will = preview ? preview.items.filter(i => i.result === 'would_change') : []
+    const wont = preview ? preview.items.filter(i => i.result !== 'would_change') : []
+    const count = preview ? will.length : n
+    const box = 'block max-h-40 overflow-auto whitespace-pre-wrap rounded-md border border-line bg-surface-2 p-2 font-mono text-xs text-fg-2'
     const ok = await confirm({
-      title: `${verb.label} ${n} card${n === 1 ? '' : 's'}?`,
+      title: preview && count === 0
+        ? `Nothing to ${verb.label.toLowerCase()}`
+        : `${verb.label} ${count} card${count === 1 ? '' : 's'}?`,
       message: (
         // Rendered inside the dialog's description <p>, so phrasing content only.
-        <span className="block space-y-2">
-          <span className="block">Each card {verb.effect}. Every change is recorded in the triage history with your name.</span>
-          <span className="block">A card that has left Needs You, or that you are not allowed to change, is skipped and listed afterwards.</span>
-          <span className="block max-h-40 overflow-auto whitespace-pre-wrap rounded-md border border-line bg-surface-2 p-2 font-mono text-xs text-fg-2">
-            {titleList(selected)}
-          </span>
+        <span className="block space-y-2" data-testid="triage-preview">
+          {preview ? (
+            <>
+              <span className="block">
+                {count === 0
+                  ? 'None of the selected cards would change.'
+                  : `${count === 1 ? 'This card' : `These ${count} cards`} ${verb.effect.replace(/^moves/, count === 1 ? 'moves' : 'move')}. Every change is recorded in the triage history with your name.`}
+              </span>
+              {will.length > 0 && (
+                <span className={box} data-testid="triage-preview-will">
+                  {will.map(i => `#${i.objective_id} ${i.title ?? ''}`).join('\n')}
+                </span>
+              )}
+              {wont.length > 0 && (
+                <>
+                  <span className="block">{wont.length} would be left alone:</span>
+                  <span className={box} data-testid="triage-preview-wont">
+                    {wont.map(i => `#${i.objective_id} ${i.title ?? ''}: ${i.error ?? i.result}`).join('\n')}
+                  </span>
+                </>
+              )}
+              <span className="block text-xs text-fg-2">Checked with the server just now; nothing has been changed yet.</span>
+            </>
+          ) : (
+            <>
+              <span className="block">Each card {verb.effect}. Every change is recorded in the triage history with your name.</span>
+              <span className="block">A card that has left Needs You, or that you are not allowed to change, is skipped and listed afterwards.</span>
+              <span className={box}>{titleList(selected)}</span>
+            </>
+          )}
         </span>
       ),
-      confirmLabel: `${verb.label} ${n}`,
-      danger: action === 'dismiss',
+      confirmLabel: preview && count === 0 ? 'OK' : `${verb.label} ${count}`,
+      danger: action === 'dismiss' && count > 0,
     })
-    if (ok) await run({ action })
+    if (ok && count > 0) await run({ action })
   }, [confirm, n, run, selected])
 
   return (

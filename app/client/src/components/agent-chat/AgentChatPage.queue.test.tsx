@@ -60,7 +60,7 @@ function mount() {
 const box = () => host.querySelector('#agent-chat-input') as HTMLTextAreaElement
 const sendButton = () => [...host.querySelectorAll('button')].find(b => b.textContent === 'Send' && b.getAttribute('type') === 'submit') as HTMLButtonElement
 const stopButton = () => [...host.querySelectorAll('button')].find(b => (b.textContent ?? '').trim() === 'Stop') as HTMLButtonElement | undefined
-const queuedBubbles = () => [...host.querySelectorAll('[data-testid="queued-bubble"]')].map(b => (b.textContent ?? '').replace(/(Queued|Sending…)$/, ''))
+const queuedBubbles = () => [...host.querySelectorAll('[data-testid="queued-bubble"]')].map(b => (b.textContent ?? '').replace(/(Queued|Sending…|Waiting for you)(Remove)?$/, ''))
 const posts = (suffix: string) => calls.filter(c => c.method === 'POST' && c.url.endsWith(suffix))
 const confirmButton = (label: string) =>
   [...document.body.querySelectorAll('button')].find(b => b.textContent === label && !host.contains(b))
@@ -221,6 +221,9 @@ describe('composer while the bot is working (obj 900949)', () => {
     expect(posts('/stop')).toHaveLength(1)
     expect(posts('/stop')[0].body?.drop_queued).toBeUndefined()
     expect(queuedBubbles()).toEqual(['keep me'])
+    // obj 901488: kept, but it now waits for the person instead of going to the bot next.
+    expect(host.querySelector('[data-testid="queued-bubble"]')?.textContent).toContain('Waiting for you')
+    expect(host.querySelector('[data-testid="held-note"]')).toBeTruthy()
   })
 
   it('discarding the queue asks first, and only then sends drop_queued', async () => {
