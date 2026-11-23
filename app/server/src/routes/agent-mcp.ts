@@ -1400,6 +1400,25 @@ interface JsonRpcMessage { jsonrpc?: string; id?: JsonRpcId; method?: string; pa
 const rpcResult = (id: JsonRpcId, result: unknown) => ({ jsonrpc: '2.0', id, result })
 const rpcError = (id: JsonRpcId, code: number, message: string) => ({ jsonrpc: '2.0', id, error: { code, message } })
 
+/**
+ * Success payload for `tools/call`.
+ *
+ * MCP Tools (2025-06-18 and 2025-11-25, "Structured Content"): a structured
+ * result is a JSON object on `structuredContent`. The same JSON stays in a
+ * text block so clients that only read `content` keep working. The schema
+ * requires an object, so an array or a scalar stays text-only.
+ */
+export function toolSuccessResult(out: unknown): {
+  content: { type: 'text'; text: string }[]
+  structuredContent?: Record<string, unknown>
+} {
+  const content = [{ type: 'text' as const, text: JSON.stringify(out) }]
+  if (out !== null && typeof out === 'object' && !Array.isArray(out)) {
+    return { content, structuredContent: out as Record<string, unknown> }
+  }
+  return { content }
+}
+
 async function handleMessage(msg: JsonRpcMessage, req: AuthRequest, rest: RestCall): Promise<object | null> {
   if (!msg || typeof msg !== 'object' || msg.jsonrpc !== '2.0') return rpcError(null, -32600, 'Invalid Request')
   // Client responses and notifications (e.g. notifications/initialized) get no reply.
@@ -1454,7 +1473,7 @@ async function handleMessage(msg: JsonRpcMessage, req: AuthRequest, rest: RestCa
       }
       try {
         const out = await tool.run(args, rest)
-        return rpcResult(id, { content: [{ type: 'text', text: JSON.stringify(out) }] })
+        return rpcResult(id, toolSuccessResult(out))
       } catch (err) {
         const status = err instanceof ToolError ? err.status : 500
         const message = err instanceof Error ? err.message : String(err)

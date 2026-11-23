@@ -1437,6 +1437,7 @@ export const AGENT_OPENAPI = {
           'initialize / ping / tools/list / tools/call. Bearer only (cookies ignored). Each tools/call re-issues the REST ' +
           'route it wraps with the same key, so scopes, workspace allowlist, transitions and the session cap apply ' +
           'unchanged; a refused call returns isError with structuredContent { error, status, missing_scope }. ' +
+          'A successful call returns the JSON object as structuredContent and the same JSON in the text block. ' +
           'Write tools need a named agent key (the legacy full-access key is read-only over MCP). ' +
           'tools/list hides tools whose scope a named key lacks. GET → 405. Tool ↔ REST parity table: docs/api/README.md#mcp-server.',
         requestBody: { required: true, content: { 'application/json': { schema: { type: 'object', description: 'JSON-RPC 2.0 message or batch' } } } },
