@@ -1182,8 +1182,9 @@ export const AGENT_OPENAPI = {
           { name: 'workspace', in: 'query', schema: { type: 'string' } },
           { name: 'limit', in: 'query', schema: { type: 'integer', maximum: 20 } },
           { name: 'mode', in: 'query', schema: { type: 'string', enum: ['hybrid', 'keyword', 'semantic'], default: 'hybrid' }, description: 'hybrid = full-text + semantic (reciprocal rank fusion), exact names/IDs/card numbers first; keyword = full-text only; semantic = embeddings only' },
+          { name: 'minSimilarity', in: 'query', schema: { type: 'number', minimum: 0, maximum: 1, default: 0.2 }, description: 'cosine-similarity floor for semantic hits (issue #134); below it a hit is dropped, so an empty results list means "nothing relevant"; 0 disables' },
         ],
-        responses: { '200': { description: '{ results: [{ path, snippet, score, match: exact|both|keyword|semantic, heading?, line?, keyword_rank, semantic_rank, similarity }], mode, mode_used, semantic: { available, reason? } } — mode_used is keyword when semantic search is unavailable' }, '400': { description: 'q missing or unknown mode' } },
+        responses: { '200': { description: '{ results: [{ path, snippet, score, match: exact|both|keyword|semantic, heading?, line?, keyword_rank, semantic_rank, similarity }], mode, mode_used, semantic: { available, reason? } } — mode_used is keyword when semantic search is unavailable; results is empty when nothing clears the similarity floor' }, '400': { description: 'q missing or unknown mode' } },
       },
     },
     '/api/docs/related': {

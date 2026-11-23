@@ -126,9 +126,11 @@ export const PROVIDER_LABEL: Record<KbProvider, string> = {
   off: 'Off',
 }
 
-export function searchKb(q: string, mode: KbSearchMode, limit = 20, workspace?: string): Promise<KbSearchResponse> {
+export function searchKb(q: string, mode: KbSearchMode, limit = 20, workspace?: string, minSimilarity?: number): Promise<KbSearchResponse> {
   const params = new URLSearchParams({ q, mode, limit: String(limit) })
   if (workspace && workspace !== 'all') params.set('workspace', workspace)
+  // issue #134: semantic similarity floor; undefined = server default (0.2)
+  if (minSimilarity !== undefined) params.set('minSimilarity', String(minSimilarity))
   return api.get<KbSearchResponse>(`/docs/search?${params.toString()}`)
 }
 
