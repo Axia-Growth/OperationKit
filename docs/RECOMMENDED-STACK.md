@@ -191,7 +191,7 @@ itself.
 
 ## 5. Run the installer
 
-The code lives at **<https://github.com/m1keluka/OperationKit>**. Updates come from the same place
+The code lives at **<https://github.com/Axia-Growth/OperationKit>**. Updates come from the same place
 (step 9).
 
 **The easy way: Claude Code does it.** Clone the repository on your laptop, open Claude Code in it,
@@ -210,7 +210,7 @@ only you can do. About 30-45 minutes, most of it the build.
 ```bash
 # on the server
 sudo apt-get update -qq && sudo apt-get install -y -qq git
-sudo git clone https://github.com/m1keluka/OperationKit.git /opt/operationkit-src
+sudo git clone https://github.com/Axia-Growth/OperationKit.git /opt/operationkit-src
 cd /opt/operationkit-src
 sudo cp install/client.conf.example client.conf
 sudo nano client.conf                                # fill in CLIENT_NAME, DOMAIN, ZONE, ACCESS_ALLOWED_EMAILS…
@@ -453,7 +453,7 @@ registered with its path (8.3).
 updates the installer switches on are **Ubuntu's security patches** for the operating system only.)
 
 **How to hear about new versions:** watch the repository on GitHub
-(<https://github.com/m1keluka/OperationKit>, *Watch → Custom → Releases*), and read
+(<https://github.com/Axia-Growth/OperationKit>, *Watch → Custom → Releases*), and read
 [CHANGELOG.md](../CHANGELOG.md), which lists every change you need to do or know something about.
 To see what is new on the server:
 

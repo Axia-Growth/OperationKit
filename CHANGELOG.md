@@ -8,6 +8,25 @@ Notable operator-facing changes. Newest first.
 
 ## Unreleased
 
+### Agent commits no longer fall back to a vendor GitHub identity (obj-701130)
+
+No database change. **Behaviour change** for sessions whose card owner has not
+connected GitHub (Settings → Connectors → GitHub):
+
+- Before: their commits were signed as a hard-coded vendor GitHub account.
+- Now: they use the install's own identity, set as `FALLBACK_GIT_NAME` /
+  `FALLBACK_GIT_EMAIL` in `client.conf` (written to the app as
+  `OK_FALLBACK_GIT_NAME` / `OK_FALLBACK_GIT_EMAIL`). Use the client's bot or
+  operator account and its GitHub noreply address so Vercel's commit-author check
+  still passes.
+- With neither set, the git identity is left empty, so `git commit` fails instead
+  of using someone else's identity. The session sees `GIT_IDENTITY=absent` and a
+  `GIT_IDENTITY_HELP` message telling the user to connect GitHub.
+
+**To keep the old behaviour on an existing install**, add the two settings to
+`client.conf` and re-run `install.sh`. An install that sets the app env directly
+needs `OK_FALLBACK_GIT_NAME` / `OK_FALLBACK_GIT_EMAIL` instead.
+
 ### Bot chat: a reply that runs out of steps still answers; Stop holds queued messages; repeats never run twice (obj 901488)
 
 No database change. Three things an operator will notice on the Bots page:

@@ -203,7 +203,7 @@ code** option needs none of this. Use it unless the client asks otherwise.
 
 ```bash
 ssh SERVER 'sudo apt-get update -qq && sudo apt-get install -y -qq git && \
-  sudo git clone https://github.com/m1keluka/OperationKit.git /opt/operationkit-src'
+  sudo git clone https://github.com/Axia-Growth/OperationKit.git /opt/operationkit-src'
 ```
 
 (As `root`, the `sudo`s are harmless.) Keep the code in `/opt/operationkit-src`:
@@ -234,6 +234,7 @@ every setting is explained there in plain words.
 | `CLIENT_SLUG` | (make it from the name: lowercase, dashes) | `example-capital` |
 | `DOMAIN` / `ZONE` | What web address should it live at? | `ops.example-capital.com` / `example-capital.com` |
 | `BRAND_NAME` / `BRAND_LOGO` | What name (and logo file) should people see? | `Example Capital OS` |
+| `FALLBACK_GIT_NAME` / `FALLBACK_GIT_EMAIL` | Which GitHub account (the client's own bot or operator, with its noreply email) should sign agent commits when the card owner has not connected GitHub? Empty = no fallback: those commits fail with a "connect GitHub" message | `acme-bot` / `12345+acme-bot@users.noreply.github.com` |
 | `ADMIN_USERNAME` | Username for the first admin? | `admin` |
 | `ADMIN_EMAIL` | The first admin's email (signs them in through Cloudflare). Empty = the first address in `ACCESS_ALLOWED_EMAILS` | `alex.partner@example-capital.com` |
 | `ACCESS_ALLOWED_EMAILS` / `ACCESS_ALLOWED_EMAIL_DOMAIN` | Who may open the site? A name-by-name list of addresses is the default; the domain field is optional and stays empty unless the client asks for it | `alex.partner@example-capital.com` |
@@ -907,7 +908,7 @@ kept.
 
 **Updates are manual: nothing pulls new Operation Kit code by itself.** The automatic updates the
 installer switches on are Ubuntu's security patches for the operating system only. To hear about new
-versions, watch <https://github.com/m1keluka/OperationKit> on GitHub and read
+versions, watch <https://github.com/Axia-Growth/OperationKit> on GitHub and read
 [CHANGELOG.md](CHANGELOG.md). To see what is waiting:
 `ssh SERVER 'cd /opt/operationkit-src && sudo git -c safe.directory="*" fetch -q origin main && git -c safe.directory="*" log --oneline HEAD..origin/main'`.
 

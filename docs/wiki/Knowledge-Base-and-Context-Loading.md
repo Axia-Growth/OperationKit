@@ -22,4 +22,4 @@ The knowledge base lives in plain files on your own server — the same property
 
 Markdown docs for a linked repository live alongside the code (`docs/product/`, `docs/architecture/`, etc. in this repo) and are readable/searchable the same way the vault is — a card working on a repo gets that repo's own living docs as context, not just the shared vault.
 
-See the [Agent API](https://github.com/m1keluka/OperationKit) docs in the repo (`docs/api/README.md`) for the exact search/read/write endpoints, and [Architecture Overview](./Architecture-Overview) for where context loading sits in the execute loop.
+See the [Agent API](https://github.com/Axia-Growth/OperationKit) docs in the repo (`docs/api/README.md`) for the exact search/read/write endpoints, and [Architecture Overview](./Architecture-Overview) for where context loading sits in the execute loop.

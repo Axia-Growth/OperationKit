@@ -313,6 +313,8 @@ export function buildPrompt(objective: Objective): string {
     '- `GOOGLE_WORKSPACE_CONNECTION=user` + `USER_GOOGLE_EMAIL` — send/read mail and Docs ONLY as that address. Never pick another account from disk.',
     '- `GOOGLE_WORKSPACE_CONNECTION=absent` — this user has no Google connection. Do NOT send email. Tell them to connect at Settings → Account → Google Workspace.',
     '- `GH_TOKEN` / `GIT_AUTHOR_EMAIL` — GitHub actor for this user. Do not fall back to another person\'s token or a sibling credential file.',
+    '- `GIT_IDENTITY=install` — commits use this install\'s own bot/operator identity (the user has no GitHub connection).',
+    '- `GIT_IDENTITY=absent` — there is no git identity, so `git commit` will fail. Do NOT set user.name/user.email or GIT_AUTHOR_* yourself. Stop and tell the user what `GIT_IDENTITY_HELP` says.',
   )
   parts.push(
     '',

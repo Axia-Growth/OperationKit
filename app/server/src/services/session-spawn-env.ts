@@ -205,32 +205,42 @@ export function resolveSpawnTier(objective: Objective): 'admin' | 'member' {
   }
 }
 
-/** Durable Vercel COMMIT_AUTHOR_REQUIRED guard (obj-701130).
+/** Install-level fallback git identity (obj-701130, moved to install config).
  *
- *  The GitHub-LINKED identity every env-less spawn falls back to so its commits
- *  are always attributable. This is the GitHub `noreply` address for the
- *  `m1keluka` account (`255270713+m1keluka@users.noreply.github.com`): it is
- *  guaranteed linked to a real GitHub account, leaks no private email, and is
- *  already the identity example2 deploys under.
- *
- *  WHY this exists: git resolves a commit's author by precedence
+ *  WHY a fallback exists at all: git resolves a commit's author by precedence
  *  (GIT_AUTHOR_* env > repo-local > --global HOME/.gitconfig > --system
- *  /etc/gitconfig). On this MULTI-USER box `/etc/gitconfig` is root-owned (no
- *  sudo) and POISONED with an UNLINKED identity (`Command Center
- *  <dev@example.com>`). When an objective owner has no linked GitHub token,
- *  `userGitIdentityEnv` returns `{}` and the spawn carries NO GIT_AUTHOR_* env
- *  — so a commit made in a fresh worktree with no repo-local user.* falls all
- *  the way through to that poisoned /etc/gitconfig, and Vercel Pro then blocks
- *  the pre-build with COMMIT_AUTHOR_REQUIRED ("No GitHub account was found
- *  matching the commit author email address"). Per-home ~/.gitconfig seeding
- *  mitigates it but is fragile (a container rebuild resets homes; a NEW ccuser
- *  home gets no identity). Injecting this identity as the GIT_AUTHOR / GIT_COMMITTER
- *  env vars — the TOP of git's precedence chain — makes EVERY spawn attributable
- *  regardless of HOME/.gitconfig/system state. */
-export const SAFE_FALLBACK_GIT_IDENTITY = {
-  name: 'm1keluka',
-  email: '255270713+m1keluka@users.noreply.github.com',
-} as const
+ *  /etc/gitconfig). When a card owner has no linked GitHub token,
+ *  `userGitIdentityEnv` returns `{}`, and a commit in a fresh worktree falls all
+ *  the way through to whatever ~/.gitconfig or /etc/gitconfig the host happens to
+ *  carry — often an UNLINKED identity that Vercel Pro then rejects with
+ *  COMMIT_AUTHOR_REQUIRED. Env is the TOP of git's precedence chain, so setting
+ *  GIT_AUTHOR_* / GIT_COMMITTER_* in the spawn env makes the result predictable.
+ *
+ *  WHO it is: the install's OWN bot or operator account, set at install time as
+ *  FALLBACK_GIT_NAME / FALLBACK_GIT_EMAIL in client.conf (written to the app as
+ *  OK_FALLBACK_GIT_NAME / OK_FALLBACK_GIT_EMAIL). It used to be a hard-coded
+ *  vendor account, which put a third party's GitHub identity on every client's
+ *  commits; the product no longer ships any default identity.
+ *
+ *  Not configured (or malformed) ⇒ `null`, and buildSpawnEnv blanks the git
+ *  identity so a commit FAILS instead of silently borrowing someone else's
+ *  (see GIT_IDENTITY_MISSING_MESSAGE). */
+export function resolveFallbackGitIdentity(
+  env: NodeJS.ProcessEnv = process.env,
+): { name: string; email: string } | null {
+  const name = (env.OK_FALLBACK_GIT_NAME || '').trim()
+  const email = (env.OK_FALLBACK_GIT_EMAIL || '').trim()
+  if (!name || !email) return null
+  // git rejects '<', '>' and newlines in an ident; a bare "x@y" is all we need.
+  if (/[<>\r\n]/.test(name) || /[<>\s]/.test(email) || !/^[^@]+@[^@]+$/.test(email)) return null
+  return { name, email }
+}
+
+/** Shown to a session (env + prompt) whose owner has no linked GitHub account on
+ *  an install with no fallback identity configured. */
+export const GIT_IDENTITY_MISSING_MESSAGE =
+  'No git identity for this session, so git commit will fail: the card owner should connect GitHub in Settings → Connectors → GitHub, ' +
+  'or ask an admin to set FALLBACK_GIT_NAME / FALLBACK_GIT_EMAIL in the install config.'
 
 /** Per-user GitHub PR attribution (obj-2221 / W4).
  *
@@ -413,23 +423,30 @@ export function buildSpawnEnv(opts: {
     Object.assign(env, userGitIdentityEnv(actingUserId, actor))
   }
 
-  // Durable Vercel COMMIT_AUTHOR_REQUIRED guard (obj-701130). If the block above
-  // injected NO commit-author identity (the owner has no linked GitHub token ⇒
-  // userGitIdentityEnv returned {}), the spawn would otherwise fall through git's
-  // author-precedence chain to the spawn HOME's ~/.gitconfig and finally the
-  // root-owned, POISONED /etc/gitconfig (Command Center <dev@example.com>,
-  // UNLINKED to any GitHub account) → Vercel Pro blocks the pre-build with
-  // COMMIT_AUTHOR_REQUIRED. Fill GIT_AUTHOR_*/GIT_COMMITTER_* with the known-good
-  // GitHub-LINKED m1keluka noreply identity so EVERY spawn commits under an
-  // attributable author regardless of HOME/.gitconfig/system state. Env is the TOP
-  // of git's precedence chain, so this is bulletproof. Per-user identity (when the
-  // owner IS linked) already set GIT_AUTHOR_EMAIL above and MUST take precedence —
-  // we only fill when it is absent. See SAFE_FALLBACK_GIT_IDENTITY for the why.
-  if (!env.GIT_AUTHOR_EMAIL) {
-    env.GIT_AUTHOR_NAME = SAFE_FALLBACK_GIT_IDENTITY.name
-    env.GIT_AUTHOR_EMAIL = SAFE_FALLBACK_GIT_IDENTITY.email
-    env.GIT_COMMITTER_NAME = SAFE_FALLBACK_GIT_IDENTITY.name
-    env.GIT_COMMITTER_EMAIL = SAFE_FALLBACK_GIT_IDENTITY.email
+  // Fallback git identity (obj-701130). If the block above injected NO
+  // commit-author identity (the owner has no linked GitHub token ⇒
+  // userGitIdentityEnv returned {}), a commit would fall through git's precedence
+  // chain to whatever HOME/.gitconfig or /etc/gitconfig the host carries. Use the
+  // install's own configured identity when there is one; otherwise set the
+  // identity env to EMPTY strings, which git refuses ("empty ident name not
+  // allowed"), so the commit fails loudly instead of borrowing another person's
+  // identity. GIT_IDENTITY tells the session which case it is in (prompt-builder).
+  // Per-user identity (when the owner IS linked) MUST take precedence — we only
+  // fill when it is absent.
+  if (env.GIT_AUTHOR_EMAIL) {
+    env.GIT_IDENTITY = 'user'
+  } else {
+    const fallback = resolveFallbackGitIdentity()
+    env.GIT_AUTHOR_NAME = fallback?.name ?? ''
+    env.GIT_AUTHOR_EMAIL = fallback?.email ?? ''
+    env.GIT_COMMITTER_NAME = fallback?.name ?? ''
+    env.GIT_COMMITTER_EMAIL = fallback?.email ?? ''
+    if (fallback) {
+      env.GIT_IDENTITY = 'install'
+    } else {
+      env.GIT_IDENTITY = 'absent'
+      env.GIT_IDENTITY_HELP = GIT_IDENTITY_MISSING_MESSAGE
+    }
   }
 
   // obj-706070 per-user Google Workspace credential. ALWAYS adds at least
