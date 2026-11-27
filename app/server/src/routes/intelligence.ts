@@ -35,7 +35,8 @@ router.get('/recent', (req: AuthRequest, res) => {
 
 // ST2 — rolling AI-review false-pass rate per workspace. A false pass = a
 // pass-gated objective that was later reopened. rate = false_passes /
-// pass_gated_reviews over the trailing window (default 30d, clamped 1–365).
+// pass_gated_reviews over the trailing window (default 30d, clamped 1–365);
+// the denominator also counts older passes reopened in the window.
 router.get('/false-pass-rate', (req: AuthRequest, res) => {
   const windowDays = Math.min(Math.max(parseInt(req.query.days as string) || 30, 1), 365)
   res.json({ window_days: windowDays, workspaces: getFalsePassRate(windowDays) })
