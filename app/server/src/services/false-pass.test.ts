@@ -138,6 +138,30 @@ describe('getFalsePassRate', () => {
     expect(example.rate).toBe(0)
   })
 
+  it('does not read 0 when an out-of-window pass is reopened in the window', () => {
+    const a = makeObjective('operator')
+    addReview(a, 1, 'pass', 45)
+    recordReopenFalsePass({ id: a, workspace: 'operator' })
+
+    expect(getFalsePassRate(30)).toEqual([
+      { workspace: 'operator', false_passes: 1, pass_gated_reviews: 1, rate: 1 },
+    ])
+  })
+
+  it('never exceeds 1 when old reopens outnumber recent passes', () => {
+    for (let i = 0; i < 2; i++) {
+      const old = makeObjective('operator')
+      addReview(old, 1, 'pass', 45)
+      recordReopenFalsePass({ id: old, workspace: 'operator' })
+    }
+    addReview(makeObjective('operator'), 1, 'pass')
+
+    const [row] = getFalsePassRate(30)
+    expect(row.false_passes).toBe(2)
+    expect(row.pass_gated_reviews).toBe(3)
+    expect(row.rate).toBeCloseTo(2 / 3, 6)
+  })
+
   it('excludes reviews outside the rolling window', () => {
     const a = makeObjective('operator')
     addReview(a, 1, 'pass', 90) // 90 days old → outside a 30-day window

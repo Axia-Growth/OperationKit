@@ -103,7 +103,8 @@ export interface WorkspaceFalsePassRate {
   workspace: string
   /** gate_false_pass rows in the window. */
   false_passes: number
-  /** objective_reviews rows with verdict='pass' in the window (the gated set). */
+  /** The gated set: pass reviews issued in the window, plus older passes that
+   *  were reopened in the window. Always includes every counted false pass. */
   pass_gated_reviews: number
   /** false_passes / pass_gated_reviews, 0 when no pass-gated reviews. */
   rate: number
@@ -111,7 +112,10 @@ export interface WorkspaceFalsePassRate {
 
 /**
  * Rolling per-workspace false-pass rate over the trailing `windowDays`.
- * rate = (gate_false_pass rows in window) / (pass-gated reviews in window).
+ * rate = (reopens in window) / (pass reviews in window + older passes that were
+ * reopened in window). A reopen can arrive long after its pass, so without the
+ * second term the numerator is not a subset of the denominator: the rate could
+ * exceed 1, or read 0 while false passes existed.
  *
  * Numerator is keyed on `gate_false_pass.workspace`; denominator joins
  * objective_reviews → objectives for the workspace. Window bounds are evaluated
@@ -126,13 +130,14 @@ export function getFalsePassRate(windowDays = 30): WorkspaceFalsePassRate[] {
   // proactive signal and must NEVER inflate this reactive metric.
   const falsePassRows = db
     .prepare(
-      `SELECT workspace, COUNT(*) AS n
+      `SELECT workspace, COUNT(*) AS n,
+              SUM(prior_verdict_at < datetime('now', ?)) AS older
          FROM gate_false_pass
         WHERE reopened_at >= datetime('now', ?)
           AND source = 'reopen'
         GROUP BY workspace`
     )
-    .all(offset) as Array<{ workspace: string; n: number }>
+    .all(offset, offset) as Array<{ workspace: string; n: number; older: number }>
 
   const passReviewRows = db
     .prepare(
@@ -145,6 +150,7 @@ export function getFalsePassRate(windowDays = 30): WorkspaceFalsePassRate[] {
     .all(offset) as Array<{ workspace: string; n: number }>
 
   const falseByWs = new Map(falsePassRows.map(r => [r.workspace, r.n]))
+  const olderByWs = new Map(falsePassRows.map(r => [r.workspace, r.older]))
   const gatedByWs = new Map(passReviewRows.map(r => [r.workspace, r.n]))
 
   // Union of workspaces seen on either side so a workspace with false passes but
@@ -154,7 +160,7 @@ export function getFalsePassRate(windowDays = 30): WorkspaceFalsePassRate[] {
   return [...workspaces]
     .map(workspace => {
       const false_passes = falseByWs.get(workspace) ?? 0
-      const pass_gated_reviews = gatedByWs.get(workspace) ?? 0
+      const pass_gated_reviews = (gatedByWs.get(workspace) ?? 0) + (olderByWs.get(workspace) ?? 0)
       const rate = pass_gated_reviews > 0 ? false_passes / pass_gated_reviews : 0
       return { workspace, false_passes, pass_gated_reviews, rate }
     })
