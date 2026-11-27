@@ -14,6 +14,7 @@ import { indexFile, isEmbeddable, markInterruptedJobs, needsBackfill, runBackfil
 import { ensureSchema, ensureVecTable, indexStats, knnChunks, loadVecExtension, replaceDocChunks } from './store.js'
 import { searchKnowledgeBase, relatedDocs, parseSearchMode } from './search.js'
 import { resetVaultIndexCache } from '../vault-index.js'
+import { searchKnowledge } from '../knowledge-search.js'
 
 /** Each concept is one dimension; any of its words in the text lights it up. */
 const CONCEPTS: string[][] = [
@@ -228,6 +229,35 @@ describe('hybrid search', () => {
     }
     const all = await searchKnowledgeBase('automobile car', { mode: 'semantic', db, provider, root })
     expect(all.results.some(h => h.path.includes(`${path.sep}other${path.sep}`))).toBe(true)
+  })
+
+  // obj 901746 (public issues #120 / #153): a saved answer held for review is never a
+  // result, a snippet, a "related" doc or a spawn-prompt hit, until a person approves it.
+  it('keeps a held saved answer out of every search path until it is approved', async () => {
+    const provider = await seed()
+    const answer = (check: string) => `---\ntitle: Which car do we lease?\ntype: answer\nanswer_check: ${check}\n---\n\n# Which car do we lease?\n\nWe lease a red automobile sedan fleet car [[decisions/2026-01-01-fleet]].\n`
+    const abs = write('workspaces/acme/answers/2026-11-20-which-car.md', answer('held'))
+    await runBackfill({ db, provider, root })
+    resetVaultIndexCache()
+    const fleet = path.join(root, 'workspaces/acme/decisions/2026-01-01-fleet.md')
+    for (const mode of ['hybrid', 'semantic', 'keyword'] as const) {
+      const r = await searchKnowledgeBase('automobile sedan fleet car', { mode, db, provider, root, workspace: 'acme' })
+      expect(r.results.some(h => h.path === abs), mode).toBe(false)
+      const scoped = await searchKnowledgeBase('automobile sedan fleet car', { mode, db, provider, root, workspace: 'acme', allow: () => true })
+      expect(scoped.results.some(h => h.path === abs), `${mode} scoped`).toBe(false)
+    }
+    // Even an exact token from its own file name cannot pin it on top.
+    expect((await searchKnowledgeBase('2026-11-20-which-car', { mode: 'hybrid', db, provider, root })).results.some(h => h.path === abs)).toBe(false)
+    expect((await relatedDocs(fleet, { db, provider, root })).some(h => h.path === abs)).toBe(false)
+    expect(searchKnowledge('automobile sedan fleet', 'acme').some(h => h.path === abs)).toBe(false)
+
+    // A person approves it: it is searchable again.
+    fs.writeFileSync(abs, answer('reviewed'))
+    await runBackfill({ db, provider, root })
+    resetVaultIndexCache()
+    const back = await searchKnowledgeBase('automobile sedan fleet car', { mode: 'hybrid', db, provider, root, workspace: 'acme' })
+    expect(back.results.some(h => h.path === abs)).toBe(true)
+    expect(searchKnowledge('automobile sedan fleet', 'acme').some(h => h.path === abs)).toBe(true)
   })
 
   it('applies the caller\'s visibility predicate before the limit', async () => {

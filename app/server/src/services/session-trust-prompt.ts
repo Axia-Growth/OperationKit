@@ -28,6 +28,7 @@ import { SENDER_MARKER } from '../lib/message-provenance.js'
 import { SESSION_SECRET_ACCESS_FLAG, readSettingFlag, verifiedSenderStampsEnabled } from '../lib/session-trust.js'
 import { listForCaller } from './secrets-broker.js'
 import { resolveSecretNames } from './secrets-store.js'
+import { isConnectorCredentialEnvKey } from '../lib/connector-credential-env.js'
 import { githubSessionAccess, githubUnavailableFix, resolveActingUserId, sessionSecretKeyFilter } from './session-spawn-env.js'
 import { resolveWriteWorkspace } from './workspaces.js'
 import { resolveBrandName } from './branding-config.js'
@@ -120,7 +121,12 @@ export function buildSecretsInventoryBlock(objective: Objective): string[] {
   } catch (err) {
     console.warn('[session-trust] secret-name listing failed:', (err as Error).message)
   }
+  // obj 901743: connector credentials (a stored GH_TOKEN / GITHUB_TOKEN /
+  // GOOGLE_OAUTH_CLIENT_*) are never exported into a session — they are used
+  // through the host-side broker — so they are not listed as "in your env".
+  // `available` keeps them so the GitHub line can say the override applies.
   const available = new Set(names)
+  names = names.filter(n => !isConnectorCredentialEnvKey(n))
   const shown = names.slice(0, MAX_LISTED)
   const lines = [
     `## Secrets available to this session (${workspace} workspace — names only)`,
@@ -192,24 +198,31 @@ export function buildSecretsInventoryBlock(objective: Objective): string[] {
 /**
  * GitHub access, stated outright (obj 900208).
  *
- * The connector token (Settings → Connectors → GitHub) reaches the session as
- * GH_TOKEN/GITHUB_TOKEN, but it is not a Secrets-store row, so the name list
- * above never showed it — and the rule "if a secret you need is NOT listed, name
- * the variable" then sent coding cards to ask for a `GH_TOKEN` secret they were
- * already holding (Example Project, 2026-11-05). When it really is missing, the
+ * The connector token (Settings → Connectors → GitHub) is not a Secrets-store
+ * row, so the name list above never showed it — and the rule "if a secret you
+ * need is NOT listed, name the variable" then sent coding cards to ask for a
+ * `GH_TOKEN` secret (Example Project, 2026-11-05). When it really is missing, the
  * fix is almost never a secret, so say which setting is.
+ *
+ * obj 901743: the token is no longer in the env at all. `git` and `gh` get it
+ * per request from the host-side broker, for the repos linked to the card's
+ * workspace, so the lines say that instead of "it is in your env".
  */
+/** How brokered GitHub works, for the session (obj 901743). */
+export const BROKERED_GITHUB_SENTENCE =
+  'No GitHub token is in your env (by design): `git` and `gh` fetch one per request from the host-side broker for repos linked to this card\'s workspace (a git credential helper and a `gh` wrapper are pre-configured). A repo that is not linked is refused — say which repo, do not look for a token.'
+
 export function buildGithubAccessLines(objective: Objective, secretNames: Set<string>): string[] {
   const head = '**GitHub (push + pull requests):**'
   if (secretNames.has('GH_TOKEN') || secretNames.has('GITHUB_TOKEN')) {
     return [
-      `${head} a \`GH_TOKEN\`/\`GITHUB_TOKEN\` secret from Settings → Secrets is set for this workspace and overrides any GitHub connection. It is in your env; \`gh pr create\` and \`git push\` over https use it (a git credential helper is pre-configured). Do not ask for another GitHub token.`,
+      `${head} a \`GH_TOKEN\`/\`GITHUB_TOKEN\` secret from Settings → Secrets is set for this workspace and overrides any GitHub connection. ${BROKERED_GITHUB_SENTENCE} Do not ask for another GitHub token.`,
     ]
   }
   const access = githubSessionAccess(objective)
   if (access.state === 'connected') {
     return [
-      `${head} connected as \`${access.login}\` through the card owner's GitHub connection (Settings → Connectors). \`GH_TOKEN\` and \`GITHUB_TOKEN\` are already in your env even though they are not in the secrets list above. \`gh pr create\` and \`git push\` over https work as \`${access.login}\` (a git credential helper is pre-configured). Do NOT ask for a \`GH_TOKEN\` secret.`,
+      `${head} connected as \`${access.login}\` through the card owner's GitHub connection (Settings → Connectors). ${BROKERED_GITHUB_SENTENCE} \`gh pr create\` and \`git push\` over https work as \`${access.login}\`. Do NOT ask for a \`GH_TOKEN\` secret.`,
     ]
   }
   return [

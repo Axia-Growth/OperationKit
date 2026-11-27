@@ -7,6 +7,8 @@ import {
 import { Alert, Badge, Button, EmptyState, SkeletonText, useConfirm } from '../ui'
 import { wikiApi, wsQuery } from './wikiApi'
 import { Select } from '../ui/Select'
+import { KnowledgeFlagsSection } from './KnowledgeFlagsSection'
+import { HeldAnswersSection } from './HeldAnswersSection'
 
 const SCHEDULE_LABEL: Record<LintSchedule, string> = {
   nightly: 'Every night',
@@ -158,7 +160,8 @@ export function CleanupPanel({
       <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
         <p className="max-w-[64ch] text-sm leading-relaxed text-fg-2">
           Cleanup checks your Context for broken links, missing topic pages, pages nothing links to, likely duplicates,
-          pages that haven’t been updated in a while, and facts that disagree between files. Safe fixes happen
+          pages that haven’t been updated in a while, facts that disagree between files, and saved answers that the
+          pages they cite don’t back up (or whose pages changed since). Safe fixes happen
           automatically; anything that needs judgement is listed for you. Your original files are never changed.
         </p>
         <Button variant="primary" loading={running} disabled={!workspace} onClick={() => { void runNow() }}
@@ -169,6 +172,10 @@ export function CleanupPanel({
 
       {error && <Alert tone="alarm" title="Something went wrong">{error}</Alert>}
       {savedNote && !error && <Alert tone="verify" title={savedNote} />}
+
+      <HeldAnswersSection workspace={workspace} onOpenNote={onOpenNote} refreshKey={report ? Date.parse(report.ran_at) || 0 : 0} />
+
+      <KnowledgeFlagsSection workspace={workspace} titles={titles} onOpenNote={onOpenNote} />
 
       {running && (
         <div aria-live="polite" aria-busy="true">

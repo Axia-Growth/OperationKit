@@ -109,6 +109,19 @@ describe('runLint', () => {
     expect(rawHashes()).toEqual(before)
   })
 
+  it('reads a quoted updated: date correctly — neither undated nor silently excluded from stale', async () => {
+    // obj-944 (#133) quotes dates in frontmatter ('updated: "2024-01-01"') because a plain
+    // YAML reader would otherwise parse an unquoted date as a Date, not a string. Before the
+    // notes.ts parseNote() fix, the literal quotes were never stripped, so Date.parse('"2024-01-01"')
+    // was NaN and this page would never be reported stale.
+    put('topics/quoted-old.md', '---\ntitle: Quoted old\ntype: topic\nupdated: "2024-01-01"\n---\n# Quoted old\n\nLinked from elsewhere so it is not an orphan.\n')
+    put('topics/linker.md', page('Linker', 'Points at [[Quoted old]].'))
+    const r = await runLint(kb, { llm: null, now: NOW, staleDays: 180, aiPages: 0 })
+    expect(r.needs_human).toContainEqual(expect.objectContaining({ kind: 'stale', page: 'topics/quoted-old.md' }))
+    const stale = r.needs_human.find(i => i.kind === 'stale' && i.page === 'topics/quoted-old.md')!
+    expect(stale.detail).toContain('2024-01-01')
+  })
+
   it('asks the AI about pages with ≥2 sources, lists contradictions, never edits them', async () => {
     const src = (n: string) => ({ notePath: `sources/${n}.md`, filePath: `sources/files/${n}.pdf`, fileName: `${n}.pdf` })
     const e = (fact: string): Entity => ({ type: 'organization', name: 'Greenway Growers', facts: [{ fact }] })

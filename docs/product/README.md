@@ -1,8 +1,8 @@
 # OperationKit
 
-**In a sentence:** OperationKit is the infrastructure layer an AI implementation consultant installs for each client, on the client's own server: a knowledge base, AI workers that run jobs as cards, optional bots to talk to, and an MCP connection for the AI apps people already use.
+**In a sentence:** Operation Kit is a capable harness an AI implementation consultant installs for each client, on the client's own server: you state the outcome, approve the breakdown, and the install owns the plumbing.
 
-**In a paragraph:** You open a card, pick an agent, and a sandboxed worker session starts on the server. The card is the source of truth: queue → working → review → done. The **Knowledge base** holds the client's files and notes; **Chat** is one ongoing conversation per agent; **Agents → Templates** adds ready-made agents from one-file templates; **Settings → Integrations** links GitHub and Google Workspace. Claude, ChatGPT and Grok reach the same notes, agents and board through one MCP address. Each client's AI work runs on that client's own AI account.
+**In a paragraph:** You open a card (or ask a bot in **Bots**) and describe the outcome you want. A project card starts in **Planning**, where a planner drafts a plan and acceptance criteria for you to approve. Then a sandboxed worker runs it on the client's own AI account, with the workspace's knowledge (**Context**), connected accounts and secrets already in reach. It writes progress on the card, splits big work into child cards, and an independent AI reviewer checks the result before it reaches you. The card is the source of truth: Planning → Queue → Working → AI review → Needs you → Done. Claude, ChatGPT and Grok reach the same notes, bots and board through one MCP address. Agent files, skills and the skill graph are an advanced option on **Bot setup**, not a first step.
 
 New install? Start with [INSTALL.md](../../INSTALL.md). Connecting an outside AI app: [Connect your AI](../CONNECT-YOUR-AGENT.md). The plain-language security page: [Security overview](../SECURITY-OVERVIEW.md).
 

@@ -25,7 +25,7 @@ Nothing — that's the point. They're plain files on your server, not stored ins
 No. Behind Cloudflare Access the app verifies Cloudflare's signed identity token and signs the person in as the Operation Kit user with that email — one login. An allowed email with no Operation Kit user sees a "No account for this email" page (never an auto-created account). Admins link emails in Settings → Users; the username + password sign-in stays as break-glass. See [Self-Hosting Quickstart](./Self-Hosting-Quickstart).
 
 **Where do I report a bug or ask something not covered here?**
-Open an issue on [github.com/m1keluka/OperationKit](https://github.com/m1keluka/OperationKit).
+Open an issue on [github.com/Axia-Growth/OperationKit](https://github.com/Axia-Growth/OperationKit).
 
 **Is this production-grade / audited to a compliance standard?**
 It's built to be a respectable open-source self-host (TLS, fail-loud secrets, login throttling, CSP, signed webhooks) — it is explicitly not SOC 2 / PE-diligence SaaS. Read the repo's `SECURITY.md` before exposing it to a network.

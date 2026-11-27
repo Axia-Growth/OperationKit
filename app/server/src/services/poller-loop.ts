@@ -69,6 +69,7 @@ import { queueExtraction } from './session-intel-pipeline.js'
 import { hasArenaCohort } from './arena-lifecycle.js'
 import { broadcast } from '../ws/index.js'
 import { mustRouteToHumanReview } from '../lib/human-tracked.js'
+import { isCodeHealthCard } from './code-health.js'
 import { isRedLaneText, GREEN_LANE_FINDINGS, type MergeLane } from './merge-lane.js'
 import { isBackendOnlyChange } from './design-context.js'
 import { resolveFilesTouched } from './files-touched.js'
@@ -1164,6 +1165,8 @@ export async function pollActiveSessions(): Promise<void> {
           // nothing) must not auto-complete to `done`. `decision` is the
           // no-op classifier already computed above for this same session.
           producedNothing: decisionProducedNothing,
+          // obj 901770 — a code-health run's PR always gets the AI reviewer.
+          alwaysReviewPr: isCodeHealthCard(objective),
         })
         mergeLane = route.lane
         resolvedStatus = route.status

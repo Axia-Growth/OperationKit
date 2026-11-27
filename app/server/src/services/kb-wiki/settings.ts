@@ -11,6 +11,10 @@ import { normaliseExcludes, parseExcludeSetting } from './vault-scan.js'
  *   kb_graph_exclude   folders the link graph leaves out (obj 900815): folder names (any depth) or
  *                      KB-relative paths, newline/comma separated. Default: DEFAULT_GRAPH_EXCLUDES.
  *                      Hidden files, raw sources and credential stores are never indexed whatever this says.
+ *   kb_curator_enabled '1' = the knowledge curator (obj 901768) runs after each cleanup pass and
+ *                      proposes page updates/retirements. No row / anything else = off, so an
+ *                      existing install sees no change until an admin switches it on.
+ *   kb_curator_ai_drafts  most AI calls per curator run (default 10, 0 = no AI: updates list the evidence).
  */
 export type LintSchedule = 'nightly' | 'weekly' | 'off'
 
@@ -20,9 +24,11 @@ export interface WikiSettings {
   lint_stale_days: number
   lint_ai_pages: number
   graph_exclude: string[]
+  curator_enabled: boolean
+  curator_ai_drafts: number
 }
 
-export const DEFAULT_WIKI_SETTINGS: WikiSettings = { lint_schedule: 'nightly', lint_hour_utc: 3, lint_stale_days: 180, lint_ai_pages: 15, graph_exclude: parseExcludeSetting(null) }
+export const DEFAULT_WIKI_SETTINGS: WikiSettings = { lint_schedule: 'nightly', lint_hour_utc: 3, lint_stale_days: 180, lint_ai_pages: 15, graph_exclude: parseExcludeSetting(null), curator_enabled: false, curator_ai_drafts: 10 }
 
 function read(key: string): string | null {
   try {
@@ -48,6 +54,8 @@ export function getWikiSettings(): WikiSettings {
     lint_stale_days: int(read('kb_lint_stale_days'), DEFAULT_WIKI_SETTINGS.lint_stale_days, 1, 3650),
     lint_ai_pages: int(read('kb_lint_ai_pages'), DEFAULT_WIKI_SETTINGS.lint_ai_pages, 0, 200),
     graph_exclude: parseExcludeSetting(read('kb_graph_exclude')),
+    curator_enabled: read('kb_curator_enabled') === '1',
+    curator_ai_drafts: int(read('kb_curator_ai_drafts'), DEFAULT_WIKI_SETTINGS.curator_ai_drafts, 0, 50),
   }
 }
 
@@ -64,10 +72,15 @@ export function saveWikiSettings(patch: Partial<WikiSettings>): WikiSettings {
     // An empty list is stored as one blank line, so "exclude nothing" is not read back as "use the defaults".
     write('kb_graph_exclude', normaliseExcludes(patch.graph_exclude).join('\n') || '\n')
   }
-  const nums: Array<[Exclude<keyof WikiSettings, 'graph_exclude'>, string, number, number]> = [
+  if (patch.curator_enabled !== undefined) {
+    if (typeof patch.curator_enabled !== 'boolean') throw new Error('curator_enabled must be true or false.')
+    write('kb_curator_enabled', patch.curator_enabled ? '1' : '0')
+  }
+  const nums: Array<[Exclude<keyof WikiSettings, 'graph_exclude' | 'curator_enabled'>, string, number, number]> = [
     ['lint_hour_utc', 'kb_lint_hour_utc', 0, 23],
     ['lint_stale_days', 'kb_lint_stale_days', 1, 3650],
     ['lint_ai_pages', 'kb_lint_ai_pages', 0, 200],
+    ['curator_ai_drafts', 'kb_curator_ai_drafts', 0, 50],
   ]
   for (const [k, key, min, max] of nums) {
     const v = patch[k]

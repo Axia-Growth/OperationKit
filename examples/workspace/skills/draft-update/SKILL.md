@@ -5,7 +5,7 @@ description: Draft a short status update for a stakeholder from recent activity,
 
 # Draft update
 
-A trivial example skill. Given a description of recent work, draft a short status
+A short example of a clear brief. Given a description of recent work, draft a short status
 update suitable for sending to a stakeholder.
 
 ## Process
@@ -14,4 +14,7 @@ update suitable for sending to a stakeholder.
 - Flag any blocker or decision you need from the reader at the end.
 - Neutral, professional tone — no hype.
 
-This is a generic example skill shipped with Command Center. Replace it with your own.
+This file is part of a small prompting library: read it for the technique, not as something to
+install. The pattern is the same one a good card brief uses: say the outcome first, say what a
+finished answer contains, and say what to do when the input is thin. You do not need to write
+skills to get work done; state the outcome on a card and the harness handles the rest.

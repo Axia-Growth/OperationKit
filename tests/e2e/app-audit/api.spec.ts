@@ -87,7 +87,7 @@ test('api: bot names and descriptions carry no vendor name under a custom brand'
 
 // Fresh install (card #901202): no legacy workspaces.json and no layer-graph
 // generator. Both calls answer 200 with an empty result, so the pages that make
-// them on load (Settings > Workspaces, Bots & skills) log no failed request.
+// them on load (Settings > Workspaces, Bot setup) log no failed request.
 test('api: fresh install — the legacy workspaces config answers with an empty list, not a 404', async ({ request }) => {
   await signIn(request, ADMIN)
   const res = await request.get('/api/workspaces-config')

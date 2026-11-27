@@ -4,7 +4,7 @@
 
 **Your work infrastructure. Any model. Your server.**
 
-OperationKit is a board you self-host: you open a card, point it at a model, and an agent session does the work — on your server, through your own accounts. Workspaces, a knowledge base, a skill/tool/agent graph, and a review gate sit on top, so the thing you're actually building — your playbooks, your history, your context — lives in plain files on infrastructure you own, not inside one AI lab's product.
+OperationKit is a capable harness you self-host. **State the problem, approve the breakdown, and the harness owns the plumbing.** You open a card and describe the outcome; for a project, a planner drafts a plan with acceptance criteria for you to approve; then an agent session does the work on your server, through your own accounts, and an independent reviewer checks it before it reaches you. Context, sandboxes, connected accounts, memory and verification are built in, so your time goes on the problem, not on writing agent files. Your history and context live in plain files on infrastructure you own, not inside one AI lab's product.
 
 Run it on Claude today. Point a workload at an open-weight model on your own GPUs tomorrow. The system underneath doesn't change when the model does — see [Why Own Your AI Infrastructure](./Why-Own-Your-AI-Infrastructure) and [Model Portability](./Model-Portability).
 
@@ -16,6 +16,7 @@ Run it on Claude today. Point a workload at an open-weight model on your own GPU
 | See which models/engines are supported today vs. on the roadmap | [Model Portability](./Model-Portability) |
 | Understand how the pieces fit together | [Architecture Overview](./Architecture-Overview) |
 | Browse what's actually built | [Features](./Features) |
+| Shape an install by hand with agent files and skills (advanced) | [Skills, Tools & Agents](./Skills-Tools-Agents) |
 | Install it on your own server | [Self-Hosting Quickstart](./Self-Hosting-Quickstart) |
 | Connect your own agent over MCP | [MCP Connector & Tools](./MCP-Connector-and-Tools) |
 | Understand subscription seats vs. your own identity | [Accounts, Subscriptions & Seats](./Accounts-Subscriptions-and-Seats) |
@@ -25,7 +26,7 @@ Run it on Claude today. Point a workload at an open-weight model on your own GPU
 
 ## Elsewhere
 
-- Source: [github.com/m1keluka/OperationKit](https://github.com/m1keluka/OperationKit)
+- Source: [github.com/Axia-Growth/OperationKit](https://github.com/Axia-Growth/OperationKit)
 - License: Apache-2.0
 - Product docs (in-repo): `docs/product/`
 - Agent / HTTP API: `docs/api/`

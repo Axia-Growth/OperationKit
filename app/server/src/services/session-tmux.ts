@@ -2,6 +2,8 @@
  * tmux spawn wrapper — extracted from session-manager.ts (behavior frozen).
  * Does not own the live-session table; that lives in session-registry.ts.
  */
+import { BROKER_BIN_DIRNAME, connectorBrokerSessionEnv, ensureConnectorBrokerShims } from './connector-broker-shims.js'
+import { CONNECTOR_CREDENTIAL_ENV, GOOGLE_BROKER_ENV, MCP_TOKEN_ENV_PREFIX, stripConnectorCredentials } from '../lib/connector-credential-env.js'
 import { withheldUnsetLine } from './bot-session-scope.js'
 import { execFileSync, execSync } from 'child_process'
 import fs from 'fs'
@@ -38,6 +40,7 @@ import { stageUploadsIntoJail, rewriteUploadPaths } from './jail-uploads.js'
 import type { SeatMount } from './seat-credentials.js'
 import { planJailCardBrowser, planTmuxCardBrowser, refusedBrowserEnv, type CardBrowserPlan } from './card-browser-spawn.js'
 import { buildCardBrowserPromptBlock } from '../lib/card-browser.js'
+import { renderEnvExports } from '../lib/shell-quote.js'
 
 // ── `~`-home false-negative fix (obj 532 / 553) ──
 // Spawned sessions run as OS user `ccuser` with HOME pointed at a per-account
@@ -124,6 +127,10 @@ function overlayGoogleMcpConfig(
 ): string | undefined {
   const credsDir = env.WORKSPACE_MCP_CREDENTIALS_DIR
   if (!credsDir) return existingPath
+  // obj 901743: a brokered card's google-workspace server is the host broker's
+  // MCP endpoint (in the workspace-MCP descriptor), registered under this same
+  // key. Writing the local workspace-mcp entry here would shadow it.
+  if (env[GOOGLE_BROKER_ENV] === '1') return existingPath
   let mcpServers: Record<string, unknown> = {}
   if (existingPath) {
     try {
@@ -135,9 +142,10 @@ function overlayGoogleMcpConfig(
   mcpServers['google-workspace'] = {
     command: fs.existsSync(uvx) ? uvx : 'uvx',
     args: ['workspace-mcp', '--tools', 'gmail', 'calendar', 'drive', 'docs', 'sheets', 'slides', '--tool-tier', 'extended'],
+    // obj 901743: no OAuth client and an empty creds dir. This entry only exists
+    // to shadow an ambient ~/.claude.json server that points at a shared folder;
+    // a connected card's Google goes through the broker (returned above).
     env: {
-      ...(env.GOOGLE_OAUTH_CLIENT_ID ? { GOOGLE_OAUTH_CLIENT_ID: env.GOOGLE_OAUTH_CLIENT_ID } : {}),
-      ...(env.GOOGLE_OAUTH_CLIENT_SECRET ? { GOOGLE_OAUTH_CLIENT_SECRET: env.GOOGLE_OAUTH_CLIENT_SECRET } : {}),
       WORKSPACE_MCP_CREDENTIALS_DIR: credsDir,
       USER_GOOGLE_EMAIL: env.USER_GOOGLE_EMAIL || '',
     },
@@ -152,6 +160,55 @@ function overlayGoogleMcpConfig(
     console.warn(`[session-manager] google MCP overlay failed for ${sessionId}:`, (err as Error).message)
     return existingPath
   }
+}
+
+/** The account tmux-mode wrappers run as (`runuser -u ccuser`). */
+export const TMUX_RUN_USER = 'ccuser'
+let tmuxRunIds: { uid: number; gid: number } | null | undefined
+
+function resolveTmuxRunIds(): { uid: number; gid: number } | null {
+  if (tmuxRunIds !== undefined) return tmuxRunIds
+  try {
+    const uid = Number.parseInt(execFileSync('id', ['-u', TMUX_RUN_USER], { encoding: 'utf8', timeout: 5000 }).trim(), 10)
+    const gid = Number.parseInt(execFileSync('id', ['-g', TMUX_RUN_USER], { encoding: 'utf8', timeout: 5000 }).trim(), 10)
+    tmuxRunIds = Number.isFinite(uid) && Number.isFinite(gid) ? { uid, gid } : null
+  } catch {
+    tmuxRunIds = null
+  }
+  return tmuxRunIds
+}
+
+/**
+ * obj 901743: a tmux-mode wrapper holds `export KEY="value"` for every secret
+ * the session gets, so it is 0700 — readable and runnable by its owner only.
+ * When the control plane is root it hands the file to ccuser (the account the
+ * wrapper runs as); otherwise the control plane already IS the running account.
+ */
+export function secureTmuxWrapper(
+  file: string,
+  ops: {
+    isRoot: () => boolean
+    ids: () => { uid: number; gid: number } | null
+    chown: (p: string, uid: number, gid: number) => void
+    chmod: (p: string, mode: number) => void
+  } = {
+    isRoot: () => typeof process.getuid === 'function' && process.getuid() === 0,
+    ids: resolveTmuxRunIds,
+    chown: (p, u, g) => fs.chownSync(p, u, g),
+    chmod: (p, m) => fs.chmodSync(p, m),
+  },
+): void {
+  if (ops.isRoot()) {
+    const ids = ops.ids()
+    if (ids) {
+      try {
+        ops.chown(file, ids.uid, ids.gid)
+      } catch (err) {
+        console.warn(`[session-manager] chown ${file} -> ${TMUX_RUN_USER} failed:`, (err as Error).message)
+      }
+    }
+  }
+  ops.chmod(file, 0o700)
 }
 
 // One `tmux ls` per TTL, shared by every getSessionState call in a poll tick.
@@ -500,10 +557,27 @@ export function spawnInTmux(opts: {
     delete fullEnv.ANTHROPIC_API_KEY
     delete fullEnv.ANTHROPIC_AUTH_TOKEN
   }
+  // obj 901743: second wall — whatever the caller passed, a connector credential
+  // is never exported into the session (jail mode drops it again in renderEnvFile).
+  stripConnectorCredentials(fullEnv)
+  // obj 901743: GitHub through the host-side broker. The git credential helper
+  // and the gh shim are static scripts (no secret); in jail mode they sit in the
+  // jail's HOME bind, in tmux mode in a shared dir under /tmp/cc-scripts.
+  if (fullEnv.CC_GITHUB_BROKER === '1') {
+    const binHost = path.join(scriptDirHost, BROKER_BIN_DIRNAME)
+    const binGuest = useJail ? `${scriptDirGuest}/${BROKER_BIN_DIRNAME}` : binHost
+    try {
+      ensureConnectorBrokerShims(binHost)
+      fs.chmodSync(binHost, 0o755)
+      Object.assign(fullEnv, connectorBrokerSessionEnv(fullEnv, binGuest))
+    } catch (err) {
+      console.warn(`[session-manager] GitHub broker helper not installed for ${sessionId}:`, (err as Error).message)
+    }
+  }
   const engine = getModelEngine(model)
-  const envExports = Object.entries(fullEnv)
-    .map(([k, v]) => `export ${k}=${JSON.stringify(v)}`)
-    .join('\n')
+  // obj 901830 (public issue #160): single-quoted via renderEnvExports, not
+  // JSON.stringify — see lib/shell-quote.ts for why.
+  const envExports = renderEnvExports(fullEnv)
 
   // Write wrapper script — runs Claude (or Codex), then cleans up.
   // CRITICAL: unset provider API keys so the CLI uses OAuth/subscription auth,
@@ -617,6 +691,11 @@ export function spawnInTmux(opts: {
   fs.writeFileSync(scriptFile, `#!/bin/bash
 unset ANTHROPIC_API_KEY ANTHROPIC_AUTH_TOKEN OPENAI_API_KEY GEMINI_API_KEY GOOGLE_API_KEY XAI_API_KEY GROK_CODE_XAI_API_KEY${unsetSigning}${unsetWithheld}
 unset CARD_BROWSER_CF_ACCESS_CLIENT_ID CARD_BROWSER_CF_ACCESS_CLIENT_SECRET
+# obj 901743 (issue #136): connector credentials are brokered by the host, never
+# held by the session. A tmux server env that carries the server's own copies
+# must not hand them on.
+unset ${CONNECTOR_CREDENTIAL_ENV.join(' ')}
+for __cc_v in $(compgen -e); do case "$__cc_v" in ${MCP_TOKEN_ENV_PREFIX}*) unset "$__cc_v" ;; esac; done; unset __cc_v
 # D2 (obj 900540): the secrets-store KEK is the server's alone. A tmux server
 # started from a container env that still carries the legacy SECRETS_MASTER_KEY
 # must not hand it to a session.
@@ -650,11 +729,13 @@ EXIT_CODE=${piped ? '${PIPESTATUS[0]}' : '$?'}
 rm -f ${JSON.stringify(promptFileGuest)} ${JSON.stringify(scriptFileGuest)}${useJail ? ` ${JSON.stringify(`${scriptDirGuest}/${sessionId}.env`)}` : ''} 2>/dev/null || true
 exit $EXIT_CODE
 `)
-  // obj 900038: the wrapper contains `export KEY="value"` for every injected
+  // obj 900038: the wrapper contains `export KEY='value'` for every injected
   // secret. In jail mode only the jail uid may read it (0600 - bash does not
-  // need +x for `bash <file>`). tmux mode keeps 0777 for ccuser.
+  // need +x for `bash <file>`). obj 901743: tmux mode is 0700 too (was 0777,
+  // which let every account on the host read every session's secrets), owned
+  // by ccuser, the account `runuser -u ccuser -- bash <file>` runs it as.
   if (useJail) applyJailOwnership(scriptFile, 'jail-read')
-  else fs.chmodSync(scriptFile, 0o777)
+  else secureTmuxWrapper(scriptFile)
 
   // Record the spawn-segment boundary BEFORE this spawn's wrapper appends to the
   // jsonl, so the death-scan attributes rate limits only to events from THIS

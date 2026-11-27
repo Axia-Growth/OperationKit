@@ -52,6 +52,7 @@ import { cardModelForBot } from './bot-card-model.js'
 import { ownerBotName } from './full-access-tools.js'
 import { openLoopsBriefSection } from './open-loops.js'
 import { botMemoryBriefSection } from './bot-memory.js'
+import { pendingWakeDecisions } from '../decision-queue.js'
 import {
   DEFAULT_INSTALL_TIMEZONE,
   DEFAULT_LEVEL,
@@ -278,6 +279,28 @@ function projectOwnerBot(agent: Pick<ChatAgent, 'slug' | 'name'>): string | null
 }
 
 /**
+ * obj 901675 — this bot's own still-open wake decisions in this workspace, so a
+ * wake does not raise the same ask again. A pending ask survives the next wake
+ * (`newerRunOf` in decision-queue.ts no longer retires it just because a later
+ * run exists), so without this a wake had no way to see it already asked.
+ */
+function pendingDecisionsBriefLines(agent: Pick<ChatAgent, 'slug'>, workspace: string | null): string[] {
+  if (!workspace) return []
+  let items: ReturnType<typeof pendingWakeDecisions> = []
+  try {
+    items = pendingWakeDecisions(getDb(), agent.slug, workspace)
+  } catch {
+    return []
+  }
+  if (!items.length) return []
+  return [
+    '',
+    '**Your own still-pending asks.** You already raised these and they are still waiting for the owner — do NOT ask again; check on them (has the owner answered since? is the card still relevant?) instead of re-raising:',
+    ...items.map(i => `   - decision ${i.id} on card #${i.objective_id} ("${i.title}"): ${i.question}`),
+  ]
+}
+
+/**
  * `openLoops` (obj 901382) = the reconcile step for a bot that tracks open loops
  * (open-loops.ts `openLoopsBriefSection`), placed right after the close-out
  * commands. Passed in by templateFor so this function stays pure.
@@ -317,6 +340,7 @@ export function buildHighAgencyBrief(agent: BriefAgent, s: BriefSettings, owner 
     '   ```bash',
     `   curl -s "http://localhost:3002/api/internal/supervisor/flags?bot=${agent.slug}" ${H}`,
     '   ```',
+    ...pendingDecisionsBriefLines(agent, s.workspace ?? null),
     '',
     '**2. Close the loop.** Only on cards you own:',
     '   - done / cancelled: `curl -s -X PATCH http://localhost:3002/api/internal/objectives/<id>/status -H \'Content-Type: application/json\' -H "X-CC-Session-Token: $CC_SESSION_TOKEN" -d \'{"status":"done"}\'` (or `"cancelled"`; `"review"` holds a running card for a person; `"working"` starts or restarts one). A card with a pull request and no passing AI review closes as done only with a stated reason: add `"override_reason":"<why>"` (it goes on the audit trail). A refused transition is not yours to force — note it in the report.',

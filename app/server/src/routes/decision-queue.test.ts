@@ -152,17 +152,61 @@ describe('stale asks clear themselves when the card finishes', () => {
     expect(sweepStaleDecisions(getDb()).clearedIds).not.toContain(d)
   })
 
-  it('a card a person closed, a deleted card and a newer run of the same job all clear it', () => {
+  it('a card a person closed, a deleted card and a newer run of the same job that itself asked all clear it', () => {
     const closed = card('done', { job_disposition: 'needs_review', terminal_by_human: 1 })
     const gone = card('review')
     const oldRun = card('done', { job_disposition: 'needs_review', routine_id: 4242 })
     const [d1, d2, d3] = [raise(closed), raise(gone), raise(oldRun)]
     getDb().prepare('DELETE FROM objectives WHERE id = ?').run(gone)
-    card('working', { routine_id: 4242 }) // the job ran again
+    const newRun = card('done', { job_disposition: 'needs_review', routine_id: 4242 }) // the job ran again AND itself asked
+    raise(newRun)
     sweepStaleDecisions(getDb())
     expect(state(d1).withdrawn_reason).toBe(STALE_REASONS.closedByPerson)
     expect(state(d2).withdrawn_reason).toBe(STALE_REASONS.missing)
     expect(state(d3).withdrawn_reason).toBe(STALE_REASONS.newerRun)
+  })
+
+  // obj 901675 — hourly High Agency wakes: a pending decision must survive the
+  // next wake unless that next wake itself finished BY ASKING (its own decision
+  // row). A wake still working, or one that finished `complete`, must not retire
+  // an older pending ask — two asks were lost this way on 2026-11-20.
+  describe('a newer run only retires the older ask when it itself asked (obj 901675)', () => {
+    it('(a) older run asked, newer run still working: the older decision stays pending', () => {
+      const older = card('done', { job_disposition: 'needs_review', routine_id: 555 })
+      const d = raise(older)
+      card('working', { routine_id: 555 }) // the hourly wake started again, still running
+      sweepStaleDecisions(getDb())
+      expect(state(d).state).toBe('open')
+    })
+
+    it('(b) newer run finished with disposition complete: the older decision stays pending', () => {
+      const older = card('done', { job_disposition: 'needs_review', routine_id: 556 })
+      const d = raise(older)
+      card('done', { job_disposition: 'complete', routine_id: 556 }) // the next wake found nothing to ask
+      sweepStaleDecisions(getDb())
+      expect(state(d).state).toBe('open')
+    })
+
+    it('(c) newer run itself finished needs_review with a decision: the older one is withdrawn with the newerRun reason', () => {
+      const older = card('done', { job_disposition: 'needs_review', routine_id: 557 })
+      const d = raise(older)
+      const newer = card('done', { job_disposition: 'needs_review', routine_id: 557 })
+      raise(newer)
+      sweepStaleDecisions(getDb())
+      expect(state(d).state).toBe('withdrawn')
+      expect(state(d).withdrawn_reason).toBe(STALE_REASONS.newerRun)
+    })
+
+    it('(d) deciding the kept decision (case a: newer run still working) is accepted, never 409 decision_stale', async () => {
+      const older = card('done', { job_disposition: 'needs_review', routine_id: 558 })
+      const d = raise(older, { source: 'job_disposition' })
+      card('working', { routine_id: 558 })
+      const r = await call('POST', `/api/decisions/${d}/decide`, { cookie: adminCookie, body: { choice: 'A' } })
+      expect(r.status).toBe(200)
+      expect(r.json.code).not.toBe('decision_stale')
+      expect(r.json.outcome).toBe('card_done')
+      expect(r.json.can_reopen).toBe(true)
+    })
   })
 
   it('a job that ended BY asking keeps its decision — the one case that shows Reopen and apply', async () => {

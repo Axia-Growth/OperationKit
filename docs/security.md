@@ -220,7 +220,9 @@ Work through this list when you install, and again after any major upgrade.
       cannot list or manage Command-Center-wide secrets.
 - [ ] Remove people's accounts when they leave. Their audit history stays.
 - [ ] Treat **anyone who can start a session as trusted with the server**. Agents run with broad
-      permissions, and the default setup mounts the Docker socket, which is equivalent to root.
+      permissions. A client install keeps the Docker socket out of the app (a policy sidecar holds
+      it, see `SECURITY.md`), but the upstream operator layout still mounts it, which is
+      equivalent to root.
       Do not give session access to people you would not give SSH.
 
 **Secrets hygiene**

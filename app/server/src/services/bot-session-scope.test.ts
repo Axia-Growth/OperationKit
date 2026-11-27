@@ -2,6 +2,10 @@
  * obj 901330 — per-bot secret allowlists and connector scoping for the eight
  * Example bots, applied in card sessions. Every value below is a FAKE test string;
  * the key NAMES mirror the real store so the packs are exercised as shipped.
+ *
+ * obj 901743 (public issue #136): GitHub / Google credentials are brokered, so
+ * "the bot gets GitHub" now reads as CC_GITHUB_BROKER=1 (Google: CC_GOOGLE_BROKER=1)
+ * and the plaintext PAT / refresh token never appears in any env.
  */
 import { describe, it, expect, beforeAll, beforeEach, afterEach } from 'vitest'
 import os from 'os'
@@ -36,6 +40,17 @@ const OPERATOR = 1
 const WS = 'your-org'
 const FAKE_PAT = 'github_pat_FAKE_TEST_ONLY_0000'
 const FAKE_REFRESH = '1//FAKE_TEST_ONLY_refresh'
+
+/** No connector credential value (PAT, refresh token, OAuth client secret) anywhere in the env. */
+function expectNoConnectorSecrets(env: Record<string, string>): void {
+  const blob = JSON.stringify(env)
+  expect(blob).not.toContain(FAKE_PAT)
+  expect(blob).not.toContain(FAKE_REFRESH)
+  expect(blob).not.toContain('fake-google-client-secret')
+  for (const k of ['GH_TOKEN', 'GITHUB_TOKEN', 'GOOGLE_REFRESH_TOKEN', 'GOOGLE_OAUTH_CLIENT_ID', 'GOOGLE_OAUTH_CLIENT_SECRET']) {
+    expect(env[k]).toBeUndefined()
+  }
+}
 
 /** Every name a scoped pack mentions, plus the out-of-pack keys the card calls out. */
 const STORE_KEYS = [
@@ -158,9 +173,17 @@ describe('test 1 — a scoped bot receives only its own keys (default migration 
   })
   it('a store GH_TOKEN secret does not reach a scoped bot as an override', () => {
     store.setSecret({ scope: { scopeType: 'global' }, key: 'GH_TOKEN', value: 'fake-gh-override', actorUserId: OPERATOR })
-    expect(spawn('example-seo').GH_TOKEN).toBeUndefined()
-    expect(spawn('example-cto').GH_TOKEN).toBeUndefined()
-    expect(spawn('general').GH_TOKEN).toBe('fake-gh-override')
+    for (const bot of ['example-seo', 'example-cto']) {
+      const env = spawn(bot)
+      expect(env.GH_TOKEN).toBeUndefined()
+      expect(env.CC_GITHUB_BROKER).toBeUndefined()
+      expect(JSON.stringify(env)).not.toContain('fake-gh-override')
+    }
+    // An unscoped agent still has GitHub, brokered: the value stays out of its env.
+    const general = spawn('general')
+    expect(general.CC_GITHUB_BROKER).toBe('1')
+    expect(general.GH_TOKEN).toBeUndefined()
+    expect(JSON.stringify(general)).not.toContain('fake-gh-override')
   })
   it('the prompt lists only the names the env holds', () => {
     const text = buildSecretsInventoryBlock(card('example-cfo')).join('\n')
@@ -222,48 +245,60 @@ describe('test 3 — connectors need an explicit Who can use it grant naming the
   it('no connector_access row: Operator\'s GitHub and Google are absent for every scoped bot', () => {
     for (const bot of Object.keys(scope.EXAMPLE_BOT_PACKS)) {
       const env = spawn(bot)
-      expect(env.GH_TOKEN).toBeUndefined()
-      expect(env.GITHUB_TOKEN).toBeUndefined()
-      expect(env.GOOGLE_REFRESH_TOKEN).toBeUndefined()
+      expect(env.CC_GITHUB_BROKER).toBeUndefined()
+      expect(env.CC_GOOGLE_BROKER).toBeUndefined()
       expect(env.GOOGLE_WORKSPACE_CONNECTION).toBe('absent')
+      expectNoConnectorSecrets(env)
     }
     expect(githubSessionAccess(card('example-cto'))).toMatchObject({ state: 'unavailable', reason: 'no_grant' })
   })
   it('a grant naming example-cto gives GitHub to example-cto only — no other bot', () => {
     setAccess('github', OPERATOR, { agents: ['example-cto', 'general'], workspaces: null, allow_delegated: false })
-    expect(spawn('example-cto').GH_TOKEN).toBe(FAKE_PAT)
+    const cto = spawn('example-cto')
+    expect(cto.CC_GITHUB_BROKER).toBe('1')
+    expectNoConnectorSecrets(cto)
     for (const bot of Object.keys(scope.EXAMPLE_BOT_PACKS).filter(b => b !== 'example-cto')) {
-      expect(spawn(bot).GH_TOKEN).toBeUndefined()
+      expect(spawn(bot).CC_GITHUB_BROKER).toBeUndefined()
     }
-    expect(spawn('some-other-agent').GH_TOKEN).toBeUndefined()
+    expect(spawn('some-other-agent').CC_GITHUB_BROKER).toBeUndefined()
   })
   it('a grant cannot widen a bot past its pack (GitHub for CFO stays off)', () => {
     setAccess('github', OPERATOR, { agents: ['example-cfo'], workspaces: null, allow_delegated: false })
-    expect(spawn('example-cfo').GH_TOKEN).toBeUndefined()
+    expect(spawn('example-cfo').CC_GITHUB_BROKER).toBeUndefined()
     expect(githubSessionAccess(card('example-cfo'))).toMatchObject({ state: 'unavailable', reason: 'bot_scope' })
   })
   it('Google: granted bots on the pack get it, marked drafts-only / read+drafts', () => {
     setAccess('google-workspace', OPERATOR, { agents: ['example-cfo', 'example-general-counsel'], workspaces: null, allow_delegated: false })
     const cfo = spawn('example-cfo')
     expect(cfo.GOOGLE_WORKSPACE_CONNECTION).toBe('user')
+    expect(cfo.CC_GOOGLE_BROKER).toBe('1')
+    expectNoConnectorSecrets(cfo)
     expect(cfo.CC_GOOGLE_USE).toBe('read_and_drafts')
     expect(spawn('example-general-counsel').CC_GOOGLE_USE).toBe('drafts_only')
     // On the pack but not named in the grant → absent.
     expect(spawn('example-client-success').GOOGLE_WORKSPACE_CONNECTION).toBe('absent')
+    expect(spawn('example-client-success').CC_GOOGLE_BROKER).toBeUndefined()
     // Granted elsewhere, not on the pack → absent.
     expect(spawn('example-cto').GOOGLE_WORKSPACE_CONNECTION).toBe('absent')
+    expect(spawn('example-cto').CC_GOOGLE_BROKER).toBeUndefined()
   })
   it('default (no row, flag off): an unscoped agent keeps today\'s behaviour', () => {
-    expect(spawn('general').GH_TOKEN).toBe(FAKE_PAT)
+    const env = spawn('general')
+    expect(env.CC_GITHUB_BROKER).toBe('1')
+    expect(env.CC_GOOGLE_BROKER).toBe('1')
+    expectNoConnectorSecrets(env)
   })
   it('connector_access_default_deny=1: no grant → an arbitrary agent gets neither; a grant names exactly who', () => {
     getDb().prepare(`INSERT INTO settings (key, value) VALUES ('connector_access_default_deny', '1')`).run()
     const env = spawn('some-other-agent')
-    expect(env.GH_TOKEN).toBeUndefined()
+    expect(env.CC_GITHUB_BROKER).toBeUndefined()
+    expect(env.CC_GOOGLE_BROKER).toBeUndefined()
     expect(env.GOOGLE_WORKSPACE_CONNECTION).toBe('absent')
     setAccess('github', OPERATOR, { agents: ['general'], workspaces: null, allow_delegated: false })
-    expect(spawn('general').GH_TOKEN).toBe(FAKE_PAT)
-    expect(spawn('some-other-agent').GH_TOKEN).toBeUndefined()
+    const general = spawn('general')
+    expect(general.CC_GITHUB_BROKER).toBe('1')
+    expectNoConnectorSecrets(general)
+    expect(spawn('some-other-agent').CC_GITHUB_BROKER).toBeUndefined()
   })
   it('workspace MCP servers are withheld from a scoped bot unless on its list', () => {
     getDb().prepare(`INSERT OR IGNORE INTO workspaces (slug, name) VALUES (?, 'Example')`).run(WS)

@@ -71,6 +71,16 @@ export function captureDir(ws: Workspace, date: Date | string = new Date(), layo
   return decisionsDir(ws)
 }
 
+/**
+ * The data-access map folder (obj 901772): `data-access/` inside a workspace's
+ * knowledge folder holds `map.md` (where current data lives and how to query
+ * it) and `flags/` (one file per "the map is wrong" report). Fixed name; it
+ * does not follow `kb_capture_layout`. See services/data-access-map.ts.
+ */
+export const DATA_ACCESS_SUBDIR = 'data-access'
+export const DATA_ACCESS_MAP_NAME = 'map.md'
+export const DATA_ACCESS_FLAGS_NAME = 'flags'
+
 /** The workspace's entry-point page. */
 export function activeFile(ws: Workspace): string {
   return `${workspaceDir(ws)}/active.md`

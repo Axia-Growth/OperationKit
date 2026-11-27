@@ -1669,7 +1669,7 @@ export function AgentChatPage() {
           title="No bots yet"
           description={
             isAdmin
-              ? 'A bot is one file in the agents folder on the server. New bot walks you through making one, or try the demo: a personal assistant bot with a made-up inbox and calendar.'
+              ? 'A bot is an assistant you talk to here. Tell it the outcome you want and it hands bigger jobs to the board. Try the demo, a personal assistant with a made-up inbox and calendar, or press New bot.'
               : 'Your administrator has not added any bots yet.'
           }
           action={

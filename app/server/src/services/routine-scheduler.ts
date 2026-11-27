@@ -1,4 +1,5 @@
 import { highAgencyFireRefusal } from './agent-chat/bot-workspaces.js'
+import { codeHealthFireRefusal } from './code-health.js'
 import { resolveWriteWorkspace } from './workspaces.js'
 import { getDb, resolveStrategyId } from '../db/index.js'
 import { broadcast } from '../ws/index.js'
@@ -451,6 +452,14 @@ async function fireAiRoutine(
     console.warn(`[routines] '${routine.name}' (#${routine.id}) refused: ${botRefusal}`)
     lastSkipReason.set(routine.id, botRefusal)
     return { ok: false, reason: botRefusal }
+  }
+  // obj 901770: a code-health run (`code-health:<repo id>`) needs its repo still
+  // linked to GitHub, and waits while an earlier run's PR sits in review.
+  const healthRefusal = codeHealthFireRefusal(routine)
+  if (healthRefusal) {
+    console.log(`[routines] '${routine.name}' (#${routine.id}) skipped: ${healthRefusal}`)
+    lastSkipReason.set(routine.id, healthRefusal)
+    return { ok: false, reason: healthRefusal }
   }
 
   // Over-fire guard — EVERY automatic fire path (fresh card AND stranded-card retry)

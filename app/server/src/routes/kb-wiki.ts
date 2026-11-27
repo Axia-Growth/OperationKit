@@ -5,7 +5,9 @@
  *
  *   GET  /api/kb-wiki/pages?workspace=                 every wiki page + counts per kind
  *   GET  /api/kb-wiki/page?workspace=&path=            one page + its backlinks
- *   POST /api/kb-wiki/answers                          {workspace, question, answer, sources} → saved page
+ *   POST /api/kb-wiki/answers                          {workspace, question, answer, sources} → saved page + check
+ *   GET  /api/kb-wiki/answers/held?workspace=          answers kept out of search until a person reviews them
+ *   POST /api/kb-wiki/answers/review                   {workspace, rel, decision: approve|keep_out} (a person only)
  *   POST /api/kb-wiki/imports?workspace=               multipart "files" → import jobs (in review)
  *   POST /api/kb-wiki/imports/samples?workspace=       the made-up sample chats and calls
  *   GET  /api/kb-wiki/imports?workspace=               jobs (no item rows) + working flag
@@ -16,6 +18,11 @@
  *   POST /api/kb-wiki/lint/run?workspace=              run the cleanup now
  *   PUT  /api/kb-wiki/lint/settings                    admin only
  *   POST /api/kb-wiki/rebuild?workspace=               admin only, body {confirm: true}
+ *   GET  /api/kb-wiki/curator?workspace=               curator suggestions (open + recently decided) + last run (obj 901768)
+ *   POST /api/kb-wiki/curator/run?workspace=           look for suggestions now (proposes only, applies nothing)
+ *   POST /api/kb-wiki/curator/proposals/:id/accept     {workspace, sign_off?} — a person; procedure pages: admin in the browser + sign_off: true
+ *   POST /api/kb-wiki/curator/proposals/:id/reject     {workspace, note?} — a person
+ *   POST /api/kb-wiki/curator/accept-light             {workspace} — every open light-touch suggestion (merges, new stubs; never a procedure page)
  *   GET  /api/kb-wiki/graph?workspace=&limit=           every page + every connection (workspace graph view, obj 900674)
  *   GET  /api/kb-wiki/graph/related?workspace=&page=&depth=   pages connected to one page (link graph, obj 720162)
  *   GET  /api/kb-wiki/graph/who-knows?workspace=&topic=      people linked to a topic, best-sourced first
@@ -43,11 +50,16 @@ import { generatedPagePath, onWikiCompiled, readPage, scanWiki } from '../servic
 import { MAX_RELATED_DEPTH, MAX_WORKSPACE_GRAPH_NODES, kbRelated, kbWhoKnows, kbWorkspaceGraph, readUnresolved, syncGraph } from '../services/kb-wiki/graph.js'
 import { graphScanOptions, syncWorkspaceGraph, workspaceForKbRoot } from '../services/kb-wiki/graph-sync.js'
 import { workspaceGraphLayout } from '../services/kb-wiki/graph-layout.js'
-import { fileAnswer } from '../services/kb-wiki/answers.js'
+import { checkAndFileAnswer } from '../services/kb-wiki/answers.js'
+import { listHeldAnswers, reviewAnswer, type ReviewDecision } from '../services/kb-wiki/answer-check.js'
+import { wikiLlm } from '../services/kb-wiki/llm.js'
 import { LINT_LAST, type LintReport } from '../services/kb-wiki/lint.js'
 import { runLintForWorkspace, startWikiLintScheduler } from '../services/kb-wiki/scheduler.js'
 import { getWikiSettings, saveWikiSettings, type WikiSettings } from '../services/kb-wiki/settings.js'
 import { rebuildWiki } from '../services/kb-wiki/rebuild.js'
+import { CuratorError, acceptLightTouch, acceptProposal, readCuratorState, rejectProposal, type Decider } from '../services/kb-wiki/curator.js'
+import { runCuratorForWorkspace } from '../services/kb-wiki/scheduler.js'
+import { authenticatedViaCookie } from '../lib/message-provenance.js'
 import { IMPORTS_STATE_DIR, INDEX_PAGE, LOG_PAGE, isProtectedPath } from '../services/kb-wiki/paths.js'
 import {
   ImportNotFoundError, cancelImport, createImport, isImporting, listImports, listItems, pauseImport,
@@ -214,13 +226,43 @@ function answerInput(body: AnswerBody): string | { question: string; answer: str
   return { question, answer, sources }
 }
 
-router.post('/answers', (req: AuthRequest, res) => {
+/** The AI that checks an answer against its pages before it is saved (obj 901746); null = rules only. */
+export function answerCheckLlm(): ReturnType<typeof wikiLlm> | null {
+  try { return wikiLlm() } catch { return null }
+}
+
+router.post('/answers', async (req: AuthRequest, res) => {
   const ws = resolveWorkspace(req, res); if (!ws) return
   const input = answerInput(req.body ?? {})
   if (typeof input === 'string') { res.status(400).json({ error: input }); return }
   try {
     const filedBy = req.agentKey ? `${req.user!.username} (agent: ${req.agentKey.label})` : req.user!.username
-    res.status(201).json(fileAnswer(workspaceKbRoot(ws), { ...input, filedBy }))
+    res.status(201).json(await checkAndFileAnswer(workspaceKbRoot(ws), { ...input, filedBy }, answerCheckLlm(), { workspace: ws }))
+  } catch (err) { fail(res, err) }
+})
+
+// ── Held answers: a person reviews them (obj 901746) ─────────────────────────
+
+router.get('/answers/held', (req: AuthRequest, res) => {
+  const ws = resolveWorkspace(req, res); if (!ws) return
+  try {
+    res.json({ answers: listHeldAnswers(workspaceKbRoot(ws)) })
+  } catch (err) { fail(res, err, 500) }
+})
+
+/**
+ * Approve (back in search) or keep out (retired, kept for the record). A
+ * PERSON only: an agent key, legacy key or card-browser session is refused, so
+ * the bot that saved an answer cannot clear its own hold.
+ */
+router.post('/answers/review', (req: AuthRequest, res) => {
+  const ws = resolveWorkspace(req, res); if (!ws) return
+  if (req.agentKey || req.authVia !== 'session') { res.status(403).json({ error: 'Only a person signed in to the app can review a held answer.' }); return }
+  const b = (req.body ?? {}) as { rel?: unknown; decision?: unknown }
+  const decision = b.decision === 'approve' || b.decision === 'keep_out' ? b.decision as ReviewDecision : null
+  if (typeof b.rel !== 'string' || !b.rel.trim() || !decision) { res.status(400).json({ error: 'Send rel (the answer page) and decision: approve or keep_out.' }); return }
+  try {
+    res.json(reviewAnswer(workspaceKbRoot(ws), b.rel, decision, req.user!.username || `user ${req.user!.id}`))
   } catch (err) { fail(res, err) }
 })
 
@@ -403,12 +445,85 @@ router.post('/lint/run', async (req: AuthRequest, res) => {
 router.put('/lint/settings', requireAdmin, (req: AuthRequest, res) => {
   const b = (req.body ?? {}) as Record<string, unknown>
   const patch: Partial<WikiSettings> = {}
-  for (const k of ['lint_schedule', 'lint_hour_utc', 'lint_stale_days', 'lint_ai_pages', 'graph_exclude'] as const) {
+  for (const k of ['lint_schedule', 'lint_hour_utc', 'lint_stale_days', 'lint_ai_pages', 'graph_exclude', 'curator_enabled', 'curator_ai_drafts'] as const) {
     if (b[k] !== undefined) (patch as Record<string, unknown>)[k] = b[k]
   }
   try {
     res.json({ settings: saveWikiSettings(patch) })
   } catch (err) { fail(res, err) }
+})
+
+// ── Curator (obj 901768) ─────────────────────────────────────────────────────
+
+/** Who is deciding: a person (not an agent key), an admin, signed in through the browser. */
+function deciderFor(req: AuthRequest): Decider {
+  const u = req.user!
+  return {
+    name: u.username ? u.username.charAt(0).toUpperCase() + u.username.slice(1) : `user ${u.id}`,
+    admin: u.role === 'admin',
+    // A person = signed in as a user (cookie or a user's own bearer JWT). Agent keys, legacy API keys
+    // and card-browser sessions are bots, never a person deciding.
+    browser: !req.agentKey && req.authVia === 'session' && authenticatedViaCookie(req),
+    person: !req.agentKey && req.authVia === 'session',
+  }
+}
+
+function curatorFail(res: Response, err: unknown): void {
+  if (err instanceof CuratorError) { res.status(err.status).json({ error: err.message, code: err.code }); return }
+  fail(res, err, 500)
+}
+
+const RECENT_DECIDED = 30
+
+router.get('/curator', (req: AuthRequest, res) => {
+  const ws = resolveWorkspace(req, res); if (!ws) return
+  const s = readCuratorState(workspaceKbRoot(ws))
+  const settings = getWikiSettings()
+  const open = s.proposals.filter(p => p.status === 'open')
+  const decided = s.proposals.filter(p => p.status === 'accepted' || p.status === 'rejected')
+    .sort((a, b) => (b.decided_at ?? '').localeCompare(a.decided_at ?? '')).slice(0, RECENT_DECIDED)
+  res.json({
+    enabled: settings.curator_enabled,
+    ai_drafts: settings.curator_ai_drafts,
+    last_run_at: s.last_run_at,
+    notes: s.last_notes,
+    stats: s.last_stats,
+    open,
+    decided,
+  })
+})
+
+// One run per knowledge base at a time, shared with the scheduler: runCurator answers 409 already_running.
+router.post('/curator/run', async (req: AuthRequest, res) => {
+  const ws = resolveWorkspace(req, res); if (!ws) return
+  try {
+    const r = await runCuratorForWorkspace(ws)
+    res.json({ ran_at: r.ran_at, proposed: r.proposed.length, open: r.open, notes: r.notes, stats: r.stats })
+  } catch (err) { curatorFail(res, err) }
+})
+
+router.post('/curator/proposals/:id/accept', (req: AuthRequest, res) => {
+  const ws = resolveWorkspace(req, res); if (!ws) return
+  try {
+    res.json(acceptProposal(workspaceKbRoot(ws), String(req.params.id), deciderFor(req), { signOff: req.body?.sign_off === true }))
+  } catch (err) { curatorFail(res, err) }
+})
+
+router.post('/curator/proposals/:id/reject', (req: AuthRequest, res) => {
+  const ws = resolveWorkspace(req, res); if (!ws) return
+  const note = typeof req.body?.note === 'string' ? req.body.note : undefined
+  try {
+    res.json(rejectProposal(workspaceKbRoot(ws), String(req.params.id), deciderFor(req), note))
+  } catch (err) { curatorFail(res, err) }
+})
+
+router.post('/curator/accept-light', (req: AuthRequest, res) => {
+  const ws = resolveWorkspace(req, res); if (!ws) return
+  const who = deciderFor(req)
+  if (!who.person) { res.status(403).json({ error: 'Only a person can accept suggestions, not an agent key.', code: 'not_a_person' }); return }
+  try {
+    res.json(acceptLightTouch(workspaceKbRoot(ws), who))
+  } catch (err) { curatorFail(res, err) }
 })
 
 // ── Rebuild ──────────────────────────────────────────────────────────────────
@@ -438,7 +553,7 @@ internalKbWikiRouter.use((req, res, next) => {
   next()
 })
 
-internalKbWikiRouter.post('/answers', (req, res) => {
+internalKbWikiRouter.post('/answers', async (req, res) => {
   const requested = typeof req.body?.workspace === 'string' ? req.body.workspace.trim() : ''
   // obj 900838: the KB path is built from the registry row's slug, never the request string.
   const ws = requested ? getWorkspace(requested)?.slug : undefined
@@ -448,7 +563,7 @@ internalKbWikiRouter.post('/answers', (req, res) => {
   if (typeof input === 'string') { res.status(400).json({ error: input }); return }
   const filedBy = typeof req.body?.filed_by === 'string' && req.body.filed_by.trim() ? req.body.filed_by.trim().slice(0, 200) : 'board session'
   try {
-    res.status(201).json(fileAnswer(workspaceKbRoot(ws), { ...input, filedBy }))
+    res.status(201).json(await checkAndFileAnswer(workspaceKbRoot(ws), { ...input, filedBy }, answerCheckLlm(), { workspace: ws }))
   } catch (err) { fail(res, err) }
 })
 

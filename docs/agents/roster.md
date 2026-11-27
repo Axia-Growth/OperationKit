@@ -1,8 +1,11 @@
-# The agent & skill roster (one place)
+# The bot roster (one place)
 
-**Agents & Skills** (`/agents`, nav label "Agents & Skills") is the one place to see and
-manage agents and skills. It has three tabs: **Registry** (roster, assignments, skill
-graph), **Board layer** and **Templates**. Settings no longer carries its own copy:
+**Bot setup** (`/agents`, avatar menu) is the one place to see and manage bots and agents.
+Its tabs, in order: **Bots** (the roster), **Templates**, **By project**, **Assignments**
+and, last, **Skills (advanced)** — the skill graph. Skill files are an optional escape
+hatch, not a way to add capability (obj 901765; see
+[Skills, Tools & Agents](../wiki/Skills-Tools-Agents.md)); the roster's "Skill files"
+filter lists any an install still has. Settings no longer carries its own copy:
 `/settings/agents-skills` and `/settings/agents` redirect to `/agents?tab=registry`
 (obj 900684, finishing obj 900495).
 

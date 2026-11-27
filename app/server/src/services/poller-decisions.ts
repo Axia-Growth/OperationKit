@@ -5,6 +5,7 @@
 import { isClearDeadSessionEnabled } from './objective-audit.js'
 import { classifyMergeLane, type MergeLane } from './merge-lane.js'
 import type { StartupFailure } from './session-startup-failure.js'
+import { isProductionIssueCard } from '../lib/production-issue.js'
 import type {
   Objective,
   ObjectiveStatus,
@@ -235,6 +236,7 @@ export function hasLinkedPr(o: { pr_number?: number | null; pr_url?: string | nu
 export function decideWorkerEndRoute(
   objective: Pick<Objective, 'type' | 'create_pr' | 'delegate_mode' | 'pr_number' | 'pr_url' | 'routine_id'> & {
     skip_ai_review?: boolean | number | null
+    origin?: string | null
   },
   ctx: {
     redPath: boolean
@@ -242,16 +244,31 @@ export function decideWorkerEndRoute(
     uiTouched: boolean
     hasDelegatorParent: boolean
     producedNothing?: boolean
+    /**
+     * obj 901770 — this routine card's PR must ALWAYS get the independent AI
+     * review (a code-health run). Without it a routine `task` with a
+     * backend-only PR is `green` and auto-completes to `done` with no reviewer.
+     * Applies only when the card really carries a linked PR; a run that opened
+     * no PR ("nothing to do") routes exactly as before.
+     */
+    alwaysReviewPr?: boolean
   },
 ): { lane: MergeLane; status: ObjectiveStatus; prLinked: boolean } {
   const isRoutine = objective.routine_id != null
+  if (ctx.alwaysReviewPr && hasLinkedPr(objective) && !ctx.producedNothing && !objective.delegate_mode) {
+    return { lane: 'yellow', status: objective.skip_ai_review ? 'review' : 'ai_review', prLinked: true }
+  }
   const prLinked = hasLinkedPr(objective) && !isRoutine
   const createPr = !!objective.create_pr
+  // obj 901771 — a fix for a production signal always gets the independent AI
+  // review: it is red-lane (never green, which skips the reviewer) and a
+  // skip_ai_review flag on it is ignored.
+  const productionIssue = isProductionIssueCard(objective)
   const lane = classifyMergeLane({
     type: objective.type,
     createPr,
     delegateMode: !!objective.delegate_mode,
-    redPath: ctx.redPath,
+    redPath: ctx.redPath || productionIssue,
     filesKnown: ctx.filesKnown,
     uiTouched: ctx.uiTouched,
     prLinked,
@@ -260,7 +277,7 @@ export function decideWorkerEndRoute(
     type: objective.type,
     delegateMode: !!objective.delegate_mode,
     createPr,
-    skipAi: !!objective.skip_ai_review,
+    skipAi: !!objective.skip_ai_review && !productionIssue,
     hasDelegatorParent: ctx.hasDelegatorParent,
     isRoutine,
     lane,

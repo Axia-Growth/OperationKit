@@ -3,6 +3,7 @@
  * (/agents). Despite the file name it is no longer rendered under Settings
  * (obj 900684). obj 900807 removed its inner Roster / Assignments / Skill Graph
  * tab group: those are top-level tabs of the page now, so this renders ONE view.
+ * obj 901765: the blurb no longer sells skills as a way to add capability.
  */
 import { CopyButton } from '../ui'
 import { AgentsSkillsTab } from '../config/AgentsSkillsTab'
@@ -20,8 +21,8 @@ export function SettingsAgents({ showSetupPrompt = true, view = 'roster' }: { sh
       {view === 'roster' && (
         <div className="mb-4 space-y-2">
           <p className="max-w-prose text-sm leading-relaxed text-fg-2">
-            <span className="font-medium text-fg-1">Bots</span> are who does the work.{' '}
-            <span className="font-medium text-fg-1">Skills</span> are how-to instructions a bot follows.{' '}
+            <span className="font-medium text-fg-1">Bots</span> are who does the work. They work out how to do a
+            task from the card, your project’s docs and Context, so you do not need to write skill files.{' '}
             <span className="font-medium text-fg-1">Tools</span> are the integrations and MCP connections a bot
             can reach — manage those in{' '}
             <a
@@ -30,7 +31,7 @@ export function SettingsAgents({ showSetupPrompt = true, view = 'roster' }: { sh
             >
               Settings → Integrations
             </a>
-            . <span className="font-medium text-fg-1">Assignments</span> (the next tab) narrow a bot or skill to one
+            . <span className="font-medium text-fg-1">Assignments</span> narrow a bot to one
             workspace, project, or user instead of it applying everywhere.
           </p>
           {showSetupPrompt && (

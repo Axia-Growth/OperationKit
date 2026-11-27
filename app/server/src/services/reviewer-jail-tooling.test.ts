@@ -199,7 +199,7 @@ describe('jail mode: a UI-change review runs on the browser jail with Playwright
     const home = jailHome(sid)
     const wrapper = fs.readFileSync(path.join(home, `${sid}.sh`), 'utf8')
     expect(wrapper).toContain(`--mcp-config "/home/jailuser/.cc/${sid}.browser-mcp.json"`)
-    expect(wrapper).toContain('export CC_CARD_BROWSER="1"')
+    expect(wrapper).toContain("export CC_CARD_BROWSER='1'")
     const args: string[] = JSON.parse(fs.readFileSync(path.join(home, `${sid}.browser-mcp.json`), 'utf8')).mcpServers.playwright.args
     expect(args).toContain('--sandbox')
     expect(args[args.indexOf('--proxy-server') + 1]).toBe('http://127.0.0.1:3099')
@@ -297,7 +297,7 @@ describe('fail-closed behaviour is unchanged (criterion 4)', () => {
     expect(argv.join(' ')).not.toContain('seccomp=')
     const wrapper = fs.readFileSync(path.join(jailHome(sid), `${sid}.sh`), 'utf8')
     expect(wrapper).not.toContain('--mcp-config')
-    expect(wrapper).toMatch(/export CC_CARD_BROWSER_REFUSED=".*ok-jail-browser:local is not on this host/)
+    expect(wrapper).toMatch(/export CC_CARD_BROWSER_REFUSED='.*ok-jail-browser:local is not on this host/)
   })
 
   it('jail mode: Chromium only ever talks through the in-jail guard (proxy set, sandbox on, no --no-sandbox)', async () => {

@@ -25,3 +25,7 @@ export {
   type RepairBlocker, type RepairBlockerCode, type RepairClassification, type RepairSafeChange, type ClassifyRepairOptions,
   type FlowFailureLike,
 } from './repair.js'
+export {
+  FLOW_DONE_WHEN_MAX_CHARS, endConditionKey, sameEndCondition, isAgentWrittenAuthor, checkEndConditionContract,
+  type FlowEndConditionContract, type EndConditionCheck,
+} from './end-condition.js'

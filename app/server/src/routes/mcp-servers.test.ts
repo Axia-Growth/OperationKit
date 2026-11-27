@@ -175,14 +175,20 @@ describe('connect flows over HTTP', () => {
 })
 
 describe('buildSpawnEnv (the real session spawn env)', () => {
-  it('a card in ws A gets ws A\'s MCP server + token; a card in ws B never does', async () => {
+  it('a card in ws A gets ws A\'s MCP server (through the host relay, no token); a card in ws B never does', async () => {
     const a = svc.createServer({ workspace: 'ws-a', name: 'Alpha', url: `${stub.baseUrl}/bearer/mcp`, auth_type: 'api_key', api_key: STUB_API_KEY }, 1)
     await svc.testServer(a.id)
     const objective = (ws: string) => ({ id: 990001, title: 't', workspace: ws, status: 'working', created_by: 1 }) as unknown as Parameters<typeof buildSpawnEnv>[0]['objective']
     const envA = buildSpawnEnv({ objective: objective('ws-a'), homeDir: os.tmpdir(), sessionKind: 'worker' })
     const envB = buildSpawnEnv({ objective: objective('ws-b'), homeDir: os.tmpdir(), sessionKind: 'worker' })
-    expect(envA[svc.sessionTokenEnvName(a.id)]).toBe(STUB_API_KEY)
-    expect(svc.parseSpawnDescriptor(envA).map(s => s.key)).toEqual(['alpha'])
+    // obj 901743: the server token stays on the host; the session reaches the
+    // server through /api/session-broker/mcp/<slug> with its own session token.
+    expect(envA[svc.sessionTokenEnvName(a.id)]).toBeUndefined()
+    expect(JSON.stringify(envA)).not.toContain(STUB_API_KEY)
+    const descA = svc.parseSpawnDescriptor(envA)
+    expect(descA.map(s => s.key)).toEqual(['alpha'])
+    expect(descA[0].url).toMatch(/\/api\/session-broker\/mcp\/alpha$/)
+    expect(envA.CC_SESSION_TOKEN).toMatch(/^ccs_/)
     expect(envB[svc.sessionTokenEnvName(a.id)]).toBeUndefined()
     expect(envB[svc.WORKSPACE_MCP_ENV]).toBeUndefined()
     expect(Object.values(envB)).not.toContain(STUB_API_KEY)

@@ -61,7 +61,7 @@ describe('app map: what it says', () => {
     expect(page(live, '/')!.click_path).toEqual(['Board'])
     expect(page(live, '/chat')!.click_path).toEqual(['Bots'])
     expect(page(live, '/knowledge')!.click_path).toEqual(['Context'])
-    expect(page(live, '/agents')).toMatchObject({ click_path: [AVATAR_MENU, 'Bots & skills'], audience: 'admin' })
+    expect(page(live, '/agents')).toMatchObject({ click_path: [AVATAR_MENU, 'Bot setup'], audience: 'admin' })
   })
 
   it('every page says how to reach it', () => {

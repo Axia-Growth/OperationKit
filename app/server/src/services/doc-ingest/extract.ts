@@ -93,6 +93,14 @@ function textRuns(xml: string, tag: string): string {
   return out
 }
 
+/**
+ * Excel stores furigana (phonetic guides) for text typed with a Japanese IME as
+ * <rPh> runs next to the real text. They are reading aids, not cell content.
+ */
+function stripPhonetic(xml: string): string {
+  return xml.replace(/<rPh\b[\s\S]*?<\/rPh>/g, '')
+}
+
 function mdCell(v: string): string {
   return v.replace(/\r?\n/g, ' ').replace(/\|/g, '\\|').trim()
 }
@@ -119,10 +127,22 @@ function colIndex(ref: string): number {
   return n - 1
 }
 
-/** Excel serial date (1900 system) → YYYY-MM-DD. */
-export function excelSerialToIso(serial: number): string {
-  const ms = Math.round((serial - 25569) * 86400 * 1000)
+/** Days between each Excel date system's day 0 and the Unix epoch (1970-01-01). */
+const EXCEL_1900_UNIX_OFFSET = 25569 // serial 25569 = 1970-01-01 (1900 system, leap-bug included)
+const EXCEL_1904_UNIX_OFFSET = 24107 // serial 0 = 1904-01-01 (1904 system)
+
+/** Excel serial date → YYYY-MM-DD. `date1904` selects the workbook's 1904 date system. */
+export function excelSerialToIso(serial: number, date1904 = false): string {
+  const offset = date1904 ? EXCEL_1904_UNIX_OFFSET : EXCEL_1900_UNIX_OFFSET
+  const ms = Math.round((serial - offset) * 86400 * 1000)
   return new Date(ms).toISOString().slice(0, 10)
+}
+
+/** Whether workbook.xml's `<workbookPr date1904="1|true">` puts the workbook on the 1904 date system. */
+export function workbookUsesDate1904(workbookXml: string): boolean {
+  const pr = workbookXml.match(/<(?:\w+:)?workbookPr\b[^>]*>/)?.[0]
+  const v = pr ? attr(pr, 'date1904')?.trim().toLowerCase() : undefined
+  return v === '1' || v === 'true'
 }
 
 function resolveZipPath(base: string, target: string): string {
@@ -141,9 +161,11 @@ export function extractXlsx(buf: Buffer): Extracted {
   const workbook = get('xl/workbook.xml')
   if (!workbook) throw new UnsupportedFileError('This file is not an Excel workbook (no xl/workbook.xml).')
 
+  const date1904 = workbookUsesDate1904(workbook)
+
   const shared: string[] = []
   const sst = get('xl/sharedStrings.xml')
-  if (sst) for (const m of sst.matchAll(/<si>([\s\S]*?)<\/si>/g)) shared.push(textRuns(m[1], 't'))
+  if (sst) for (const m of sst.matchAll(/<si>([\s\S]*?)<\/si>/g)) shared.push(textRuns(stripPhonetic(m[1]), 't'))
 
   // Which style indexes are dates: cellXfs[i].numFmtId → built-in or custom date format.
   const dateStyles = new Set<number>()
@@ -194,12 +216,12 @@ export function extractXlsx(buf: Buffer): Extracted {
         const v = body.match(/<v>([\s\S]*?)<\/v>/)?.[1]
         let val = ''
         if (t === 's') val = shared[Number(v)] ?? ''
-        else if (t === 'inlineStr') val = textRuns(body, 't')
+        else if (t === 'inlineStr') val = textRuns(stripPhonetic(body), 't')
         else if (t === 'b') val = v === '1' ? 'TRUE' : 'FALSE'
         else if (v !== undefined) {
           val = decodeXmlEntities(v)
           const num = Number(val)
-          if (t !== 'str' && t !== 'e' && dateStyles.has(s) && Number.isFinite(num)) val = excelSerialToIso(num)
+          if (t !== 'str' && t !== 'e' && dateStyles.has(s) && Number.isFinite(num)) val = excelSerialToIso(num, date1904)
         }
         const idx = ref ? colIndex(ref) : row.length
         while (row.length < idx) row.push('')

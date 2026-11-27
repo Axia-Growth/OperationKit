@@ -45,6 +45,8 @@ const KB_WRITE_MODULES: Record<string, number> = {
   'services/kb-wiki/wiki.ts': 1,
   'services/kb-wiki/answers.ts': 1,
   'services/kb-wiki/lint.ts': 1,
+  'services/kb-wiki/answer-check.ts': 1, // a saved answer's check result / a person's review (obj 901746)
+  'services/kb-wiki/curator.ts': 1, // a page update / retirement / merge / new page a person accepted (obj 901768)
   'services/kb-wiki/imports.ts': 2,
   'services/kb-setup/runs.ts': 3,
   'services/doc-ingest/notes.ts': 2,

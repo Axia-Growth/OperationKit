@@ -101,4 +101,29 @@ describe('FlowSelfTestPanel', () => {
     expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toEqual({ version: 3, mode: 'dry' })
     expect(fetchMock.mock.calls[0][0]).toBe('/api/flows/12/test')
   })
+
+  it('obj 901766: a builder-written end condition is shown and must be confirmed before publish', async () => {
+    render({
+      ...state(selfTest('passed')),
+      end_condition: {
+        value: { assert: [{ expr: 'steps.notify.output.ok == true', why: 'summary posted' }] },
+        confirmation_required: true,
+        reason: 'proposed_by_agent',
+        contract: { done_when: 'The team got one summary message.', end_condition: null, confirmed_by: null, confirmed_at: null },
+      },
+    })
+    const ecBox = host.querySelector('[data-testid="flow-end-condition"]')!
+    expect(ecBox.textContent).toContain('The team got one summary message.')
+    expect(ecBox.textContent).toContain('steps.notify.output.ok == true')
+    // Tick the send node: still blocked on the end condition.
+    const nodeBox = [...host.querySelectorAll('input[type="checkbox"]')].find((b) => !(b as HTMLElement).dataset.testid) as HTMLInputElement
+    await act(async () => { nodeBox.click() })
+    expect(publishButton().disabled).toBe(true)
+    expect(host.textContent).toContain('Confirm the end condition first.')
+    await act(async () => { (host.querySelector('[data-testid="flow-confirm-end-condition"]') as HTMLInputElement).click() })
+    expect(publishButton().disabled).toBe(false)
+    fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ ok: true, approvals: { version: 3, nodes: ['notify'], by: 'user:1', at: 'x' } }), { status: 200 }))
+    await act(async () => { publishButton().click() })
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toEqual({ version: 3, approve: ['notify'], confirm_end_condition: true })
+  })
 })

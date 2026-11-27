@@ -31,6 +31,8 @@ import { initFlowSchema } from '../db/schema/flow.js'
 import { FLOW_ID_RE, LLM_MAX_ITERATIONS_CAP, LOOP_MAX_CONCURRENCY } from '../../../shared/flow/types.js'
 import { flowsEnabled, listRegisteredFlowTools } from './flow-engine.js'
 import { defaultModelIdIn } from './model-registry.js'
+import { pinFlowEndCondition } from './flow-contract.js'
+import { isAgentWrittenAuthor } from '../../../shared/flow/end-condition.js'
 
 /** §5.1: "up to builder.max_iterations (default 6)". */
 export const DEFAULT_BUILDER_MAX_ITERATIONS = 6
@@ -232,6 +234,10 @@ export interface BuilderBriefInput {
   workspace: string
   goal: string
   endCondition: unknown | null
+  /** obj 901766 — the person's plain-words "Done when". */
+  doneWhen?: string | null
+  /** obj 901766 — true when a person (not an agent key) gave the end condition. */
+  endConditionByPerson?: boolean
   /** obj 900868 — the owner's notes and the tools/integrations they want used. */
   notes?: string | null
   preferredTools?: string[]
@@ -260,9 +266,18 @@ export function builderBrief(b: BuilderBriefInput): string {
     '## End condition',
     '',
   )
+  if (b.doneWhen) {
+    lines.push(
+      'In the owner\'s words, the workflow has worked when:',
+      '',
+      ...b.doneWhen.split(/\r?\n/).map((l) => `> ${l}`),
+      '',
+    )
+  }
   if (b.endCondition) {
     lines.push(
-      'Given by the owner. Put it in `goal.end_condition` exactly as written — it is the contract, you may not weaken or edit it:',
+      (b.endConditionByPerson === false ? 'Given with the goal (by an agent; the owner confirms it at publish).' : 'Given by the owner.') +
+        ' Put it in `goal.end_condition` exactly as written — it is the contract, and the server refuses (`end_condition_changed`) a draft of yours that changes it:',
       '',
       '```json',
       JSON.stringify(b.endCondition, null, 2),
@@ -270,9 +285,11 @@ export function builderBrief(b: BuilderBriefInput): string {
     )
   } else {
     lines.push(
-      'None given. **Propose one**: at least one deterministic `assert` (an expression over `steps.<id>.output…`), optional `judge`.',
-      'Put it in the draft\'s `goal.end_condition` and state it in your summary so the owner can confirm it before publishing.',
-      'Once the owner confirms it, you may not change it without them.',
+      b.doneWhen
+        ? '**Turn those words into the machine-checkable end condition**: at least one deterministic `assert` (an expression over `steps.<id>.output…`) per thing the owner named, plus an optional `judge` only for what an expression cannot check.'
+        : 'None given. **Propose one**: at least one deterministic `assert` (an expression over `steps.<id>.output…`), optional `judge`.',
+      'Put it in the draft\'s `goal.end_condition` and state it in your summary in plain words next to each assert, so the owner can confirm it before publishing.',
+      'Your FIRST draft pins it: the server refuses (`end_condition_changed`) a later draft of yours that changes it. Fix the steps, not the test. If it is wrong, say so in your summary; only the owner can change it.',
     )
   }
   if (b.notes) {
@@ -353,7 +370,7 @@ export function builderBrief(b: BuilderBriefInput): string {
 }
 
 export const BUILDER_COMPLETION_GOAL =
-  'A draft version of this workflow validates and its latest self-test is `passed`; the summary names the version, the self-test id, the end condition and the send/spend nodes the owner must approve at publish. The builder never publishes.'
+  'A draft version of this workflow validates and its latest self-test is `passed`; the summary names the version, the self-test id, the end condition (each assert in plain words) and the send/spend nodes the owner must approve at publish. The builder never publishes and never changes a pinned end condition.'
 
 // ── create ──────────────────────────────────────────────────────────────────
 
@@ -363,6 +380,8 @@ export interface CreateFromGoalInput {
   name?: string
   endCondition?: unknown
   maxIterations?: number
+  /** obj 901766 — plain-words "Done when", stored on the flow and shown to the builder and the publisher. */
+  doneWhen?: string | null
   /** obj 900868 — optional Notes + Tools, stored on the flow and shown to the builder. */
   notes?: string | null
   tools?: string[]
@@ -401,10 +420,17 @@ export async function createWorkflowFromGoal(db: Database.Database, input: Creat
       input.notes || null, input.tools && input.tools.length ? JSON.stringify(input.tools) : null,
     )
     const flowId = Number(r.lastInsertRowid)
+    if (input.doneWhen) db.prepare('UPDATE flow_definitions SET done_when = ? WHERE id = ?').run(input.doneWhen, flowId)
+    // The end condition given with the goal is the contract (obj 901766): pinned
+    // now, confirmed at once when a person gave it, else waiting for one at publish.
+    if (input.endCondition != null) {
+      pinFlowEndCondition(db, flowId, input.endCondition, isAgentWrittenAuthor(input.createdBy) ? null : input.createdBy)
+    }
     const maxIterations = builderMaxIterations(db, flowId)
     const description = builderBrief({
       flowId, slug, name, workspace: input.workspace, goal: input.goal, endCondition: input.endCondition ?? null,
       notes: input.notes ?? null, preferredTools: input.tools ?? [],
+      doneWhen: input.doneWhen ?? null, endConditionByPerson: !isAgentWrittenAuthor(input.createdBy),
       maxIterations, tools, okit, connectors, flowsEnabled: enabled,
     })
     const o = db.prepare(

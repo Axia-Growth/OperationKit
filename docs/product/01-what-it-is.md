@@ -1,82 +1,117 @@
-# What OperationKit is
+# What Operation Kit is
 
-OperationKit (`cc.example.com`) is Example’s control plane for AI work. It is not a chatbot with a file picker. It is a **kanban of jobs** that become **live agent sessions** on a single VPS, with the same GitHub, Google, and repos we already use.
+Operation Kit is a **capable harness for AI work** that runs on a business's own server. You say what
+outcome you want. You approve how it gets broken down. The install handles the plumbing: context,
+sandboxes, accounts, memory, verification and follow-up.
 
-If you think in pictures, start with the chart. If you think in words, skip to **The loop**. Tables and databases sit in [Data](./07-data.md).
+It is built for the AI implementation consultant who installs one copy per client. Their scarce time
+is understanding the client's problem and breaking it down, so that is the only part the product
+asks of them. Writing agent files, wiring context and building checks are the harness's job.
+
+If you think in pictures, start with the chart. If you think in words, skip to **The loop**. Tables
+and files are in [Data](./07-data.md).
 
 ```mermaid
 flowchart TB
-  subgraph people["People"]
-    You["You / Casey"]
-    Settings["Settings → You\nGitHub + Google"]
-    You --> Settings
+  subgraph you["You: the scarce part"]
+    Problem["1. State the problem\n(a card, or ask a bot)"]
+    Approve["2. Approve the breakdown\n(plan + acceptance criteria)"]
+    SignOff["Sign off / answer a decision"]
   end
 
-  subgraph capture["Capture"]
-    Board["Board card"]
-    Assistant["Assistant chat"]
-    Jobs["Jobs / cron"]
-    You --> Board
-    You --> Assistant
-    Assistant --> Board
-    Jobs --> Board
+  subgraph harness["The harness: the plumbing"]
+    Planner["Planner drafts the plan"]
+    Context["Context\nknowledge base, connected accounts, secrets"]
+    Worker["Worker in its own sandbox\n(Claude Code, Codex or Grok)"]
+    Children["Child cards in parallel"]
+    Memory["Memory\nprogress, notes, deliverable"]
+    Review["Independent AI review\nagainst the criteria"]
+    PR["Pull request behind CI checks"]
   end
 
-  subgraph dispatch["Dispatch"]
-    Obj["objectives row\n= source of truth"]
-    Model["Model registry"]
-    Seat["Seat: Claude / Grok / Codex"]
-    Board --> Obj
-    Obj --> Model
-    Obj --> Seat
-  end
-
-  subgraph execute["Execute on the VPS"]
-    Tmux["tmux session"]
-    Repo["Repo on disk / worktree"]
-    PR["GitHub PR"]
-    Mail["Gmail as assignee"]
-    Seat --> Tmux
-    Tmux --> Repo
-    Tmux --> PR
-    Tmux --> Mail
-  end
-
-  subgraph watch["Watch"]
-    Poller["Poller every ~3s"]
-    Intel["session_intel"]
-    Dash["Dashboard spend + seats"]
-    Poller --> Obj
-    Tmux --> Intel
-    Intel --> Dash
-  end
+  Problem --> Planner
+  Planner --> Approve
+  Approve --> Worker
+  Context --> Worker
+  Worker --> Children
+  Worker --> Memory
+  Children --> Worker
+  Worker --> PR
+  Worker --> Review
+  Review --> SignOff
+  Worker -- "a question only you can answer" --> SignOff
 ```
 
 ## The loop
 
-Someone captures work (you, Assistant, a Job, a meeting). It becomes an **objective** on the Board. Dispatch picks a **subscription seat** (Claude OAuth, SuperGrok, or ChatGPT/Codex) and a **model**. Execute is a tmux session on the host: the agent edits `/home/operator/projects/…`, opens a PR when asked, talks in the card. The **board status** is truth — not the agent’s last sentence. When the session dies, intel lands, and a human (or a Job) decides what happens next.
+1. **State the problem.** Press **New** on the Board, or tell a bot in **Bots** what you want. Write
+   the outcome, not the method: "a weekly report of overdue invoices goes to finance every Monday",
+   not "build a skill that queries the accounting API".
+2. **Approve the breakdown.** A project card starts in **Planning**. A read-only planner reads the card
+   and the workspace's knowledge, asks you questions, and drafts a plan with acceptance criteria. You
+   answer and edit until it is right, then press **Approve plan**. A smaller task or bug card goes
+   straight to the queue.
+3. **The harness runs it.** Each card gets one worker session in its own sandbox, on the client's own
+   AI account, with the relevant knowledge and connected accounts in reach. It writes progress you
+   can read on the card, splits large work into child cards that run side by side, and keeps notes
+   that survive a restart. Code changes land as a pull request behind the repo's CI checks.
+4. **Check, then sign off.** When the worker finishes, an independent AI reviewer grades the result
+   against the approved criteria. A failed review goes back to the worker. A pass closes a task or
+   bug card; a project waits in **Needs you** for your sign-off. If the worker needs something only you can decide, it raises one short briefing
+   (context, one question, options, a recommendation) instead of stopping with a wall of text.
+
+The **card status is the truth**, not the agent's last sentence: Planning → Queue → Working →
+AI review → Needs you → Done (or Retired).
 
 ## Who it is for
 
-Operator and teammates (Casey, …). Everyone has their own login. Work is organized by **organization** (workspace): Example, Example Project, Example3, and others. A card is assigned to a person; that person is who the agent acts as for mail and git.
+- **The consultant** installs it for a client and spends their time on the client's workflows.
+- **The client's team** each have their own login. Work is grouped into **workspaces** (a team or
+  business unit), each with its own board and knowledge folders. A card is assigned to a person, and
+  the worker acts as that person for email and GitHub.
 
 ## What you see every day
 
-- **Board** — create and run work
-- **Assistant** — talk to the system
-- **Jobs** — recurring work
-- **Knowledge base** — the vault
-- **Avatar menu** — Settings, Archive, and for admins **System** (AI usage, estimated spend, host health) and **Agents** (registry, board layer, templates). There is no "More" menu.
-- **Notifications (bell)** — unread / all, grouped by day
+- **Bots**: one ongoing conversation per bot, like a personal assistant. Bots draft emails and
+  calendar invites for a person to send, and hand bigger jobs to the board as cards.
+- **Board**: the cards, from Planning to Done.
+- **Context**: the knowledge base, plain markdown files compiled from the client's own documents.
+- **Workflows** (admins): recurring work on a schedule. Every run is a card.
+- **Needs you**: the badge in the top bar. One stack of open decisions across bots and cards.
+- **Account menu**: Settings (integrations, secrets, models, branding, email), and for admins
+  **System** (usage, spend, host health) and **Bot setup**.
 
-Unfinished surfaces (Contacts, Strategies, Development, Notes, Status, Feed) still exist at their URLs and in ⌘K. They are not the product yet.
+## What you do not have to manage
+
+The harness owns these, so a new user can ignore them:
+
+| Plumbing | How the install handles it |
+| --- | --- |
+| Context | Each card gets the relevant knowledge for its workspace; nothing from another workspace. |
+| Accounts and keys | Linked once in **Settings → Integrations** and **Settings → Secrets**. Workers use them by name and never see a value in chat. |
+| Sandboxes | Every card runs in its own sandbox and its own copy of the repo, never the live checkout. |
+| Verification | Independent AI review plus CI on every code change. |
+| Memory | Per-card notes and deliverable; bots can keep their own notes and open loops. |
+| Seats | If one AI account hits its limit, work moves to another seat on the same install. |
+
+## Advanced: shaping the install by hand
+
+Agent files, skills and the skill graph are still there, on **Bot setup** in the account menu,
+for consultants who want them. You do not need them to get work done. See
+[Skills, Tools & Agents](../wiki/Skills-Tools-Agents.md) and the
+[agent file format](../agents/agent-file-format.md). The example skills in
+`examples/workspace/skills/` are a short prompting library: read them for how to write a clear brief,
+rather than installing them as a pack.
 
 ## What it is not
 
-- Not a shared Google/GitHub identity. Assigned user wins.
-- Not API-key billing for the coding agents. Claude, Grok, and Codex run on **subscriptions**.
-- Not “rebuild the Docker image for a TypeScript change.” That kills every live session. Code deploys restart Node only.
+- Not a shared cloud. Every client has its own install on its own server.
+- Not a shared identity. A card acts as its assigned person for email and git.
+- Not a chatbot with a file picker. Anything longer than a few minutes becomes a card with a plan,
+  a reviewer and a history.
 
 ## One screen of truth
 
-If the Board disagrees with the transcript, trust the Board, then go read the session. If spend looks wrong, trust Dashboard, then the account cards. If mail went out as the wrong person, check Settings → You and the card’s assignee.
+If the Board disagrees with a transcript, trust the Board, then read the session. If a decision is
+waiting, it is in **Needs you**. If something went out as the wrong person, check the card's assignee
+and that person's **Settings → Integrations**.

@@ -18,6 +18,8 @@ import { getDb } from '../db/index.js'
 import type { Objective } from '@operationkit/shared'
 import { isMoneyPath } from './merge-lane.js'
 import { resolveHarnessRepo } from '../lib/install-defaults.js'
+import { isProductionIssueCard } from '../lib/production-issue.js'
+import { codeHealthLimits, codeHealthMergeBlock, isCodeHealthCard, readPrSize } from './code-health.js'
 
 export { isMoneyPath }
 
@@ -55,6 +57,17 @@ export interface AutoMergeInputs {
   unsafe?: boolean
   /** Title/description looks like a live money path. */
   moneyPath?: boolean
+  /**
+   * obj 901771 — a card filed from a production signal (origin
+   * 'production-issue'). Its fix ships to a live app: a person merges it.
+   */
+  productionIssue?: boolean
+  /**
+   * obj 901770 — a code-health run's PR that is not lightweight (over the size
+   * cap, a schema / dependency / CI path, or size unreadable). The reason string;
+   * null/omitted = no extra block.
+   */
+  codeHealthBlock?: string | null
 }
 
 export type AutoMergeAction = 'merge' | 'dry-run' | 'skip'
@@ -87,8 +100,14 @@ export function decideAutoMerge(i: AutoMergeInputs): AutoMergeDecision {
   if (i.moneyPath) {
     return { action: 'skip', reason: 'money-path objective — human merge' }
   }
+  if (i.productionIssue) {
+    return { action: 'skip', reason: 'production-issue fix — a person merges anything that ships to production' }
+  }
   if (i.unsafe) {
     return { action: 'skip', reason: 'PR is behind/blocked/dirty — rebase before auto-merge' }
+  }
+  if (i.codeHealthBlock) {
+    return { action: 'skip', reason: i.codeHealthBlock }
   }
   // All gates green from here on.
   if (!i.enabled) {
@@ -197,8 +216,14 @@ export async function evaluateAutoMerge(
 ): Promise<AutoMergeDecision> {
   const repo = githubRepoFor(obj)
   let unsafe = false
+  let codeHealthBlock: string | null = null
   if (obj.pr_number && harnessGreen && reviewVerdict === 'pass' && obj.type !== 'project') {
     unsafe = await prUnsafeToAutoMerge(obj.pr_number, repo)
+    // obj 901770: a code-health run may only auto-merge a LIGHTWEIGHT PR. Read
+    // its size from GitHub; unreadable fails closed (a person merges it).
+    if (isCodeHealthCard(obj)) {
+      codeHealthBlock = codeHealthMergeBlock(repo ? await readPrSize(repo, obj.pr_number) : null, codeHealthLimits())
+    }
   }
   const decision = decideAutoMerge({
     enabled: isAutoMergeEnabled(),
@@ -209,6 +234,8 @@ export async function evaluateAutoMerge(
     objectiveType: obj.type,
     unsafe,
     moneyPath: isMoneyPath(obj),
+    productionIssue: isProductionIssueCard(obj),
+    codeHealthBlock,
   })
 
   if (decision.action === 'skip') {

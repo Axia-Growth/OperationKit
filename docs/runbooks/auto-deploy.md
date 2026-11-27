@@ -26,7 +26,7 @@ pre-deploy commit and bounces — so a bad merge reverts itself instead of takin
 
 ## Host move (2026-11-18, obj 901408)
 The live host is now `https://ai.exampleai.com` (OVH) and serves the **public**
-`m1keluka/OperationKit` code. Both GitHub hooks were moved there, but Cloudflare Access
+`Axia-Growth/OperationKit` code. Both GitHub hooks were moved there, but Cloudflare Access
 still answers `/api/webhooks/github` with its sign-in page, so no merge reaches this code yet.
 See [github-webhooks.md](./github-webhooks.md) for the hook ids, delivery evidence, the
 Access bypass that is needed, and the public-repo webhook proposal.

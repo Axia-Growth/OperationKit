@@ -770,7 +770,12 @@ export async function runFullAccessTool(ctx: FaCtx & { username: string }, fnNam
       def.id = flow.slug
       def.workspace = flow.workspace
       def.version = (latest ?? 0) + 1
+      // obj 901766: the end condition is the contract runs are graded against; a bot may not change a pinned one.
+      const { checkAgentDraftEndCondition, noteFlowVersionSaved } = await import('../flow-contract.js')
+      const contract = checkAgentDraftEndCondition(db, flow.id, def as never)
+      if (!contract.ok) throw new ToolUseError(`The draft was not saved. ${contract.error}`)
       const saved = saveFlowVersion(db, { workspace: flow.workspace, definition: def as never, author: `bot:${ctx.agent.slug}` })
+      if (saved.ok && saved.created) noteFlowVersionSaved(db, flow.id, def as never, `bot:${ctx.agent.slug}`)
       if (!saved.ok) {
         const errors = (saved.errors ?? []).slice(0, 10)
         throw new ToolUseError(`The draft was not saved (${saved.reason}).${errors.length ? ` ${JSON.stringify(errors).slice(0, 1500)}` : ''}`)

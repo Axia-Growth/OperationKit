@@ -18,6 +18,7 @@ import { resolveAgentPromptFile } from './agent-registry.js'
 import { isStrategyTierEnabled } from './strategy-governance.js'
 import { HUMAN_VOICE } from '../lib/human-voice.js'
 import { PUSH_BATCHING_RULES } from '../lib/push-batching.js'
+import { TOUCHED_AREA_HEALTH_RULES } from '../lib/touched-area-health.js'
 import { SOURCING_AUTHORITY, needsSourcingAuthority } from '../lib/sourcing-authority.js'
 import {
   SANDBOX_LIVE_SCRIPT,
@@ -26,6 +27,7 @@ import {
   buildVaultCaptureBlock,
   sandboxedLiveOutputLines,
 } from './kb-access-prompt.js'
+import { buildDataAccessBlock } from './data-access-map.js'
 import { jailEnabled } from './session-jail.js'
 import {
   readAgentInstructions,
@@ -45,8 +47,11 @@ import { resolveWriteWorkspace } from './workspaces.js'
 import { resolveBrandName } from './branding-config.js'
 import { resolveOwnerName } from '../lib/install-defaults.js'
 import { buildDecisionRequestBlock, DECISION_EXAMPLE } from './decision-prompt.js'
+import { buildKbFlagBlock } from './kb-flag-prompt.js'
 import { takePendingAnswersBlock } from './decision-delivery.js'
 import { buildStopConditionsBlock } from './card-brief-prompt.js'
+import { buildProcedureSourcesBlock } from '../lib/procedure-sources.js'
+import { standingRulesPromptLines } from './outcome-intake.js'
 
 export {
   COMPACTION_SESSION_SENTINEL,
@@ -292,6 +297,10 @@ export function buildPrompt(objective: Objective): string {
         : `No skills are assigned to this ${objective.project ? `project (${objective.project})` : `workspace (${workspace})`}. Operate without skills unless an admin assigns one.`,
     )
   }
+  // obj 901765: skills are a harness internal, not a required surface. Every
+  // worker is told where procedure comes from (card → repo docs → knowledge
+  // base) so a new install with no SKILL.md files still gets work done.
+  parts.push(...buildProcedureSourcesBlock())
   if (onBehalf) {
     parts.push(
       '',
@@ -310,9 +319,11 @@ export function buildPrompt(objective: Objective): string {
     '',
     'Google and GitHub for this session belong to the assigned user (or the creator if unassigned). Env tells you which:',
     `- \`CC_ACTING_USER_ID\` — ${brand} user id you are acting as.`,
-    '- `GOOGLE_WORKSPACE_CONNECTION=user` + `USER_GOOGLE_EMAIL` — send/read mail and Docs ONLY as that address. Never pick another account from disk.',
+    '- `GOOGLE_WORKSPACE_CONNECTION=user` + `USER_GOOGLE_EMAIL` — read mail and save drafts ONLY as that address, through the `google-workspace` MCP tools (brokered by the host; no Google credential is in your env or on disk). Never pick another account from disk.',
     '- `GOOGLE_WORKSPACE_CONNECTION=absent` — this user has no Google connection. Do NOT send email. Tell them to connect at Settings → Account → Google Workspace.',
-    '- `GH_TOKEN` / `GIT_AUTHOR_EMAIL` — GitHub actor for this user. Do not fall back to another person\'s token or a sibling credential file.',
+    '- `CC_GITHUB_BROKER=1` / `GIT_AUTHOR_EMAIL` — GitHub actor for this user. `git` and `gh` get the credential per request from the host broker; there is no GitHub token in your env. Do not fall back to another person\'s token or a sibling credential file.',
+    '- `GIT_IDENTITY=install` — commits use this install\'s own bot/operator identity (the user has no GitHub connection).',
+    '- `GIT_IDENTITY=absent` — there is no git identity, so `git commit` will fail. Do NOT set user.name/user.email or GIT_AUTHOR_* yourself. Stop and tell the user what `GIT_IDENTITY_HELP` says.',
   )
   parts.push(
     '',
@@ -441,6 +452,12 @@ export function buildPrompt(objective: Objective): string {
     )
   }
 
+  // obj 901764 — standing outcome rules for the card's workspace (e.g.
+  // "before-and-after screenshots on every PR"), set by a person, not a skill
+  // file. Rules already frozen into the criteria above are not repeated. No
+  // rules = nothing added.
+  parts.push(...standingRulesPromptLines(() => getDb() as never, objective, 'worker'))
+
   // obj 900452 — owner instructions outrank card text. Unflagged, and placed
   // AFTER the description, approved plan, Completion Goal and acceptance
   // criteria: a bot-written FORBIDDEN / HARD REQUIREMENT line there must not
@@ -543,6 +560,10 @@ export function buildPrompt(objective: Objective): string {
       '**Do your work inside the worktree.** Make changes, test, verify.',
       '',
       ...PUSH_BATCHING_RULES,
+      '',
+      // obj 901769 — bounded cleanup of the files the feature touched; the
+      // reviewer half (buildReviewerTouchedAreaBlock) fails sprawl/regressions.
+      ...TOUCHED_AREA_HEALTH_RULES,
     )
 
     if (mode === 'merge-back') {
@@ -589,7 +610,7 @@ export function buildPrompt(objective: Objective): string {
         prCreateCmd,
         '```',
         '',
-        '**If any `gh` command fails with `401`/`Bad credentials`:** the per-user GitHub token injected into your env (`GH_TOKEN`/`GITHUB_TOKEN`, for PR attribution) is stale. Do NOT unset it globally — retry only the failing call with the bot token by prefixing `env -u GH_TOKEN -u GITHUB_TOKEN` (a valid token lives in `/etc/gh/hosts.yml`). This also applies to the `gh pr view` calls in the verification block below.',
+        '**If any `gh` command fails with `401`/`Bad credentials`:** the per-user GitHub credential the broker hands `gh` (for PR attribution) is stale. Retry only the failing call with the install bot login by prefixing `CC_GH_BROKER=0` (it uses `/etc/gh/hosts.yml` when this install has one). This also applies to the `gh pr view` calls in the verification block below.',
       )
       // A delegator parent (create_pr=1) aggregates its children's branches into
       // this one PR before opening it.
@@ -650,7 +671,13 @@ export function buildPrompt(objective: Objective): string {
   // `~/second-brain/` (byte-identical to before). In a docker jail neither path
   // exists, so both blocks point at the permission-checked control-plane API.
   parts.push(...buildKbAccessBlock({ id: objective.id, workspace }))
+  // obj 901772 — where current data lives + "flag, don't copy". Empty (prompt
+  // unchanged) unless the workspace has data-access/map.md.
+  parts.push(...buildDataAccessBlock({ id: objective.id, workspace }))
   parts.push(...buildVaultCaptureBlock({ id: objective.id, workspace }))
+  // obj 901767 — report a knowledge defect (missing / wrong / stale) as a flag
+  // for the Cleanup queue instead of rewriting the page mid-task.
+  parts.push(...buildKbFlagBlock())
 
   // obj 901059 — how to ask the person for a decision: a structured briefing
   // (context / one question / 2-4 options with pros, cons, next / recommendation),

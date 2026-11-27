@@ -47,6 +47,17 @@ export interface GoogleUse {
   agent: string
   /** The chat's workspace — matched against the owner's workspace list. */
   workspace: string | null
+  /**
+   * Who is using the credential. Chat is the person themself (the default). A
+   * card session reaching Google through the host-side connector broker
+   * (obj 901743) passes its session actor, so an agent key's connector list
+   * still applies on every token use.
+   */
+  actor?: ConnectorActor
+}
+
+function actorOf(use: GoogleUse): ConnectorActor {
+  return use.actor ?? { kind: 'user', userId: use.userId }
 }
 
 const MAIL_SCOPES = [
@@ -284,7 +295,7 @@ async function draftBody(api: Authed, draft: EmailDraft): Promise<{ message: { r
 }
 
 function gmailConnector(use: GoogleUse, email: string, canCompose: boolean): MailConnector {
-  const api = authed(use.userId, { kind: 'user', userId: use.userId }, { agent: use.agent, workspace: use.workspace })
+  const api = authed(use.userId, actorOf(use), { agent: use.agent, workspace: use.workspace })
   return {
     id: googleConnectorId(email),
     label: `Gmail (${email})`,
@@ -332,7 +343,7 @@ interface GEvent {
 }
 
 function calendarConnector(use: GoogleUse, email: string): CalendarConnector {
-  const api = authed(use.userId, { kind: 'user', userId: use.userId }, { agent: use.agent, workspace: use.workspace })
+  const api = authed(use.userId, actorOf(use), { agent: use.agent, workspace: use.workspace })
   return {
     id: googleConnectorId(email),
     label: `Google Calendar (${email})`,
@@ -380,7 +391,7 @@ export function googleConnectorsFor(use: GoogleUse): GoogleConnectors {
   const decision = canUseConnectorCredential({
     connectorId: CONNECTOR_ID,
     ownerUserId: use.userId,
-    actor: { kind: 'user', userId: use.userId },
+    actor: actorOf(use),
     use: { agent: use.agent, workspace: use.workspace },
   })
   if (!decision.allowed) return none

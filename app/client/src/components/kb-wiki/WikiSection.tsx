@@ -3,15 +3,16 @@ import { useAuth } from '../../context/AuthContext'
 import type { WikiPageSummary, WikiPagesResponse } from '../../lib/kbWiki'
 import { Alert, Card, CardBody, CardHeader, Tabs } from '../ui'
 import { CleanupPanel } from './CleanupPanel'
+import { CuratorPanel } from './CuratorPanel'
 import { ImportsPanel } from './ImportsPanel'
 import { WikiBrowser } from './WikiBrowser'
 import { WorkspaceGraph } from './WorkspaceGraph'
 import { wikiApi, wsQuery } from './wikiApi'
 
-type Tab = 'graph' | 'wiki' | 'imports' | 'cleanup'
+type Tab = 'graph' | 'wiki' | 'imports' | 'cleanup' | 'curator'
 
 const TAB_KEY = 'cc.kbWiki.tab'
-const TABS: Tab[] = ['graph', 'wiki', 'imports', 'cleanup']
+const TABS: Tab[] = ['graph', 'wiki', 'imports', 'cleanup', 'curator']
 
 /** The tab last used on this browser; the graph on a first visit (obj 900674). */
 function initialTab(): Tab {
@@ -44,7 +45,7 @@ export function WikiSection({
   const [tab, setTabState] = useState<Tab>(initialTab)
   const setTab = (t: Tab) => {
     setTabState(t)
-    // codeql[js/clear-text-storage-of-sensitive-data] -- persists a UI tab id ('graph' | 'wiki' | 'imports' | 'cleanup'), never a secret
+    // codeql[js/clear-text-storage-of-sensitive-data] -- persists a UI tab id ('graph' | 'wiki' | 'imports' | 'cleanup' | 'curator'), never a secret
     try { window.localStorage.setItem(TAB_KEY, t) } catch { /* private mode */ }
   }
   const [data, setData] = useState<WikiPagesResponse | null>(null)
@@ -90,6 +91,7 @@ export function WikiSection({
             { key: 'wiki', label: 'Pages', count: pageCount },
             { key: 'imports', label: 'Import chats & calls' },
             { key: 'cleanup', label: 'Cleanup' },
+            { key: 'curator', label: 'Suggestions' },
           ]}
           value={tab}
           onChange={k => setTab(k as Tab)}
@@ -111,6 +113,9 @@ export function WikiSection({
         {tab === 'imports' && <ImportsPanel workspace={workspace} onOpenNote={onOpenNote} onChanged={changed} />}
         {tab === 'cleanup' && (
           <CleanupPanel workspace={workspace} pages={data?.pages ?? null} isAdmin={user?.role === 'admin'} onOpenNote={onOpenNote} onChanged={changed} />
+        )}
+        {tab === 'curator' && (
+          <CuratorPanel workspace={workspace} pages={data?.pages ?? null} isAdmin={user?.role === 'admin'} onOpenNote={onOpenNote} onChanged={changed} />
         )}
         </Tabs>
       </CardBody>

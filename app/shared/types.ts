@@ -24,6 +24,7 @@ export * from './bot-work.js'
 export * from './decision-briefing.js'
 export * from './decision-queue.js'
 export * from './decision-chat-action.js'
+export * from './kb-flags.js'
 
 // Type-aware transitions live in `./workflow.ts` to keep this file focused on
 // the data shape. Re-exported here so `@operationkit/shared` callers can get

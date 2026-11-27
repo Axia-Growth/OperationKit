@@ -10,7 +10,7 @@
  * read its wrapper. Inside that world-readable directory live:
  *
  *   - `<sid>.env` — the docker `--env-file`: EVERY injected secret, plaintext.
- *   - `<sid>.sh`  — the wrapper, whose `export KEY="value"` lines are the same
+ *   - `<sid>.sh`  — the wrapper, whose `export KEY='value'` lines are the same
  *                   secrets again.
  *
  * Nothing deleted them. The wrapper `rm`s its own prompt + script on a clean

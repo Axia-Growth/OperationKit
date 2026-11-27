@@ -141,8 +141,9 @@ afterwards, not now.
 4. Show the agent file: **Agents → Templates → Personal assistant**. *"Each agent is one file:
    instructions, which folders it may read, which tools it may use, its schedules. This one can
    read and write only its own `personal/` folders and can never send an email by itself. You
-   write these once and drop them into every client. A marketplace for sharing them is the next
-   step."*
+   write these once and drop them into every client. There are no skill packs to buy or curate:
+   the agent works out how to do a job from the card, the client's docs and the knowledge
+   base."*
 5. Switch to **Chat → Operator** (the agent whose file allows creating board cards) and send:
    *"Put a job on the board: write a one-page quote for Maple Street Dental, weekly evening clean,
    12-month contract, about $185 a visit."* → a card appears in the chat with its status.
@@ -220,8 +221,9 @@ Hand over or show the [security overview](./SECURITY-OVERVIEW.md). Key lines:
 - Cloudflare Access and Tunnel in front, no open web ports, sandboxed jobs, secrets never shown.
 - **Honest gaps:** no SOC 2 attestation (and why the self-hosted model sidesteps most of that
   question), no built-in SSO beyond Cloudflare Access, transcripts not encrypted at rest.
-- Next: a shared marketplace for agent templates, so the agents you build for one client can be
-  reused for the next.
+- Reuse between clients is copying a whole agent file into the next install (Templates → import).
+  No skill store, no marketplace to curate: a shared marketplace is paused
+  ([docs/agents/marketplace.md](agents/marketplace.md)).
 
 ---
 

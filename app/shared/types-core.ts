@@ -35,7 +35,7 @@ export type ObjectiveType = 'project' | 'bug' | 'task'
  *  - 'job_reply' — spawned from a job's in-thread "create an objective" reply.
  *  - 'workflow'  — the home card of a workflow (obj 900640, docs/design/WORKFLOWS.md §7.2).
  */
-export type ObjectiveOrigin = 'manual' | 'strategy' | 'routine' | 'job_reply' | 'agent_api' | 'agent_chat' | 'workflow'
+export type ObjectiveOrigin = 'manual' | 'strategy' | 'routine' | 'job_reply' | 'agent_api' | 'agent_chat' | 'workflow' | 'production-issue'
 /**
  * Disposition of a job (routine-spawned objective) once its run is done.
  * - `complete`     — clean run, nothing for Operator to do. Default.

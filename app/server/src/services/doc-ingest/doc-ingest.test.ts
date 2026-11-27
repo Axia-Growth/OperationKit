@@ -3,9 +3,10 @@ import fs from 'fs'
 import os from 'os'
 import path from 'path'
 import zlib from 'zlib'
+import { parse as parseYaml } from 'yaml'
 import { writeZip, readZip } from './zip.js'
-import { extractDocument, kindForFile, sniffDelimiter, UnsupportedFileError } from './extract.js'
-import { upsertEntityNote, notePathFor, relLink, slugify, loadEntityIndex, sameOrganization, writeOrganized, type Entity, type SourceRef } from './notes.js'
+import { excelSerialToIso, extractDocument, kindForFile, sniffDelimiter, UnsupportedFileError, workbookUsesDate1904 } from './extract.js'
+import { upsertEntityNote, notePathFor, relLink, slugify, loadEntityIndex, sameOrganization, writeOrganized, renderFrontmatter, parseNote, type Entity, type SourceRef } from './notes.js'
 import { applyNameGroups, claimInbox, drainQueue, ingestOne, mergeOrganized, reconcileNames, parseOrganizeReply, readManifest, recoverInterrupted, requeue, splitForOrganize } from './ingest.js'
 import { askKnowledgeBase, rankNotes, terms } from './ask.js'
 import { createIngestLlm, credentialSource } from './llm.js'
@@ -25,6 +26,18 @@ function xlsx(): Buffer {
       '<row r="3"/>' +
       '</sheetData></worksheet>'],
     ['xl/worksheets/sheet2.xml', '<worksheet><sheetData><row r="1"><c r="A1" t="inlineStr"><is><t>free text | with pipe</t></is></c></row></sheetData></worksheet>'],
+  ])
+}
+
+/** One-sheet workbook with date-styled serials 0, 1, 45000; `workbookPr` is spliced into workbook.xml as-is. */
+function datedXlsx(workbookPr: string): Buffer {
+  return writeZip([
+    ['xl/workbook.xml', `<workbook>${workbookPr}<sheets><sheet name="Dates" sheetId="1" r:id="rId1"/></sheets></workbook>`],
+    ['xl/_rels/workbook.xml.rels', '<Relationships><Relationship Id="rId1" Target="worksheets/sheet1.xml"/></Relationships>'],
+    ['xl/styles.xml', '<styleSheet><cellXfs count="2"><xf numFmtId="0"/><xf numFmtId="14"/></cellXfs></styleSheet>'],
+    ['xl/worksheets/sheet1.xml', '<worksheet><sheetData><row r="1">' +
+      '<c r="A1" s="1"><v>1</v></c><c r="B1" s="1"><v>45000</v></c><c r="C1"><v>1</v></c><c r="D1" s="1"><v>0</v></c>' +
+      '</row></sheetData></worksheet>'],
   ])
 }
 
@@ -76,6 +89,57 @@ describe('extract', () => {
     expect(ex.markdown).toContain('Acme & Sons | 12.4 | 2023-03-15 |  | Lost - price')
     expect(ex.markdown).toContain('free text \\| with pipe')
     expect(ex.markdown).toContain('2 non-empty row(s)')
+  })
+
+  describe('workbook date system (issue #137)', () => {
+    // Same serials, two date systems: 1900 (default) vs 1904 (workbookPr date1904).
+    it.each([
+      ['no workbookPr', ''],
+      ['workbookPr without date1904', '<workbookPr defaultThemeVersion="164011"/>'],
+      ['date1904="0"', '<workbookPr date1904="0"/>'],
+      ['date1904="false"', '<workbookPr date1904="false"/>'],
+    ])('1900 system: %s', (_label, pr) => {
+      const ex = extractDocument('dates.xlsx', datedXlsx(pr))
+      // serial 1 = 1900-01-01, but the 1900 system's offset (incl. the 1900 leap bug) lands it on 1899-12-31,
+      // exactly as before this change; 45000 = 2023-03-15; an unstyled 1 stays a number.
+      expect(ex.markdown).toContain('| 1899-12-31 | 2023-03-15 | 1 | 1899-12-30 |')
+    })
+
+    it.each([
+      ['date1904="1"', '<workbookPr date1904="1"/>'],
+      ['date1904="true"', '<workbookPr date1904="true" defaultThemeVersion="164011"/>'],
+      ['prefixed x:workbookPr', '<x:workbookPr date1904="true"/>'],
+    ])('1904 system: %s', (_label, pr) => {
+      const ex = extractDocument('dates.xlsx', datedXlsx(pr))
+      // 1904 system: serial 0 = 1904-01-01, serial 1 = 1904-01-02, 45000 = 1900-system 46462 = 2027-03-16.
+      expect(ex.markdown).toContain('| 1904-01-02 | 2027-03-16 | 1 | 1904-01-01 |')
+      expect(ex.markdown).not.toContain('1899-12-31')
+    })
+
+    it('converts serials with the matching epoch', () => {
+      expect(excelSerialToIso(45000)).toBe('2023-03-15')
+      expect(excelSerialToIso(1, true)).toBe('1904-01-02')
+      expect(excelSerialToIso(45000 - 1462, true)).toBe('2023-03-15')
+      expect(workbookUsesDate1904('<workbook><workbookPr date1904="1"/></workbook>')).toBe(true)
+      expect(workbookUsesDate1904('<workbook><workbookPr date1904="TRUE"/></workbook>')).toBe(true)
+      expect(workbookUsesDate1904('<workbook><workbookPr date1904="0"/></workbook>')).toBe(false)
+      expect(workbookUsesDate1904('<workbook><workbookProtection lockStructure="1"/></workbook>')).toBe(false)
+    })
+  })
+
+  it('leaves Excel phonetic guides (furigana) out of cell text', () => {
+    const rPh = '<rPh sb="0" eb="2"><t>ヤマダ</t></rPh><rPh sb="2" eb="4"><t>タロウ</t></rPh><phoneticPr fontId="1"/>'
+    const ex = extractDocument('顧客.xlsx', writeZip([
+      ['xl/workbook.xml', '<workbook><sheets><sheet name="顧客" sheetId="1" r:id="rId1"/></sheets></workbook>'],
+      ['xl/_rels/workbook.xml.rels', '<Relationships><Relationship Id="rId1" Target="worksheets/sheet1.xml"/></Relationships>'],
+      ['xl/sharedStrings.xml', `<sst><si><t>山田太郎</t>${rPh}</si><si><r><t>山田</t></r><r><t>太郎</t></r>${rPh}</si></sst>`],
+      ['xl/worksheets/sheet1.xml', '<worksheet><sheetData><row r="1">' +
+        '<c r="A1" t="s"><v>0</v></c><c r="B1" t="s"><v>1</v></c>' +
+        `<c r="C1" t="inlineStr"><is><t>山田太郎</t>${rPh}</is></c>` +
+        '</row></sheetData></worksheet>'],
+    ]))
+    expect(ex.markdown).toContain('| 山田太郎 | 山田太郎 | 山田太郎 |')
+    expect(ex.markdown).not.toContain('ヤマダ')
   })
 
   it('reads CSV with quoted commas and a BOM', () => {
@@ -184,6 +248,41 @@ describe('notes', () => {
     expect(again).toContain('Founder wants to retire')
     expect(again.match(/## From: Price List.xlsx/g)).toHaveLength(1)
     expect(again.match(/Dana Ruiz/g)).toHaveLength(1)
+  })
+})
+
+describe('frontmatter', () => {
+  // The vault is meant to open in Obsidian and other editors, which read frontmatter as real YAML.
+  it('writes titles and aliases that a YAML reader returns unchanged', () => {
+    const names = [
+      "'47 Brand", '& Partners', '2024', '2024-01-15', '1.5', '0x1F', '.5', 'true', 'No', 'null', '~', 'y',
+      'Acme & Sons', 'Acme, Inc. (2024)', 'Q3 plan', '3M Company', 'Dana Ruiz',
+    ]
+    for (const title of names) {
+      const text = `${renderFrontmatter({ title, type: 'organization', aliases: [title], tags: [title], sources: [], updated: '2026-11-18' })}\n`
+      const yaml = parseYaml(text.replace(/^---\n|---\n$/g, '')) as Record<string, unknown>
+      expect(yaml.title, title).toBe(title)
+      expect(yaml.aliases, title).toEqual([title])
+      expect(yaml.tags, title).toEqual([title])
+      // ...and this app still reads back what it wrote.
+      expect(parseNote(text).fm?.title, title).toBe(title)
+      expect(parseNote(text).fm?.aliases, title).toEqual([title])
+    }
+  })
+
+  it('leaves ordinary names unquoted', () => {
+    expect(renderFrontmatter({ title: 'Acme & Sons', type: 'organization', aliases: ['3M Company'], tags: [], sources: [], updated: '2026-11-18' }))
+      .toContain('title: Acme & Sons\ntype: organization\naliases: [3M Company]')
+  })
+
+  // obj-944 (#133) quotes a plain-looking date in frontmatter (`updated: "2026-11-18"`)
+  // because an unquoted `2026-11-18` is a YAML date, not a string. parseNote() must strip
+  // those quotes back off, the same way it already does for `title`, or every reader of
+  // `fm.updated` (the stale-page check, the curator) sees the literal quote marks and
+  // Date.parse() on them returns NaN — silently treating a dated page as undated.
+  it('reads a quoted updated: date back without the quote marks', () => {
+    const text = '---\ntitle: Quoted date\ntype: organization\nupdated: "2026-11-18"\n---\n# Quoted date\n'
+    expect(parseNote(text).fm?.updated).toBe('2026-11-18')
   })
 })
 

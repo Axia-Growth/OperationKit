@@ -8,8 +8,9 @@ Kit Dev** (`/chat/operation-kit-dev`) and tell it what you want to set up. It he
 - **Email** — picking a provider (Resend, Postmark or SMTP), setting the sender,
   sending a test and adding the SPF / DKIM / DMARC records (Settings → Email).
 - **Branding** — product name, colours, logos and favicon (Settings → Branding).
-- **Creating bots, agents and skills** — it asks a few questions, writes the
-  complete file, and tells you where it goes.
+- **Creating bots and agents** — it asks a few questions, writes the
+  complete file, and tells you where it goes. It does not push skill files: a
+  bot works out how to do a task from the card, your docs and the knowledge base.
 - **Your business** — it keeps a short profile of how your business works and
   suggests automations that would save you time.
 
@@ -23,7 +24,7 @@ prompts.
 | Read the knowledge base folders `business/`, `organizations/`, `products/`, `projects/`, `topics/` | Read `people/` or any other folder |
 | Write its own notes: `business/profile.md`, `business/automation-ideas.md` | Change settings, connect accounts or send email — you press those buttons |
 | Read the board cards you can see, and what is waiting on you | See secret values (it only ever needs a key's **name**) |
-| File a board card for bigger work (a new integration, a new skill) | Start work by itself without the card showing up on your board |
+| File a board card for bigger work (a new integration, a new agent) | Start work by itself without the card showing up on your board |
 | Merge the pull request of its **own** card when you ask, if you gave it an "Approve on my behalf" merge grant (review passed, checks green) | Merge anyone else's card, a reserved PR, or anything the merge tool refuses; deploy or run a production migration |
 | With **Merge without asking me each time** ticked on that grant: its own passed cards are merged as soon as they pass, and you get one line in its chat | Deploy, run a production migration, touch secrets, keys, DNS or Cloudflare Access, billing, or a protected PR — ever |
 
@@ -106,29 +107,34 @@ pull request by repo and number when no card links it, the public sync pull requ
 and update a branch so its checks really run. See
 [GitHub repo rights](../wiki/Dev-Bot-GitHub-Repo-Rights.md).
 
-## Creating a bot, agent or skill
+## Creating a bot or agent
 
-The **Agents** page now opens with **Make a new bot, agent or skill**:
+The **Bot setup** page (avatar menu) opens with **Make a new bot**:
 
 - **Bot** — someone you chat with on the Bots page. One file: `agents/<slug>/agent.md`.
 - **Agent** — a worker that picks up board cards. One file: `agents/<slug>.md`.
-- **Skill** — how-to steps an agent follows for one recurring task: `skills/<slug>/SKILL.md`.
+
+Skill files (`skills/<slug>/SKILL.md`) are no longer a way in (obj 901765). A
+bot or agent takes its procedure from the card, the project's docs and the
+knowledge base. Under the tiles, one small line links to **Skills (advanced)** and
+lets you ask the Dev bot to write one for a rare procedure that must be followed
+exactly; the Dev bot first checks whether the card, the docs or the knowledge base
+already cover it.
 
 It offers three ways in:
 
-1. **Ask the Operation Kit Dev bot** — *Create a bot / an agent / a skill* opens the
+1. **Ask the Operation Kit Dev bot** — *Create a bot* opens the
    bot's conversation with the request already typed in (`/chat/operation-kit-dev?prompt=…`).
    Nothing is sent until you press Send. If the bot is not on your install
    (built-in bots switched off with `AGENT_CHAT_BUILTINS=0`), this tile shows the
    copy-paste setup prompt instead.
-2. **Start from a template** — Agents → Templates.
-3. **Paste or import a file** — Agents → Templates → **Paste agent file** (or
+2. **Start from a template** — Bot setup → Templates.
+3. **Paste or import a file** — Bot setup → Templates → **Paste agent file** (or
    *Import agent file*). The file is checked before anything is added.
 
 For a **bot**, the Dev bot writes the full `agent.md` in chat. Copy it, choose
-**Paste a bot file**, check it and press **Add agent**. For an **agent** or a
-**skill**, it files a card with the full file text in the brief; the coding session
-adds the file (for skills, `okit new skill <slug>`, then `okit validate`).
+**Paste a bot file**, check it and press **Add agent**. For an **agent**, it files
+a card with the full file text in the brief; the coding session adds the file.
 
 ## Customising it
 
@@ -168,7 +174,7 @@ every Monday; want me to automate it?" — instead of waiting to be asked.
 - **One question at a time**, woven in after it has answered what was asked.
 - **Ideas are a ledger, not a chat message.** `business/automation-ideas.md` holds
   each idea with *why* (the evidence), *what it needs* (integration, secret name,
-  bot / agent / skill), *effort* and *status* (suggested / accepted / declined /
+  bot / agent), *effort* and *status* (suggested / accepted / declined /
   built, plus the card number). It suggests at most three at a time, ranked by time
   saved, and never re-suggests a declined idea.
 - **Accepted ideas become cards.** Settings-only work is walked through; anything

@@ -72,7 +72,32 @@ export interface ItemFilter {
   min_messages?: number
 }
 
-export type LintKind = 'broken_link' | 'broken_edge' | 'orphan' | 'isolated' | 'duplicate' | 'stale' | 'missing_topic' | 'contradiction'
+export type LintKind = 'broken_link' | 'broken_edge' | 'orphan' | 'isolated' | 'duplicate' | 'stale' | 'missing_topic' | 'contradiction' | 'ungrounded_answer' | 'stale_answer'
+
+/** A saved answer kept out of search until a person reviews it (obj 901746). GET /api/kb-wiki/answers/held. */
+export interface HeldAnswer {
+  rel: string
+  title: string
+  kind: 'ungrounded' | 'stale' | null
+  reason: string
+  checked_at: string | null
+}
+
+export const HELD_ANSWER_KIND_LABEL: Record<'ungrounded' | 'stale', string> = {
+  ungrounded: 'Not backed by its pages',
+  stale: 'Its pages changed',
+}
+
+/** What saving an answer found (obj 901746). `held` = saved, but kept out of search until someone reviews it. */
+export interface AnswerCheckResult {
+  status: 'passed' | 'held' | 'reviewed' | 'unchecked'
+  kind?: 'ungrounded' | 'stale'
+  reason?: string
+  unsupported: Array<{ claim: string; page?: string; why: string }>
+  checked_by: 'rules' | 'ai'
+  ai_skipped?: string
+  pages: string[]
+}
 
 export interface LintItem {
   kind: LintKind
@@ -98,6 +123,48 @@ export interface WikiSettings {
   lint_ai_pages: number
   /** Folders the link graph leaves out (obj 900815): folder names (any depth) or KB-relative paths. */
   graph_exclude?: string[]
+  /** obj 901768: the knowledge curator runs after each cleanup (off by default). */
+  curator_enabled?: boolean
+  curator_ai_drafts?: number
+}
+
+// ── Knowledge curator (obj 901768) ───────────────────────────────────────────
+
+export interface CuratorEvidence {
+  type: 'flag' | 'lint' | 'correction'
+  id: string
+  detail: string
+  at?: string
+  objective_id?: number | null
+  by?: string | null
+}
+
+export interface CuratorProposal {
+  id: string
+  kind: 'update' | 'retire' | 'merge' | 'create'
+  status: 'open' | 'accepted' | 'rejected' | 'superseded'
+  pages: string[]
+  title: string
+  reason: string
+  evidence: CuratorEvidence[]
+  procedure: boolean
+  light_touch: boolean
+  proposed_text?: string
+  drafted_by: 'ai' | 'rule'
+  decided_by?: string
+  decided_at?: string
+  decision_note?: string
+  signed_off?: boolean
+}
+
+export interface CuratorView {
+  enabled: boolean
+  ai_drafts: number
+  last_run_at: string | null
+  notes: string[]
+  stats: Record<string, number>
+  open: CuratorProposal[]
+  decided: CuratorProposal[]
 }
 
 // ── Paths ────────────────────────────────────────────────────────────────────
@@ -281,6 +348,8 @@ export const LINT_KIND_LABEL: Record<LintKind, string> = {
   stale: 'Not updated in a while',
   missing_topic: 'New topic page',
   contradiction: 'Facts disagree',
+  ungrounded_answer: 'Answer not backed up',
+  stale_answer: 'Answer may be out of date',
 }
 
 /** "03:00 UTC" for an hour 0–23. */

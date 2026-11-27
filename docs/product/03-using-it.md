@@ -34,9 +34,11 @@ Not to be confused with the **LLM gateway** (`/api/llm/v1`), which lets other ap
 
 Routines on a cron. Each fire is a board card. Lanes: running, needs review, complete. This is the scheduler, not a second to-do list.
 
+**Code health (per repo, off by default).** An admin can give a linked repo a regular janitor pass: **Settings → Workspaces → the workspace → Repos & projects → the repo's ⋯ menu → Code health weekly** (or daily). Each run is one card that finds one small slice of tech debt or slop, opens at most one small PR for it, or reports that nothing needed doing. The independent AI review checks every one of those PRs. A small one (8 files / 200 changed lines by default, no database, dependency or CI changes) takes the green auto-merge path above when auto-merge is on; anything bigger waits in Needs You, and bigger findings are raised there instead of opened as a PR. A merge from it never deploys. While one run's PR waits for a person, the next run is skipped. It shows on Jobs as `code-health:<repo id>`. More: [Code-health Job](../wiki/Code-Health-Job.md).
+
 ## Knowledge base
 
-Your business's shared memory: plain markdown files on your own server that you and every agent read and edit. Open it from **Knowledge base** in the top bar (`/knowledge`; old `/docs` links still work). There is one knowledge base and one page list: each workspace is a folder in it, and imports (files, chat exports, call transcripts) land in the workspace's folder. Pick a page to read or edit it. Agent instructions and skills are on **Agents**, code repos on **Development**; they are not part of the knowledge base. Agents reach the same files over the API and MCP (`GET /api/docs/search`, `GET/PUT /api/docs/file`), so what you write here is what they know. Product docs for OperationKit live in this repo at `docs/product/`. Linked repos keep the same folder (see [Living docs](./LIVING.md)).
+Your business's shared memory: plain markdown files on your own server that you and every agent read and edit. Open it from **Knowledge base** in the top bar (`/knowledge`; old `/docs` links still work). There is one knowledge base and one page list: each workspace is a folder in it, and imports (files, chat exports, call transcripts) land in the workspace's folder. Pick a page to read or edit it. Agent instructions (and any optional skill files) are on **Bot setup**, code repos on **Development**; they are not part of the knowledge base. Agents reach the same files over the API and MCP (`GET /api/docs/search`, `GET/PUT /api/docs/file`), so what you write here is what they know. Product docs for OperationKit live in this repo at `docs/product/`. Linked repos keep the same folder (see [Living docs](./LIVING.md)).
 
 ## Dashboard
 
@@ -53,7 +55,7 @@ them inline.
 | Integrations | everyone | your GitHub and Google Workspace (Gmail, Calendar, Drive) accounts, and which agents and workspaces may use them — see [Integrations](./04-you.md#integrations) |
 | Secrets | workspace/global admin | org/global keys, reviewer test logins |
 | Org | global admin | organizations, users, **linked repos** |
-| Agents & Skills | global admin | agent roster, assignments, skill graph |
+| Bot setup (account menu) | global admin | advanced: bot roster, templates, assignments, and last the skill graph (Skills (advanced)). Not needed to get work done |
 | Branding | global admin | reserved slot (sister sprint 3) |
 | Email | global admin | reserved slot (sister sprint 5) |
 | Platform | global admin | host cron |

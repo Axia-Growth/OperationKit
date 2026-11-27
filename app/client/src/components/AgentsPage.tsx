@@ -195,9 +195,9 @@ export function AgentsPage({ workspace, fixture, loadFile, embedded = false }: A
         </p>
       ) : (
         <PageHeader
-          title="Bots & skills"
-          breadcrumbs={[{ label: 'Bots & skills', href: '/agents' }, { label: 'By project' }]}
-          description="The bot, skill and tool files a project's cards actually run on. Read-only — the roster and assignments live on the Registry and Assignments tabs."
+          title="Bot setup"
+          breadcrumbs={[{ label: 'Bot setup', href: '/agents' }, { label: 'By project' }]}
+          description="The bot, skill and tool files a project's cards actually run on. Read-only — the roster and assignments live on the Bots and Assignments tabs."
           actions={
             <Button variant="ghost" size="sm" onClick={() => { window.location.assign(agentsTabRoute('registry')) }}>
               Bot registry
@@ -471,7 +471,7 @@ function LayerList({
                 </div>
                 <div className="space-y-1.5">
                   {declared.length === 0 && (
-                    <p className="text-xs text-fg-3">This bot lists no skills.</p>
+                    <p className="text-xs text-fg-3">This bot lists no skills. None are needed.</p>
                   )}
                   {declared.map(({ slug, always }) => {
                     const skill = skillBySlug.get(slug)

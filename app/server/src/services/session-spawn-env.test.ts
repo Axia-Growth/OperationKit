@@ -4,7 +4,8 @@ import {
   spawnSecurityPolicy,
   resolveSpawnTier,
   userGitIdentityEnv,
-  SAFE_FALLBACK_GIT_IDENTITY,
+  resolveFallbackGitIdentity,
+  GIT_IDENTITY_MISSING_MESSAGE,
 } from './session-manager.js'
 import { GIT_SSH_COMMAND } from '../config.js'
 import type { Objective } from '@operationkit/shared'
@@ -52,20 +53,22 @@ function legacyInlineEnv(homeDir: string): Record<string, string> {
 }
 
 // obj-701130 — the base env above is NO LONGER the whole story for an UNLINKED
-// owner. buildSpawnEnv now ALWAYS appends the GitHub-linked m1keluka noreply
-// fallback (GIT_AUTHOR_*/GIT_COMMITTER_*) after the base block whenever no
-// per-user identity was injected, so an env-less spawn can never fall through to
-// the poisoned root /etc/gitconfig (dev@example.com) and trip Vercel's
-// COMMIT_AUTHOR_REQUIRED. These 4 keys append in this exact order (after the base
-// keys, before any flag-gated scoped secrets) — the byte/key-order contract below
-// was updated DELIBERATELY to include them.
+// owner. buildSpawnEnv ALWAYS sets GIT_AUTHOR_*/GIT_COMMITTER_* after the base
+// block when no per-user identity was injected, so an env-less spawn can never
+// fall through to whatever ~/.gitconfig or /etc/gitconfig the host carries. With
+// no install fallback configured (OK_FALLBACK_GIT_NAME/EMAIL unset, as here) the
+// values are EMPTY, so git refuses to commit, and GIT_IDENTITY=absent plus
+// GIT_IDENTITY_HELP tell the session why. These keys append in this exact order
+// (after the base keys, before any flag-gated scoped secrets).
 function expectedEnv(homeDir: string): Record<string, string> {
   return {
     ...legacyInlineEnv(homeDir),
-    GIT_AUTHOR_NAME: SAFE_FALLBACK_GIT_IDENTITY.name,
-    GIT_AUTHOR_EMAIL: SAFE_FALLBACK_GIT_IDENTITY.email,
-    GIT_COMMITTER_NAME: SAFE_FALLBACK_GIT_IDENTITY.name,
-    GIT_COMMITTER_EMAIL: SAFE_FALLBACK_GIT_IDENTITY.email,
+    GIT_AUTHOR_NAME: '',
+    GIT_AUTHOR_EMAIL: '',
+    GIT_COMMITTER_NAME: '',
+    GIT_COMMITTER_EMAIL: '',
+    GIT_IDENTITY: 'absent',
+    GIT_IDENTITY_HELP: GIT_IDENTITY_MISSING_MESSAGE,
     // obj-706070 — per-user Google Workspace. With no connection row for the
     // objective's owner the resolver contributes exactly ONE key: the explicit
     // -absence marker. No token keys, and specifically no fallback to anyone
@@ -79,25 +82,25 @@ function expectedEnv(homeDir: string): Record<string, string> {
 describe('buildSpawnEnv — no-regression base block + obj-701130 git-author fallback (flags OFF default + admin tier)', () => {
   const HOME = '/home/ccuser-a'
 
-  it('base block equals the legacy inline literal, PLUS the linked git-author fallback (obj-701130)', () => {
+  it('base block equals the legacy inline literal, PLUS the blanked git identity (obj-701130)', () => {
     // Was: expect(env).toEqual(legacyInlineEnv(HOME)). DELIBERATELY CHANGED —
-    // buildSpawnEnv now always appends the m1keluka noreply fallback for an
-    // unlinked owner so no spawn can hit the poisoned /etc/gitconfig. The base 8
-    // keys are still byte-identical; the 4 fallback keys are the intended addition.
+    // buildSpawnEnv always sets the git identity for an unlinked owner so no spawn
+    // can hit a host /etc/gitconfig. The base keys are still byte-identical.
     const env = buildSpawnEnv({ objective: fakeObjective(), homeDir: HOME, sessionKind: 'worker' })
     expect(env).toEqual(expectedEnv(HOME))
   })
 
   it('preserves the exact key set AND key order the wrapper serializes', () => {
     // The wrapper script does Object.entries(env).map(export ...). Order is part of
-    // the byte-for-byte contract, so assert the ordered key list explicitly. The 4
-    // GIT_AUTHOR_*/GIT_COMMITTER_* fallback keys (obj-701130) append after the base
-    // block, in the order the code assigns them.
+    // the byte-for-byte contract, so assert the ordered key list explicitly. The
+    // GIT_AUTHOR_*/GIT_COMMITTER_* + GIT_IDENTITY keys (obj-701130) append after
+    // the base block, in the order the code assigns them.
     const env = buildSpawnEnv({ objective: fakeObjective(), homeDir: HOME, sessionKind: 'worker' })
     expect(Object.keys(env)).toEqual([
       'HOME', 'USER', 'TERM', 'PATH', 'GIT_SSH_COMMAND', 'GH_CONFIG_DIR',
       'SUPABASE_ACCESS_TOKEN',
       'GIT_AUTHOR_NAME', 'GIT_AUTHOR_EMAIL', 'GIT_COMMITTER_NAME', 'GIT_COMMITTER_EMAIL',
+      'GIT_IDENTITY', 'GIT_IDENTITY_HELP',
       // obj-706070: the per-user Google resolver ALWAYS appends this marker so a
       // session can distinguish "acting user's Google account" from "none". With
       // no connection seeded it is the only Google key ('absent'); the token keys
@@ -138,31 +141,65 @@ describe('buildSpawnEnv — no-regression base block + obj-701130 git-author fal
 describe('userGitIdentityEnv — W4 hook, UNLINKED-owner fallback (filled by obj-2221)', () => {
   // The hook itself is unchanged: for an owner with no linked token it still
   // returns {} (fakeObjective().created_by = 7 has no token row in this test DB).
-  // What changed (obj-701130) is what buildSpawnEnv does with that {}: it now
-  // injects the m1keluka noreply GIT_AUTHOR_*/GIT_COMMITTER_* fallback so the
-  // spawn never inherits the poisoned /etc/gitconfig. The LINKED path (token
-  // present ⇒ GH_TOKEN + per-user GIT_AUTHOR_*/GIT_COMMITTER_*) is proven in
-  // session-user-git-identity.test.ts against a seeded, encrypted token row.
+  // What buildSpawnEnv does with that {} is decided by the install config
+  // (obj-701130): its own fallback identity, or a blanked identity that makes
+  // `git commit` fail. The LINKED path is proven in session-user-git-identity.test.ts.
+  afterEach(() => { vi.unstubAllEnvs() })
+
   it('the hook still returns {} for an owner with no linked token (fallback is applied by buildSpawnEnv, not here)', () => {
     expect(userGitIdentityEnv(7, SERVER_ACTOR)).toEqual({})
     expect(userGitIdentityEnv(null, SERVER_ACTOR)).toEqual({})
     expect(userGitIdentityEnv(undefined, SERVER_ACTOR)).toEqual({})
   })
 
-  it('spawn env for an unlinked owner carries the linked noreply git-author fallback, NOT a token or dev@example.com', () => {
+  it('NO install fallback: the identity is blanked so git refuses to commit, with a connect-GitHub message', () => {
+    vi.stubEnv('OK_FALLBACK_GIT_NAME', '')
+    vi.stubEnv('OK_FALLBACK_GIT_EMAIL', '')
     const env = buildSpawnEnv({ objective: fakeObjective(), homeDir: '/home/ccuser-a', sessionKind: 'worker' })
-    // No PR-actor token for an unlinked owner — PR auth still rides the shared /etc/gh.
     expect(env.GH_TOKEN).toBeUndefined()
     expect(env.GITHUB_TOKEN).toBeUndefined()
-    // But the commit author/committer are now the GitHub-linked m1keluka noreply id…
-    expect(env.GIT_AUTHOR_EMAIL).toBe('255270713+m1keluka@users.noreply.github.com')
-    expect(env.GIT_AUTHOR_NAME).toBe('m1keluka')
-    expect(env.GIT_COMMITTER_EMAIL).toBe('255270713+m1keluka@users.noreply.github.com')
-    expect(env.GIT_COMMITTER_NAME).toBe('m1keluka')
-    // …and NEVER the poisoned unlinked identity that trips Vercel COMMIT_AUTHOR_REQUIRED.
-    expect(env.GIT_AUTHOR_EMAIL).not.toBe('dev@example.com')
-    expect(env.GIT_AUTHOR_EMAIL).toBe(SAFE_FALLBACK_GIT_IDENTITY.email)
+    // Present-but-empty: env beats every gitconfig, and git rejects an empty ident.
+    for (const k of ['GIT_AUTHOR_NAME', 'GIT_AUTHOR_EMAIL', 'GIT_COMMITTER_NAME', 'GIT_COMMITTER_EMAIL']) {
+      expect(env).toHaveProperty(k, '')
+    }
+    expect(env.GIT_IDENTITY).toBe('absent')
+    expect(env.GIT_IDENTITY_HELP).toMatch(/Settings → Connectors → GitHub/)
+    // No vendor identity is shipped in the product.
+    expect(JSON.stringify(env)).not.toMatch(/m1keluka/)
   })
+
+  it('install fallback set: an unlinked owner commits as the install\'s own bot/operator identity', () => {
+    vi.stubEnv('OK_FALLBACK_GIT_NAME', ' acme-bot ')
+    vi.stubEnv('OK_FALLBACK_GIT_EMAIL', '12345+acme-bot@users.noreply.github.com')
+    const env = buildSpawnEnv({ objective: fakeObjective(), homeDir: '/home/ccuser-a', sessionKind: 'worker' })
+    expect(env.GH_TOKEN).toBeUndefined()
+    expect(env.GIT_AUTHOR_NAME).toBe('acme-bot')
+    expect(env.GIT_AUTHOR_EMAIL).toBe('12345+acme-bot@users.noreply.github.com')
+    expect(env.GIT_COMMITTER_NAME).toBe('acme-bot')
+    expect(env.GIT_COMMITTER_EMAIL).toBe('12345+acme-bot@users.noreply.github.com')
+    expect(env.GIT_IDENTITY).toBe('install')
+    expect(env.GIT_IDENTITY_HELP).toBeUndefined()
+  })
+})
+
+describe('resolveFallbackGitIdentity — install config (obj-701130)', () => {
+  it('returns null unless BOTH name and email are set', () => {
+    expect(resolveFallbackGitIdentity({})).toBeNull()
+    expect(resolveFallbackGitIdentity({ OK_FALLBACK_GIT_NAME: 'acme-bot' })).toBeNull()
+    expect(resolveFallbackGitIdentity({ OK_FALLBACK_GIT_EMAIL: 'bot@acme.test' })).toBeNull()
+    expect(resolveFallbackGitIdentity({ OK_FALLBACK_GIT_NAME: '  ', OK_FALLBACK_GIT_EMAIL: 'bot@acme.test' })).toBeNull()
+  })
+
+  it('trims and returns a well-formed identity', () => {
+    expect(resolveFallbackGitIdentity({ OK_FALLBACK_GIT_NAME: ' Acme Bot ', OK_FALLBACK_GIT_EMAIL: ' bot@acme.test ' }))
+      .toEqual({ name: 'Acme Bot', email: 'bot@acme.test' })
+  })
+
+  it('rejects values git would reject or that could smuggle a second ident', () => {
+    expect(resolveFallbackGitIdentity({ OK_FALLBACK_GIT_NAME: 'a<b>', OK_FALLBACK_GIT_EMAIL: 'bot@acme.test' })).toBeNull()
+    expect(resolveFallbackGitIdentity({ OK_FALLBACK_GIT_NAME: 'bot', OK_FALLBACK_GIT_EMAIL: 'not-an-email' })).toBeNull()
+    expect(resolveFallbackGitIdentity({ OK_FALLBACK_GIT_NAME: 'bot', OK_FALLBACK_GIT_EMAIL: 'a b@acme.test' })).toBeNull()
+    expect(resolveFallbackGitIdentity({ OK_FALLBACK_GIT_NAME: 'bot', OK_FALLBACK_GIT_EMAIL: '<bot@acme.test>' })).toBeNull()  })
 })
 
 describe('spawnSecurityPolicy — two-tier (admin vs member)', () => {
@@ -303,5 +340,95 @@ describe('buildSpawnEnv — session_kb_access (obj 900204)', () => {
     expect(verifySessionToken(reviewerEnv.CC_SESSION_TOKEN)).toMatchObject({ objectiveId: 42, workspace: 'example', readOnly: true })
     expect(verifySessionToken(workerEnv.CC_SESSION_TOKEN)).toMatchObject({ objectiveId: 42, workspace: 'example' })
     expect(verifySessionToken(workerEnv.CC_SESSION_TOKEN)?.readOnly).toBeUndefined()
+  })
+})
+
+// obj 901743 (public issue #136): GitHub and Google credentials never reach a
+// spawned agent's process env, even when BOTH connectors are linked and the
+// Secrets store also holds copies. The connections are stubbed at their module
+// seams (the real-DB versions live in session-github-connector / -google-credential
+// / connector-isolation tests); what is asserted here is buildSpawnEnv itself and
+// what the jail would receive through renderEnvFile.
+describe('buildSpawnEnv — linked GitHub + Google never put plaintext credentials in the env (obj 901743)', () => {
+  const PAT = 'github_pat_11SPAWNENV_linkedOwnerSecret_42'
+  const REFRESH = '1//spawn-env-linked-refresh-token'
+  const CLIENT_SECRET = 'GOCSPX-spawn-env-client-secret'
+  const STORE_GH = 'ghp_storeCopyOfAGithubToken00000'
+  const STORE_GOOGLE_SECRET = 'GOCSPX-store-copy-secret'
+
+  afterEach(() => {
+    vi.doUnmock('./user-github-tokens.js')
+    vi.doUnmock('./user-google-connections.js')
+    vi.doUnmock('./secrets-store.js')
+    vi.doUnmock('./connector-guard.js')
+    vi.resetModules()
+  })
+
+  async function loadLinked() {
+    vi.resetModules()
+    vi.doMock('./connector-guard.js', async orig => {
+      const real = (await orig()) as Record<string, unknown>
+      const allow = () => ({ allowed: true })
+      return { ...real, checkConnectorCredential: allow, canUseConnectorCredential: allow }
+    })
+    vi.doMock('./user-github-tokens.js', async orig => ({
+      ...((await orig()) as Record<string, unknown>),
+      getForUser: () => ({ github_login: 'owner-gh', github_email: '7+owner-gh@users.noreply.github.com' }),
+      getDecryptedForUser: () => PAT,
+    }))
+    vi.doMock('./user-google-connections.js', async orig => ({
+      ...((await orig()) as Record<string, unknown>),
+      getForUser: () => ({ google_email: 'owner@example.com', client_id: 'primary' }),
+      getOAuthClientById: () => ({ clientId: 'cid.apps.googleusercontent.com', clientSecret: CLIENT_SECRET }),
+      getDecryptedRefreshToken: () => REFRESH,
+    }))
+    vi.doMock('./secrets-store.js', async orig => ({
+      ...((await orig()) as Record<string, unknown>),
+      resolveSecrets: () => ({
+        GH_TOKEN: STORE_GH,
+        GITHUB_TOKEN: STORE_GH,
+        GOOGLE_OAUTH_CLIENT_ID: 'store-cid',
+        GOOGLE_OAUTH_CLIENT_SECRET: STORE_GOOGLE_SECRET,
+        GOOGLE_REFRESH_TOKEN: '1//store-refresh',
+        UNRELATED_API_KEY: 'kept',
+      }),
+    }))
+    const spawn = await import('./session-spawn-env.js')
+    const jail = await import('./session-jail.js')
+    return { buildSpawnEnv: spawn.buildSpawnEnv, renderEnvFile: jail.renderEnvFile }
+  }
+
+  const FORBIDDEN = ['GH_TOKEN', 'GITHUB_TOKEN', 'GOOGLE_REFRESH_TOKEN', 'GOOGLE_OAUTH_CLIENT_ID', 'GOOGLE_OAUTH_CLIENT_SECRET']
+  const VALUES = [PAT, REFRESH, CLIENT_SECRET, STORE_GH, STORE_GOOGLE_SECRET, '1//store-refresh']
+
+  it('every spawn kind: identity + broker markers only, no credential name or value', async () => {
+    const { buildSpawnEnv: build } = await loadLinked()
+    for (const sessionKind of ['worker', 'arena', 'followup', 'planner', 'reviewer'] as const) {
+      const env = build({ objective: fakeObjective(), homeDir: '/home/ccuser-a', sessionKind, isAdminSpawn: true })
+      for (const k of FORBIDDEN) expect(env[k], `${sessionKind} ${k}`).toBeUndefined()
+      expect(Object.keys(env).filter(k => k.startsWith('CC_MCP_TOKEN_'))).toEqual([])
+      const all = JSON.stringify(env)
+      for (const v of VALUES) expect(all, sessionKind).not.toContain(v)
+      // What the session DOES get: who it acts as, and that the broker is on.
+      expect(env.GIT_AUTHOR_EMAIL).toBe('7+owner-gh@users.noreply.github.com')
+      expect(env.USER_GOOGLE_EMAIL).toBe('owner@example.com')
+      expect(env.CC_GITHUB_BROKER).toBe('1')
+      expect(env.CC_GOOGLE_BROKER).toBe('1')
+      expect(env.CC_SESSION_TOKEN).toMatch(/^ccs_/)
+      expect(env.UNRELATED_API_KEY).toBe('kept')
+      // Google is the broker's MCP endpoint, authenticated by the session's own token.
+      const servers = JSON.parse(env.CC_WORKSPACE_MCP_SERVERS) as { key: string; url: string; headers: Record<string, string> }[]
+      const g = servers.find(s => s.key === 'google-workspace')!
+      expect(g.url).toMatch(/\/api\/session-broker\/google\/mcp$/)
+      expect(g.headers).toEqual({ 'X-CC-Session-Token': '${CC_SESSION_TOKEN}' })
+    }
+  })
+
+  it('renderEnvFile of that env (what a jail receives) carries none of them either', async () => {
+    const { buildSpawnEnv: build, renderEnvFile: render } = await loadLinked()
+    const file = render(build({ objective: fakeObjective(), homeDir: '/home/jailuser', sessionKind: 'worker', isAdminSpawn: true }))
+    for (const k of FORBIDDEN) expect(file).not.toMatch(new RegExp(`^${k}=`, 'm'))
+    for (const v of VALUES) expect(file).not.toContain(v)
+    expect(file).toMatch(/^CC_GITHUB_BROKER=1$/m)
   })
 })

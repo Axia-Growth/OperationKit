@@ -60,6 +60,7 @@ describe('session start with no GitHub login (obj 901458)', () => {
     const c = card({ created_by: null as unknown as number })
     const env = buildSpawnEnv({ objective: c, homeDir: '/tmp/h', sessionKind: 'worker' })
     expect(env.GH_TOKEN).toBeUndefined()
+    expect(env.CC_GITHUB_BROKER).toBeUndefined()
     const n = notes(c.id)
     expect(n).toHaveLength(1)
     expect(n[0].reason).toBe('no_owner')
@@ -84,6 +85,7 @@ describe('session start with no GitHub login (obj 901458)', () => {
     const c = card()
     const env = buildSpawnEnv({ objective: c, homeDir: '/tmp/h', sessionKind: 'worker' })
     expect(env.GH_TOKEN).toBeUndefined()
+    expect(env.CC_GITHUB_BROKER).toBeUndefined()
     expect(notes(c.id).map(n => n.reason)).toEqual(['access_rule'])
   })
 
@@ -91,13 +93,18 @@ describe('session start with no GitHub login (obj 901458)', () => {
     tokens.upsert(OWNER, { rawToken: PAT, login: 'owner-gh', githubUserId: 1, email: '1+owner-gh@users.noreply.github.com', scopes: null, tokenType: 'pat_fine' })
     const c = card()
     const env = buildSpawnEnv({ objective: c, homeDir: '/tmp/h', sessionKind: 'worker' })
-    expect(env.GH_TOKEN).toBe(PAT)
+    // obj 901743: the login is brokered — the marker is set, the PAT is not in the env.
+    expect(env.CC_GITHUB_BROKER).toBe('1')
+    expect(env.GH_TOKEN).toBeUndefined()
+    expect(JSON.stringify(env)).not.toContain(PAT)
     expect(notes(c.id)).toEqual([])
   })
 
-  it('a GH_TOKEN override in the env, or a card with no repo project, gets no note', () => {
-    expect(githubStartNote(card({ created_by: null as unknown as number }), { GH_TOKEN: 'x' })).toBeNull()
-    expect(githubStartNote(card({ created_by: null as unknown as number }), { GITHUB_TOKEN: 'x' })).toBeNull()
+  it('a brokered GitHub (connection or Secrets override), or a card with no repo project, gets no note', () => {
+    expect(githubStartNote(card({ created_by: null as unknown as number }), { CC_GITHUB_BROKER: '1' })).toBeNull()
+    // A raw token name in the env no longer counts: buildSpawnEnv strips it and
+    // turns it into the broker marker, so only the marker means "has a login".
+    expect(githubStartNote(card({ created_by: null as unknown as number }), { GH_TOKEN: 'x' })).not.toBeNull()
     expect(githubStartNote(card({ created_by: null as unknown as number, project: null as unknown as string }), {})).toBeNull()
   })
 

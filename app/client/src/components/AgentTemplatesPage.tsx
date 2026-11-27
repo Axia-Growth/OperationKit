@@ -337,7 +337,7 @@ export function AgentTemplatesPage({ embedded = false }: { embedded?: boolean } 
       ) : (
         <PageHeader
           title="Agent templates"
-          breadcrumbs={[{ label: 'Bots & skills', href: '/agents' }, { label: 'Templates' }]}
+          breadcrumbs={[{ label: 'Bot setup', href: '/agents' }, { label: 'Templates' }]}
           description="Each agent is one file you can copy, share and re-import. Add a starter agent, import a file someone sent you, or export an agent to share it."
           actions={importActions}
         />

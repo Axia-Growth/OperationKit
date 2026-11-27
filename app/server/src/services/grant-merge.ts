@@ -51,6 +51,7 @@ import type { Objective } from '@operationkit/shared'
 import { updateBehindBranch } from './grant-merge-update-branch.js'
 import { decideAutoMerge } from './auto-merge.js'
 import { isMoneyPath } from './merge-lane.js'
+import { isProductionIssueCard } from '../lib/production-issue.js'
 import { fetchPrCheckState, fetchRequiredChecks } from './ci-green-gate-github.js'
 import {
   DEFAULT_CONFIG,
@@ -82,6 +83,7 @@ export type GrantMergeRefusal =
   | 'strategy'
   | 'project_card'
   | 'money_path'
+  | 'production_issue'
   | 'review_not_passed'
   | 'pr_not_open'
   | 'ci_not_green'
@@ -98,7 +100,7 @@ export type GrantMergeRefusal =
 export type GrantMergeCard = Pick<
   Objective,
   'id' | 'title' | 'description' | 'status' | 'type' | 'workspace' | 'project' | 'pr_url' | 'pr_number' | 'is_strategy'
-> & { ai_review_verdict?: string | null; ai_review_head_sha?: string | null }
+> & { ai_review_verdict?: string | null; ai_review_head_sha?: string | null; origin?: string | null }
 
 /** True when this card's `approval: merge` goes down the server-side merge path. */
 export function cardHasPr(card: Pick<Objective, 'pr_url' | 'pr_number'>): boolean {
@@ -219,6 +221,11 @@ export function precheckGrantMerge(card: GrantMergeCard, reserved: readonly Rese
   }
   if (isMoneyPath(card)) {
     return refuse(409, 'money_path', `Card #${card.id} is on the money path (billing/payments); its PR is merged by the owner, never under a grant.`)
+  }
+  // obj 901771 — a fix for a production signal ships to a live app: a person
+  // merges it, never a grant, a standing merge or a chat tool (all come here).
+  if (isProductionIssueCard(card)) {
+    return refuse(409, 'production_issue', `Card #${card.id} fixes a production issue; a person merges it in GitHub, never under a grant. Nothing was merged and the card was not closed.`)
   }
   // Reuse the auto-merge rules for project-type and verdict; CI/mergeability are
   // supplied as passing here because they are checked live afterwards.

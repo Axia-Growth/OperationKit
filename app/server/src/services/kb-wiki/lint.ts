@@ -4,11 +4,14 @@ import { relLink, sameOrganization, slugify } from '../doc-ingest/notes.js'
 import type { LlmCall } from '../doc-ingest/llm.js'
 import { GENERATED_BY, LINT_REPORT_PAGE, STATE_DIR, isProtectedPath } from './paths.js'
 import {
-  appendLog, compileWiki, generatedPagePath, loadWiki, nameKey, pagesNamed, resolveLinkTarget, topicFolder, wikilink, yamlValue,
+  appendLog, compileWiki, fmField, generatedPagePath, loadWiki, nameKey, pagesNamed, resolveLinkTarget, stripBacklinks, topicFolder, wikilink, yamlValue,
   type LoadedPage, type RawLink, type WikiPage,
 } from './wiki.js'
 import { deriveGraph, isolatedPages } from './graph.js'
 import { noteKbChanged } from '../kb-semantic/service.js'
+import { parseNote } from '../doc-ingest/notes.js'
+import { answerCheckStatus } from '../../lib/kb-answer-hold.js'
+import { recordCheck, ruleCheck, staleSources, unsupportedReason, verifyAnswer, type AnswerCheck } from './answer-check.js'
 
 /**
  * The wiki's cleanup pass (obj 720117). Safe, mechanical fixes are applied
@@ -18,7 +21,7 @@ import { noteKbChanged } from '../kb-semantic/service.js'
  * person and never edited. Raw sources and machine state are never touched.
  */
 
-export type LintKind = 'broken_link' | 'broken_edge' | 'orphan' | 'isolated' | 'duplicate' | 'stale' | 'missing_topic' | 'contradiction'
+export type LintKind = 'broken_link' | 'broken_edge' | 'orphan' | 'isolated' | 'duplicate' | 'stale' | 'missing_topic' | 'contradiction' | 'ungrounded_answer' | 'stale_answer'
 
 export interface LintItem {
   kind: LintKind
@@ -43,6 +46,8 @@ export interface LintOptions {
   staleDays: number
   /** How many pages the AI reads for contradictions (0 = skip). */
   aiPages: number
+  /** Scope label for the untrusted frames the answer check sends the AI. */
+  workspace?: string | null
 }
 
 export const LINT_LAST = `${STATE_DIR}/lint-last.json`
@@ -83,7 +88,7 @@ export function renderStub(name: string, mentionedIn: WikiPage[], today: string)
     `title: ${yamlValue(name)}`,
     'type: topic',
     'stub: true',
-    `updated: ${today}`,
+    `updated: ${yamlValue(today)}`,
     `generated_by: ${GENERATED_BY}`,
     '---',
     '',
@@ -294,6 +299,88 @@ async function checkContradictions(pages: LoadedPage[], llm: LlmCall, notes: str
   return items
 }
 
+// ── Saved answers vs the pages they cite (obj 901746) ───────────────────────
+
+/** Most saved answers the AI re-reads per cleanup run (each is one AI call). */
+export const MAX_AI_ANSWERS = 20
+
+function heldItem(rel: string, title: string, text: string): LintItem {
+  const kind = fmField(text, 'answer_check_kind') === 'stale' ? 'stale_answer' : 'ungrounded_answer'
+  const reason = fmField(text, 'answer_check_reason') ?? ''
+  return { kind, page: rel, detail: `"${title}" is kept out of search until someone reviews it.${reason ? ` ${reason}` : ''}` }
+}
+
+/**
+ * Every saved answer, each run: one already held is listed again (it still
+ * needs a person); a checked or reviewed one whose cited pages changed since is
+ * held as stale; one never checked (saved before this check, or while the AI
+ * was down) is checked now. Report-and-hold only: the answer text is never edited.
+ */
+export async function checkSavedAnswers(
+  kbRoot: string, answers: LoadedPage[], opts: { llm?: LlmCall | null; aiPages: number; workspace?: string | null; now: Date },
+  notes: string[], stats: Record<string, number>,
+): Promise<LintItem[]> {
+  const items: LintItem[] = []
+  const llm = opts.llm && opts.aiPages > 0 ? opts.llm : null
+  let aiLeft = llm ? MAX_AI_ANSWERS : 0
+  let checked = 0, newlyHeld = 0, stale = 0, unchecked = 0, aiFailed = 0
+  const shortName = (rel: string) => rel.replace(/\.md$/, '')
+  for (const l of answers) {
+    const rel = l.page.rel
+    const status = answerCheckStatus(l.text) ?? 'unchecked'
+    if (status === 'held') { items.push(heldItem(rel, l.page.title, l.text)); continue }
+    const { fm, body } = parseNote(l.text.replace(/\r\n?/g, '\n'))
+    const input = { question: l.page.title, answer: stripBacklinks(body), sources: fm?.sources ?? [] }
+    const st = staleSources(kbRoot, l.text)
+    const touched = [...st.changed, ...st.missing]
+
+    if (touched.length && (status === 'passed' || status === 'reviewed')) {
+      let extra = ''
+      const rules = ruleCheck(kbRoot, input)
+      if (aiLeft > 0) {
+        aiLeft--
+        const c = await verifyAnswer(kbRoot, input, llm, { workspace: opts.workspace })
+        if (c.status === 'passed') extra = ' The AI re-read the pages and still found every claim backed up.'
+        else if (c.status === 'held') extra = c.unsupported.length ? ` The AI re-read the pages: ${unsupportedReason(c.unsupported)}` : ` ${c.reason ?? ''}`.trimEnd()
+      }
+      const names = touched.slice(0, 3).map(shortName).join(', ') + (touched.length > 3 ? ` and ${touched.length - 3} more` : '')
+      const what = st.missing.length && !st.changed.length ? 'no longer exist' : 'changed after it was saved'
+      const reason = `${touched.length === 1 ? 'A page it cites' : `${touched.length} pages it cites`} ${what} (${names}), so it may be out of date.${extra}`
+      recordCheck(kbRoot, rel, { status: 'held', kind: 'stale', reason, pages: rules.pages }, opts.now)
+      stale++
+      items.push({ kind: 'stale_answer', page: rel, pages: touched.filter(r => !st.missing.includes(r)).slice(0, 5), detail: `"${l.page.title}" is kept out of search until someone reviews it. ${reason}` })
+      continue
+    }
+    if (status !== 'unchecked') continue
+
+    const rules = ruleCheck(kbRoot, input)
+    let check: AnswerCheck
+    if (rules.problems.length) {
+      check = { status: 'held', kind: 'ungrounded', reason: rules.problems.join(' '), pages: rules.pages, unsupported: [], checked_by: 'rules' }
+    } else if (aiLeft > 0) {
+      aiLeft--
+      check = await verifyAnswer(kbRoot, input, llm, { workspace: opts.workspace })
+      checked++
+      if (check.status === 'unchecked') { aiFailed++; unchecked++; continue }
+    } else { unchecked++; continue }
+    recordCheck(kbRoot, rel, check, opts.now)
+    if (check.status === 'held') {
+      newlyHeld++
+      items.push({ kind: 'ungrounded_answer', page: rel, pages: check.unsupported.map(c => c.page).filter((p): p is string => !!p).slice(0, 5), detail: `"${l.page.title}" is kept out of search until someone reviews it. ${check.reason ?? ''}`.trimEnd() })
+    }
+  }
+  stats.answers = answers.length
+  stats.answers_checked = checked
+  stats.answers_held = items.length
+  stats.answers_newly_held = newlyHeld
+  stats.answers_stale = stale
+  stats.answers_unchecked = unchecked
+  if (aiFailed) notes.push(`The AI could not check ${aiFailed} saved answer${aiFailed === 1 ? '' : 's'}; ${aiFailed === 1 ? 'it' : 'they'} will be tried again next time.`)
+  else if (unchecked && !llm) notes.push(`${unchecked} saved answer${unchecked === 1 ? ' has' : 's have'} not been checked against ${unchecked === 1 ? 'its' : 'their'} pages by the AI (the AI check is ${opts.aiPages <= 0 ? 'turned off' : 'not set up'}); only the citations were checked.`)
+  else if (unchecked) notes.push(`${unchecked} more saved answer${unchecked === 1 ? '' : 's'} will be checked against ${unchecked === 1 ? 'its' : 'their'} pages on the next runs (${MAX_AI_ANSWERS} per run).`)
+  return items
+}
+
 // ── Report ───────────────────────────────────────────────────────────────────
 
 const SECTION_FOR: Record<LintKind, string> = {
@@ -305,6 +392,8 @@ const SECTION_FOR: Record<LintKind, string> = {
   duplicate: 'Pages that may be duplicates',
   stale: 'Pages not updated in a long time',
   contradiction: 'Facts that disagree',
+  ungrounded_answer: 'Saved answers their pages do not back up',
+  stale_answer: 'Saved answers whose pages changed',
 }
 
 function itemLine(i: LintItem, titleOf: (rel: string) => string): string {
@@ -314,7 +403,7 @@ function itemLine(i: LintItem, titleOf: (rel: string) => string): string {
 
 export function renderLintReport(r: LintReport, titleOf: (rel: string) => string = r2 => stem(r2)): string {
   const lines = [
-    '---', 'title: Wiki cleanup report', 'type: lint-report', `generated_by: ${GENERATED_BY}`, `updated: ${r.ran_at.slice(0, 10)}`, '---', '',
+    '---', 'title: Wiki cleanup report', 'type: lint-report', `generated_by: ${GENERATED_BY}`, `updated: ${yamlValue(r.ran_at.slice(0, 10))}`, '---', '',
     '# Wiki cleanup report', '',
     `Last run ${r.ran_at.slice(0, 16).replace('T', ' ')} UTC. Fixed ${r.fixed.length} thing${r.fixed.length === 1 ? '' : 's'} automatically; ${r.needs_human.length} need${r.needs_human.length === 1 ? 's' : ''} a person to look. Nothing in the original files was changed.`,
     '',
@@ -412,8 +501,15 @@ export async function runLint(kbRoot: string, opts: LintOptions): Promise<LintRe
   if (fixedLinks || stubbed.size) loaded = loadWiki(kbRoot)
   stats.pages = loaded.length
 
-  // 3. Orphans.
-  const orphans = findOrphans(loaded)
+  // A page the curator retired (obj 901768) is kept for the record: it is not an
+  // orphan, a duplicate or stale any more, so the checks below leave it out.
+  const isRetiredPage = (text: string) => (fmField(text.replace(/\r\n?/g, '\n'), 'status') ?? '').trim().replace(/^(['"])(.*)\1$/, '$2').toLowerCase() === 'retired'
+  const active = loaded.filter(l => !isRetiredPage(l.text))
+  const retiredRels = new Set(loaded.filter(l => isRetiredPage(l.text)).map(l => l.page.rel))
+
+  // 3. Orphans. Links FROM a retired page still count (it is kept for the record), so retiring a
+  // page never turns the pages it links to into orphans.
+  const orphans = findOrphans(loaded).filter(p => !retiredRels.has(p.rel))
   stats.orphans = orphans.length
   for (const p of orphans.slice(0, MAX_LISTED)) needs.push({ kind: 'orphan', page: p.rel, detail: `Nothing links to ${p.title} yet.` })
   if (orphans.length > MAX_LISTED) notes.push(`${orphans.length - MAX_LISTED} more pages that nothing links to are not listed.`)
@@ -430,20 +526,20 @@ export async function runLint(kbRoot: string, opts: LintOptions): Promise<LintRe
   if (graph.broken.length > MAX_LISTED) notes.push(`${graph.broken.length - MAX_LISTED} more connections to missing pages are not listed.`)
   const orphanRels = new Set(orphans.map(p => p.rel))
   const stubRels = new Set(loaded.filter(l => l.stub).map(l => l.page.rel))
-  const isolated = isolatedPages(graph).filter(n => !orphanRels.has(n.rel) && !stubRels.has(n.rel) && n.kind !== 'generated')
+  const isolated = isolatedPages(graph).filter(n => !orphanRels.has(n.rel) && !stubRels.has(n.rel) && !retiredRels.has(n.rel) && n.kind !== 'generated')
   stats.isolated = isolated.length
   for (const n of isolated.slice(0, MAX_LISTED)) needs.push({ kind: 'isolated', page: n.rel, detail: `${n.title} has no connections: nothing links to it and it links to nothing.` })
   if (isolated.length > MAX_LISTED) notes.push(`${isolated.length - MAX_LISTED} more pages with no connections are not listed.`)
 
   // 4. Possible duplicates.
-  const dups = findDuplicates(loaded.map(l => l.page))
+  const dups = findDuplicates(active.map(l => l.page))
   stats.duplicates = dups.length
   for (const g of dups.slice(0, MAX_LISTED)) {
     needs.push({ kind: 'duplicate', pages: g.map(p => p.rel), detail: `These pages may be about the same ${g[0].kind}: ${g.map(p => p.title).join(', ')}. Merge them by hand if so.` })
   }
 
   // 5. Stale pages.
-  const stale = findStale(loaded.map(l => l.page), opts.staleDays, now)
+  const stale = findStale(active.map(l => l.page), opts.staleDays, now)
   stats.stale = stale.length
   for (const p of stale.slice(0, MAX_STALE)) needs.push({ kind: 'stale', page: p.rel, detail: `${p.title} has not been updated since ${p.updated!.slice(0, 10)}.` })
 
@@ -464,13 +560,16 @@ export async function runLint(kbRoot: string, opts: LintOptions): Promise<LintRe
   // 7. Duplicates the name rules cannot see (AI, report-only).
   if (opts.llm && opts.aiPages > 0) {
     const byRel = new Map(loaded.map(l => [l.page.rel, l.page]))
-    const aiDups = await checkDuplicatesWithAi(loaded.map(l => l.page), opts.llm, dups.map(g => g.map(p => p.rel)), notes)
+    const aiDups = await checkDuplicatesWithAi(active.map(l => l.page), opts.llm, dups.map(g => g.map(p => p.rel)), notes)
     for (const g of aiDups.slice(0, MAX_LISTED)) {
       const ps = g.map(r => byRel.get(r)!)
       needs.push({ kind: 'duplicate', pages: g, detail: `These pages look like the same ${ps[0].kind} under different names: ${ps.map(p => p.title).join(', ')}. Merge them by hand if so.` })
     }
     stats.duplicates += aiDups.length
   }
+
+  // 8. Saved answers checked against the pages they cite; held ones stay out of search (obj 901746).
+  needs.push(...await checkSavedAnswers(kbRoot, active.filter(l => l.page.kind === 'answer' && fmField(l.text.replace(/\r\n?/g, '\n'), 'type') === 'answer'), { llm: opts.llm, aiPages: opts.aiPages, workspace: opts.workspace, now }, notes, stats))
 
   compileWiki(kbRoot, { now })
 

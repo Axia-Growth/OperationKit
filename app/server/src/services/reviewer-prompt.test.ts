@@ -114,3 +114,20 @@ describe('buildReviewerPrompt — adversarial framing (QW3)', () => {
     expect(firstPass).toMatch(/concrete artifact/i)
   })
 })
+
+// obj 901769 — the reviewer half of the touched-area health pass is rendered for
+// cards with a linked repo only, next to the touched-file list.
+describe('buildReviewerPrompt — touched-area health check (obj 901769)', () => {
+  it('is present for a card with a linked repo', () => {
+    const p = buildReviewerPrompt(makeObjective({ project: 'operationkit' } as Partial<Objective>), ['app/server/src/foo.ts'], null)
+    expect(p).toContain('## Touched-area health pass — check the cleanup')
+    expect(p).toContain('[PASS|FAIL] touched-area-health')
+    expect(p).toContain('Do NOT fail a card for doing NO cleanup.')
+    expect(p.indexOf('## Files touched by the worker session')).toBeLessThan(p.indexOf('## Touched-area health pass'))
+  })
+
+  it('is absent for a card with no linked repo', () => {
+    const p = buildReviewerPrompt(makeObjective({ project: null } as Partial<Objective>), ['notes.md'], null)
+    expect(p).not.toContain('Touched-area health pass')
+  })
+})

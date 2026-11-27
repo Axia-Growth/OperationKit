@@ -18,6 +18,7 @@ export const TRUSTED_TOOL_RESULTS: ReadonlySet<string> = new Set([
   'create_objective',
   'write_doc',
   'file_answer',
+  'flag_knowledge',
   'email_create_draft',
   'calendar_draft_event',
   'secrets_list',

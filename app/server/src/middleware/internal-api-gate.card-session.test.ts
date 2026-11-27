@@ -19,6 +19,7 @@ import { describe, it, expect, beforeAll, afterAll, afterEach } from 'vitest'
 import fs from 'fs'
 import os from 'os'
 import path from 'path'
+import { fileURLToPath } from 'url'
 import http from 'http'
 import express from 'express'
 
@@ -470,7 +471,7 @@ describe('criterion 6 — loopback and credentialled callers behave exactly as b
 })
 
 describe('criterion 7 — every internal call the session prompts tell a card to make is allow-listed', () => {
-  const SRC = path.resolve(path.dirname(new URL(import.meta.url).pathname), '..')
+  const SRC = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
   const PROMPT_FILES = [
     'services/prompt-builder.ts',
     'services/prompt-builder-blocks.ts',
@@ -584,7 +585,7 @@ describe('criterion 7 — every internal call the session prompts tell a card to
 })
 
 describe('criterion 8 — the internal secret and the objectives token never reach a jail or a prompt', () => {
-  const SRC = path.resolve(path.dirname(new URL(import.meta.url).pathname), '..')
+  const SRC = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
   it('no worker or reviewer prompt source names them', () => {
     const hits: string[] = []
     for (const rel of [

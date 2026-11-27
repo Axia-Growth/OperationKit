@@ -1,17 +1,52 @@
 # Operation Kit
 
-**The infrastructure layer for AI implementation consultants.**
+**Describe the outcome. Approve the breakdown. The install handles the rest.**
 
-> Install it once per client, on the client's own server. They own it; you build on it.
+> One install per client, on the client's own server. They own it. You spend your time on their problem.
 
-Operation Kit is a ready-made base for putting AI to work inside a business. A consultant installs
-one copy per client, on a server the client owns, in under an hour. The client gets a private web
-app with a knowledge base of their own documents, AI workers that run jobs as cards on a board, an
-optional chat with ready-made agents, and a secure connection for the AI apps their people already
-use (Claude, ChatGPT, Grok). The consultant starts every engagement 80 to 90 percent of the way
-there and spends their time on the client's actual workflows.
+An AI implementation consultant's scarce time goes on understanding a client's problem and breaking
+it into pieces. It should not go on writing agent files, wiring context, building verification, or
+babysitting sessions. Operation Kit is a capable harness that does that work so you don't have to.
+
+The work loop is three steps:
+
+1. **State the problem.** Open a card (or tell a bot in Chat) what outcome you want, in plain words:
+   "every new lead from the website lands in the CRM with a follow-up drafted", not "write a skill
+   that calls the CRM API".
+2. **Approve the breakdown.** For a bigger job, a planner reads the card and the client's knowledge
+   base, asks you questions, and drafts a plan with checkable acceptance criteria. You change it until
+   it is right, then press **Approve plan**. Large work splits into child cards that run side by side.
+3. **The harness owns the plumbing.** Each card runs a coding agent (Claude Code by default; Codex and
+   Grok supported) in its own sandbox, with the client's knowledge, connected accounts and secrets
+   already in reach. It writes progress as it goes, keeps memory across restarts, and an independent
+   AI reviewer checks the result against the criteria before a person signs it off. When it needs
+   you, it asks one clear question in **Needs you**; otherwise it gets on with it.
+
+A consultant installs one copy per client in under an hour and starts every engagement 80 to 90
+percent of the way there.
 
 **Website:** [operationkit.com](https://operationkit.com) · **Guides and articles:** [operationkit.com/blog](https://operationkit.com/blog/)
+
+## What the harness takes care of
+
+You should not have to manage any of this by hand. It is built in:
+
+| | What it does for you |
+|---|---|
+| **Context** | A knowledge base (**Context** in the top bar) of the client's own files (Excel, CSV, PDF, Word, chat exports, call transcripts) compiled into linked notes, with every answer citing its source. Each card gets the relevant part of it automatically. Plain markdown, so it opens in Obsidian or any editor. |
+| **Breakdown and orchestration** | The Planning stage turns a stated outcome into a plan and acceptance criteria for you to approve. A card can fan out into child cards that run in parallel and roll their results back up. |
+| **Verification** | An independent AI reviewer grades every finished card against its criteria, and code changes ship as pull requests behind the client's CI checks. "Done" means checked, not "the agent said so". |
+| **Memory** | Each card keeps working notes across restarts and a final deliverable for the reviewer. Bots can keep their own notes, open loops and a journal. |
+| **Automations** | Recurring work runs on a schedule from **Workflows**; every run is a card with the same review and history. |
+| **Connections** | Link GitHub and Google Workspace once in Settings, add remote MCP servers, and store API keys in an encrypted secrets store. Agents use them by name and never see the values. |
+| **Decisions** | When a job needs a person, it raises one short briefing (context, one question, options, a recommendation) in **Needs you**, not a wall of text. |
+| **Any AI app** | Claude, ChatGPT, Grok, Codex, Cursor and other MCP apps connect with a named, limited key and reach the same knowledge base, bots and board. [Connect your AI](./docs/CONNECT-YOUR-AGENT.md). |
+| **Workspaces** | Separate teams or business units inside one install, each with its own board and knowledge folders. |
+
+**Bots (optional).** Chat is one ongoing conversation per bot, like a personal assistant. Bots read
+and update their own notes, draft emails and calendar invites for a person to send (never on their
+own), and hand bigger jobs to the board as cards. A built-in setup bot helps with integrations,
+email and branding, and drafts a new bot for you from a plain description of what it is for.
 
 ## Why the client owns the install
 
@@ -23,20 +58,8 @@ there and spends their time on the client's actual workflows.
   "is your vendor SOC 2 audited?" question mostly becomes "is our own server set up well?". To be
   plain about it: **Operation Kit has no SOC 2 attestation**, and we do not claim one. See the
   [security overview](./docs/SECURITY-OVERVIEW.md) for what is protected and what is not done yet.
-- **No lock-in to a model.** Agents, skills and the knowledge base are plain files on the server.
-  Switch the AI provider and none of it moves.
-
-## What is inside
-
-| | What it does |
-|---|---|
-| **Knowledge base** | Drop in Excel, CSV, PDF and Word files; they become organized, linked notes you can ask questions of, with every answer citing its source. It works like a living wiki: originals are kept untouched, a page per person, organization and topic is compiled from them, good answers can be saved back as new pages, and a nightly cleanup flags contradictions and stale facts. Claude and ChatGPT chat exports and call transcripts (.txt, .docx, .vtt, .srt) can be imported too. Plain markdown, so it opens in Obsidian or any editor. |
-| **AI workers on a board** | Anything that takes more than a few minutes becomes a card: *queue → working → review → done*. Each card runs a coding agent (Claude Code by default; Codex and Grok supported) in its own sandbox, and an independent AI reviewer checks the result before a person signs it off. |
-| **Bots (optional)** | One ongoing conversation per bot, like a personal assistant. A bot is a durable identity defined by one agent file; the conversation is the history with it, and clearing a conversation never deletes the bot. Bots read and update their own notes, draft emails and calendar invites for a person to send (never on their own), and hand bigger jobs to the board. |
-| **Connect any AI app (MCP)** | Claude, ChatGPT, Grok, Codex, Cursor and other MCP apps connect with a named, limited key and can use the same knowledge base, agents and board. [Connect your AI](./docs/CONNECT-YOUR-AGENT.md). |
-| **Agent templates** | Each agent is one file (instructions, knowledge folders, tools, schedules). Starter templates ship in the box (Personal assistant, Knowledge librarian, Operator); consultants can write their own and drop them into a client's install. A shared marketplace for publishing agents is planned, and the install side is already built for it ([how it would plug in](./docs/agents/marketplace.md)). |
-| **Connectors** | Link GitHub and Google Workspace once in Settings and choose which agents may use each. Credentials are stored encrypted and never shown to agents. |
-| **Workspaces** | Separate teams or business units inside one install, each with its own board and knowledge folders. |
+- **No lock-in to a model.** The knowledge base, the board history and any agent instructions are
+  plain files on the server. Switch the AI provider and none of it moves.
 
 ## Install
 
@@ -51,7 +74,7 @@ A fresh Ubuntu 24.04 server, the client's domain on Cloudflare, and a Claude acc
 your laptop follows [INSTALL.md](./INSTALL.md) and does the work; you answer a few questions and do two
 short sign-ins. About 30 to 45 minutes, most of it waiting for the build.
 
-The code: <https://github.com/m1keluka/OperationKit> (updates come from the same place, and are
+The code: <https://github.com/Axia-Growth/OperationKit> (updates come from the same place, and are
 applied by hand: [Updating](./INSTALL.md#updating)).
 
 **Recommended stack** (what we run and test): an **OVHcloud Rise** dedicated server, **Backblaze B2**
@@ -98,11 +121,30 @@ list and keep both locks:
 | Running a live demo | [docs/DEMO-RUNBOOK.md](./docs/DEMO-RUNBOOK.md) |
 | Using it day to day | [docs/product/README.md](./docs/product/README.md) |
 | Bots | [docs/product/09-agent-chat.md](./docs/product/09-agent-chat.md) |
-| Writing agent files | [docs/agents/agent-file-format.md](./docs/agents/agent-file-format.md) |
 | Agent / HTTP / MCP API reference | [docs/api/README.md](./docs/api/README.md) |
 | Model choice and portability | [docs/product/08-model-portability.md](./docs/product/08-model-portability.md) |
 | Engineers: how the code is laid out (start here) | [docs/architecture/OVERVIEW.md](./docs/architecture/OVERVIEW.md) |
 | Engineers: architecture and threat model | [docs/architecture/README.md](./docs/architecture/README.md) · [SECURITY.md](./SECURITY.md) |
+
+## Advanced: writing your own agents and skills
+
+You do not need this to get work done. Cards run on a default worker agent, and the setup bot
+writes a bot file for you when you ask for one. It is here for consultants who want to shape a
+client's install by hand:
+
+- **Agent and bot files.** Each bot or worker agent is one markdown file (instructions, knowledge
+  folders, tools, schedules). Starter templates ship in the box under **Bot setup → Templates** (account menu).
+  Format: [docs/agents/agent-file-format.md](./docs/agents/agent-file-format.md). A shared
+  marketplace is paused; reuse is copying whole agent files, never skill packs
+  ([why](./docs/agents/marketplace.md)).
+- **Skills are an escape hatch, not a way to add capability.** Each card's session works out how to
+  do the job from the card, the project's own docs and the knowledge base. A skill file is only for
+  a rare procedure that must be pinned word for word; the **Skills (advanced)** tab on **Bot setup**
+  shows which agents load which skills. See [Skills, Tools & Agents](./docs/wiki/Skills-Tools-Agents.md).
+- **Example skills are a prompting library, not a pack to install.** The few in
+  [`examples/workspace/skills/`](./examples/workspace/skills/) show how to write a clear brief
+  (lead with the outcome, say what done looks like, name the stop conditions). Read them to sharpen
+  how you state a problem on a card; you do not need to install them.
 
 ## Status
 

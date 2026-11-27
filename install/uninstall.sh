@@ -3,7 +3,7 @@
 #
 #   sudo bash install/uninstall.sh --config client.conf --yes [options]
 #
-# Removes: the app + connector containers, every session sandbox container,
+# Removes: the app + connector + Docker policy sidecar containers, every session sandbox container,
 # the nightly backup job, the built images, the Cloudflare tunnel / DNS record / Access app / verify
 # token that install.sh created, and INSTALL_DIR (data, secrets, everything).
 # Leaves alone: Docker, firewall, security updates, SSH settings (host prep is
@@ -48,7 +48,7 @@ if [ -f "$OK_SETTINGS_ENV" ] && [ -f "$OK_SECRETS_ENV" ]; then
   if [ "$DRY_RUN" -eq 1 ]; then log "  [dry-run] docker compose down --remove-orphans"
   else COMPOSE_PROFILES=tunnel dc down --remove-orphans; fi
 else
-  run docker rm -f command-center >/dev/null 2>&1 || true
+  run docker rm -f command-center ok-docker-proxy >/dev/null 2>&1 || true
   run docker compose --project-name operationkit down --remove-orphans >/dev/null 2>&1 || true
 fi
 

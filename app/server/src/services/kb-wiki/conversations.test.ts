@@ -1,12 +1,13 @@
 import { describe, it, expect } from 'vitest'
 import fs from 'fs'
 import path from 'path'
+import { fileURLToPath } from 'url'
 import { writeZip } from '../doc-ingest/zip.js'
 import {
   conversationChars, detectImportKind, parseChatGptExport, parseClaudeExport, parseSpeakerLines, parseTranscript, renderConversationMarkdown,
 } from './conversations.js'
 
-const SAMPLES = path.join(path.dirname(new URL(import.meta.url).pathname), 'sample-data')
+const SAMPLES = path.join(path.dirname(fileURLToPath(import.meta.url)), 'sample-data')
 const sample = (n: string) => fs.readFileSync(path.join(SAMPLES, n))
 
 describe('detectImportKind', () => {

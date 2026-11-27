@@ -4,16 +4,23 @@ import { Workflow } from 'lucide-react'
 import { Alert, Button, Modal } from '../ui'
 import { Select } from '../ui/Select'
 import { FLOW_NOTES_MAX_CHARS } from '../../../../shared/flow/details'
+import { FLOW_DONE_WHEN_MAX_CHARS } from '../../../../shared/flow/end-condition'
 import { FlowToolsInput } from './FlowToolsInput'
 
 /**
  * "New workflow" (obj 900642, card B6 of docs/design/WORKFLOWS.md §5.1).
  *
  * A workflow starts from a GOAL, not from JSON: this posts `{workspace, goal,
- * name?, end_condition?, builder.max_iterations}` to POST /api/flows, which files
+ * done_when?, name?, end_condition?, builder.max_iterations}` to POST /api/flows, which files
  * the workflow and its BUILDER CARD on the board. The builder agent drafts and
  * self-tests versions; the owner publishes from Jobs → Workflows. Opened from the
  * board header and from Jobs → Workflows.
+ *
+ * obj 901766 — the goal comes with a CHECKABLE END: "Done when" in plain words
+ * (required unless exact checks are given). The builder turns those words into
+ * the asserts the engine grades every self-test and run against; the owner
+ * confirms them at publish. Exact checks stay available under a disclosure for
+ * people who already know the step names.
  */
 export interface NewWorkflowResult {
   flow_id: number
@@ -26,6 +33,8 @@ export interface NewWorkflowResult {
 export async function createWorkflowFromGoal(body: {
   workspace: string
   goal: string
+  /** obj 901766 — how the person will know it worked, in plain words. */
+  done_when?: string
   name?: string
   end_condition?: { assert: { expr: string }[] }
   builder?: { max_iterations: number }
@@ -83,6 +92,7 @@ export function NewWorkflowDialog({
   const [workspace, setWorkspace] = useState('')
   const [goal, setGoal] = useState('')
   const [name, setName] = useState('')
+  const [doneWhen, setDoneWhen] = useState('')
   const [asserts, setAsserts] = useState('')
   const [maxIterations, setMaxIterations] = useState(6)
   const [notes, setNotes] = useState('')
@@ -99,6 +109,7 @@ export function NewWorkflowDialog({
     setWorkspace(defaultWorkspace && workspaces.includes(defaultWorkspace) ? defaultWorkspace : workspaces[0] ?? '')
     setGoal('')
     setName('')
+    setDoneWhen('')
     setAsserts('')
     setMaxIterations(6)
     setNotes('')
@@ -114,13 +125,15 @@ export function NewWorkflowDialog({
     setWorkspace((w) => w || (defaultWorkspace && workspaces.includes(defaultWorkspace) ? defaultWorkspace : workspaces[0]))
   }, [open, workspace, workspaces, defaultWorkspace])
 
+  const hasEnd = !!doneWhen.trim() || !!parseAsserts(asserts)
   const submit = async () => {
-    if (!goal.trim() || !workspace) return
+    if (!goal.trim() || !workspace || !hasEnd) return
     setBusy(true)
     setError(null)
     const r = await createWorkflowFromGoal({
       workspace,
       goal: goal.trim(),
+      ...(doneWhen.trim() ? { done_when: doneWhen.trim() } : {}),
       ...(name.trim() ? { name: name.trim() } : {}),
       ...(parseAsserts(asserts) ? { end_condition: parseAsserts(asserts) } : {}),
       builder: { max_iterations: maxIterations },
@@ -145,8 +158,10 @@ export function NewWorkflowDialog({
         {created ? (
           <div className="mt-3 space-y-3 text-sm leading-relaxed text-fg-1" data-testid="new-workflow-created">
             <p>
-              Workflow <span className="font-mono">{created.slug}</span> is filed with a builder card. The builder drafts
-              and self-tests it (up to {created.builder.max_iterations} drafts); you publish it from Jobs → Workflows.
+              Workflow <span className="font-mono">{created.slug}</span> is filed with a builder card. The builder turns
+              your goal and "done when" into steps and checks, and self-tests them (up to {created.builder.max_iterations}{' '}
+              drafts). You confirm the checks and publish it from Jobs → Workflows. After that it runs on its own, and if
+              a run fails a repair agent fixes it inside a small budget; anything that sends or spends waits for you.
             </p>
             {created.builder.queue_hold && (
               <Alert tone="amber" title="Held until workflows are on">
@@ -172,8 +187,8 @@ export function NewWorkflowDialog({
             }}
           >
             <p className="text-sm leading-snug text-fg-2">
-              Describe the goal. A builder agent turns it into typed steps, validates them and self-tests them against
-              the end condition. Nothing runs or sends until you publish it.
+              Say what you want done and how you will know it worked. A builder agent turns that into steps and checks,
+              then tests them. Nothing runs, sends or spends until you publish it.
             </p>
             <div>
               <label className={LABEL} htmlFor={`${titleId}-goal`}>Goal</label>
@@ -203,17 +218,38 @@ export function NewWorkflowDialog({
               </div>
             </div>
             <div>
-              <label className={LABEL} htmlFor={`${titleId}-asserts`}>
-                End condition <span className="text-fg-3">(optional — one check per line; leave empty and the builder proposes one)</span>
+              <label className={LABEL} htmlFor={`${titleId}-done`}>
+                Done when <span className="text-fg-3">(how you will know it worked)</span>
+              </label>
+              <textarea
+                id={`${titleId}-done`}
+                data-testid="new-workflow-done-when"
+                className={`${FIELD} min-h-[56px]`}
+                value={doneWhen}
+                onChange={(e) => setDoneWhen(e.target.value)}
+                maxLength={FLOW_DONE_WHEN_MAX_CHARS}
+                aria-describedby={`${titleId}-done-help`}
+                placeholder="Every booking from yesterday has a CRM record with a category, and the team got exactly one summary message."
+              />
+              <p id={`${titleId}-done-help`} className="mt-1 text-xs text-fg-3">
+                Plain words are fine. The builder turns them into checks the engine runs after every test and every run;
+                you confirm those checks before it goes live.
+              </p>
+            </div>
+            <details className="rounded-md border border-line px-3 py-2" open={asserts.trim() ? true : undefined}>
+              <summary className="cursor-pointer text-xs font-medium text-fg-1">Exact checks (optional, if you know the step names)</summary>
+              <label className={`${LABEL} mt-2`} htmlFor={`${titleId}-asserts`}>
+                One check per line. These are used exactly as written and the builder may not change them.
               </label>
               <textarea
                 id={`${titleId}-asserts`}
+                data-testid="new-workflow-asserts"
                 className={`${FIELD} min-h-[56px] font-mono text-xs`}
                 value={asserts}
                 onChange={(e) => setAsserts(e.target.value)}
                 placeholder="len(steps.fetch.output.bookings) == steps.upsert.output.count"
               />
-            </div>
+            </details>
             <div>
               <label className={LABEL} htmlFor={`${titleId}-tools`}>Tools <span className="text-fg-3">(optional)</span></label>
               <FlowToolsInput id={`${titleId}-tools`} value={tools} onChange={setTools} describedBy={`${titleId}-tools-help`} workspace={workspace || undefined} />
@@ -223,6 +259,7 @@ export function NewWorkflowDialog({
               <label className={LABEL} htmlFor={`${titleId}-notes`}>Notes <span className="text-fg-3">(optional)</span></label>
               <textarea
                 id={`${titleId}-notes`}
+                data-testid="new-workflow-notes"
                 className={`${FIELD} min-h-[56px]`}
                 value={notes}
                 onChange={(e) => setNotes(e.target.value)}
@@ -243,10 +280,13 @@ export function NewWorkflowDialog({
               />
               <span className="text-xs text-fg-3">drafts before it hands back to you</span>
             </div>
+            {goal.trim() && !hasEnd && (
+              <p className="text-xs text-fg-3" data-testid="new-workflow-needs-end">Add "Done when" so the workflow has an end it can be checked against.</p>
+            )}
             {error && <Alert tone="alarm" title="Could not create the workflow">{error}</Alert>}
             <div className="flex justify-end gap-2 pt-1">
               <Button variant="ghost" size="sm" type="button" onClick={onClose}>Cancel</Button>
-              <Button variant="primary" size="sm" type="submit" disabled={busy || !goal.trim() || !workspace}>
+              <Button variant="primary" size="sm" type="submit" disabled={busy || !goal.trim() || !workspace || !hasEnd}>
                 {busy ? 'Creating…' : 'Create builder card'}
               </Button>
             </div>

@@ -24,7 +24,7 @@ const STOPS: Stop[] = [
   { name: 'context', path: () => '/knowledge', landmark: p => p.getByRole('button', { name: 'Graph', exact: true }) },
   { name: 'context-setup', path: () => '/knowledge/setup', landmark: h1('Set up your Context') },
   { name: 'workflows', path: () => '/jobs', landmark: h1('Workflows') },
-  { name: 'bots-and-skills', path: () => '/agents', landmark: h1('Bots & skills') },
+  { name: 'bots-and-skills', path: () => '/agents', landmark: h1('Bot setup') },
   // Fresh install (card #901202): no layer-graph generator -> an empty state, not an error.
   { name: 'bots-and-skills-graph', path: () => '/agents?tab=graph', landmark: p => p.getByText('Skill graph not set up'), scrollTo: true },
   { name: 'system', path: () => '/system', landmark: h1('System') },

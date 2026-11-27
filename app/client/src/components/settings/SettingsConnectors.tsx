@@ -32,6 +32,7 @@ import { McpServersSection } from '../connectors/McpServersSection'
 import { defaultWorkspace } from '../connectors/mcpServerCopy'
 import { NewIntegrationPanel } from '../connectors/NewIntegrationPanel'
 import { BuiltIntegrationsSection } from '../connectors/BuiltIntegrationsSection'
+import { ProductionIntakeSection } from '../connectors/ProductionIntakeSection'
 import { connectedConnectors, newIntegrationStep, type NewIntegrationStep } from '../connectors/integrationsView'
 
 function errText(err: unknown, fallback: string): string {
@@ -307,6 +308,10 @@ export function SettingsConnectors() {
 
           {(mcpWorkspace || wsDefault) && (
             <BuiltIntegrationsSection workspace={mcpWorkspace || wsDefault} onLoaded={setBuiltTools} />
+          )}
+
+          {workspaceOptions.length > 0 && (
+            <ProductionIntakeSection isAdmin={isAdmin} workspaces={workspaceOptions} defaultWorkspace={wsDefault} />
           )}
         </>
       )}

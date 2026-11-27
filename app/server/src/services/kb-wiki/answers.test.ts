@@ -2,8 +2,9 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import fs from 'fs'
 import os from 'os'
 import path from 'path'
-import { fileAnswer, rewriteCitations } from './answers.js'
+import { checkAndFileAnswer, fileAnswer, rewriteCitations } from './answers.js'
 import { readPage } from './wiki.js'
+import { isHeldAnswerFile } from '../../lib/kb-answer-hold.js'
 
 let kb: string
 beforeEach(() => { kb = fs.mkdtempSync(path.join(os.tmpdir(), 'kbwiki-ans-')) })
@@ -33,14 +34,19 @@ describe('fileAnswer', () => {
       filedBy: 'Rosa Delgado',
       now: NOW,
     })
-    expect(r).toEqual({ rel: 'answers/2026-10-31-who-delivers-our-plants.md', title: 'Who delivers our plants?' })
+    expect(r.rel).toBe('answers/2026-10-31-who-delivers-our-plants.md')
+    expect(r.title).toBe('Who delivers our plants?')
+    // obj 901746: [[organizations/nope.md]] is not a page, so the rules hold it out of search.
+    expect(r.check).toMatchObject({ status: 'held', kind: 'ungrounded', checked_by: 'rules' })
+    expect(r.check.reason).toContain('"organizations/nope", which is not a page in Context')
     const page = read(r.rel)
-    expect(page).toMatch(/^---\ntitle: "Who delivers our plants\?"\ntype: answer\nsources: \[organizations\/greenway-growers.md, people\/sam-okafor.md\]\nfiled_by: Rosa Delgado\nupdated: 2026-10-31\ngenerated_by: kb-wiki\n---\n\n# Who delivers our plants\?\n/)
+    expect(page).toMatch(/^---\ntitle: "Who delivers our plants\?"\ntype: answer\nsources: \[organizations\/greenway-growers.md, people\/sam-okafor.md\]\nfiled_by: Rosa Delgado\nupdated: 2026-10-31\nanswer_check: held\nanswer_check_kind: ungrounded\nanswer_check_reason: .+\nanswer_checked_at: 2026-10-31\nsource_hashes: \{"organizations\/greenway-growers.md":"[0-9a-f]{16}","people\/sam-okafor.md":"[0-9a-f]{16}"\}\ngenerated_by: kb-wiki\n---\n\n# Who delivers our plants\?\n/)
+    expect(isHeldAnswerFile(path.join(kb, r.rel))).toBe(true)
+    expect(read('log.md')).toContain('Saved an answer (kept out of search until someone reviews it): Who delivers our plants?')
     expect(page).toContain('Tuesdays [[organizations/greenway-growers|Greenway Growers]]; Sam checks it in [[people/sam-okafor|Sam]]. Unknown: [[organizations/nope.md]].')
     expect(page).toContain('## Pages this answer used\n\n- [[organizations/greenway-growers|Greenway Growers]]\n- [[people/sam-okafor|Sam Okafor]]')
     expect(page).not.toContain('raw/calls')
     expect(readPage(kb, 'organizations/greenway-growers.md').backlinks).toEqual([{ rel: r.rel, title: 'Who delivers our plants?' }])
-    expect(read('log.md')).toContain('## [2026-10-31 12:00] answer | Saved an answer: Who delivers our plants?')
     expect(read('index.md')).toContain('## Answers (1)')
   })
 
@@ -51,7 +57,48 @@ describe('fileAnswer', () => {
     expect(a.rel).toBe('answers/2026-10-31-who-is-sam.md')
     expect(b.rel).toBe('answers/2026-10-31-who-is-sam-2.md')
     expect(read(a.rel)).toContain('\none\n')
+    expect(a.check.status).toBe('held') // cites no page
     expect(read(b.rel)).not.toContain('## Pages this answer used')
+  })
+
+  it('an answer citing only real pages is filed unchecked (rules only) and stays searchable', () => {
+    seed()
+    const r = fileAnswer(kb, { question: 'Who manages the store?', answer: 'Sam Okafor [[people/sam-okafor.md]].', sources: [], now: NOW })
+    expect(r.check).toMatchObject({ status: 'unchecked', pages: ['people/sam-okafor.md'] })
+    expect(read(r.rel)).toContain('answer_check: unchecked')
+    expect(isHeldAnswerFile(path.join(kb, r.rel))).toBe(false)
+  })
+
+  it('an answer that cites nothing is held: nothing backs it up', () => {
+    seed()
+    const r = fileAnswer(kb, { question: 'Who is Sam?', answer: 'A friend.', sources: [], now: NOW })
+    expect(r.check.status).toBe('held')
+    expect(r.check.reason).toContain('does not cite any page')
+  })
+
+  it('checkAndFileAnswer: the AI verdict decides — supported is filed as passed, an unsupported claim is held with the claim', async () => {
+    seed()
+    const seen: string[] = []
+    const ok = await checkAndFileAnswer(kb, { question: 'What does Greenway do?', answer: 'Greenway Growers supplies plants [[organizations/greenway-growers.md]].', sources: [], now: NOW },
+      async (_s, p) => { seen.push(p); return '{"unsupported":[]}' })
+    expect(ok.check).toMatchObject({ status: 'passed', checked_by: 'ai' })
+    expect(seen[0]).toContain('Plant supplier.') // the cited page went to the AI
+    expect(isHeldAnswerFile(path.join(kb, ok.rel))).toBe(false)
+
+    const bad = await checkAndFileAnswer(kb, { question: 'When does Greenway deliver?', answer: 'Greenway Growers delivers on Tuesdays [[organizations/greenway-growers.md]].', sources: [], now: NOW },
+      async () => JSON.stringify({ unsupported: [{ claim: 'delivers on Tuesdays', page: 'organizations/greenway-growers.md', why: 'The page says nothing about delivery days.' }] }))
+    expect(bad.check).toMatchObject({ status: 'held', kind: 'ungrounded', checked_by: 'ai' })
+    expect(bad.check.unsupported).toEqual([{ claim: 'delivers on Tuesdays', page: 'organizations/greenway-growers.md', why: 'The page says nothing about delivery days.' }])
+    expect(read(bad.rel)).toContain('answer_check: held')
+    expect(isHeldAnswerFile(path.join(kb, bad.rel))).toBe(true)
+  })
+
+  it('checkAndFileAnswer: an AI that fails leaves the answer unchecked, never lost', async () => {
+    seed()
+    const r = await checkAndFileAnswer(kb, { question: 'Who is Sam?', answer: 'Store manager [[people/sam-okafor.md]].', sources: [], now: NOW }, async () => { throw new Error('offline') })
+    expect(r.check.status).toBe('unchecked')
+    expect(r.check.ai_skipped).toContain('offline')
+    expect(fs.existsSync(path.join(kb, r.rel))).toBe(true)
   })
 
   it('rejects an empty question or answer', () => {

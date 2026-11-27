@@ -10,8 +10,9 @@
  *    into the remote URL and never logged. Failure stays non-fatal.
  *
  * 2. `ensureRepoCredentialHelper` — when a repo is registered, give it a
- *    repo-local `credential.helper = !gh auth git-credential` so https pushes from
- *    sessions (which carry GH_TOKEN in their env) authenticate.
+ *    repo-local `credential.helper = !gh auth git-credential` (server-side and
+ *    operator use). Card sessions no longer carry GH_TOKEN (obj 901743): their
+ *    env-scoped config resets this helper and asks the connector broker instead.
  */
 import { execFileSync, execSync } from 'child_process'
 import fs from 'fs'

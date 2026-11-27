@@ -232,6 +232,8 @@ jobs:
         with:
           node-version: 22
       - run: node --test scripts/setup-check.test.mjs
+      # Dependency-free SARIF filter used by codeql.yml on PR runs (obj 901854).
+      - run: node --test scripts/codeql-drop-suppressed.test.mjs
 
   gate:
     if: always()

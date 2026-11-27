@@ -276,6 +276,22 @@ describe('workspace isolation (sessions + chat bots)', () => {
     expect(svc.spawnEnvFor('ws-unknown')).toEqual({})
   })
 
+  it('relay mode (obj 901743): the session gets the broker relay URL and NO server credential', async () => {
+    const { a, b } = await twoWorkspaces()
+    const env = svc.spawnEnvFor('ws-a', { relayBaseUrl: 'http://localhost:3002/api/session-broker/' })
+    const desc = svc.parseSpawnDescriptor(env)
+    expect(desc.map(s => s.key)).toEqual(['alpha-docs'])
+    expect(desc[0].url).toBe('http://localhost:3002/api/session-broker/mcp/alpha-docs')
+    expect(desc[0].headers).toEqual({ 'X-CC-Session-Token': '${CC_SESSION_TOKEN}' })
+    expect(desc[0].env_headers).toEqual({ 'X-CC-Session-Token': 'CC_SESSION_TOKEN' })
+    expect(desc[0].bearer_env).toBeUndefined()
+    expect(Object.keys(env).filter(k => k.startsWith('CC_MCP_TOKEN_'))).toEqual([])
+    expect(JSON.stringify(env)).not.toContain(STUB_API_KEY)
+    expect(JSON.stringify(env)).not.toContain('beta-only-key')
+    expect(JSON.stringify(env)).not.toContain(stub.baseUrl)
+    void b
+  })
+
   it('disabled servers and servers that are not connected are not injected', async () => {
     const { a } = await twoWorkspaces()
     svc.updateServer(a.id, { enabled: false }, 1)

@@ -19,7 +19,23 @@ export function isApiKey(token: string): boolean {
   return token.startsWith(API_KEY_PREFIX)
 }
 
+/**
+ * Lookup digest for a minted `cc_live_` key. SHA-256 is the right tool here and
+ * a password KDF (bcrypt / scrypt / argon2) is not:
+ *
+ * - The input is never a person's password. `mintApiKey()` makes it from 32
+ *   bytes of `randomBytes` (256 bits), so there is no dictionary to try and a
+ *   slow hash buys nothing against guessing.
+ * - The digest IS the lookup key (`WHERE api_token_hash = ?`). A salted KDF
+ *   gives a different digest every time, so a presented key could no longer be
+ *   found with one indexed read, and every Bearer request would pay the KDF.
+ *
+ * CodeQL's js/insufficient-password-hash reads "api key" in the names as
+ * "password". The suppression below covers this one call only; any other
+ * fast hash of a password-like value is still reported.
+ */
 export function hashApiKey(plaintext: string): string {
+  // codeql[js/insufficient-password-hash] -- 256-bit random API key from mintApiKey(), not a password; SHA-256 is the indexed lookup digest (a salted KDF could not be looked up); see the comment above
   return createHash('sha256').update(plaintext).digest('hex')
 }
 

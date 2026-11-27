@@ -121,6 +121,30 @@ export type MergeDeployDecision =
   | { deploy: true; reason: 'not_grant_merge' }
   | { deploy: true; reason: 'deploy_grant'; grantMerge: GrantMergeRecord; deployGrantId: number }
   | { deploy: false; reason: 'grant_merge_without_deploy_grant'; grantMerge: GrantMergeRecord }
+  | { deploy: false; reason: 'production_issue_fix'; objectiveId: number }
+
+/**
+ * obj 901771 — the card (origin 'production-issue') whose pull request this is,
+ * or null. A fix filed from a production signal never auto-deploys, whoever
+ * merged it: a person deploys it. Matches on the PR number AND the repo (from the
+ * card's pr_url), so a same-numbered PR in another repo is not a match.
+ */
+export function productionIssueCardForPr(db: Database, repo: string, prNumber: number): number | null {
+  const rows = db
+    .prepare(
+      `SELECT id, pr_url FROM objectives
+        WHERE origin = 'production-issue' AND deleted_at IS NULL AND (pr_number = ? OR pr_url LIKE ?)
+        ORDER BY id DESC`,
+    )
+    .all(prNumber, `%/pull/${prNumber}`) as Array<{ id: number; pr_url: string | null }>
+  const want = repo.toLowerCase()
+  for (const r of rows) {
+    const m = /github\.com\/([^/]+\/[^/]+)\/pull\/(\d+)/i.exec(r.pr_url ?? '')
+    if (!m) return r.id // number matched and no URL to tell repos apart: fail closed (no auto-deploy)
+    if (m[1].toLowerCase() === want && Number(m[2]) === prNumber) return r.id
+  }
+  return null
+}
 
 /**
  * Whether a merged PR on the install's own `main` may auto-deploy (when
@@ -128,6 +152,12 @@ export type MergeDeployDecision =
  * error is treated as "not a grant merge", which is exactly today's behaviour.
  */
 export function decideMergeAutoDeploy(db: Database, repo: string, prNumber: number, now = new Date()): MergeDeployDecision {
+  try {
+    const pi = productionIssueCardForPr(db, repo, prNumber)
+    if (pi != null) return { deploy: false, reason: 'production_issue_fix', objectiveId: pi }
+  } catch {
+    /* unreadable: fall through to today's behaviour */
+  }
   let gm: GrantMergeRecord | null = null
   try {
     gm = findGrantMerge(db, repo, prNumber, now.getTime())

@@ -3,6 +3,7 @@ import { existsSync, readFileSync } from 'node:fs'
 import { searchVaultIndex } from './vault-index.js'
 import { knowledgeBaseRoot } from '../lib/knowledge-base-root.js'
 import { filterToWorkspaceScope, isValidWorkspaceSlug } from '../lib/kb-workspace-scope.js'
+import { isHeldAnswerFile } from '../lib/kb-answer-hold.js'
 
 /**
  * Knowledge-base search for spawn-context injection.
@@ -110,13 +111,15 @@ function makeSnippet(file: string, terms: string[]): string {
  * context-builder KB-injection contract is untouched.
  */
 export function searchKnowledge(query: string, workspace?: string | null): KnowledgeHit[] {
+  // A saved answer held for review (obj 901746) is never handed to a prompt.
+  const visible = (hits: KnowledgeHit[]) => hits.filter(h => !isHeldAnswerFile(h.path))
   try {
-    const semantic = searchVaultIndex(query, workspace)
+    const semantic = visible(searchVaultIndex(query, workspace))
     if (semantic.length > 0) return semantic
   } catch {
     // fall through to grep
   }
-  return searchKnowledgeGrep(query, workspace)
+  return visible(searchKnowledgeGrep(query, workspace))
 }
 
 /**

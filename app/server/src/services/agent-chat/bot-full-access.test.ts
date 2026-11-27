@@ -413,6 +413,27 @@ const OTHER_WORKSPACE: { name: string; run: (c: ReturnType<typeof ctx>) => Promi
   { name: 'file a card', run: c => runChatTool(c, 'create_objective', { title: 't', description: 'd', workspace: OTHER }) },
 ]
 
+describe('obj 901766: a Full access bot edits a workflow but never its pinned end condition', () => {
+  it('a draft that changes the confirmed end condition is refused; one that keeps it is saved', async () => {
+    fullAccessOn()
+    const { pinFlowEndCondition } = await import('../flow-contract.js')
+    const c = ctx(ADMIN, bot())
+    const def = (await runChatTool(c, 'workflow_read', { id: flowId })).result as Loose
+    pinFlowEndCondition(getDb(), flowId, def.definition.goal.end_condition, `user:${ADMIN}`)
+    let err: unknown = null
+    try {
+      await runChatTool(c, 'workflow_save_draft', {
+        id: flowId,
+        definition: { ...def.definition, goal: { ...def.definition.goal, end_condition: { assert: [{ expr: 'true == true' }] } } },
+      })
+    } catch (e) { err = e }
+    expect(err).toBeInstanceOf(ToolUseError)
+    expect(String((err as Error).message)).toMatch(/end_condition_changed/)
+    const ok = await runChatTool(c, 'workflow_save_draft', { id: flowId, definition: { ...def.definition, name: `Weekly report kept ${Date.now()}` } })
+    expect((ok.result as Loose).status).toBe('draft')
+  })
+})
+
 describe('abilities — allowed when Full access is on', () => {
   for (const a of ABILITIES) {
     it(a.name, async () => {

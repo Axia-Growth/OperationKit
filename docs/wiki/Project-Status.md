@@ -6,7 +6,7 @@ Where OperationKit actually is today, not where the pitch says it's headed. Writ
 
 | Repo | Visibility | What it is | Status |
 | --- | --- | --- | --- |
-| [`m1keluka/OperationKit`](https://github.com/m1keluka/OperationKit) | **Public** | The genericized OSS cut — the actual product code, docs, and this wiki's source | **Live.** Last synced from upstream 2026-10-15. |
+| [`Axia-Growth/OperationKit`](https://github.com/Axia-Growth/OperationKit) | **Public** | The genericized OSS cut — the actual product code, docs, and this wiki's source | **Live.** Last synced from upstream 2026-10-15. |
 | `m1keluka/OperationKit-dev` | **Private** | Early-access mirror of the same cut, for pre-release testers | Private by design — not a staging area for the public repo, a separate access tier |
 | [`m1keluka/operationkit-site`](https://github.com/m1keluka/operationkit-site) | **Public** | Marketing site (operationkit.com), hand-authored static HTML, no build step | Live, updated independently of the product repo |
 
@@ -33,7 +33,7 @@ A GitHub Actions workflow (`oss-sync.yml`) mirrors the genericized tracked tree 
 
 - No managed/hosted offering — this is self-hosted infrastructure you run on your own server, by design (see [Why Own Your AI Infrastructure](./Why-Own-Your-AI-Infrastructure))
 - No write-capable MCP tools yet — the connector is read-only (search, read, list); card creation/status changes still go through the REST API
-- No marketplace transaction layer — skill/agent packages are downloadable files, not a paid ingestion pipeline
+- No marketplace — sharing is paused and re-scoped to whole agent template files, never a skill store (see [Sharing agents between installs](../agents/marketplace.md)); skill files are an optional escape hatch, not a way to add capability ([Skills, Tools & Agents](./Skills-Tools-Agents))
 
 ## Reporting a discrepancy
 

@@ -136,7 +136,7 @@ export async function runFlowSelfTest(
  */
 export async function publishFlow(
   flowId: number,
-  args: { version: number; approve: string[] },
+  args: { version: number; approve: string[]; confirm_end_condition?: true },
 ): Promise<{ ok: boolean; reason?: string; error?: string; approvals?: FlowApprovals }> {
   try {
     const r = await fetch(`/api/flows/${flowId}/publish`, {

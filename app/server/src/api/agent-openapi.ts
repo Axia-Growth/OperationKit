@@ -1249,6 +1249,60 @@ export const AGENT_OPENAPI = {
         responses: { '201': { description: '{ rel, title }' }, '404': { description: 'Knowledge base switched off' } },
       },
     },
+    '/api/kb-wiki/flags': {
+      get: {
+        tags: ['vault'],
+        summary: 'Knowledge-gap flag queue for one workspace, oldest first (obj 901767): what agents and people reported as missing, wrong or stale (vault:read)',
+        parameters: [
+          { name: 'workspace', in: 'query', required: true, schema: { type: 'string' } },
+          { name: 'status', in: 'query', schema: { type: 'string', enum: ['open', 'resolved', 'dismissed', 'all'], default: 'open' } },
+          { name: 'kind', in: 'query', schema: { type: 'string', enum: ['missing', 'wrong', 'stale'] } },
+          { name: 'objective_id', in: 'query', schema: { type: 'integer' } },
+          { name: 'after_id', in: 'query', schema: { type: 'integer' }, description: 'Only flags with a larger id (a curator cursor)' },
+          { name: 'limit', in: 'query', schema: { type: 'integer', minimum: 1, maximum: 200, default: 50 } },
+          { name: 'offset', in: 'query', schema: { type: 'integer', minimum: 0 } },
+        ],
+        responses: { '200': { description: '{ flags: [{ id, kind, subject, page, detail, suggested_fix, objective_id, trace, source, filed_by, status, seen_count, … }], total, open }' } },
+      },
+      post: {
+        tags: ['vault'],
+        summary: 'Report a knowledge defect: missing, wrong or stale, with an optional suggested fix (obj 901767). A queue row for the Cleanup tab; it never edits a page (vault:write)',
+        requestBody: {
+          required: true,
+          content: {
+            'application/json': {
+              schema: {
+                type: 'object',
+                required: ['workspace', 'kind', 'subject', 'detail'],
+                properties: {
+                  workspace: { type: 'string' },
+                  kind: { type: 'string', enum: ['missing', 'wrong', 'stale'] },
+                  subject: { type: 'string', maxLength: 300 },
+                  detail: { type: 'string', maxLength: 4000 },
+                  page: { type: 'string', description: 'Knowledge-base-relative page path' },
+                  suggested_fix: { type: 'string', maxLength: 8000 },
+                  objective_id: { type: 'integer', description: 'A card in the same workspace' },
+                  trace: { type: 'string', maxLength: 500 },
+                },
+              },
+            },
+          },
+        },
+        responses: { '201': { description: '{ flag, reused: false }' }, '200': { description: '{ flag, reused: true } — the same open defect was already flagged; seen_count went up' }, '400': { description: '{ error, errors }' } },
+      },
+    },
+    '/api/kb-wiki/flags/{id}/status': {
+      post: {
+        tags: ['vault'],
+        summary: 'Close (resolved / dismissed) or reopen a knowledge-gap flag. Records the outcome only; it edits no page. Not available to a card session token (vault:write)',
+        parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'integer' } }],
+        requestBody: {
+          required: true,
+          content: { 'application/json': { schema: { type: 'object', required: ['workspace', 'status'], properties: { workspace: { type: 'string' }, status: { type: 'string', enum: ['open', 'resolved', 'dismissed'] }, note: { type: 'string' } } } } },
+        },
+        responses: { '200': { description: '{ flag }' }, '404': { description: 'No such flag in that workspace' } },
+      },
+    },
     '/api/kb-wiki/graph': {
       get: {
         tags: ['vault'],
@@ -1324,7 +1378,8 @@ export const AGENT_OPENAPI = {
                   workspace: { type: 'string' },
                   goal: { type: 'string', maxLength: 4000, description: 'New workflow: what it must achieve' },
                   name: { type: 'string', maxLength: 120 },
-                  end_condition: { type: 'object', description: '{ assert: [{ expr, why? }], judge? } — omit and the builder proposes one' },
+                  done_when: { type: 'string', maxLength: 1000, description: 'New workflow: how to know it worked, in plain words. The builder turns it into asserts; the owner confirms them at publish.' },
+                  end_condition: { type: 'object', description: '{ assert: [{ expr, why? }], judge? } — pinned as written (no agent draft may change it); omit and the builder proposes one' },
                   builder: { type: 'object', properties: { max_iterations: { type: 'integer', minimum: 1, maximum: 20 } } },
                   definition: { type: 'object', description: 'okflow/1 JSON (instead of goal)' },
                 },
@@ -1333,7 +1388,7 @@ export const AGENT_OPENAPI = {
           },
         },
         responses: {
-          '201': { description: 'Goal: { ok, flow_id, slug, workspace, objective_id, builder: { objective_id, status, max_iterations, queue_hold }, flow }. Definition: { ok, flow_id, version, created, objective_id, flow }' },
+          '201': { description: 'Goal: { ok, flow_id, slug, workspace, objective_id, builder: { objective_id, status, max_iterations, queue_hold }, end_condition: { done_when, end_condition, confirmed_by, confirmed_at }, flow }. Definition: { ok, flow_id, version, created, objective_id, flow }' },
           '400': { description: 'Validation — a refused definition carries every issue in errors[]' },
           '403': { description: 'Workspace forbidden, or missing_scope board:write' },
         },
@@ -1492,7 +1547,7 @@ export const AGENT_DISCOVERY = {
     docs: '/docs/api/README.md#mcp-server',
     tools: [
       'search', 'search_files', 'list_folders', 'read_file', 'get_card', 'search_cards', 'file_info',
-      'write_doc', 'file_answer', 'kb_related', 'kb_who_knows', 'whoami', 'get_attention', 'get_seat_pool', 'get_changes', 'board_briefing', 'list_objectives', 'search_objectives',
+      'write_doc', 'file_answer', 'flag_knowledge', 'list_knowledge_flags', 'kb_related', 'kb_who_knows', 'whoami', 'get_attention', 'get_seat_pool', 'get_changes', 'board_briefing', 'list_objectives', 'search_objectives',
       'get_objective', 'get_progress', 'get_output', 'get_artifacts', 'list_workspaces', 'list_agents', 'list_chat_agents',
       'get_chat_agent', 'create_objective',
       'update_objective', 'update_status', 'start_objective', 'send_message', 'list_secret_requests',

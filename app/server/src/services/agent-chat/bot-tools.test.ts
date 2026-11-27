@@ -233,7 +233,8 @@ describe('a full chat turn: web tools reach the model only when assigned', () =>
     const { f, offered } = scriptedOpenAi()
     const env = { ...WEB_ENV, OPENAI_API_KEY: 'sk-test' } as NodeJS.ProcessEnv
     const r = await runTurn({ userId: USER, username: 'user1', agent: findAgent('notes-only')!, text: 'news?', env, deps: { env, fetch: f as Loose }, webDeps: { fetch: searchFetch } })
-    expect(offered[0]).toEqual(['search', 'read_file'])
+    // obj 901767: a bot that reads notes may also flag a knowledge gap (implied, never a page edit).
+    expect(offered[0]).toEqual(['search', 'read_file', 'flag_knowledge'])
     const tool = r.messages.find(m => m.role === 'tool')!
     expect(tool.meta?.ok).toBe(false)
     expect(tool.content).toMatch(/not allowed/)

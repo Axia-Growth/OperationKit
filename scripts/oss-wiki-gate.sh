@@ -62,16 +62,34 @@ if [ -f "$DENYLIST_FILE" ]; then
   done < "$DENYLIST_FILE"
 fi
 
+# obj 901801: the public repo's owner/name (scripts/oss-public-repo.txt) is the one
+# "Example" string the wiki may carry (its source / issue links). The scan deletes that
+# exact, case-sensitive literal from a scratch copy; any other hit still fails.
+PUBLIC_REPO=""
+if [ -f "$SCRIPT_DIR/oss-public-repo.txt" ]; then
+  while IFS= read -r pr_line; do
+    case "$pr_line" in "repo: "*) PUBLIC_REPO="${pr_line#repo: }" ;; esac
+  done < "$SCRIPT_DIR/oss-public-repo.txt"
+fi
+[[ "$PUBLIC_REPO" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || PUBLIC_REPO=""
+REPO_SCRATCH="$(mktemp -t oss-wiki-repo-XXXXXX)"
+trap 'rm -f "$REPO_SCRATCH"' EXIT
+
 scan_denylist_in() {
   local dir="$1"; shift
   local -a pats=("$@")
-  local hits=0 f pat
+  local hits=0 f pat src
   while IFS= read -r f; do
     if file --mime "$dir/$f" 2>/dev/null | grep -q 'charset=binary'; then continue; fi
+    src="$dir/$f"
+    if [ -n "$PUBLIC_REPO" ] && grep -qF -- "$PUBLIC_REPO" "$src" 2>/dev/null; then
+      PUBLIC_REPO="$PUBLIC_REPO" python3 -c 'import os,sys; d=open(sys.argv[1],"rb").read(); open(sys.argv[2],"wb").write(d.replace(os.fsencode(os.environ["PUBLIC_REPO"]), b""))' "$src" "$REPO_SCRATCH"
+      src="$REPO_SCRATCH"
+    fi
     for pat in "${pats[@]}"; do
       [ -z "$pat" ] && continue
-      if grep -niF -- "$pat" "$dir/$f" >/dev/null 2>&1; then
-        grep -niF -- "$pat" "$dir/$f" | while IFS= read -r ln; do
+      if grep -niF -- "$pat" "$src" >/dev/null 2>&1; then
+        grep -niF -- "$pat" "$src" | while IFS= read -r ln; do
           echo "  ✗ DENYLIST '$pat' -> $f: $ln"
         done
         hits=$((hits + 1))

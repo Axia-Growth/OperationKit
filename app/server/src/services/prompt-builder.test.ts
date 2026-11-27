@@ -80,6 +80,17 @@ const CRITERIA: AcceptanceCriterion[] = [
   { id: 'self-verify-line', criterion: 'The worker is told to run tests and paste output before done', type: 'functional', method: 'doc' },
 ]
 
+it('includes failed reviewer findings in the next worker prompt', () => {
+  const findings = 'Add a test for an empty CSV file.'
+  const prompt = buildPrompt(makeObjective({
+    ai_review_verdict: 'fail',
+    ai_review_findings: findings,
+  }))
+
+  expect(prompt).toContain('## Prior AI Review Findings')
+  expect(prompt).toContain(findings)
+})
+
 describe('buildPrompt — QW1 (inject acceptance_criteria)', () => {
   it('renders the criteria block with each criterion id, text, type, and method', () => {
     const prompt = buildPrompt(makeObjective({ acceptance_criteria: CRITERIA }))
@@ -364,6 +375,34 @@ describe('Git Workflow — push once per session (obj 901348)', () => {
   it('is absent when there is no git workflow (no project)', () => {
     const prompt = buildPrompt(makeObjective({ create_pr: false, project: null }))
     expect(prompt).not.toContain('### Push once per session')
+  })
+})
+
+// obj 901769 — touched-area health pass: every card that changes a linked repo
+// gets the bounded-cleanup rule, in both integration modes; no repo, no rule.
+describe('Git Workflow — touched-area health pass (obj 901769)', () => {
+  it('emits the bounded cleanup block in `pr` mode, before the PR step', () => {
+    const prompt = buildPrompt(makeObjective({ id: 901769001, create_pr: true, project: 'operationkit' }))
+    expect(prompt).toContain('### Touched-area health pass (bounded cleanup')
+    expect(prompt).toContain('Nothing nearby needs fixing? Do nothing.')
+    expect(prompt.indexOf('### Touched-area health pass')).toBeLessThan(prompt.indexOf('### Integration — open a pull request'))
+  })
+
+  it('emits it in `merge-back` mode too', () => {
+    const parentId = 901769900
+    getDb()
+      .prepare(
+        `INSERT OR REPLACE INTO objectives (id, title, status, agent_context, workspace, project, create_pr)
+         VALUES (?, 'Parent delegator', 'working', 'cto', 'example', 'operationkit', 1)`,
+      )
+      .run(parentId)
+    const prompt = buildPrompt(makeObjective({ id: 901769901, create_pr: false, parent_id: parentId, project: 'operationkit' }))
+    expect(prompt).toContain('### Touched-area health pass (bounded cleanup')
+  })
+
+  it('is absent when the card has no linked repo', () => {
+    const prompt = buildPrompt(makeObjective({ create_pr: false, project: null }))
+    expect(prompt).not.toContain('Touched-area health pass')
   })
 })
 

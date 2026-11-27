@@ -72,16 +72,29 @@ export interface SourceRef {
   fileName: string
 }
 
+/**
+ * Drop leading and trailing '-' in one linear pass. Replaces `/^-+|-+$/g`, which
+ * CodeQL flags as a polynomial regex on uncontrolled input (js/polynomial-redos):
+ * `-+$` is retried at every dash of a long run that is not at the end.
+ */
+function trimDashes(s: string): string {
+  let start = 0
+  let end = s.length
+  while (start < end && s.charCodeAt(start) === 45) start++
+  while (end > start && s.charCodeAt(end - 1) === 45) end--
+  return s.slice(start, end)
+}
+
 export function slugify(name: string): string {
-  const s = name
-    .normalize('NFKD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .toLowerCase()
-    .replace(/&/g, ' and ')
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-+|-+$/g, '')
-    .slice(0, 80)
-  return s || 'untitled'
+  const normalized = name.normalize('NFKD').replace(/[\u0300-\u036f]/g, '').toLowerCase()
+  const readable = trimDashes(normalized.replace(/&/g, ' and ').replace(/[^\p{L}\p{N}]+/gu, '-'))
+  const ascii = trimDashes(normalized.replace(/&/g, ' and ').replace(/[^a-z0-9]+/g, '-'))
+  const stem = readable || 'untitled'
+  // Preserve legacy ASCII filenames, while making Unicode-only (and empty) slugs
+  // readable and unique. The original input keeps the digest stable per entity.
+  if (readable && readable === ascii) return stem.slice(0, 80)
+  const digest = crypto.createHash('sha1').update(name).digest('hex').slice(0, 6)
+  return `${stem.slice(0, 73)}-${digest}`
 }
 
 export function notePathFor(type: EntityType, name: string): string {
@@ -97,8 +110,17 @@ export function relLink(from: string, to: string): string {
   return [...Array(a.length - i).fill('..'), ...b.slice(i)].join('/') || to
 }
 
-function yamlStr(s: string): string {
-  return /^[\w .,'()&/-]+$/.test(s) && !/^[-?:]/.test(s) && !/:\s/.test(s) ? s : JSON.stringify(s)
+// Plain scalars a YAML reader (Obsidian, js-yaml, `yaml`) would not read back as the same string:
+// booleans/null in YAML 1.1 or 1.2, and numbers, hex/octal/binary, .inf/.nan and dates.
+const YAML_NON_STRING = /^(?:~|null|true|false|yes|no|on|off|y|n|[-+]?(?:\d[\d_]*(?:\.[\d_]*)?(?:e[-+]?\d+)?|\.\d[\d_]*(?:e[-+]?\d+)?|0x[\da-f_]+|0o[0-7_]+|0b[01_]+|\.inf|\.nan)|\d{4}-\d\d?-\d\d?.*)$/i
+
+/**
+ * YAML scalar: bare when a YAML reader returns exactly `s`, else JSON-quoted (valid YAML, and what
+ * parseNote reads back). A leading `'` starts a single-quoted scalar and `&` an anchor, so either
+ * one makes the whole frontmatter unreadable outside this app.
+ */
+export function yamlStr(s: string): string {
+  return /^[\w .,'()&/-]+$/.test(s) && !/^[-?:'&]/.test(s) && !/:\s/.test(s) && !YAML_NON_STRING.test(s) ? s : JSON.stringify(s)
 }
 
 function yamlList(items: string[]): string {
@@ -156,7 +178,7 @@ export function parseNote(text: string): { fm: Frontmatter | null; body: string 
       aliases: parseYamlList(get('aliases')),
       sources: parseYamlList(get('sources')),
       tags: parseYamlList(get('tags')),
-      updated: get('updated'),
+      updated: unq(get('updated')),
     },
     body: text.slice(m[0].length),
   }

@@ -69,7 +69,7 @@ describe('NewWorkflowDialog', () => {
     act(() => {
       type(q<HTMLTextAreaElement>('textarea')!, 'Triage yesterday\'s bookings into the CRM')
       type(q<HTMLInputElement>('input[maxlength="120"]')!, 'Booking triage')
-      type(document.body.querySelectorAll('textarea')[1] as HTMLTextAreaElement, 'steps.check.output.ok == true')
+      type(q<HTMLTextAreaElement>('[data-testid="new-workflow-asserts"]')!, 'steps.check.output.ok == true')
       type(q<HTMLInputElement>('input[type="number"]')!, '4')
     })
     await act(async () => { q<HTMLButtonElement>('button[type="submit"]')!.click() })
@@ -93,7 +93,10 @@ describe('NewWorkflowDialog', () => {
   it('shows the server error and stays on the form', async () => {
     fetchMock.mockResolvedValue({ status: 403, json: async () => ({ error: "No access to workspace 'beta'" }) })
     render()
-    act(() => type(q<HTMLTextAreaElement>('textarea')!, 'goal'))
+    act(() => {
+      type(q<HTMLTextAreaElement>('textarea')!, 'goal')
+      type(q<HTMLTextAreaElement>('[data-testid="new-workflow-done-when"]')!, 'it is done')
+    })
     await act(async () => { q<HTMLButtonElement>('button[type="submit"]')!.click() })
     expect(document.body.textContent).toContain("No access to workspace 'beta'")
     expect(q('[data-testid="new-workflow-created"]')).toBeNull()
@@ -115,7 +118,8 @@ describe('NewWorkflowDialog', () => {
     const toolsInput = q<HTMLInputElement>("[data-testid=\"flow-tools-input\"] input")!
     act(() => {
       type(q<HTMLTextAreaElement>("textarea")!, "Sync bookings")
-      type(document.body.querySelectorAll("textarea")[2] as HTMLTextAreaElement, "Skip test bookings.")
+      type(q<HTMLTextAreaElement>("[data-testid=\"new-workflow-done-when\"]")!, "Every booking is synced.")
+      type(q<HTMLTextAreaElement>("[data-testid=\"new-workflow-notes\"]")!, "Skip test bookings.")
       type(toolsInput, "HubSpot, Slack,")
     })
     act(() => { type(toolsInput, "Google Sheets") })
@@ -131,10 +135,28 @@ describe('NewWorkflowDialog', () => {
   it("obj 900868: leaves notes and tools out when empty", async () => {
     fetchMock.mockResolvedValue({ status: 201, json: async () => ({ flow_id: 9, slug: "t", workspace: "beta", objective_id: 1, builder: { objective_id: 1, status: "queue", max_iterations: 6, queue_hold: null } }) })
     render()
-    act(() => type(q<HTMLTextAreaElement>("textarea")!, "Sync bookings"))
+    act(() => {
+      type(q<HTMLTextAreaElement>("textarea")!, "Sync bookings")
+      type(q<HTMLTextAreaElement>("[data-testid=\"new-workflow-done-when\"]")!, "Every booking is synced.")
+    })
     await act(async () => { q<HTMLButtonElement>("button[type=\"submit\"]")!.click() })
     const body = JSON.parse(fetchMock.mock.calls[0][1].body)
     expect(body).not.toHaveProperty("notes")
     expect(body).not.toHaveProperty("tools")
+  })
+
+  it('obj 901766: a goal needs a checkable end — "Done when" in plain words is enough, and is sent as done_when', async () => {
+    fetchMock.mockResolvedValue({ status: 201, json: async () => ({ flow_id: 9, slug: 't', workspace: 'beta', objective_id: 1, builder: { objective_id: 1, status: 'queue', max_iterations: 6, queue_hold: null } }) })
+    render()
+    act(() => type(q<HTMLTextAreaElement>('textarea')!, 'Triage new bookings'))
+    // A goal alone is not enough: the button stays off and the form says why.
+    expect(q<HTMLButtonElement>('button[type="submit"]')!.disabled).toBe(true)
+    expect(q('[data-testid="new-workflow-needs-end"]')).not.toBeNull()
+    act(() => type(q<HTMLTextAreaElement>('[data-testid="new-workflow-done-when"]')!, 'Every booking from yesterday has a CRM record.'))
+    expect(q<HTMLButtonElement>('button[type="submit"]')!.disabled).toBe(false)
+    await act(async () => { q<HTMLButtonElement>('button[type="submit"]')!.click() })
+    const body = JSON.parse(fetchMock.mock.calls[0][1].body)
+    expect(body.done_when).toBe('Every booking from yesterday has a CRM record.')
+    expect(body).not.toHaveProperty('end_condition')
   })
 })

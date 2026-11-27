@@ -13,10 +13,12 @@ import { getEffectiveGateMode, buildVisionRubricBlock, isBackendOnlyChange, type
 import { maskWorkerScratch, buildReviewerArtifactBlock } from './prompt-builder.js'
 import { buildReviewerKbAccessBlock } from './kb-access-prompt.js'
 import { hasLockedCriteria } from './review-rubric.js'
+import { standingRulesPromptLines } from './outcome-intake.js'
 import { resolveBrowserPolicy, type BrowserPolicy } from '../lib/browser-policy.js'
 import { buildPlaywrightMcpArgs, resolveChromiumBinary, writePlaywrightMcpConfig } from '../lib/card-browser.js'
 import { sharedBrowserEgressProxy } from './browser-egress-proxy.js'
 import { resolveBrandName } from './branding-config.js'
+import { buildReviewerTouchedAreaBlock } from '../lib/touched-area-health.js'
 
 const TMUX_SCRIPT_DIR = process.env.CC_SCRIPT_DIR || '/tmp/cc-scripts'
 
@@ -420,6 +422,8 @@ export function buildReviewerPrompt(
     // "the reviewer prompt never carries the scratch path" is asserted in
     // reviewer-prompt-mask.test.ts.
     buildReviewerArtifactBlock(objective),
+    // obj 901764: the workspace's standing outcome rules not already in the criteria. None = no element.
+    ...standingRulesPromptLines(() => getDb() as never, objective, 'reviewer').map(l => maskWorkerScratch(l)),
     '',
     buildReviewerKbAccessBlock(objective).join('\n'),
     '',
@@ -433,6 +437,9 @@ export function buildReviewerPrompt(
     '## Files touched by the worker session',
     filesTouched.length > 0 ? filesTouched.map(f => `- ${f}`).join('\n') : '(none captured)',
     '',
+    // obj 901769 — only cards with a linked repo get the worker's bounded
+    // cleanup rule, so only they get the sprawl/regression check.
+    objective.project ? buildReviewerTouchedAreaBlock(filesTouched) : '',
     '## Where the worker\'s deliverable lives (READ BEFORE GRADING)',
     'Your shell may start in a GENERIC agent dir, NOT the deliverable repo — especially when'
       + ' this objective has no linked project. The worker almost never edits `main`; it works on'

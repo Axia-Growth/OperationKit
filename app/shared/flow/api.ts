@@ -2,6 +2,7 @@
 // Response contracts shared by the server routes and the Jobs → Workflows UI.
 
 import type { FlowApprovals, FlowDefinition, FlowNodeRunStatus } from './types.js'
+import type { FlowEndConditionContract } from './end-condition.js'
 
 /** The `kind='flow'` routine row that carries a published flow's cron (§7.1). */
 export interface FlowRoutineInfo {
@@ -194,6 +195,8 @@ export interface FlowBuilderState {
   max: number
   remaining: number
   exhausted: boolean
+  /** obj 901766: the person's plain-words "Done when", given with the goal. */
+  done_when?: string | null
 }
 
 /** Changed-node tags for the version picker (B7, §6.2 "Versions"). */
@@ -320,6 +323,17 @@ export interface FlowPublishState {
   self_test: FlowSelfTest | null
   /** The recorded owner approval of this version, if it was published. */
   approvals: FlowApprovals | null
+  /**
+   * obj 901766 — the end condition this version is graded against, and whether
+   * the publisher must confirm it (an agent wrote it and no person has vouched
+   * for it yet). Publish then needs `confirm_end_condition: true`.
+   */
+  end_condition?: {
+    value: unknown | null
+    confirmation_required: boolean
+    reason: 'proposed_by_agent' | 'differs_from_confirmed' | null
+    contract: FlowEndConditionContract
+  }
 }
 
 // ── Click-to-inspect side panel (card B7, §6.2 "Click a node") ──────────────

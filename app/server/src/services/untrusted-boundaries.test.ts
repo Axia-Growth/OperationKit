@@ -605,3 +605,68 @@ describe('L. decision Q&A: card text reaches the answering bot only inside a fra
     expect(user.lastIndexOf('Why today?')).toBeGreaterThan(close)
   })
 })
+
+describe('M. knowledge curator: flags and human corrections reach the drafting AI only inside a frame (obj 901768)', () => {
+  it('a hostile correction is sealed in the draft and routing prompts, the page body stays outside, and the scanner logs it', async () => {
+    const { draftPrompt, routePrompt } = await import('./kb-wiki/curator.js')
+    const before = injectionRows().length
+    const draft = draftPrompt('topics/invoice-header.md', 'Invoice header', 'Invoices use the blue header.', [
+      { type: 'correction', id: 'hc-1', detail: HOSTILE, objective_id: 7 },
+    ], 'ws-a')
+    expectSingleSealedFrame(draft)
+    expect(draft.indexOf('Invoices use the blue header.')).toBeLessThan(draft.indexOf(UNTRUSTED_OPEN))
+    const route = routePrompt([{ rel: 'topics/invoice-header.md', title: 'Invoice header' }], [
+      { id: 'hc-2', at: '2026-11-22T00:00:00Z', text: HOSTILE, objective_id: 7, session_id: 'cc-7-1', by: 'Ana' },
+    ], 'ws-a')
+    expectSingleSealedFrame(route)
+    expect(route.indexOf('topics/invoice-header.md | Invoice header')).toBeLessThan(route.indexOf(UNTRUSTED_OPEN))
+    const rows = injectionRows().slice(before)
+    expect(rows.some(r => r.metadata.boundary === 'kb-curator-evidence')).toBe(true)
+  })
+})
+
+describe('N. a production signal reaches the worker only inside a frame (obj 901771)', () => {
+  it('a hostile alert body is sealed on the card; the human-merge rule stays outside, after it; the scanner logs it', async () => {
+    const { buildCardDescription, normalizeSignal, HUMAN_MERGE_RULE } = await import('./production-intake.js')
+    const n = normalizeSignal({ title: 'Checkout 500', message: HOSTILE })
+    if (!n.ok) throw new Error(n.error)
+    const before = injectionRows().length
+    const desc = buildCardDescription({ signal: n.signal, signalId: 9, workspace: 'ws-a', fingerprint: 'fp', sourceName: 'Sentry' })
+    expectSingleSealedFrame(desc)
+    expect(desc.split('\n').find(l => l.startsWith(UNTRUSTED_OPEN))).toContain('source="production-signal"')
+    expect(desc.indexOf(HUMAN_MERGE_RULE)).toBeGreaterThan(desc.indexOf(UNTRUSTED_CLOSE))
+    expect(injectionRows().length).toBeGreaterThan(before)
+  })
+})
+
+describe('O. a saved answer and its cited pages reach the answer checker only inside frames (obj 901746)', () => {
+  it('a hostile answer and a hostile page are each sealed; the page label and the instructions stay outside; the scanner logs it', async () => {
+    const { buildVerifyPrompt, VERIFY_SYSTEM } = await import('./kb-wiki/answer-check.js')
+    const before = injectionRows().length
+    const prompt = buildVerifyPrompt('Who supplies us?', `Greenway. ${HOSTILE}`, [{ rel: 'organizations/greenway.md', text: `Plant supplier. ${HOSTILE}` }], 'ws-a')
+    const [answerPart, pagePart] = prompt.split('CITED PAGES:')
+    expectSingleSealedFrame(answerPart)
+    expectSingleSealedFrame(pagePart)
+    expect(pagePart.indexOf('===== PAGE: organizations/greenway.md =====')).toBeLessThan(pagePart.indexOf(UNTRUSTED_OPEN))
+    expect(prompt.split('\n').filter(l => l.startsWith(UNTRUSTED_OPEN)).every(l => l.includes('source="kb-answer-check"'))).toBe(true)
+    expect(VERIFY_SYSTEM).not.toContain(UNTRUSTED_OPEN)
+    const rows = injectionRows().slice(before)
+    expect(rows.some(r => r.metadata.boundary === 'kb-answer-check')).toBe(true)
+  })
+})
+
+describe('P. brokered Google tools: mail and calendar reach the card session only inside a frame (obj 901743)', () => {
+  it('a hostile email body is sealed and logged; a draft confirmation (server-written) stays plain', async () => {
+    const { googleToolResultForSession } = await import('./connector-broker.js')
+    const card = { objective: { id: stranger }, workspace: 'ws-a' } as Parameters<typeof googleToolResultForSession>[0]
+    const before = injectionRows().length
+    const framed = googleToolResultForSession(card, 'gmail_read_message', { id: 'm1', subject: 'hi', body: HOSTILE })
+    expectSingleSealedFrame(framed)
+    expect(framed.split('\n').find(l => l.startsWith(UNTRUSTED_OPEN))).toContain('source="email"')
+    expect(injectionRows().length).toBeGreaterThan(before)
+    const cal = googleToolResultForSession(card, 'calendar_list_events', { events: [{ title: HOSTILE }] })
+    expect(cal.split('\n').find(l => l.startsWith(UNTRUSTED_OPEN))).toContain('source="calendar"')
+    const draft = googleToolResultForSession(card, 'gmail_create_draft', { saved: true, draft_id: 'd1' })
+    expect(draft).not.toContain(UNTRUSTED_OPEN)
+  })
+})

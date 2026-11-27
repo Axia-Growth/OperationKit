@@ -62,8 +62,14 @@ function rawShas(): Record<string, string> {
 
 // The AI: answers every conversation in a batch like the real extractor would.
 let gate: Promise<void> | null = null
-setWikiLlmForTests(async (_system, prompt) => {
+setWikiLlmForTests(async (system, prompt) => {
   if (gate) await gate
+  // obj 901746: the answer check. Anything about Antarctica is not on any page.
+  if (system.startsWith('You check whether an answer is supported')) {
+    return prompt.includes('Antarctica')
+      ? JSON.stringify({ unsupported: [{ claim: 'Fernleaf ships to Antarctica', page: SHOP, why: 'The page only says it is an independent garden centre.' }] })
+      : '{"unsupported":[]}'
+  }
   const convs = [...prompt.matchAll(/=== CONVERSATION (c\d+) ===\nKind: .*\nTitle: (.*)/g)].map(([, key, title]) => ({
     key, skip: false, title, summary: `About ${title}.`, decisions: [], todos: [],
     entities: [{ type: 'person', name: 'Sam Okafor', facts: [{ fact: `Talked about ${title}`, where: 'message 1, You' }] }],
@@ -172,10 +178,11 @@ describe('kb-wiki routes', () => {
   let answerRel = ''
   it('files an answer: the page exists and the page it used links back to it', async () => {
     expect((await send('POST', '/api/kb-wiki/answers', { workspace: WS, question: '', answer: 'x' }, MEMBER)).status).toBe(400)
-    const r = await send<{ rel: string; title: string }>('POST', '/api/kb-wiki/answers', {
+    const r = await send<{ rel: string; title: string; check: { status: string } }>('POST', '/api/kb-wiki/answers', {
       workspace: WS, question: 'Who owns Fernleaf?', answer: `Rosa Delgado owns it [[${ROSA}]].`, sources: [ROSA, 'raw/notes/original.txt', 'nope/x.md'],
     }, MEMBER)
     expect(r.status, JSON.stringify(r.body)).toBe(201)
+    expect(r.body.check.status).toBe('passed') // obj 901746: the AI read Rosa's page next to the answer
     answerRel = r.body.rel
     expect(answerRel).toMatch(/^answers\/\d{4}-\d{2}-\d{2}-who-owns-fernleaf\.md$/)
     expect(r.body.title).toBe('Who owns Fernleaf?')
@@ -186,6 +193,36 @@ describe('kb-wiki routes', () => {
     expect(used.body.backlinks.map(b => b.rel)).toContain(answerRel)
     const pages = await get<{ counts: Record<string, number> }>(`/api/kb-wiki/pages?workspace=${WS}`, MEMBER)
     expect(pages.body.counts.answer).toBe(1)
+  })
+
+  it('an answer its pages do not back up is saved but held; a member lists it and a person approves or keeps it out (obj 901746)', async () => {
+    const r = await send<{ rel: string; check: { status: string; kind: string; reason: string; unsupported: unknown[] } }>('POST', '/api/kb-wiki/answers', {
+      workspace: WS, question: 'Where does Fernleaf ship?', answer: `Fernleaf ships to Antarctica [[${SHOP}]].`, sources: [SHOP],
+    }, MEMBER)
+    expect(r.status, JSON.stringify(r.body)).toBe(201)
+    expect(r.body.check).toMatchObject({ status: 'held', kind: 'ungrounded' })
+    expect(r.body.check.reason).toContain('Fernleaf ships to Antarctica')
+    const wrong = await send<{ rel: string; check: { status: string; reason: string } }>('POST', '/api/kb-wiki/answers', {
+      workspace: WS, question: 'Who delivers compost?', answer: 'Greenway [[organizations/greenway-growers.md]].', sources: [],
+    }, MEMBER)
+    expect(wrong.body.check).toMatchObject({ status: 'held' })
+    expect(wrong.body.check.reason).toContain('not a page in Context')
+
+    const held = await get<{ answers: Array<{ rel: string; kind: string; reason: string }> }>(`/api/kb-wiki/answers/held?workspace=${WS}`, MEMBER)
+    expect(held.body.answers.map(a => a.rel).sort()).toEqual([r.body.rel, wrong.body.rel].sort())
+    expect((await get(`/api/kb-wiki/answers/held?workspace=${WS}`, OUTSIDER)).status).toBe(403)
+
+    expect((await send('POST', '/api/kb-wiki/answers/review', { workspace: WS, rel: r.body.rel, decision: 'maybe' }, MEMBER)).status).toBe(400)
+    expect((await send('POST', '/api/kb-wiki/answers/review', { workspace: WS, rel: r.body.rel, decision: 'approve' }, OUTSIDER)).status).toBe(403)
+    expect((await send('POST', '/api/kb-wiki/answers/review', { workspace: WS, rel: ROSA, decision: 'approve' }, MEMBER)).status).toBe(400)
+    const ok = await send<{ status: string }>('POST', '/api/kb-wiki/answers/review', { workspace: WS, rel: r.body.rel, decision: 'approve' }, MEMBER)
+    expect(ok.status, JSON.stringify(ok.body)).toBe(200)
+    expect(ok.body.status).toBe('reviewed')
+    expect(fs.readFileSync(path.join(KB, r.body.rel), 'utf8')).toContain('reviewed_by: u2')
+    expect((await send('POST', '/api/kb-wiki/answers/review', { workspace: WS, rel: wrong.body.rel, decision: 'keep_out' }, MEMBER)).status).toBe(200)
+    expect((await get<{ answers: unknown[] }>(`/api/kb-wiki/answers/held?workspace=${WS}`, MEMBER)).body.answers).toEqual([])
+    // Tidy up so the page counts below stay as they were.
+    fs.rmSync(path.join(KB, r.body.rel)); fs.rmSync(path.join(KB, wrong.body.rel)); compileWiki(KB)
   })
 
   it('internal answers route: localhost only, no login', async () => {
@@ -325,6 +362,64 @@ describe('kb-wiki routes', () => {
     for (const [rel, h] of Object.entries(before)) expect(now[rel], rel).toBe(h)
   })
 
+  it('curator (obj 901768): off by default, proposes without editing, procedure pages need an admin in the browser to sign off', async () => {
+    writeKb('topics/how-to-repot.md', '---\ntitle: How to repot a fern\ntype: topic\nupdated: 2026-10-01\n---\n# How to repot a fern\n\nUse the 20 cm pots.\n')
+    writeKb('.kb-wiki/flags.jsonl', [
+      JSON.stringify({ schema: 'kb-flag/1', id: 'f-pots', kind: 'outdated', page: 'topics/how-to-repot.md', detail: 'We switched to 25 cm pots in November.' }),
+      JSON.stringify({ schema: 'kb-flag/1', id: 'f-shop', kind: 'wrong', page: SHOP, detail: 'Opening hours changed to 8-6.' }),
+    ].join('\n') + '\n')
+    const before = fs.readFileSync(path.join(KB, 'topics/how-to-repot.md'), 'utf8')
+
+    const empty = await get<{ enabled: boolean; open: unknown[] }>(`/api/kb-wiki/curator?workspace=${WS}`, MEMBER)
+    expect(empty.status).toBe(200)
+    expect(empty.body.enabled).toBe(false)
+    expect(empty.body.open).toEqual([])
+
+    const run = await send<{ proposed: number }>('POST', `/api/kb-wiki/curator/run?workspace=${WS}`, {}, MEMBER)
+    expect(run.status, JSON.stringify(run.body)).toBe(200)
+    expect(run.body.proposed).toBeGreaterThan(0)
+    expect(fs.readFileSync(path.join(KB, 'topics/how-to-repot.md'), 'utf8')).toBe(before)
+
+    const list = await get<{ open: Array<{ id: string; pages: string[]; procedure: boolean }> }>(`/api/kb-wiki/curator?workspace=${WS}`, MEMBER)
+    const p = list.body.open.find(x => x.pages[0] === 'topics/how-to-repot.md')!
+    expect(p.procedure).toBe(true)
+    const accept = `/api/kb-wiki/curator/proposals/${p.id}/accept`
+    expect((await send<{ code: string }>('POST', accept, { workspace: WS, sign_off: true }, MEMBER)).body.code).toBe('procedure_needs_admin')
+    const bearer = await fetch(`${base}${accept}`, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${ADMIN.slice('token='.length)}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ workspace: WS, sign_off: true }),
+    })
+    expect(bearer.status).toBe(403)
+    expect((await send<{ code: string }>('POST', accept, { workspace: WS }, ADMIN)).body.code).toBe('procedure_needs_sign_off')
+    expect(fs.readFileSync(path.join(KB, 'topics/how-to-repot.md'), 'utf8')).toBe(before)
+    const ok = await send<{ proposal: { status: string; signed_off: boolean } }>('POST', accept, { workspace: WS, sign_off: true }, ADMIN)
+    expect(ok.status, JSON.stringify(ok.body)).toBe(200)
+    expect(ok.body.proposal).toMatchObject({ status: 'accepted', signed_off: true })
+    expect(fs.readFileSync(path.join(KB, 'topics/how-to-repot.md'), 'utf8')).toContain('25 cm pots')
+    expect((await send('POST', accept, { workspace: WS, sign_off: true }, ADMIN)).status).toBe(409)
+
+    // A legacy per-user API key (what outside bots use) is not a person deciding, even on a domain page.
+    const { mintApiKey, hashApiKey } = await import('../lib/api-keys.js')
+    const legacy = mintApiKey()
+    getDb().prepare('UPDATE users SET api_token_hash = ? WHERE id = 2').run(hashApiKey(legacy))
+    const shop = list.body.open.find(x => x.pages[0] === SHOP)!
+    const asKey = (url: string, body: unknown) => fetch(`${base}${url}`, { method: 'POST', headers: { authorization: `Bearer ${legacy}`, 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
+    for (const url of [`/api/kb-wiki/curator/proposals/${shop.id}/accept`, `/api/kb-wiki/curator/proposals/${shop.id}/reject`, '/api/kb-wiki/curator/accept-light']) {
+      const r = await asKey(url, { workspace: WS })
+      expect(r.status, url).toBe(403)
+      expect((await r.json() as { code: string }).code).toBe('not_a_person')
+    }
+    // The same member signed in through the browser may accept it.
+    expect((await send('POST', `/api/kb-wiki/curator/proposals/${shop.id}/accept`, { workspace: WS }, MEMBER)).status).toBe(200)
+
+    expect((await get(`/api/kb-wiki/curator?workspace=${WS}`, OUTSIDER)).status).toBe(403)
+    expect((await send('PUT', '/api/kb-wiki/lint/settings', { curator_enabled: true }, MEMBER)).status).toBe(403)
+    const on = await send<{ settings: { curator_enabled: boolean } }>('PUT', '/api/kb-wiki/lint/settings', { curator_enabled: true, curator_ai_drafts: 0 }, ADMIN)
+    expect(on.body.settings).toMatchObject({ curator_enabled: true, curator_ai_drafts: 0 })
+    await send('PUT', '/api/kb-wiki/lint/settings', { curator_enabled: false }, ADMIN)
+  })
+
   it('nextLintRun: off → null, nightly → the next slot, weekly → a week after the last run', () => {
     const now = new Date('2026-10-31T10:00:00Z')
     expect(nextLintRun(null, { lint_schedule: 'off', lint_hour_utc: 3 }, now)).toBeNull()
@@ -350,6 +445,25 @@ describe('kb-wiki routes', () => {
     const saved = (out.result as { saved: string }).saved
     expect(fs.readFileSync(path.join(KB, saved), 'utf8')).toContain('librarian')
     expect(String((runTool(ctx, 'read_file', { path: 'index.md' }).result as { content: string }).content)).toContain('Who supplies compost?')
+  })
+
+  it('a bot cannot release a held answer by rewriting the file; a person in the editor can (obj 901746)', async () => {
+    const { checkAndFileAnswer } = await import('../services/kb-wiki/answers.js')
+    const held = await checkAndFileAnswer(KB, { question: 'Does Fernleaf ship to Antarctica?', answer: `Yes, Fernleaf ships to Antarctica [[${SHOP}]].`, sources: [SHOP] },
+      async () => '{"unsupported":[{"claim":"Fernleaf ships to Antarctica","why":"The page does not say so."}]}')
+    expect(held.check.status).toBe('held')
+    const agent = { slug: 'librarian', tools: ['write_doc', 'read_file'], knowledge_folders: ['.'] } as unknown as Parameters<typeof runTool>[0]['agent']
+    const ctx = { userId: 2, username: 'u2', workspace: WS, agent, kbRoot: KB, connectors: {} } as Parameters<typeof runTool>[0]
+    const text = fs.readFileSync(path.join(KB, held.rel), 'utf8')
+    expect(() => runTool(ctx, 'write_doc', { path: held.rel, content: text.replace('answer_check: held', 'answer_check: passed') })).toThrow('until a person reviews it')
+    expect(fs.readFileSync(path.join(KB, held.rel), 'utf8')).toContain('answer_check: held')
+    // Editing the text while keeping the hold is fine.
+    expect(runTool(ctx, 'write_doc', { path: held.rel, content: `${text}\nA note.\n` }).summary).toContain('Saved')
+    // A person signed in to the app is reviewing when they edit it themselves.
+    updateWorkspace(WS, { doc_write_roots: [KB] } as Parameters<typeof updateWorkspace>[1])
+    const put = await send('PUT', '/api/docs/file', { path: path.join(KB, held.rel), content: text.replace('answer_check: held', 'answer_check: reviewed') }, ADMIN)
+    expect(put.status, JSON.stringify(put.body)).toBe(200)
+    fs.rmSync(path.join(KB, held.rel)); compileWiki(KB)
   })
 
   it('rebuild is admin-only, needs confirm, sets pages aside and keeps raw + answers', async () => {

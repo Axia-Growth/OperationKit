@@ -18,7 +18,7 @@ cards, and a few tiny copy fixes. **No visual redesign. Not merged, not deployed
 - Main `acbb7ee3`. Booted as a scratch server (`[startup] SCRATCH instance …` logged, temp DB,
   port 3912) and screenshotted with Playwright.
 - Live: `GET http://localhost:3002/api/health` → `{"status":"ok","commit":"f0291dca0498"}`. GitHub
-  commit search resolves that hash to **m1keluka/OperationKit**
+  commit search resolves that hash to **Axia-Growth/OperationKit**
   `chore: sync from upstream (gated) (#84)`, 2026-11-13T19:35Z, whose PR body says it was
   "Triggered by merged upstream PR **#751**".
 - Delta live → main: `git log` after `f1b88687` (#751) shows **#753, #754, #752, #755**.

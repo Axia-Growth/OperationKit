@@ -624,13 +624,13 @@ describe('tool table', () => {
     expect(AGENT_DISCOVERY.mcp.url).toBe('/api/mcp')
     expect(AGENT_DISCOVERY.mcp.transport).toBe('streamable-http')
     expect([...AGENT_DISCOVERY.mcp.tools].sort()).toEqual(MCP_TOOLS.map(t => t.name).sort())
-    expect([...AGENT_DISCOVERY.mcp.tools].sort()).toEqual([...KNOWLEDGE_TOOLS, ...BOARD_TOOLS, ...CHAT_AGENT_TOOLS, ...WORKFLOW_TOOLS, 'file_info', 'write_doc', 'file_answer', 'kb_related', 'kb_who_knows'].sort())
+    expect([...AGENT_DISCOVERY.mcp.tools].sort()).toEqual([...KNOWLEDGE_TOOLS, ...BOARD_TOOLS, ...CHAT_AGENT_TOOLS, ...WORKFLOW_TOOLS, 'file_info', 'write_doc', 'file_answer', 'flag_knowledge', 'list_knowledge_flags', 'kb_related', 'kb_who_knows'].sort())
   })
 
   it('the write set is exactly these — no merge / deploy / spend / delete tool', () => {
     expect(MCP_TOOLS.filter(t => t.access === 'write').map(t => t.name).sort())
       .toEqual([
-        'call_with_secret', 'create_objective', 'create_workflow', 'draft_workflow_version', 'file_answer', 'fulfill_secret_request', 'run_workflow',
+        'call_with_secret', 'create_objective', 'create_workflow', 'draft_workflow_version', 'file_answer', 'flag_knowledge', 'fulfill_secret_request', 'run_workflow',
         'send_message', 'start_objective', 'stop_objective', 'test_workflow', 'update_objective', 'update_status', 'write_doc',
       ])
     // obj 719065: the write-only request relay pair — neither can read a value

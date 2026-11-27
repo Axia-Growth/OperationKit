@@ -1,5 +1,5 @@
 /**
- * Roster of every bot and skill — the Registry tab of the Bots & skills page
+ * Roster of every bot and skill — the Bots tab of the Bot setup page
  * (/agents). Extracted from ConfigPage.tsx.
  *
  * obj 900684: GET /admin/agents now returns every source of agents the app knows
@@ -220,13 +220,19 @@ export function AgentsSkillsTab() {
             className="flex w-full [&>*]:flex-1 [&>*]:justify-center"
             items={[
               { key: 'agents', label: 'Bots', count: agents.length },
-              { key: 'skills', label: 'Skills', count: skills.length },
+              // Skill files are an optional escape hatch, not how a bot gets capability (obj 901765).
+              { key: 'skills', label: 'Skill files', count: skills.length },
             ]}
           />
         </div>
         <div className="max-h-[60vh] space-y-0.5 overflow-y-auto p-2">
           {items.length === 0 && (
-            <EmptyState compact icon={<FileCode2 className="h-5 w-5" />} title={viewMode === 'agents' ? 'No bots' : 'No skills'} />
+            <EmptyState
+              compact
+              icon={<FileCode2 className="h-5 w-5" />}
+              title={viewMode === 'agents' ? 'No bots' : 'No skill files'}
+              description={viewMode === 'agents' ? undefined : 'None needed. Bots work out how to do a task from the card, your project’s docs and Context.'}
+            />
           )}
           {viewMode === 'agents' && agents.map(agent => (
             <button
@@ -299,7 +305,7 @@ export function AgentsSkillsTab() {
           <EmptyState
             icon={<Sparkles className="h-5 w-5" />}
             title="Nothing selected"
-            description="Pick a bot or skill to see its skills, usage, and links."
+            description="Pick a bot to see what it can use and where it runs."
           />
         ) : selected.type === 'agent' ? (
           (() => {

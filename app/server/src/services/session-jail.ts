@@ -588,13 +588,34 @@ export const JAIL_FORBIDDEN_ENV: readonly string[] = [
   'INTERNAL_API_SECRET',
   'OBJECTIVES_API_TOKEN',
   'OBJECTIVES_API_TOKEN_FILE',
+  // obj 901743 (public issue #136): connector credentials. buildSpawnEnv no
+  // longer emits them (GitHub / Google / workspace MCP go through the host-side
+  // broker); this is the second wall, in case any other path puts one back.
+  // Spelled out rather than imported from lib/connector-credential-env.ts: this
+  // module is loaded standalone by scripts/session-jail-proof.sh (node type
+  // stripping, no .js → .ts resolution), so it imports node built-ins only.
+  // session-jail.test.ts asserts the two lists stay equal.
+  'GH_TOKEN',
+  'GITHUB_TOKEN',
+  'GOOGLE_REFRESH_TOKEN',
+  'GOOGLE_OAUTH_CLIENT_ID',
+  'GOOGLE_OAUTH_CLIENT_SECRET',
 ]
+
+/** Name families that never enter a jail either (obj 901743): workspace MCP tokens. */
+export const JAIL_FORBIDDEN_ENV_PREFIXES: readonly string[] = ['CC_MCP_TOKEN_']
+
+/** True when `name` must not be written to a jail's --env-file. Case-insensitive. */
+export function isJailForbiddenEnv(name: string): boolean {
+  const k = String(name).toUpperCase()
+  return JAIL_FORBIDDEN_ENV.includes(k) || JAIL_FORBIDDEN_ENV_PREFIXES.some(p => k.startsWith(p))
+}
 
 /** Serialise a scoped env bag to docker `--env-file` format (KEY=value, one per line). */
 export function renderEnvFile(env: Record<string, string>): string {
   return Object.entries(env)
     .filter(([k]) => /^[A-Za-z_][A-Za-z0-9_]*$/.test(k))
-    .filter(([k]) => !JAIL_FORBIDDEN_ENV.includes(k.toUpperCase()))
+    .filter(([k]) => !isJailForbiddenEnv(k))
     // docker --env-file has no quoting/escaping; a newline would inject a var.
     .map(([k, v]) => `${k}=${String(v ?? '').replace(/[\r\n]+/g, ' ')}`)
     .join('\n') + '\n'
