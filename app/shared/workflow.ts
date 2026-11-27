@@ -102,6 +102,8 @@ export const ORIGIN_BADGES: Record<string, { label: string; cls: string; descrip
   agent_chat: { label: 'FROM CHAT',      cls: 'bg-status-planning/20 text-status-planning border-status-planning/30', description: 'Handed to the board by a built-in chat agent' },
   // obj 900640: the home card of a workflow (Jobs → Workflows). Runs never create cards.
   workflow:  { label: 'WORKFLOW',         cls: 'bg-sky-500/15 text-sky-200 border-sky-500/25',       description: 'Home card of a workflow; its diagram and runs are under Jobs → Workflows' },
+  // obj 901771: filed from a production signal (monitor alert, error report, pasted log). A person merges its PR.
+  'production-issue': { label: 'PRODUCTION ISSUE', cls: 'bg-red-500/15 text-red-200 border-red-500/25', description: 'Filed from a production signal. A worker may open a fix PR; a person merges it and nothing auto-deploys' },
 } as const
 
 /** Machine still owns this row. `review` is the human gate and is not in-flight. */

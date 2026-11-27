@@ -9,7 +9,7 @@ If you would not give someone SSH on this host, do not give them a login that ca
 | Assumption | What it means |
 | --- | --- |
 | Trusted operators | Anyone who can spawn a session is trusted with the host. Agent CLIs run with auto-approval (`--dangerously-skip-permissions` / Grok `--always-approve`). |
-| Docker socket | The default compose file mounts `/var/run/docker.sock`. That is equivalent to host root. Do not onboard untrusted users onto the same instance. |
+| Docker socket | Client installs (`install/docker-compose.yml`) do **not** mount `/var/run/docker.sock` into the app. A policy sidecar (`install/docker-proxy/`) owns it and only lets the app create locked-down sandboxes and manage containers that carry the sandbox label; every call is logged. The repo-root `docker-compose.yml` (the upstream operator's own development layout) still mounts the socket, which is equivalent to host root. See "Docker socket" below. |
 | Shared container | Claude/Codex/Grok home directories and host project mounts are visible inside the same container. Workspaces are a SQL filter, not a jail. |
 | Disk trust | SQLite and session transcripts sit on disk. Encrypt the disk; there is no whole-database encryption. PATs, Google refresh tokens, and the secrets store use AES-256-GCM. |
 | Single node | Login throttling and webhook dedupe are in-process. One Node process, one host. |
@@ -17,6 +17,26 @@ If you would not give someone SSH on this host, do not give them a login that ca
 A later “PE diligence” pass is: dedicated tenant, MFA/SSO, socket-less member sessions, scoped spawn env, transcript encryption. None of that is this baseline.
 
 ## What this baseline does ship
+
+- **Docker policy sidecar instead of the Docker socket** (client installs; public issue #97). The
+  app container has no `/var/run/docker.sock`. `ok-docker-proxy` holds it and serves a filtered
+  Docker API on a private network (`DOCKER_HOST=tcp://docker-proxy:2375`). Rules
+  (`install/docker-proxy/policy.mjs`): only the endpoints the app uses; a create must be a
+  sandbox (name `ok-jail-<id>`, label `ok.objective`, allow-listed image, non-root user,
+  `CapDrop ALL`, `no-new-privileges`, read-only root); `Privileged`, `CapAdd`, host
+  network / pid / ipc / uts / userns / cgroupns, devices, published ports, named volumes, unknown
+  HostConfig fields and any bind outside `OK_STATE` (resolved through symlinks) are refused;
+  exec / rm / logs / inspect / start and the rest need the `ok.objective` label on the target;
+  `docker ps` lists only labelled containers. Docker reads JSON field names case-insensitively, so
+  the sidecar refuses case-folded duplicate keys and forwards its own serialisation of the body it
+  checked; every other call must have NO body (a GET/DELETE body would be parsed by Docker as the
+  next request), API versions below 1.41 are refused, uid/gid 0 is refused in every spelling Go
+  accepts (`0`, `00`, `+0`, `root`), the only seccomp profile a jail may carry is the one this
+  checkout ships, an empty cgroupns mode is pinned to `private`, a jail starts only once, and the
+  attach/exec stream is spliced only after Docker answers `101` (nothing pipelined behind it). One JSON audit line per call goes to `$INSTALL_DIR/logs/docker-proxy/audit.jsonl`,
+  outside every app mount. Proofs: `install/test/docker-proxy-test.mjs` (rules, no Docker),
+  `scripts/docker-proxy-proof.sh` (the real docker CLI against a real daemon, in the Session Jail
+  Proof workflow), `install/verify.sh` check 11 (on every install).
 
 - TLS at the edge (Caddy), HSTS, CSP, `X-Frame-Options: DENY`, `nosniff`, `Permissions-Policy`
 - Express hides `X-Powered-By` and repeats those headers (so localhost / a stale Caddyfile still look respectable)
@@ -116,7 +136,10 @@ We will acknowledge, fix, and credit (unless you ask not to).
 3. Pre-populate `~/.ssh/known_hosts` on the host (`ssh-keyscan github.com`) — the `.ssh` mount is read-only, so `accept-new` cannot append.
 4. Set `UPTIMEROBOT_WEBHOOK_TOKEN` and `GITHUB_WEBHOOK_SECRET` if those routes are reachable.
 5. Change the seed password immediately (`changeme` in `app/server/src/db/seed.ts` is a first-boot default).
-6. Do not publish the Docker socket to a network, and do not add untrusted session spawners.
+6. Do not publish the Docker socket to a network, and do not add untrusted session spawners. On a
+   client install keep the app on the sidecar (no `docker.sock` mount; `install/verify.sh` check 11
+   fails if one comes back) and leave `HOST_RUNNER="off"` unless you use the Dev bot's deploy and
+   Cloudflare tools on that server.
 7. Leave `BROWSER_SANDBOX` and the card browser egress guard on, and keep Playwright pinned to a release whose Chromium is at or above current Chrome stable (`install/update.sh` prints what you are running).
 8. If you enable the Cloudflare Access allow-list sync, issue a **separate** token for it with the
    single Access: Apps and Policies → Edit permission. Do not reuse the installer's token: that one
@@ -125,10 +148,24 @@ We will acknowledge, fix, and credit (unless you ask not to).
 
 ## Known gaps (documented, not hidden)
 
-- Docker socket = host root
+- Docker socket: closed for the app on client installs (policy sidecar). What is left:
+  - the sidecar itself holds the socket (= host root); it is ~700 lines of plain Node with no dependencies,
+    runs from a read-only folder the app cannot write, and has no network but the private one
+    to the app
+  - `HOST_RUNNER="on"` re-opens ONE privileged path: the Dev bot's host runner, pinned to the
+    shipped script bytes and this install's paths, and never an `exec` into it. Whoever controls the
+    app can then run what that script offers (deploy `origin/main`, the scripted Cloudflare edits),
+    not arbitrary code
+  - a bind source is checked (symlinks resolved) at create and again right before `start`, where
+    Docker resolves it, and a jail starts only once. The app can still write inside `OK_STATE`, so
+    a symlink swapped in during the window between that last check and Docker's mount is a race
+    the sidecar cannot close by itself (it only lowers the odds: each try costs a new jail, and
+    the jail runs as a non-root uid/gid with no capabilities). Closing it needs the session
+    folders on a path the app cannot rename (follow-up)
+  - the repo-root `docker-compose.yml` (operator development layout) still mounts the socket
 - The card browser is sandboxed and egress-restricted, but still shares the app container. Moving it to its own secret-free container is the structural fix and is not in this baseline
 - The card browser may reach `localhost` by default (preview review needs it); set `BROWSER_ALLOW_LOOPBACK="off"` on installs that never preview locally
 - Sibling OAuth homes in one container
 - No MFA / SSO / passkeys
-- Spawn env scoping for docker.sock / sibling homes is still the admin-only default
+- Spawn env scoping for docker.sock / sibling homes is still the admin-only default (operator layout)
 - UptimeRobot token is optional until you set it, because UR cannot HMAC

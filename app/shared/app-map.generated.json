@@ -337,6 +337,22 @@
           "audience": "everyone"
         },
         {
+          "name": "Saved answers to check",
+          "trail": [],
+          "under": [
+            "Your Context"
+          ],
+          "audience": "everyone"
+        },
+        {
+          "name": "Flagged while working",
+          "trail": [],
+          "under": [
+            "Your Context"
+          ],
+          "audience": "everyone"
+        },
+        {
           "name": "Needs a look",
           "trail": [],
           "under": [
@@ -371,6 +387,36 @@
             "Your Context"
           ],
           "audience": "admin"
+        },
+        {
+          "name": "Waiting for you",
+          "trail": [],
+          "under": [
+            "Your Context"
+          ],
+          "audience": "everyone",
+          "settings": [
+            "I have read this change to a procedure page and sign off on it."
+          ]
+        },
+        {
+          "name": "Recently decided",
+          "trail": [],
+          "under": [
+            "Your Context"
+          ],
+          "audience": "everyone"
+        },
+        {
+          "name": "Curator schedule",
+          "trail": [],
+          "under": [
+            "Your Context"
+          ],
+          "audience": "everyone",
+          "settings": [
+            "Look for suggestions after each cleanup"
+          ]
         },
         {
           "name": "How your Context connects",
@@ -586,30 +632,24 @@
     },
     {
       "path": "/agents",
-      "title": "Bots & skills",
+      "title": "Bot setup",
       "click_path": [
         "Avatar menu (top right)",
-        "Bots & skills"
+        "Bot setup"
       ],
       "audience": "admin",
       "tabs": [
         {
-          "label": "Registry",
+          "label": "Bots",
           "trail": [],
           "audience": "admin",
           "url": "?tab=registry"
         },
         {
-          "label": "Assignments",
+          "label": "Templates",
           "trail": [],
           "audience": "admin",
-          "url": "?tab=assignments"
-        },
-        {
-          "label": "Skill graph",
-          "trail": [],
-          "audience": "admin",
-          "url": "?tab=graph"
+          "url": "?tab=templates"
         },
         {
           "label": "By project",
@@ -618,10 +658,16 @@
           "url": "?tab=board"
         },
         {
-          "label": "Templates",
+          "label": "Assignments",
           "trail": [],
           "audience": "admin",
-          "url": "?tab=templates"
+          "url": "?tab=assignments"
+        },
+        {
+          "label": "Skills (advanced)",
+          "trail": [],
+          "audience": "admin",
+          "url": "?tab=graph"
         },
         {
           "label": "Layers",
@@ -640,7 +686,7 @@
       ],
       "panels": [
         {
-          "name": "Make a new bot or skill",
+          "name": "Make a new bot",
           "trail": [],
           "audience": "admin"
         },
@@ -648,7 +694,7 @@
           "name": "Ask an assistant",
           "trail": [],
           "under": [
-            "Make a new bot or skill"
+            "Make a new bot"
           ],
           "audience": "admin"
         },
@@ -656,7 +702,7 @@
           "name": "Add a starter bot",
           "trail": [],
           "under": [
-            "Make a new bot or skill"
+            "Make a new bot"
           ],
           "audience": "admin"
         },
@@ -664,14 +710,14 @@
           "name": "Paste or import it",
           "trail": [],
           "under": [
-            "Make a new bot or skill"
+            "Make a new bot"
           ],
           "audience": "admin"
         },
         {
           "name": "Assign agent / skill to a scope",
           "trail": [
-            "Registry"
+            "Bots"
           ],
           "audience": "admin",
           "settings": [
@@ -697,7 +743,7 @@
         {
           "name": "Skill graph",
           "trail": [
-            "Skill graph"
+            "Skills (advanced)"
           ],
           "audience": "admin"
         },
@@ -987,6 +1033,39 @@
           "trail": [],
           "audience": "everyone",
           "description": "Tools agents in this workspace can use. Keys live in Settings → Secrets under the names shown."
+        },
+        {
+          "name": "Production issues",
+          "trail": [],
+          "audience": "everyone",
+          "description": "Turn an alert, error report or log from your live app into a bug card with the evidence attached.",
+          "settings": [
+            "Workspace"
+          ]
+        },
+        {
+          "name": "Paste a report",
+          "trail": [],
+          "under": [
+            "Production issues"
+          ],
+          "audience": "everyone",
+          "settings": [
+            "Error, log or what the customer saw"
+          ]
+        },
+        {
+          "name": "Webhooks",
+          "trail": [],
+          "under": [
+            "Production issues"
+          ],
+          "audience": "admin",
+          "settings": [
+            "Name",
+            "Project",
+            "Start a bot on each new card"
+          ]
         }
       ]
     },

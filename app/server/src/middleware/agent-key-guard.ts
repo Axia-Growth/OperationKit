@@ -127,6 +127,11 @@ export function requiredScope(method: string, path: string, body: unknown): Scop
   // Knowledge-base wiki (obj 720117): an agent may file an answer as a wiki page
   // (MCP file_answer). Imports, cleanup and rebuild stay off-surface.
   if (m === 'POST' && p === '/api/kb-wiki/answers') return { kind: 'scope', scope: 'vault:write' }
+  // Knowledge-gap flags (obj 901767): filing a flag is not a wiki edit, but it
+  // is a write to the shared queue, so filing and closing need vault:write;
+  // reading the queue (a curator run) needs vault:read.
+  if (p === '/api/kb-wiki/flags' && m === 'GET') return { kind: 'scope', scope: 'vault:read' }
+  if (m === 'POST' && (p === '/api/kb-wiki/flags' || /^\/api\/kb-wiki\/flags\/\d+\/status$/.test(p))) return { kind: 'scope', scope: 'vault:write' }
   // Link graph (obj 720162): read-only lookups (MCP kb_related / kb_who_knows).
   if (m === 'GET' && (p === '/api/kb-wiki/graph' || p === '/api/kb-wiki/graph/related' || p === '/api/kb-wiki/graph/who-knows' || p === '/api/kb-wiki/graph/unresolved')) return { kind: 'scope', scope: 'vault:read' }
 

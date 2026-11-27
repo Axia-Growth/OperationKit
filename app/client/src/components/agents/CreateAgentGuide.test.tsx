@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { createRoot, type Root } from 'react-dom/client'
 import { MemoryRouter } from 'react-router-dom'
-import { CreateAgentGuide, CREATE_PROMPTS, DEV_BOT_SLUG, devBotLink } from './CreateAgentGuide'
+import { CreateAgentGuide, CREATE_PROMPTS, DEV_BOT_SLUG, SETUP_PROMPT, devBotLink } from './CreateAgentGuide'
 
 /* obj 900672 — the Agents page's one clear way in to creating a bot, agent or
    skill. Path 1 hands off to the built-in Operation Kit Dev bot, so it is
@@ -37,17 +37,37 @@ afterEach(() => {
 const links = () => Object.fromEntries([...container.querySelectorAll('a')].map(a => [a.textContent, a.getAttribute('href')]))
 
 describe('CreateAgentGuide (obj 900672)', () => {
-  it('names the four things in one line each, per the glossary', async () => {
+  it('names the things in one line each, per the glossary — skills are not one of them (obj 901765)', async () => {
     agents = [{ slug: DEV_BOT_SLUG, name: 'Acme Dev' }]
     root.render(<MemoryRouter><CreateAgentGuide /></MemoryRouter>)
     await settle()
     const text = container.textContent ?? ''
-    expect(text).toContain('Make a new bot or skill')
+    expect(text).toContain('Make a new bot')
+    expect(text).not.toContain('Make a new bot or skill')
     expect(text).toMatch(/Bot — an AI teammate you chat with and assign cards to/)
     expect(text).toMatch(/Outside agent — a third-party AI program/)
     expect(text).toMatch(/Tool — /)
     expect(text).not.toMatch(/Agent — a worker/)
-    expect(text).toMatch(/Skill — how-to steps a bot follows/)
+    expect(text).not.toMatch(/Skill — /)
+    // Tools are reached by a bot directly, not "through a skill".
+    expect(text).not.toMatch(/a skill lets a bot use/)
+  })
+
+  it('skill files are an advanced escape hatch, not a primary way in (obj 901765)', async () => {
+    agents = [{ slug: DEV_BOT_SLUG, name: 'Acme Dev' }]
+    root.render(<MemoryRouter><CreateAgentGuide /></MemoryRouter>)
+    await settle()
+    // No primary "Create a skill" button among the three tiles.
+    expect(links()['Create a skill']).toBeUndefined()
+    expect([...container.querySelectorAll('ol a')].some(a => /skill/i.test(a.textContent ?? ''))).toBe(false)
+    const hatch = container.querySelector('[data-testid="skills-escape-hatch"]')!
+    expect(hatch.textContent).toMatch(/You do not need skill files/)
+    expect(hatch.textContent).toMatch(/the card, your project’s docs and\s+Context/)
+    expect(links()['Skills (advanced)']).toBe('/agents?tab=graph')
+    expect(links()['ask Acme Dev to write one']).toBe(devBotLink('skill'))
+    // The setup prompt for an outside assistant does not ask it to write skills.
+    expect(SETUP_PROMPT).toMatch(/Do not write skill files/)
+    expect(SETUP_PROMPT).not.toMatch(/^- Skill:/m)
   })
 
   it('with the Dev bot installed, links open its conversation with the request typed in', async () => {
@@ -57,8 +77,8 @@ describe('CreateAgentGuide (obj 900672)', () => {
     const l = links()
     expect(l['Create a bot']).toBe(devBotLink('bot'))
     expect(l['Create an agent']).toBeUndefined()
-    expect(l['Create a skill']).toBe(devBotLink('skill'))
-    expect(new URL(`http://x${l['Create a skill']}`).searchParams.get('prompt')).toBe(CREATE_PROMPTS.skill)
+    expect(l['Create a skill']).toBeUndefined()
+    expect(new URL(`http://x${l['ask Acme Dev to write one']}`).searchParams.get('prompt')).toBe(CREATE_PROMPTS.skill)
     expect(l['Browse templates']).toBe('/agents?tab=templates')
     expect(l['Paste a bot file']).toBe('/agents?tab=templates&paste=1')
     // The bot's name comes from the live list (white-label), not a literal.
@@ -73,5 +93,8 @@ describe('CreateAgentGuide (obj 900672)', () => {
     expect(l['Create a bot']).toBeUndefined()
     expect([...container.querySelectorAll('a')].some(a => (a.getAttribute('href') ?? '').startsWith('/chat/'))).toBe(false)
     expect(container.textContent).toContain('Copy setup prompt')
+    // The escape hatch still points at the advanced tab, with no Dev bot link.
+    expect(l['Skills (advanced)']).toBe('/agents?tab=graph')
+    expect(l['ask Acme Dev to write one']).toBeUndefined()
   })
 })

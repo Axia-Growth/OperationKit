@@ -85,6 +85,8 @@ import {
   BUILDER_MAX_ITERATIONS_CAP, FLOW_GOAL_MAX_CHARS, FLOW_NAME_MAX_CHARS, builderIterationState, createWorkflowFromGoal,
   isAgentAuthor, recordBuilderAttempt,
 } from '../services/flow-builder.js'
+import { checkAgentDraftEndCondition, endConditionPublishState, noteFlowVersionSaved, pinFlowEndCondition, readFlowContract } from '../services/flow-contract.js'
+import { FLOW_DONE_WHEN_MAX_CHARS } from '../../../shared/flow/end-condition.js'
 import { validateFlow } from '../../../shared/flow/validate.js'
 import { autoPauseThreshold } from '../services/routine-auto-pause.js'
 import { definitionToMermaid } from '../../../shared/flow/mermaid.js'
@@ -279,6 +281,7 @@ function publishState(db: Database.Database, flowId: number, version: number, de
     nodes_missing_mocks: nodesMissingMocks(def),
     self_test: latestSelfTest(db, flowId, version),
     approvals: recordedFlowApprovals(db, flowId, version),
+    end_condition: (({ check: _c, ...ec }) => ec)(endConditionPublishState(db, flowId, version, def)),
   }
 }
 
@@ -286,7 +289,10 @@ function publishState(db: Database.Database, flowId: number, version: number, de
 function builderState(db: Database.Database, flow: FlowRow): FlowBuilderState | null {
   const row = db.prepare('SELECT goal_statement FROM flow_definitions WHERE id = ?').get(flow.id) as { goal_statement: string | null } | undefined
   if (!row?.goal_statement) return null
-  return { goal: row.goal_statement, objective_id: flow.objective_id, ...builderIterationState(db, flow.id) }
+  return {
+    goal: row.goal_statement, objective_id: flow.objective_id, ...builderIterationState(db, flow.id),
+    done_when: readFlowContract(db, flow.id).done_when,
+  }
 }
 
 function routineInfo(db: Database.Database, flowId: number): FlowRoutineInfo | null {
@@ -582,7 +588,18 @@ router.post('/', async (req: AuthRequest, res) => {
   }
   const db = getDb()
   const author = actorOf(req)
+  // obj 901766: a definition for an EXISTING workflow is a draft of it, so an agent
+  // may not change its pinned end condition this way either.
+  if (isAgentAuthor(author) && typeof d.id === 'string') {
+    const existing = db.prepare('SELECT id FROM flow_definitions WHERE workspace = ? AND slug = ?').get(workspace, d.id) as { id: number } | undefined
+    const contract = existing ? checkAgentDraftEndCondition(db, existing.id, d) : null
+    if (contract && !contract.ok) {
+      res.status(409).json({ error: contract.error, reason: 'end_condition_changed', pinned_end_condition: contract.pinned, confirmed_by: contract.confirmed_by })
+      return
+    }
+  }
   const saved = saveFlowVersion(db, { workspace, definition: d, author })
+  if (saved.ok && saved.created) noteFlowVersionSaved(db, saved.flowId, d, author)
   if (!saved.ok) {
     const status = saved.reason === 'version_immutable' ? 409 : 400
     res.status(status).json({ error: saved.reason, reason: saved.reason, errors: saved.errors ?? [] })
@@ -634,9 +651,9 @@ function parseEndCondition(raw: unknown): { ok: true; value: EndCondition | null
 async function createFromGoal(req: AuthRequest, res: Response): Promise<void> {
   const body = (req.body ?? {}) as {
     workspace?: unknown; goal?: unknown; name?: unknown; end_condition?: unknown; builder?: unknown; max_iterations?: unknown
-    notes?: unknown; tools?: unknown
+    notes?: unknown; tools?: unknown; done_when?: unknown
   }
-  const g = body.goal as { statement?: unknown; end_condition?: unknown } | string
+  const g = body.goal as { statement?: unknown; end_condition?: unknown; done_when?: unknown } | string
   const statement = typeof g === 'string' ? g : g && typeof g === 'object' && !Array.isArray(g) && typeof g.statement === 'string' ? g.statement : ''
   if (!statement.trim()) {
     res.status(400).json({ error: 'goal must be a non-empty string (or {statement, end_condition?})' })
@@ -651,6 +668,13 @@ async function createFromGoal(req: AuthRequest, res: Response): Promise<void> {
     res.status(400).json({ error: ec.error })
     return
   }
+  // obj 901766 — "Done when" in the person's own words; the builder turns it into asserts.
+  const rawDoneWhen = body.done_when ?? (typeof g === 'object' ? g?.done_when : undefined)
+  if (rawDoneWhen !== undefined && rawDoneWhen !== null && (typeof rawDoneWhen !== 'string' || rawDoneWhen.length > FLOW_DONE_WHEN_MAX_CHARS)) {
+    res.status(400).json({ error: `done_when must be a string of at most ${FLOW_DONE_WHEN_MAX_CHARS} characters` })
+    return
+  }
+  const doneWhen = typeof rawDoneWhen === 'string' && rawDoneWhen.trim() ? rawDoneWhen.trim() : null
   if (body.name !== undefined && (typeof body.name !== 'string' || body.name.length > FLOW_NAME_MAX_CHARS)) {
     res.status(400).json({ error: `name must be a string of at most ${FLOW_NAME_MAX_CHARS} characters` })
     return
@@ -688,7 +712,7 @@ async function createFromGoal(req: AuthRequest, res: Response): Promise<void> {
   const actingUser = req.user && req.user.id > 0 ? req.user.id : null
   const made = await createWorkflowFromGoal(db, {
     workspace, goal: statement.trim(), ...(typeof body.name === 'string' && body.name.trim() ? { name: body.name } : {}),
-    endCondition: ec.value, ...(maxIterations ? { maxIterations } : {}), createdBy: actor, createdByUserId: actingUser,
+    endCondition: ec.value, doneWhen, ...(maxIterations ? { maxIterations } : {}), createdBy: actor, createdByUserId: actingUser,
     notes: details.value.notes ?? null, tools: details.value.tools ?? [],
   })
   const obj = db.prepare('SELECT * FROM objectives WHERE id = ?').get(made.objectiveId) as Objective | undefined
@@ -713,6 +737,7 @@ async function createFromGoal(req: AuthRequest, res: Response): Promise<void> {
       max_iterations: made.maxIterations,
       queue_hold: made.queueHold,
     },
+    end_condition: readFlowContract(db, made.flowId),
     flow: summarize(db, getFlowRow(db, made.flowId)!),
   })
 }
@@ -812,6 +837,16 @@ router.post('/:id/versions', (req: AuthRequest, res) => {
       return
     }
   }
+  // obj 901766: an agent may not change the end condition it is graded against.
+  const contract = agent ? checkAgentDraftEndCondition(db, flow.id, d) : null
+  if (contract && !contract.ok) {
+    recordBuilderAttempt(db, { flowId: flow.id, author, ok: false, version: null, errors: [{ code: 'end_condition_changed' }] })
+    res.status(409).json({
+      error: contract.error, reason: 'end_condition_changed', pinned_end_condition: contract.pinned,
+      confirmed_by: contract.confirmed_by, builder: builderIterationState(db, flow.id),
+    })
+    return
+  }
   let saved: ReturnType<typeof saveFlowVersion>
   if (d.id !== flow.slug) saved = { ok: false, reason: 'flow_id_mismatch' }
   else if (d.workspace !== flow.workspace) saved = { ok: false, reason: 'workspace_mismatch' }
@@ -823,6 +858,8 @@ router.post('/:id/versions', (req: AuthRequest, res) => {
       errors: saved.ok ? undefined : (saved.errors ?? [{ code: saved.reason }]),
     })
   }
+  // A person's draft is their contract; an agent's first draft pins its PROPOSED one (unconfirmed).
+  if (saved.ok && saved.created) noteFlowVersionSaved(db, flow.id, d, author)
   const builder = agent ? builderIterationState(db, flow.id) : null
   if (!saved.ok) {
     const status = saved.reason === 'version_immutable' ? 409 : 400
@@ -880,10 +917,23 @@ router.post('/:id/publish', (req: AuthRequest, res) => {
     res.status(status).json({ error: typeof detail.error === 'string' ? detail.error : reason, ...detail, reason })
     return
   }
+  // obj 901766: the end condition is the contract every run is graded against. One
+  // an agent wrote that no person has vouched for needs the publisher to confirm it.
+  const ec = endConditionPublishState(db, flow.id, version, gate.definition)
+  if (ec.confirmation_required && (req.body ?? {}).confirm_end_condition !== true) {
+    res.status(409).json({
+      error: ec.reason === 'differs_from_confirmed'
+        ? `version ${version} changes the end condition you confirmed; confirm the new one (confirm_end_condition: true) to publish`
+        : `the builder proposed the end condition of version ${version}; confirm it is how you know the workflow worked (confirm_end_condition: true) to publish`,
+      reason: 'end_condition_unconfirmed', end_condition: ec.value, done_when: ec.contract.done_when, why: ec.reason,
+    })
+    return
+  }
   let r: ReturnType<typeof publishFlowVersion>
   try {
     r = db.transaction(() => {
       recordFlowApprovals(db, flow.id, gate.approvals)
+      if (ec.value != null) pinFlowEndCondition(db, flow.id, ec.value, `user:${req.user!.id}`)
       const out = publishFlowVersion(db, { flowId: flow.id, version })
       if (!out.ok) throw Object.assign(new Error(out.reason), { publishResult: out })
       return out
@@ -907,6 +957,7 @@ router.post('/:id/publish', (req: AuthRequest, res) => {
       metadata: {
         kind: 'flow_published', flow_id: flow.id, version, routine_id: r.routineId, actor: `user:${req.user!.id}`,
         approved_nodes: gate.approvals.nodes, self_test_id: gate.approvals.self_test_id, sha256: gate.approvals.sha256,
+        end_condition_confirmed: ec.confirmation_required,
       },
     })
   } catch { /* activity is best-effort */ }
@@ -1462,6 +1513,12 @@ router.post('/:id/repairs/:repairId/approve', (req: AuthRequest, res) => {
     const { status, ...body } = out
     res.status(status).json(body)
     return
+  }
+  // The owner approved this diff, end condition included: it is the contract now (obj 901766).
+  if (out.repair.applied_version != null) {
+    const applied = loadFlowVersion(db, flow.id, out.repair.applied_version)
+    const ec = (applied?.goal as { end_condition?: unknown } | undefined)?.end_condition
+    if (ec != null) pinFlowEndCondition(db, flow.id, ec, `user:${req.user!.id}`)
   }
   try {
     logActivity({

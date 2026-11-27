@@ -41,6 +41,17 @@ BRAND_NAME="Operation Kit"
 # PNG or SVG, at most 512 KB. Leave empty for the default mark.
 BRAND_LOGO=""
 
+# ── Fallback git identity ─────────────────────────────────────────────────────
+# Agent commits normally carry the card owner's own GitHub identity (Settings →
+# Connectors → GitHub). When the owner has not connected GitHub, commits use
+# this identity instead: the client's own bot or operator GitHub account. Use
+# its GitHub noreply address (Settings → Emails on github.com, e.g.
+# 12345+acme-bot@users.noreply.github.com) so hosts such as Vercel can match it.
+# Leave both empty to have no fallback: a commit by an owner without GitHub then
+# fails with a "connect GitHub in Settings" message instead.
+FALLBACK_GIT_NAME=""
+FALLBACK_GIT_EMAIL=""
+
 # ── First administrator ───────────────────────────────────────────────────────
 # Username for the first admin account. The installer creates it with a
 # one-time setup password; the first sign-in is forced to choose a new one.
@@ -171,6 +182,14 @@ TIMEZONE="America/New_York"
 # Per-session sandbox. Leave on "docker" for client installs: every AI session
 # runs in its own locked-down container that can only see its own work folder.
 SESSION_ISOLATION="docker"
+
+# The app never holds the host Docker socket: a policy sidecar (docker-proxy)
+# does, and it only lets the app start and manage locked-down sandboxes. The one
+# privileged thing it can allow is the Operation Kit Dev bot's deploy and
+# Cloudflare tools (dev_deploy, cloudflare_*), which run install/update.sh on the
+# host. Leave "off" unless you use those tools on this server; "on" allows only
+# the exact script this checkout ships, with this install's own paths.
+HOST_RUNNER="off"
 
 # Size of each sandbox's in-memory /tmp. Leave at "2g": the old 256m filled up
 # when an AI review cloned a large repo. It only uses RAM for what is written.

@@ -28,6 +28,7 @@ import {
 import { isAutoDeployEnabled, shouldAutoDeploy, triggerAutoDeploy, selfRepo } from '../services/auto-deploy.js'
 import { getDb } from '../db/index.js'
 import { decideMergeAutoDeploy, skippedDeployLine } from '../services/merge-deploy-gate.js'
+import { isCodeHealthPr } from '../services/code-health.js'
 import { sendFollowUp } from '../services/session-manager.js'
 import { broadcast } from '../ws/index.js'
 
@@ -517,7 +518,18 @@ router.post('/', (req: Request, res: Response) => {
           // that bot in that workspace; otherwise the owner deploys. A person's
           // merge and the background auto-merge are unchanged.
           const gate = decideMergeAutoDeploy(getDb(), normalized.repo, normalized.prNumber)
-          if (!gate.deploy) {
+          if (!gate.deploy && gate.reason === 'production_issue_fix') {
+            // obj 901771: a fix filed from a production signal never auto-deploys.
+            console.log(
+              `[auto-deploy] SKIPPED — ${normalized.repo}#${normalized.prNumber} fixes production-issue card #${gate.objectiveId}; ` +
+                'a fix filed from a production signal never auto-deploys. Merged, not live until a person deploys.',
+            )
+          } else if (isCodeHealthPr(getDb(), normalized.repo, normalized.prNumber)) {
+            // obj 901770: a code-health run's merge is never a deploy. The owner deploys.
+            console.log(
+              `[auto-deploy] SKIPPED — ${normalized.repo}#${normalized.prNumber} is a code-health PR; merged, not live until the owner deploys.`,
+            )
+          } else if (!gate.deploy) {
             console.log(skippedDeployLine(normalized.repo, normalized.prNumber, gate.grantMerge))
           } else {
             triggerAutoDeploy(

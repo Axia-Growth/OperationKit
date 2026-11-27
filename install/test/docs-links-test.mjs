@@ -3,7 +3,8 @@
 //   node install/test/docs-links-test.mjs [file.md …]
 import fs from 'node:fs'
 import path from 'node:path'
-const root = path.resolve(path.dirname(new URL(import.meta.url).pathname), '../..')
+import { fileURLToPath } from 'node:url'
+const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..')
 const files = process.argv.slice(2).length ? process.argv.slice(2) : [
   'README.md', 'INSTALL.md', 'CHANGELOG.md', 'docs/RECOMMENDED-STACK.md',
   'docs/migration/ovh-rise4.md', 'docs/product/06-operating.md',

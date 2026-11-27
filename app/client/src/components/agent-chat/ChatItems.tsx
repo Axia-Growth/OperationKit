@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { ChatDecision } from '../decisions/ChatDecision'
+import { ChatOutcomeProposal } from './OutcomeProposal'
 import { AlarmClock, ArrowRight, BookOpen, CalendarDays, Clock, Download, LayoutGrid, Mail, X, type LucideIcon } from 'lucide-react'
 import { Badge, Button, Modal, cn } from '../ui'
 import { StatusDot } from '../design/primitives'
@@ -319,6 +320,8 @@ export function ToolLine({ m }: { m: ChatMessage }) {
       {images.length > 0 && <ChatImageGallery images={images} />}
       {/* obj 901059: a raise_decision call renders the briefing itself, with its Q&A thread and Choose/Deny. */}
       {!failed && typeof m.meta?.decision_id === 'number' && <ChatDecision id={m.meta.decision_id} />}
+      {/* obj 901764: a propose_outcome call renders the breakdown, editable, with Approve and start. */}
+      {!failed && typeof m.meta?.outcome_proposal_id === 'number' && <ChatOutcomeProposal id={m.meta.outcome_proposal_id} />}
     </div>
   )
 }

@@ -10,7 +10,7 @@
 // Tool names an agent file may list under `tools:` (obj 719987). Shared with
 // the agent-templates card: knowledge + board names match the MCP connector's
 // tool names; `email` and `calendar` are connectors that only ever draft.
-export const KNOWLEDGE_TOOLS = ['search', 'list_folders', 'read_file', 'write_doc', 'file_answer'] as const
+export const KNOWLEDGE_TOOLS = ['search', 'list_folders', 'read_file', 'write_doc', 'file_answer', 'flag_knowledge'] as const
 export const BOARD_TOOLS = ['create_objective', 'get_objective', 'list_objectives', 'board_briefing'] as const
 // obj 901028: attach a screenshot (a card artifact, a knowledge-base path, or
 // generated image data) to the bot's reply so it renders inline in chat.
@@ -53,6 +53,10 @@ export const DECISION_TOOLS = ['raise_decision'] as const
 // bot runs an ordinary turn there and posts its answer; no new permission.
 // Implied by create_objective (tools.ts IMPLIED_TOOLS), like raise_decision.
 export const FOLLOWUP_TOOLS = ['followups'] as const
+// obj 901764: propose a breakdown (card, done-when, acceptance criteria, child
+// split, standing rules) for an outcome the person states. Files nothing: the
+// person edits and approves it in the chat. Implied by create_objective.
+export const OUTCOME_TOOLS = ['propose_outcome'] as const
 // obj 901493: where a page, tab or setting is in the app right now, from the
 // generated app map (shared/app-map.generated.json). Read-only and static.
 export const APP_TOOLS = ['app_routes'] as const
@@ -77,6 +81,7 @@ export const KNOWN_TOOL_NAMES: ReadonlySet<string> = new Set<string>([
   ...CARD_BROWSER_TOOLS,
   ...DECISION_TOOLS,
   ...FOLLOWUP_TOOLS,
+  ...OUTCOME_TOOLS,
   ...APP_TOOLS,
 ])
 
@@ -118,11 +123,13 @@ export const TOOL_CATALOG: readonly ToolCatalogEntry[] = [
   { name: 'read_file', label: 'Read notes', description: 'Read a text file in the bot’s knowledge folders.', group: 'knowledge' },
   { name: 'write_doc', label: 'Write notes', description: 'Create or replace a note in the bot’s knowledge folders.', group: 'knowledge' },
   { name: 'file_answer', label: 'Save answers to the wiki', description: 'Save a useful answer as a wiki page.', group: 'knowledge' },
+  { name: 'flag_knowledge', label: 'Flag knowledge gaps', description: 'Report something missing, wrong or out of date in the knowledge base, with an optional fix. It lands on the Cleanup tab; no page is changed. A bot that can search or read notes gets it automatically.', group: 'knowledge' },
   { name: 'create_objective', label: 'File board cards', description: 'Hand a bigger job to the board as a card.', group: 'board' },
   { name: 'get_objective', label: 'Read a card', description: 'Read one board card the person can see.', group: 'board' },
   { name: 'list_objectives', label: 'List cards', description: 'List board cards the person can see.', group: 'board' },
   { name: 'board_briefing', label: 'Board briefing', description: 'What is waiting on the person across their boards.', group: 'board' },
   { name: 'raise_decision', label: 'Ask for decisions', description: 'Ask the person to decide on a card with a short briefing: the question, options with pros and cons, a recommendation and a Q&A thread.', group: 'board' },
+  { name: 'propose_outcome', label: 'Propose work for approval', description: 'Turn an outcome you describe into proposed cards with a done-when and acceptance criteria. Nothing is filed until you edit and approve it in the chat.', group: 'board' },
   { name: 'followups', label: 'Check back later (follow-ups)', description: 'Set itself a one-off follow-up in the chat ("check back in 10 minutes") and answer there when it is due, with its normal permissions. Limits: 5 waiting per chat, 6 in a row without a message from you.', group: 'board' },
   { name: 'attach_image', label: 'Attach images', description: 'Attach a screenshot (a card artifact, a knowledge-base path, or a generated image) so it renders inline in the reply.', group: 'images' },
   { name: 'bot_messages', label: 'Message other bots', description: 'Send another bot a message in the same workspace and get its reply on a shared thread.', group: 'bots' },
@@ -162,6 +169,11 @@ export const TOOL_REACH: readonly ToolReachEntry[] = [
     about: () => 'Ask it to save a note or a useful answer; each save shows up in the conversation.',
   },
   {
+    tools: ['flag_knowledge'],
+    reach: () => 'Flags missing, wrong or out-of-date notes for the Cleanup tab — it never edits them',
+    about: () => 'When it finds a note that is missing, wrong or out of date it flags it on the Cleanup tab instead of rewriting it.',
+  },
+  {
     tools: ['web_search', 'web_fetch'],
     reach: () => 'Searches the public web and reads public pages',
     about: () => 'Ask it to look something up on the web or read a public page.',
@@ -175,6 +187,11 @@ export const TOOL_REACH: readonly ToolReachEntry[] = [
     tools: ['create_objective'],
     reach: () => 'Files bigger jobs as board cards for the team’s coding tools',
     about: () => 'For bigger work, ask it to put a task on the board; the team’s coding tools pick it up.',
+  },
+  {
+    tools: ['propose_outcome'],
+    reach: () => 'Proposes cards and acceptance criteria for an outcome you describe — nothing is filed until you approve',
+    about: () => 'Tell it the outcome you want; it proposes the cards and how done is checked, and you approve or edit them.',
   },
   {
     tools: ['raise_decision'],

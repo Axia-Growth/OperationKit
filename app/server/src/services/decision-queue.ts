@@ -73,10 +73,25 @@ function loadCard(db: Database.Database, id: number): DecisionCardRow | undefine
   return db.prepare(`SELECT ${CARD_COLS} FROM objectives WHERE id = ?`).get(id) as DecisionCardRow | undefined
 }
 
-/** A newer run of the same job (same routine, created later), if any. */
+/**
+ * A newer run of the same job that itself finished BY ASKING — done,
+ * job_disposition = needs_review, not closed by a person, and it raised its
+ * own decision row — if any. A later run that is still working, or that
+ * finished `complete`, did not replace the ask: it must not retire it (obj
+ * 901675 — hourly High Agency wakes lost two asks this way on 2026-11-20).
+ */
 function newerRunOf(db: Database.Database, card: DecisionCardRow): number | null {
   if (card.routine_id == null) return null
-  const r = db.prepare('SELECT id FROM objectives WHERE routine_id = ? AND id > ? ORDER BY id LIMIT 1').get(card.routine_id, card.id) as { id: number } | undefined
+  const r = db
+    .prepare(
+      `SELECT o.id FROM objectives o
+        WHERE o.routine_id = ? AND o.id > ?
+          AND o.status = 'done' AND NOT COALESCE(o.terminal_by_human, 0)
+          AND o.job_disposition = 'needs_review'
+          AND EXISTS (SELECT 1 FROM decisions d WHERE d.objective_id = o.id)
+        ORDER BY o.id LIMIT 1`,
+    )
+    .get(card.routine_id, card.id) as { id: number } | undefined
   return r?.id ?? null
 }
 
@@ -235,6 +250,36 @@ export function deliveryConsumed(db: Database.Database, decisionId: number | und
   } catch {
     return false
   }
+}
+
+/** A bot's own still-open decisions (so a High Agency wake does not ask the same thing twice). */
+export interface PendingWakeDecision {
+  id: number
+  objective_id: number
+  title: string
+  question: string
+}
+
+/**
+ * The still-pending decisions this bot itself raised in this workspace (obj
+ * 901675): with hourly wakes, an unanswered ask from an earlier wake otherwise
+ * looks invisible to the next one, which then raises the same question again.
+ * Only decisions the sweep would keep (see `staleReasonFor`) are listed — a
+ * genuinely stale one is withdrawn before it ever reaches here.
+ */
+export function pendingWakeDecisions(db: Database.Database, agentSlug: string, workspace: string): PendingWakeDecision[] {
+  if (!agentSlug || !workspace) return []
+  const rows = db
+    .prepare(
+      `SELECT d.id, d.objective_id, d.question, o.title FROM decisions d
+         JOIN objectives o ON o.id = d.objective_id
+        WHERE d.state = 'open' AND d.incomplete = 0 AND d.agent_slug = ? AND d.workspace = ?
+        ORDER BY d.created_at ASC`,
+    )
+    .all(agentSlug, workspace) as { id: number; objective_id: number; question: string; title: string }[]
+  return rows
+    .filter(r => !staleReasonForCard(db, r.objective_id))
+    .map(r => ({ id: r.id, objective_id: r.objective_id, title: r.title, question: r.question }))
 }
 
 // ── the queue ──────────────────────────────────────────────────────────────

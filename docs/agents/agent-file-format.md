@@ -1,5 +1,10 @@
 # Agent files: one file per agent
 
+> **Advanced.** You do not need to write an agent file to get work done: state the outcome on a
+> card, approve the plan, and the install handles the rest. The built-in setup bot can also draft a
+> bot file for you from a plain description. This page is for consultants who want to shape an
+> install by hand.
+
 An **agent** is an AI helper with its own instructions, the knowledge-base folders
 it may use, and the tools it may use. Every agent is described by **one file**.
 Because it is just a file, you can copy it, email it, keep it in a shared drive,
@@ -52,8 +57,10 @@ agent's instructions.
 | Tool | What it allows |
 |---|---|
 | `search`, `list_folders`, `read_file`, `write_doc`, `file_answer` | Search, browse, read and write the knowledge base, and save a useful answer as a wiki page — only inside `knowledge_folders`. |
+| `flag_knowledge` | Report something in the knowledge base that is missing, wrong or out of date (with an optional fix). It lands on the Knowledge base **Cleanup** tab; no page is changed. Any bot that lists `search` or `read_file` gets it automatically. |
 | `create_objective`, `get_objective`, `list_objectives`, `board_briefing` | Create board cards for the coding tools, check on them, and summarise what is waiting on the person. |
 | `raise_decision` | Ask the person to decide something on a card, with a short briefing (question, options, recommendation). It only asks. A bot with `create_objective` gets it automatically. |
+| `propose_outcome` | When the person states an outcome, propose the breakdown: one card, a checkable "done when", acceptance criteria, any child cards and any standing rule ("screenshots on every PR"). Nothing is filed: the person edits it in the chat and presses **Approve and start**. Any bot that lists `create_objective` gets it automatically. See `docs/wiki/Outcome-First-Intake.md`. |
 | `followups` | Set itself a one-off follow-up in the chat it is in ("check back in 10 minutes") with `schedule_followup`, `list_followups` and `cancel_followup`. When it is due the bot runs an ordinary turn in that chat and posts its answer; the person sees a "Follow-up scheduled for HH:MM" line with **Cancel**. Any bot that lists `create_objective` gets it automatically. See `docs/wiki/Bot-Follow-Ups.md`. |
 | `attach_image` | Attach a screenshot or image to a reply so it shows in the chat. |
 | `bot_messages` | Message another bot that may work in the same workspace and get its reply on a shared thread. |

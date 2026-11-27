@@ -135,7 +135,7 @@ export async function stopSession(sessionId: string): Promise<void> {
     }
     // obj 900038: an operator-initiated stop never reaches handleSessionDeath,
     // so it would otherwise leave the jail HOME — wrapper script and all its
-    // `export KEY="value"` lines — on the shared host /tmp. Idempotent.
+    // `export KEY='value'` lines — on the shared host /tmp. Idempotent.
     try {
       cleanupJailHome(sessionId, { transcriptPaths: [session.jsonlPath, session.logPath] })
     } catch (err) {

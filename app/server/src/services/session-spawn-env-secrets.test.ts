@@ -73,6 +73,7 @@ describe('buildSpawnEnv — USE_SCOPED_SECRETS OFF: zero new keys', () => {
       'HOME', 'USER', 'TERM', 'PATH', 'GIT_SSH_COMMAND', 'GH_CONFIG_DIR',
       'SUPABASE_ACCESS_TOKEN',
       'GIT_AUTHOR_NAME', 'GIT_AUTHOR_EMAIL', 'GIT_COMMITTER_NAME', 'GIT_COMMITTER_EMAIL',
+      'GIT_IDENTITY', 'GIT_IDENTITY_HELP',
       // obj-706070: the per-user Google resolver ALWAYS appends this marker so a
       // session can distinguish "acting user's Google account" from "none". With
       // no connection seeded it is the only Google key ('absent'); the token keys
@@ -126,7 +127,13 @@ describe('buildSpawnEnv — USE_SCOPED_SECRETS ON: scoped set merged', () => {
     expect(env.USER).toBe('ccuser')
   })
 
-  it('a global GOOGLE_OAUTH_CLIENT_* secret does not clobber the per-user grant client (obj-716719)', async () => {
+  // obj-716719 used to pin that the user's grant client won over the store's
+  // global client as ONE unit. obj 901743 (public issue #136): neither reaches
+  // the session any more — the grant (refresh token + its issuing client) stays
+  // on the host and is applied by the broker. What is left of that contract: the
+  // connected user's IDENTITY still wins, and NO Google client or token value,
+  // from the store or from the grant, is in the env.
+  it('a global GOOGLE_OAUTH_CLIENT_* secret never reaches the env; the per-user connection is brokered (obj-716719, obj 901743)', async () => {
     process.env.TEST_CRED_ENCRYPTION_KEY = Buffer.alloc(32, 5).toString('base64')
     process.env.GMAIL_CLIENT_ID = 'legacy-client.apps.googleusercontent.com'
     process.env.GMAIL_CLIENT_SECRET = 'legacy-secret'
@@ -145,10 +152,33 @@ describe('buildSpawnEnv — USE_SCOPED_SECRETS ON: scoped set merged', () => {
     const env = sm.buildSpawnEnv({ objective: fakeObjective(), homeDir: '/home/ccuser-a', sessionKind: 'worker' })
 
     expect(env.GOOGLE_WORKSPACE_CONNECTION).toBe('user')
-    expect(env.GOOGLE_REFRESH_TOKEN).toBe('rt-legacy')
-    expect(env.GOOGLE_OAUTH_CLIENT_ID).toBe('legacy-client.apps.googleusercontent.com')
-    expect(env.GOOGLE_OAUTH_CLIENT_SECRET).toBe('legacy-secret')
+    expect(env.USER_GOOGLE_EMAIL).toBe('eva@example.com')
+    expect(env.CC_GOOGLE_BROKER).toBe('1')
+    expect(env.GOOGLE_REFRESH_TOKEN).toBeUndefined()
+    expect(env.GOOGLE_OAUTH_CLIENT_ID).toBeUndefined()
+    expect(env.GOOGLE_OAUTH_CLIENT_SECRET).toBeUndefined()
+    const blob = JSON.stringify(env)
+    for (const v of ['rt-legacy', 'legacy-secret', 'primary-client', 'primary-secret']) expect(blob).not.toContain(v)
     freshDb.getDb().exec('DELETE FROM user_google_connections')
+  })
+
+  // obj 901743: a Settings → Secrets GH_TOKEN / GITHUB_TOKEN is still honoured as
+  // an override, but by the broker per request — the value never reaches the env.
+  it('a store GH_TOKEN / GITHUB_TOKEN turns the GitHub broker on and is stripped from the env (obj 901743)', async () => {
+    store.setSecret({ scope: { scopeType: 'global' }, key: 'GH_TOKEN', value: 'ghp_storeOverrideValue_0001', actorUserId: 1 })
+    store.setSecret({ scope: { scopeType: 'workspace', workspace: 'example' }, key: 'GITHUB_TOKEN', value: 'ghp_storeOverrideValue_0002', actorUserId: 1 })
+
+    vi.resetModules()
+    const freshDb = await import('../db/index.js')
+    freshDb.initDb()
+    const sm = await import('./session-manager.js')
+    const env = sm.buildSpawnEnv({ objective: fakeObjective(), homeDir: '/home/ccuser-a', sessionKind: 'worker' })
+
+    expect(env.CC_GITHUB_BROKER).toBe('1')
+    expect(env.CC_SESSION_TOKEN).toBeTruthy()
+    expect(env.GH_TOKEN).toBeUndefined()
+    expect(env.GITHUB_TOKEN).toBeUndefined()
+    expect(JSON.stringify(env)).not.toContain('ghp_storeOverrideValue_')
   })
 
   it('writes one inject audit row per resolved key', async () => {
@@ -227,12 +257,13 @@ describe('buildSpawnEnv — USE_SCOPED_SECRETS ON: scoped set merged', () => {
     freshDb.initDb()
     const sm = await import('./session-manager.js')
     const env = sm.buildSpawnEnv({ objective: fakeObjective(), homeDir: '/home/ccuser-a', sessionKind: 'worker' })
-    // No secret-store keys added; the trailing 4 keys are the obj-701130 fallback
+    // No secret-store keys added; the trailing git-identity keys are the obj-701130 fallback
     // (injected before the scoped-secrets block, independent of USE_SCOPED_SECRETS).
     expect(Object.keys(env)).toEqual([
       'HOME', 'USER', 'TERM', 'PATH', 'GIT_SSH_COMMAND', 'GH_CONFIG_DIR',
       'SUPABASE_ACCESS_TOKEN',
       'GIT_AUTHOR_NAME', 'GIT_AUTHOR_EMAIL', 'GIT_COMMITTER_NAME', 'GIT_COMMITTER_EMAIL',
+      'GIT_IDENTITY', 'GIT_IDENTITY_HELP',
       // obj-706070: the per-user Google resolver ALWAYS appends this marker so a
       // session can distinguish "acting user's Google account" from "none". With
       // no connection seeded it is the only Google key ('absent'); the token keys

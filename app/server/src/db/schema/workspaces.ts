@@ -77,6 +77,25 @@ export function initWorkspacesSchema(db: Database.Database): void {
     db.exec('ALTER TABLE workspace_repos ADD COLUMN docs_enabled INTEGER NOT NULL DEFAULT 1')
   }
 
+  // code_health_jobs (obj 901770) — the recurring code-health Job for ONE linked
+  // repo (services/code-health.ts). No row = off: nothing runs on an existing
+  // install until an admin switches it on for a repo. The schedule itself is an
+  // ordinary AI routine named `code-health:<repo id>` that this row drives.
+  // No FK on repo_id on purpose: removing a repo switches the routine off and
+  // keeps this row so the run history on the Jobs page survives.
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS code_health_jobs (
+      repo_id INTEGER PRIMARY KEY,
+      workspace TEXT NOT NULL,
+      enabled INTEGER NOT NULL DEFAULT 0,
+      cadence TEXT NOT NULL DEFAULT 'weekly',
+      routine_id INTEGER,
+      run_as_user_id INTEGER,
+      updated_by TEXT,
+      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+  `)
+
   // workspace_integrations — per-workspace connections to external platforms
   // (GitHub org, PostHog project). `config` holds the RAW secrets (PAT / project
   // + personal API keys) as JSON and is SERVER-ONLY: it is never returned by any

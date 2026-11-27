@@ -65,6 +65,7 @@ import {
 } from '../grant-merge-github-auth.js'
 import { ciGreenForMerge, loadReservedPrs, reservedPrMatch, type CiGreenResult, type ReservedPr } from '../grant-merge.js'
 import { isMoneyPath } from '../merge-lane.js'
+import { isProductionIssueCard } from '../../lib/production-issue.js'
 import { getSecretValue } from '../secrets-store.js'
 import { writeDevOpsAudit } from './audit.js'
 import { closeCardDone, prNumberOf, updateBranch, type DevActor } from './merge.js'
@@ -99,6 +100,7 @@ export type RepoMergeCode =
   | 'pr_draft'
   | 'strategy'
   | 'money_path'
+  | 'production_issue'
   | 'card_still_running'
   | 'review_failed'
   | 'pr_not_open'
@@ -499,7 +501,7 @@ export async function resolveCodeScanningTestThreads(exec: ExecFn, repo: string,
 
 // ── cards: link or file ──────────────────────────────────────────────────────
 
-type LinkedCard = Pick<Objective, 'id' | 'title' | 'description' | 'status' | 'type' | 'workspace' | 'project' | 'pr_url' | 'pr_number' | 'is_strategy'> & { ai_review_verdict?: string | null }
+type LinkedCard = Pick<Objective, 'id' | 'title' | 'description' | 'status' | 'type' | 'workspace' | 'project' | 'pr_url' | 'pr_number' | 'is_strategy'> & { ai_review_verdict?: string | null; origin?: string | null }
 
 /** Every live card that links this exact PR (repo and number), newest first. Cancelled cards are not links. */
 export function linkedCards(repo: string, prNumber: number): LinkedCard[] {
@@ -519,6 +521,7 @@ export function linkedCardRefusal(cards: readonly LinkedCard[]): RepoMergeResult
   for (const c of cards) {
     if (c.is_strategy) return no('strategy', `Card #${c.id} links this pull request and is a Strategy; only the owner closes a Strategy. Nothing was merged.`, { objective_id: c.id })
     if (isMoneyPath(c)) return no('money_path', `Card #${c.id} links this pull request and is on the money path (billing/payments); the owner merges it. Nothing was merged.`, { objective_id: c.id })
+    if (isProductionIssueCard(c)) return no('production_issue', `Card #${c.id} links this pull request and fixes a production issue; a person merges it in GitHub. Nothing was merged.`, { objective_id: c.id })
     if (RUNNING.has(c.status)) return no('card_still_running', `Card #${c.id} links this pull request and is ${c.status}: its worker may still push to the branch. Merge once it has finished.`, { objective_id: c.id })
     if (FAILED_VERDICTS.has(String(c.ai_review_verdict ?? ''))) {
       return no('review_failed', `Card #${c.id} links this pull request and its AI review did not pass (verdict: ${c.ai_review_verdict}). Fix the findings first; nothing was merged.`, { objective_id: c.id })

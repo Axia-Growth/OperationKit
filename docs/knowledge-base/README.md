@@ -13,6 +13,8 @@ You find it on the **Knowledge base** page (Docs in the menu): click **Import fi
 
 **Starting from a pile of existing files?** Use **Knowledge base → Set up**: drop in whole folders of documents, spreadsheets, slide decks, exports and notes, and the Knowledge Base Setup agent files them into people, companies & clients, projects, decisions, processes, products and a glossary — and asks you about anything it should not guess. See [How to set up your knowledge base](setup-agent.md).
 
+**Where does your data live?** Keep a [data-access map](data-access-map.md): a page that tells agents which system holds what and how to query it, kept current by flags. The knowledge base never stores a copy of your warehouse or CRM.
+
 **Reorganising folders?** Whoever runs the server can move files without breaking links with [the move tool](vault-migrate.md).
 
 ---
@@ -217,6 +219,31 @@ To save a good answer back:
   `{ workspace, question, answer, sources: ["people/rosa-delgado.md", …] }`.
 - **Board-card sessions on the server:**
   `curl -s -X POST http://localhost:3002/api/internal/kb-wiki/answers -H 'Content-Type: application/json' -d '{"workspace":"<slug>","question":"…","answer":"…","sources":["…"],"filed_by":"<agent>"}'`
+
+**Where data lives.** A workspace can keep a data-access map at `data-access/map.md`:
+which system holds which data and how to query it. Agents read it before querying a
+source and, when it is wrong, file a small flag in `data-access/flags/` instead of
+copying the data in. See [The data-access map](data-access-map.md).
+
+### Flagging a knowledge gap (obj 901767)
+
+An agent that notices something **missing**, **wrong** or **out of date** while it works
+reports it instead of quietly rewriting the fact. A flag is a queue row, never a page
+edit: it shows on the **Cleanup** tab under "Flagged while working" (beside the cleanup
+report, which is unchanged) and in the queue a later curator run reads.
+
+- **Chat bots:** the `flag_knowledge` tool (any bot with `search` or `read_file` has it).
+- **MCP agents:** `flag_knowledge` to file, `list_knowledge_flags` to read the queue.
+- **Board-card sessions:** `POST /api/kb-wiki/flags` with the card's own token — the
+  workspace and card link come from the token:
+  `curl -s -X POST http://localhost:3002/api/kb-wiki/flags -H "X-CC-Session-Token: $CC_SESSION_TOKEN" -H 'Content-Type: application/json' -d '{"kind":"wrong","subject":"Acme billing contact","page":"organizations/acme.md","detail":"Page says Dana; the latest invoice thread is signed by Lee.","suggested_fix":"Billing contact: Lee Park"}'`
+
+Body: `kind` (`missing` / `wrong` / `stale`), `subject` and `detail` (required),
+`page`, `suggested_fix`, `objective_id`, `trace` (optional). Filing the same open
+defect again returns the existing flag with `reused: true` and a higher `seen_count`.
+People close a flag from the Cleanup tab (**Fixed** / **Dismiss**), or an agent key
+with `vault:write` via `POST /api/kb-wiki/flags/:id/status`. A card session can file
+flags but never close them: the busy worker reports, it does not curate.
 
 Correcting the wiki works as before: edit a page (or ask an agent to with `write_doc`),
 and corrections you give agents on a card are still fed into their next run. The

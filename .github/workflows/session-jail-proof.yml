@@ -36,3 +36,14 @@ jobs:
 
       - name: Run session jail proof
         run: bash scripts/session-jail-proof.sh
+
+      # obj 901741 (public issue #97): the Docker policy sidecar that replaces the
+      # app's /var/run/docker.sock mount. First its rules without Docker (a fake
+      # daemon on a unix socket), then live: the real docker CLI through the
+      # sidecar against this runner's daemon — privileged / host / bind-of-/
+      # creates refused, unlabelled exec/rm refused, the real jail argv allowed.
+      - name: Docker policy sidecar — rules (no Docker)
+        run: node --test install/test/docker-proxy-test.mjs
+
+      - name: Docker policy sidecar — live proof
+        run: bash scripts/docker-proxy-proof.sh

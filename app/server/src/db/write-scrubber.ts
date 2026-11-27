@@ -45,6 +45,12 @@ export const SCRUBBED_TABLES = [
   // and the model's answers, so a key echoed or pasted into either is redacted.
   'decisions',
   'decision_messages',
+  // obj 901764: a proposed breakdown and a standing rule are bot/person-written text.
+  'outcome_proposals',
+  'outcome_rules',
+  // obj 901771: a production signal is an outside monitor's payload or a pasted
+  // log, the likeliest place for a connection string or token to arrive.
+  'production_signals',
 ] as const
 
 const WRITE_SQL_RE = new RegExp(

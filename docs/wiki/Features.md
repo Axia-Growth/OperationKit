@@ -9,7 +9,7 @@ OperationKit's category claim is **self-hosted, multi-tenant work infrastructure
 | Workspaces & multi-tenancy / RBAC | Isolated workspaces per team or business unit, with admin/member roles gating who can see and act on what | [Workspaces & Multi-tenancy](./Workspaces-and-Multi-tenancy) |
 | Board & objectives lifecycle | Cards move queue → working → review → done; acceptance criteria are tracked on the card | [Board & Objectives Lifecycle](./Board-and-Objectives-Lifecycle) |
 | Model-agnostic engine routing | Claude, Codex, Grok natively; Gemini and local open-weight models via the bundled LiteLLM proxy | [Model Portability](./Model-Portability) |
-| Skills / Tools / Agents + CLI | Composable, versioned knowledge and procedure files, surfaced in an admin skill graph | [Skills, Tools & Agents](./Skills-Tools-Agents) |
+| Skills / Tools / Agents + CLI (advanced) | Optional, versioned procedure files for shaping an install by hand, surfaced in an admin skill graph; not needed to get work done | [Skills, Tools & Agents](./Skills-Tools-Agents) |
 | Knowledge base & context loading | Team knowledge and per-workspace context load automatically before a session starts | [Knowledge Base & Context Loading](./Knowledge-Base-and-Context-Loading) |
 | Subscription seat pooling | Multiple Claude/Grok/Codex subscriptions pooled and routed by priority and rate-limit state, so concurrent work isn't capped by any one plan | [Accounts, Subscriptions & Seats](./Accounts-Subscriptions-and-Seats) |
 

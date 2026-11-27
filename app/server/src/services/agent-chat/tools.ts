@@ -25,13 +25,16 @@ import { cardModelForBot } from './bot-card-model.js'
 import { CHILD_CAP_PER_PARENT, depthForParent, openChildCount } from '../../lib/objective-depth.js'
 import { checkAgentInWorkspacePool, defaultAgentForWorkspace } from '../../routes/objectives-helpers.js'
 import { broadcast } from '../../ws/index.js'
-import { chatActionWordingErrors, getInitialStatus, validateOwnerBot, type Objective } from '@operationkit/shared'
+import { KB_FLAG_KINDS, chatActionWordingErrors, getInitialStatus, validateKbFlagInput, validateOwnerBot, type Objective } from '@operationkit/shared'
 import { raiseDecision } from '../decisions.js'
 import type { ChatAgent } from './agent-defs.js'
 import { createDraft, type Connectors, type EmailDraft, type EventDraft } from './connectors.js'
 import { workspaceKbRoot } from '../doc-ingest/kb-paths.js'
 import { ingestEnabled } from '../doc-ingest/service.js'
-import { fileAnswer } from '../kb-wiki/answers.js'
+import { checkAndFileAnswer, fileAnswer, type FiledAnswer } from '../kb-wiki/answers.js'
+import { wikiLlm } from '../kb-wiki/llm.js'
+import { heldAnswerReleaseRefusal, isHeldAnswerText } from '../../lib/kb-answer-hold.js'
+import { fileKbFlag } from '../kb-wiki/flags.js'
 import { botForAgentSlug, resolveBot } from '../bots/bot-registry.js'
 import { createBotJob, findJobByIdempotency } from '../bots/bot-jobs.js'
 import { isDuplicateGuardEnabled, recordDedupe } from '../../lib/objective-dedupe.js'
@@ -78,6 +81,8 @@ import { ImageRejected, MAX_IMAGE_BYTES, parseIncomingImages, validateImageBytes
 import { publicCardUrl } from '../../lib/public-url.js'
 import { APP_ROUTES_DEFAULT_BOTS, APP_ROUTES_DESCRIPTION, APP_ROUTES_TOOL, appRoutesSummary, searchAppMap } from './app-routes-tool.js'
 import { offsetArg, pageNote, pageText } from './text-page.js'
+import { createProposal, listRules } from '../outcome-intake.js'
+import { MAX_CHILDREN, MAX_CRITERIA, MAX_SUGGESTED_RULES } from '../../../../shared/outcome-intake.js'
 import { cardDecisionsForBot, cardOwnerAndGrants, cardThreadForBot, holdView, type BotCardOwner, type BotDecisionView, type BotThreadEntry } from './card-context.js'
 
 export interface ToolSpec {
@@ -158,6 +163,8 @@ export interface ToolOutcome {
   decision_id?: number
   /** obj 901392: a follow-up this call scheduled or cancelled — the chat renders its live state and a Cancel control. */
   followup_id?: number
+  /** obj 901764: a breakdown this call proposed — the chat renders it, editable, with Approve and start. */
+  outcome_proposal_id?: number
   /** obj 901028: an image this tool call attaches to the reply — rendered inline, same as a pasted screenshot. */
   images?: IncomingImage[]
 }
@@ -199,8 +206,18 @@ const SPECS: Record<string, ToolSpec[]> = {
     }, ['path']))],
   write_doc: [fn('write_doc', 'Create or replace one .md/.txt/.csv file in your knowledge folders. Send the FULL new content; read the file first when editing.',
     obj({ path: { type: 'string' }, content: { type: 'string' } }, ['path', 'content']))],
-  file_answer: [fn('file_answer', 'Save a good answer into the workspace knowledge base as a wiki page, linked from the pages it used, so later questions can build on it. Only save answers the person found useful.',
+  file_answer: [fn('file_answer', 'Save a good answer into the workspace knowledge base as a wiki page, linked from the pages it used, so later questions can build on it. Only save answers the person found useful. The answer is checked against the pages it cites first: one that cites a missing page, or makes claims its pages do not back up, is saved but kept out of search until a person reviews it.',
     obj({ question: { type: 'string' }, answer: { type: 'string', description: 'The answer in markdown; cite pages as [[folder/page.md]]' }, sources: { type: 'array', items: { type: 'string' }, description: 'Knowledge-base paths of the pages the answer used, e.g. "people/dana-ruiz.md"' } }, ['question', 'answer']))],
+  // obj 901767: report a knowledge defect to the Cleanup queue. Never edits a page.
+  flag_knowledge: [fn('flag_knowledge', 'Report that something in the knowledge base is MISSING, WRONG or OUT OF DATE, so a person or the curator can fix it later. This does NOT edit any page: use it instead of quietly rewriting a fact you are unsure about. Add a suggested fix when you know the right answer, and the card number you were working on when there is one. Filing the same defect again just counts it again.',
+    obj({
+      kind: { type: 'string', enum: [...KB_FLAG_KINDS], description: 'missing = not written down anywhere; wrong = a page says something untrue; stale = was true, now out of date' },
+      subject: { type: 'string', description: 'What knowledge is affected, in a few words, e.g. "Acme billing contact"' },
+      detail: { type: 'string', description: 'What is missing / wrong / out of date, and how you noticed' },
+      page: { type: 'string', description: 'Optional knowledge-base-relative page path the defect is on (or belongs on), e.g. "organizations/acme.md"' },
+      suggested_fix: { type: 'string', description: 'Optional: the correct fact or the text you would add. It is NOT applied automatically.' },
+      card_id: { type: 'integer', description: 'Optional: the board card you were working on when you noticed' },
+    }, ['kind', 'subject', 'detail']))],
   attach_image: [fn('attach_image', 'Attach an image so it renders inline in chat as a thumbnail the person can open full size. source "kb" = a path in your knowledge folders; "card_artifact" = a screenshot a board card saved to its objective memory (give objective_id and the artifact path, e.g. "live/screenshot.png" — list a card\'s files with get_objective first if unsure); "data" = base64 image bytes you generated yourself (e.g. a chart). PNG, JPEG, GIF or WebP only, 5 MB max.',
     obj({
       source: { type: 'string', enum: ['kb', 'card_artifact', 'data'] },
@@ -221,6 +238,40 @@ const SPECS: Record<string, ToolSpec[]> = {
       idempotency_key: { type: 'string', description: 'One key per card you intend to file (any short unique string, no spaces). Reuse it word for word if you call again for the SAME card: you get the card already filed, never a second one. Use a new key for a different card.' },
       file_anyway: { type: 'boolean', description: 'Only after a result said "possible duplicate #N" and you checked that card is different work: true files the new card anyway.' },
     }, ['title', 'description']))],
+  propose_outcome: [fn('propose_outcome', 'When the person states an OUTCOME they want (a result, not a quick question), propose how the board will deliver it, for them to approve. Nothing is filed: they see the breakdown in this chat, can edit every line, and press "Approve and start"; only then are the cards filed and started. Give ONE outcome card in their words, a checkable done_when, and acceptance criteria a reviewer can test; split into child cards only when the parts are genuinely independent. Never ask them to pick skills, tools or knowledge folders: that is your job. A standing rule they want on every card (for example "before-and-after screenshots on every PR") goes in standing_rules, never in a skill file. Do not also file these cards with create_objective.',
+    obj({
+      outcome: { type: 'string', description: 'The outcome in the person\'s own words, verbatim or near it.' },
+      title: { type: 'string', description: 'Short title of the outcome card, saying the result ("Contact form on the website emails sales").' },
+      brief: { type: 'string', description: 'What to build or change, where, and the context a stranger needs. Not the definition of done.' },
+      done_when: DONE_WHEN_ARG,
+      criteria: {
+        type: 'array', minItems: 1, maxItems: MAX_CRITERIA,
+        description: 'Acceptance criteria: each ONE concrete, testable statement an independent reviewer checks (not "it works").',
+        items: obj({
+          criterion: { type: 'string' },
+          type: { type: 'string', enum: ['functional', 'visual', 'data'] },
+          method: { type: 'string', enum: ['browser', 'api', 'doc'], description: 'How the reviewer verifies it' },
+        }, ['criterion']),
+      },
+      stop_conditions: STOP_CONDITIONS_ARG,
+      children: {
+        type: 'array', maxItems: MAX_CHILDREN,
+        description: 'Only when the outcome has independent parts that can run in parallel: one child card per part, each with its own done_when and criteria. Leave out for a single piece of work.',
+        items: obj({
+          title: { type: 'string' },
+          brief: { type: 'string' },
+          done_when: { type: 'string' },
+          criteria: { type: 'array', items: obj({ criterion: { type: 'string' }, type: { type: 'string', enum: ['functional', 'visual', 'data'] }, method: { type: 'string', enum: ['browser', 'api', 'doc'] } }, ['criterion']) },
+          stop_conditions: { type: 'array', items: { type: 'string' } },
+        }, ['title', 'brief', 'done_when', 'criteria']),
+      },
+      standing_rules: {
+        type: 'array', maxItems: MAX_SUGGESTED_RULES,
+        description: 'Rules the person asked to apply to EVERY future card in this workspace, e.g. "before-and-after screenshots in the pull request". They are saved only when the person approves. applies_to "pr" (default) = only cards that open a pull request.',
+        items: obj({ text: { type: 'string' }, applies_to: { type: 'string', enum: ['pr', 'all'] } }, ['text']),
+      },
+      workspace: { type: 'string', description: 'Workspace slug for the cards. Omit for this chat\'s workspace.' },
+    }, ['outcome', 'title', 'brief', 'done_when', 'criteria']))],
   raise_decision: [fn('raise_decision', 'Ask the person to DECIDE something on a board card, with a short briefing. It shows at the top of the card and in this chat with a Q&A thread and Approve/Deny; their choice is sent to the card. Use this instead of asking for a decision in prose. Under about 200 words in total. Refused if the question or options are missing. A deploy or merge never runs from the answer: an option that deploys or merges must say in its next that the person types deploy / merge in this chat (e.g. "You type deploy in this chat and I run it.").',
     obj({
       card_id: { type: 'integer', description: 'The card the decision is about' },
@@ -330,7 +381,15 @@ const IMPLIED_TOOLS: Record<string, string[]> = {
   // follow-up to check back on them, instead of asking the person to say
   // "check". A follow-up turn has exactly a normal turn's permissions, so this
   // implies no new reach, only a timer (limits: followups.ts).
-  create_objective: ['raise_decision', 'followups'],
+  // obj 901764: and it can PROPOSE a breakdown for an outcome the person states.
+  // propose_outcome files nothing: the person edits and approves it in the chat,
+  // and only their click files the cards (through createCard below).
+  create_objective: ['raise_decision', 'followups', 'propose_outcome'],
+  // obj 901767: a bot that reads the knowledge base can report a defect it
+  // finds there. A flag is a queue row, never a page edit, so this implies no
+  // new reach into the knowledge base.
+  search: ['flag_knowledge'],
+  read_file: ['flag_knowledge'],
 }
 
 /**
@@ -622,6 +681,8 @@ function knowledgeSearch(ctx: ToolContext, q: string) {
     } catch {
       continue
     }
+    // obj 901746: a saved answer held for review is never a hit.
+    if (isHeldAnswerText(text)) continue
     const lower = text.toLowerCase()
     const rel = path.relative(root, file).split(path.sep).join('/')
     let score = 0
@@ -811,7 +872,7 @@ function followUpHint(ctx: ToolContext, id: number): string {
     : `check it with get_objective ${id} and tell the person its number; they can add to it on the card.`
 }
 
-function createCard(
+export function createCard(
   ctx: ToolContext,
   title: string,
   rawDescription: string,
@@ -1325,6 +1386,37 @@ async function withSelfAction(ctx: ToolContext, fnName: string, args: Record<str
   }
 }
 
+/** What the model sees after file_answer: a held answer says so, with the reason (obj 901746). */
+function fileAnswerOutcome(saved: FiledAnswer): ToolOutcome {
+  const held = saved.check.status === 'held'
+  return {
+    result: { saved: saved.rel, title: saved.title, check: saved.check.status, ...(held ? { kept_out_of_search: true, reason: saved.check.reason } : {}) },
+    summary: held
+      ? `Saved ${saved.rel}, but it is kept out of search until someone reviews it: ${saved.check.reason}`
+      : `Saved the answer to the wiki as ${saved.rel}`,
+  }
+}
+
+/** file_answer in a chat turn: the answer is checked against its pages by the AI before it is saved (obj 901746). */
+async function runFileAnswerChecked(ctx: ToolContext, args: Record<string, unknown>): Promise<ToolOutcome> {
+  const tool = owningTool('file_answer')
+  if (!tool || !effectiveTools(ctx.agent).includes(tool)) throw new ToolUseError('Tool "file_answer" is not allowed for this agent.')
+  if (!ingestEnabled()) throw new ToolUseError('The knowledge base is switched off on this install.')
+  if (!ctx.workspace) throw new ToolUseError(noWorkspaceMessage(ctx))
+  const now = ctx.now ?? (() => new Date())
+  const sources = Array.isArray(args.sources) ? args.sources.filter((x): x is string => typeof x === 'string') : []
+  let llm: ReturnType<typeof wikiLlm> | null = null
+  try { llm = wikiLlm() } catch { llm = null }
+  try {
+    return fileAnswerOutcome(await checkAndFileAnswer(workspaceKbRoot(ctx.workspace), {
+      question: s(args, 'question', true), answer: s(args, 'answer', true), sources, filedBy: `${ctx.username} (chat: ${ctx.agent.slug})`, now: now(),
+    }, llm, { workspace: ctx.workspace }))
+  } catch (err) {
+    if (err instanceof ToolUseError) throw err
+    throw new ToolUseError((err as Error).message)
+  }
+}
+
 async function runChatToolInner(ctxIn: ToolContext, fnName: string, args: Record<string, unknown>): Promise<ToolOutcome> {
   const ctx = withKbFolders(ctxIn)
   // obj 900972: the Full access tool family. Checked again inside, on every call.
@@ -1357,6 +1449,7 @@ async function runChatToolInner(ctxIn: ToolContext, fnName: string, args: Record
     if (!tool || !effectiveTools(ctx.agent).includes(tool)) throw new ToolUseError(`Tool "${fnName}" is not allowed for this agent.`)
     return runMailCalendarTool(ctx, fnName, args)
   }
+  if (fnName === 'file_answer') return runFileAnswerChecked(ctx, args)
   if (fnName !== 'web_search' && fnName !== 'web_fetch') return runTool(ctx, fnName, args)
   if (!agentHasTool(ctx.agent, fnName)) throw new ToolUseError(`Tool "${fnName}" is not allowed for this agent.`)
   try {
@@ -1670,6 +1763,9 @@ export function runTool(ctxIn: ToolContext, fnName: string, args: Record<string,
       if (!WRITE_EXT.has(path.extname(abs).toLowerCase())) throw new ToolUseError('Only .md, .txt or .csv files can be written.')
       const content = typeof args.content === 'string' ? args.content : ''
       if (Buffer.byteLength(content) > MAX_WRITE_BYTES) throw new ToolUseError('That file is too large to write from chat.')
+      // obj 901746: a bot never releases a held saved answer by rewriting it.
+      const heldRefusal = heldAnswerReleaseRefusal(abs, content)
+      if (heldRefusal) throw new ToolUseError(heldRefusal)
       fs.mkdirSync(path.dirname(abs), { recursive: true })
       fs.writeFileSync(abs, content)
       noteKbChanged(abs) // semantic index + link graph
@@ -1679,13 +1775,35 @@ export function runTool(ctxIn: ToolContext, fnName: string, args: Record<string,
       if (!ingestEnabled()) throw new ToolUseError('The knowledge base is switched off on this install.')
       if (!ctx.workspace) throw new ToolUseError(noWorkspaceMessage(ctx))
       const sources = Array.isArray(args.sources) ? args.sources.filter((x): x is string => typeof x === 'string') : []
-      let saved: { rel: string; title: string }
+      let saved: FiledAnswer
       try {
+        // Rules only on this synchronous path; runChatTool adds the AI check (obj 901746).
         saved = fileAnswer(workspaceKbRoot(ctx.workspace), { question: s(args, 'question', true), answer: s(args, 'answer', true), sources, filedBy: `${ctx.username} (chat: ${ctx.agent.slug})`, now: now() })
       } catch (err) {
         throw new ToolUseError((err as Error).message)
       }
-      return { result: { saved: saved.rel, title: saved.title }, summary: `Saved the answer to the wiki as ${saved.rel}` }
+      return fileAnswerOutcome(saved)
+    }
+    case 'flag_knowledge': {
+      if (!ctx.workspace) throw new ToolUseError(noWorkspaceMessage(ctx))
+      const cardRaw = args.card_id
+      let objectiveId: number | null = null
+      if (cardRaw !== undefined && cardRaw !== null && cardRaw !== '') {
+        const card = getBoardCard(ctx, Number(cardRaw))
+        if (card.workspace !== ctx.workspace) throw new ToolUseError(`Card #${card.id} is in another workspace than this chat (${ctx.workspace}).`)
+        objectiveId = card.id
+      }
+      const { errors, input } = validateKbFlagInput({
+        kind: args.kind, subject: args.subject, detail: args.detail, page: args.page,
+        suggested_fix: args.suggested_fix, objective_id: objectiveId,
+        trace: ctx.lane ? `chat:${ctx.agent.slug}` : null,
+      })
+      if (!input) throw new ToolUseError(errors.join(' '))
+      const out = fileKbFlag(getDb(), input, { workspace: ctx.workspace, source: 'bot', filedBy: `${ctx.username} (chat: ${ctx.agent.slug})` })
+      return {
+        result: { flag_id: out.flag.id, status: out.flag.status, reused: out.reused, seen_count: out.flag.seen_count, note: 'Flag filed for the Cleanup queue. No page was changed.' },
+        summary: out.reused ? `Counted knowledge flag #${out.flag.id} again (${out.flag.kind}: ${out.flag.subject})` : `Flagged knowledge #${out.flag.id} (${out.flag.kind}: ${out.flag.subject})`,
+      }
     }
     case 'attach_image': {
       const source = s(args, 'source', true)
@@ -1739,6 +1857,37 @@ export function runTool(ctxIn: ToolContext, fnName: string, args: Record<string,
         result: { filed: true, id: card.id, status: card.status, workspace: card.workspace, ...(card.parent_id ? { parent_id: card.parent_id } : {}), reused: card.reused, will_start: card.will_start, note: card.note },
         summary: card.reused ? `Card #${card.id} was already filed for this request: ${title}` : `Created card #${card.id}: ${title}`,
         objective_id: card.id,
+      }
+    }
+    case 'propose_outcome': {
+      // A proposal waits for the person's click in THIS chat; a wake has nobody watching.
+      if (ctx.botWake || ctx.cardWake) throw new ToolUseError('propose_outcome is only for a chat with the person, who approves the breakdown there. Nothing was proposed.')
+      const workspace = cardWorkspace(ctx, args.workspace)
+      const out = createProposal(getDb() as never, {
+        userId: ctx.userId,
+        agentSlug: ctx.agent.slug,
+        threadId: ctx.lane && ctx.lane.kind === 'thread' ? ctx.lane.id : null,
+        workspace,
+        raw: {
+          outcome: args.outcome,
+          card: { title: args.title, brief: args.brief, done_when: args.done_when, criteria: args.criteria, stop_conditions: args.stop_conditions },
+          children: args.children,
+          suggested_rules: args.standing_rules,
+        },
+      })
+      if (!out.ok) throw new ToolUseError(`Nothing was proposed. Fix these and call propose_outcome again: ${out.errors.join('; ')}`)
+      const p = out.row.proposal
+      const rules = listRules(getDb() as never, workspace)
+      return {
+        result: {
+          proposal_id: out.row.id,
+          workspace,
+          cards: 1 + p.children.length,
+          standing_rules_in_force: rules.map(r => ({ id: r.id, text: r.text, applies_to: r.applies_to })),
+          note: 'The person now sees this breakdown in the chat, can edit any line, and presses "Approve and start". NOTHING is filed until they do; do not file these cards with create_objective. Tell them in one line that it is waiting for their approval. Standing rules in force are added to every card as criteria on approval.',
+        },
+        summary: `Proposed a breakdown for approval: ${p.card.title}${p.children.length ? ` (${p.children.length} child card${p.children.length === 1 ? '' : 's'})` : ''}`,
+        outcome_proposal_id: out.row.id,
       }
     }
     case 'raise_decision': {

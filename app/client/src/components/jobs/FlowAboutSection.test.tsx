@@ -88,4 +88,11 @@ describe('FlowAboutSection', () => {
     expect(host.textContent).toContain("No access to workspace 'beta'")
     expect(q('[data-testid="flow-about-form"]')).not.toBeNull()
   })
+
+  it('obj 901766: shows "Done when" in the person\'s words when the workflow has one', () => {
+    act(() => root.render(<FlowAboutSection flow={{ id: 4, name: 'Triage', notes: null, tools: [] }} goal="Triage bookings" doneWhen="Every booking has a category." />))
+    expect(q('[data-testid="flow-about-done-when"]')?.textContent).toContain('Every booking has a category.')
+    act(() => root.render(<FlowAboutSection flow={{ id: 4, name: 'Triage', notes: null, tools: [] }} goal="Triage bookings" />))
+    expect(q('[data-testid="flow-about-done-when"]')).toBeNull()
+  })
 })

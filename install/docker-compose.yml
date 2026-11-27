@@ -27,6 +27,16 @@
 # localhost:3002 to command-center:3002 over it, so the ~60 prompt/script call
 # sites that say "curl localhost:3002" (AI review criteria, pr-created, ...)
 # reach the app. The app treats that subnet as on-box (INTERNAL_TRUSTED_PEER_CIDRS).
+#
+# Docker API (obj 901741, public issue #97): the app does NOT mount
+# /var/run/docker.sock — that socket is the same as host root. The docker-proxy
+# sidecar below owns it and serves a filtered Docker API on the private
+# `ok-docker-api` network, which only the app shares. The app's docker CLI points
+# at it with DOCKER_HOST. The rules (install/docker-proxy/policy.mjs): only the
+# endpoints the app uses; a create must be a jail (non-root, CapDrop ALL,
+# no-new-privileges, read-only root, binds only inside OK_STATE); no privileged,
+# CapAdd, host network/pid/ipc, devices; exec/rm/etc only on containers with
+# the ok.objective label. Every call is logged to $OK_DIR/logs/docker-proxy.
 # ==============================================================================
 name: operationkit
 
@@ -51,13 +61,17 @@ services:
     networks:
       - default
       - jails
+      # The filtered Docker API (see header). The sandboxes are not on it.
+      - docker-api
+    depends_on:
+      docker-proxy:
+        condition: service_healthy
     volumes:
       - ${OK_STATE:?run ./install.sh}/data:/app/data
       - ${OK_STATE}/home:${OK_APP_HOME:?run ./install.sh}
       - ${OK_STATE}/tmp:/tmp
-      # Needed ONLY to start the per-session sandbox containers. Sessions never
-      # see this socket: each sandbox mounts just its own work folder + home.
-      - /var/run/docker.sock:/var/run/docker.sock
+      # No /var/run/docker.sock here (obj 901741): the app reaches Docker only
+      # through the docker-proxy sidecar (DOCKER_HOST below).
       # D2 (obj 900540): the secrets-store key-encryption key, read-only, app only.
       # Root-owned mode 400 on the host (install/lib.sh kek_file_ensure). Session
       # sandboxes mount only their own work folder + home, so they never see it.
@@ -77,10 +91,25 @@ services:
       TEST_CRED_ENCRYPTION_KEY: ${TEST_CRED_ENCRYPTION_KEY:?missing — run ./install.sh}
       CORS_ORIGINS: https://${OK_DOMAIN}
       OK_BRAND_NAME: ${OK_BRAND_NAME:-OperationKit}
+      # Git identity for commits by sessions whose card owner has not connected
+      # GitHub (session-spawn-env.ts resolveFallbackGitIdentity). Empty = no
+      # fallback: such a commit fails with a "connect GitHub" message.
+      OK_FALLBACK_GIT_NAME: ${OK_FALLBACK_GIT_NAME:-}
+      OK_FALLBACK_GIT_EMAIL: ${OK_FALLBACK_GIT_EMAIL:-}
       # The operator's own background jobs; nothing to run on a client install.
       HOST_BOOT_DAEMONS_ENABLED: "false"
       # Image-based install: no live checkout, so the drift guard has nothing to watch.
       DRIFT_GUARD: "off"
+      # The filtered Docker API (obj 901741). The docker CLI in this container
+      # talks to the sidecar, never to the host socket.
+      DOCKER_HOST: tcp://docker-proxy:2375
+      # The preview-spool host kick needs a privileged container, which the
+      # sidecar refuses; client installs have no preview spool anyway.
+      PREVIEW_SPOOL_HOST_KICK: "0"
+      # Where the Operation Kit Dev host runner finds this install (must match
+      # what the sidecar pins; install.sh writes both from the same values).
+      CC_DEV_OPS_SRC_DIR: ${OK_REPO_DIR:-/opt/operationkit-src}
+      CC_DEV_OPS_CONFIG: ${OK_CONFIG_FILE:-/opt/operationkit-src/client.conf}
       # Per-session sandbox (app/server/src/services/session-jail.ts).
       SESSION_ISOLATION: ${OK_SESSION_ISOLATION:-docker}
       SESSION_JAIL_IMAGE: ok-jail:local
@@ -132,6 +161,66 @@ services:
       retries: 3
       start_period: 30s
 
+  # The Docker policy sidecar (obj 901741, public issue #97). The ONLY service
+  # that holds the host Docker socket. It runs install/docker-proxy/server.mjs
+  # (no dependencies) from the app image the installer already builds; the code
+  # is mounted read-only from this checkout, which the app container cannot see.
+  docker-proxy:
+    image: operationkit-app:local
+    container_name: ok-docker-proxy
+    entrypoint: ["node", "/opt/ok-docker-proxy/server.mjs"]
+    command: []
+    restart: unless-stopped
+    init: true
+    # root only to open the socket (root:docker 0660). Every capability is
+    # dropped except DAC_READ_SEARCH, which lets it resolve bind sources (realpath)
+    # inside OK_STATE folders owned by the app user. Nothing on disk is writable
+    # except the audit log folder.
+    user: "0:0"
+    cap_drop: [ALL]
+    cap_add: [DAC_READ_SEARCH]
+    security_opt: ["no-new-privileges:true"]
+    read_only: true
+    tmpfs:
+      - /tmp:rw,nosuid,nodev,noexec,size=16m
+    networks:
+      - docker-api
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ./docker-proxy:/opt/ok-docker-proxy:ro
+      # The exact host runner script this checkout ships; the sidecar allows the
+      # Dev host runner only with these bytes (and only when HOST_RUNNER=on).
+      - ../app/server/src/services/dev-ops/host-runner.sh:/opt/ok-docker-proxy-host-runner.sh:ro
+      # The one seccomp profile a jail may ask for (the card-browser jail's).
+      - ../app/server/src/lib/jail-browser-seccomp.json:/opt/ok-docker-proxy-seccomp/jail-browser.json:ro
+      # Read-only, at the SAME path as on the host, so a bind source is resolved
+      # (symlinks followed) exactly where Docker will resolve it.
+      - ${OK_STATE}:${OK_STATE}:ro
+      - ${OK_DOCKER_PROXY_LOG_DIR:?run ./install.sh}:/var/log/ok-docker-proxy
+    environment:
+      DOCKER_PROXY_LISTEN: 0.0.0.0:2375
+      DOCKER_PROXY_UPSTREAM: /var/run/docker.sock
+      DOCKER_PROXY_AUDIT_LOG: /var/log/ok-docker-proxy/audit.jsonl
+      DOCKER_PROXY_BIND_ROOTS: ${OK_STATE}
+      DOCKER_PROXY_IMAGES: ok-jail:local,ok-jail-browser:local
+      DOCKER_PROXY_NETWORKS: ok-jails
+      DOCKER_PROXY_NAME_PREFIX: ok-jail-
+      DOCKER_PROXY_SECCOMP_PROFILES: /opt/ok-docker-proxy-seccomp/jail-browser.json
+      # Operation Kit Dev deploy / Cloudflare tools (privileged host runner).
+      # OFF unless client.conf says HOST_RUNNER="on".
+      DOCKER_PROXY_HOST_RUNNER: ${OK_DOCKER_PROXY_HOST_RUNNER:-off}
+      DOCKER_PROXY_HOST_RUNNER_IMAGE: operationkit-app:local
+      DOCKER_PROXY_HOST_RUNNER_SCRIPT: /opt/ok-docker-proxy-host-runner.sh
+      DOCKER_PROXY_HOST_RUNNER_SRC: ${OK_REPO_DIR:-/opt/operationkit-src}
+      DOCKER_PROXY_HOST_RUNNER_CONF: ${OK_CONFIG_FILE:-/opt/operationkit-src/client.conf}
+      DOCKER_PROXY_HOST_RUNNER_DATA: ${OK_STATE}/data
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:2375/_ping').then(r=>process.exit(r.ok?0:1),()=>process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
+
   cloudflared:
     image: cloudflare/cloudflared:latest
     restart: unless-stopped
@@ -144,6 +233,12 @@ services:
     profiles: ["tunnel"]
 
 networks:
+  # The filtered Docker API (obj 901741): the app and docker-proxy only. Internal:
+  # no route out, and no sandbox is ever attached to it.
+  docker-api:
+    name: ok-docker-api
+    driver: bridge
+    internal: true
   # Shared ONLY by the app container and the per-session sandboxes (obj 900113).
   # Fixed name: the app passes it to `docker run --network` for each sandbox.
   # Fixed subnet: the app trusts exactly this range as on-box callers.

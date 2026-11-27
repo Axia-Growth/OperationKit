@@ -113,6 +113,46 @@ describe('SESSION_ISOLATION unset / tmux → existing spawnInTmux path (live dro
   })
 })
 
+describe('obj 901743 (issue #136): tmux wrapper holds no connector credential and is 0700', () => {
+  it('the wrapper is owner-only (was 0777), unsets inherited connector credentials and exports none', async () => {
+    const spawnInTmux = await loadSpawn()
+    const opts = spawnOpts(tmp)
+    spawnInTmux({ ...opts, env: { ...opts.env, GH_TOKEN: 'ghp_leakedFromCaller0000', GOOGLE_OAUTH_CLIENT_SECRET: 'GOCSPX-leak', CC_MCP_TOKEN_9: 'mcp-leak' } })
+    const wrapper = path.join(tmp, 'cc-scripts', 'cc-709080-1756400000000.sh')
+    expect(fs.statSync(wrapper).mode & 0o777).toBe(0o700)
+    const body = fs.readFileSync(wrapper, 'utf8')
+    expect(body).toContain('unset GH_TOKEN GITHUB_TOKEN GOOGLE_REFRESH_TOKEN GOOGLE_OAUTH_CLIENT_ID GOOGLE_OAUTH_CLIENT_SECRET')
+    expect(body).toContain('CC_MCP_TOKEN_*) unset')
+    for (const leak of ['ghp_leakedFromCaller0000', 'GOCSPX-leak', 'mcp-leak']) expect(body).not.toContain(leak)
+    expect(body).toContain("export SOME_SECRET='value'")
+  })
+
+  it('a brokered card gets the git credential helper + gh shim, wired by env (no token)', async () => {
+    const spawnInTmux = await loadSpawn()
+    const opts = spawnOpts(tmp)
+    spawnInTmux({ ...opts, env: { ...opts.env, CC_GITHUB_BROKER: '1', CC_SESSION_TOKEN: 'ccs_card', PATH: '/usr/bin:/bin' } })
+    const bin = path.join(tmp, 'cc-scripts', 'cc-broker-bin')
+    expect(fs.statSync(path.join(bin, 'gh')).mode & 0o777).toBe(0o755)
+    expect(fs.statSync(path.join(bin, 'git-credential-cc')).mode & 0o777).toBe(0o755)
+    const body = fs.readFileSync(path.join(tmp, 'cc-scripts', 'cc-709080-1756400000000.sh'), 'utf8')
+    expect(body).toContain(`export PATH='${bin}:/usr/bin:/bin'`)
+    expect(body).toContain("export GIT_CONFIG_KEY_1='credential.https://github.com.helper'")
+    expect(body).toContain(`export GIT_CONFIG_VALUE_1='!sh ${bin}/git-credential-cc'`)
+    expect(body).toContain("export CC_CONNECTOR_BROKER_URL='http://localhost:")
+    expect(body).not.toMatch(/export (GH_TOKEN|GITHUB_TOKEN)=/)
+  })
+
+  it('jail mode: the shims live in the jail HOME and the guest PATH points there', async () => {
+    process.env.SESSION_ISOLATION = 'docker'
+    const spawnInTmux = await loadSpawn()
+    const opts = spawnOpts(tmp)
+    spawnInTmux({ ...opts, env: { ...opts.env, CC_GITHUB_BROKER: '1', CC_SESSION_TOKEN: 'ccs_card', PATH: '/usr/bin:/bin' } })
+    const homeBin = path.join(tmp, 'jail-homes', 'cc-709080-1756400000000', '.cc', 'cc-broker-bin')
+    expect(fs.existsSync(path.join(homeBin, 'gh'))).toBe(true)
+    expect(fs.existsSync(path.join(homeBin, 'git-credential-cc'))).toBe(true)
+  })
+})
+
 describe('SESSION_ISOLATION=docker → createSessionJail path', () => {
   it('docker-runs the jail with the proven isolation argv and no host tmux', async () => {
     process.env.SESSION_ISOLATION = 'docker'

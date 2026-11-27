@@ -409,10 +409,11 @@ const WORKFLOW_TOOLS: McpTool[] = [
       properties: {
         workspace: { type: 'string', description: 'REQUIRED workspace slug (see list_workspaces)' },
         goal: { type: 'string', description: 'What the workflow must achieve, in plain words' },
+        done_when: { type: 'string', maxLength: 1000, description: 'How the owner will know it worked, in plain words (e.g. "every signup got one welcome"). The builder turns it into the checks every self-test and run is graded against; the owner confirms them at publish. Give this or end_condition.' },
         name: { type: 'string', description: 'Display name (default: from the goal). The slug is derived from it.' },
         end_condition: {
           type: 'object',
-          description: 'Optional machine-checkable end condition {assert:[{expr, why?}], judge?}. Omit and the builder proposes one for the owner to confirm.',
+          description: 'Optional machine-checkable end condition {assert:[{expr, why?}], judge?}. Pinned as written: no agent draft may change it, and a person confirms it at publish. Omit and the builder proposes one from done_when.',
         },
         max_iterations: { type: 'integer', minimum: 1, maximum: 20, description: 'builder.max_iterations: agent draft submissions allowed before the card goes to the owner (default 6)' },
       },
@@ -422,9 +423,11 @@ const WORKFLOW_TOOLS: McpTool[] = [
       const goal = strArg(a, 'goal', true)!
       const name = strArg(a, 'name')
       const endCondition = objArg(a, 'end_condition')
+      const doneWhen = strArg(a, 'done_when')
       const max = intArg(a, 'max_iterations')
       const r = await flowRest(rest, 'create_workflow', {}, '', {
         workspace, goal, ...(name ? { name } : {}), ...(endCondition ? { end_condition: endCondition } : {}),
+        ...(doneWhen ? { done_when: doneWhen } : {}),
         ...(max ? { builder: { max_iterations: max } } : {}),
       })
       const b = (r.builder ?? {}) as Record<string, unknown>
@@ -749,7 +752,7 @@ export const MCP_TOOLS: McpTool[] = [
     name: 'file_answer',
     access: 'write',
     scope: 'vault:write',
-    description: 'Save a good answer into a workspace knowledge base as a wiki page (answers/<date>-<question>.md), linked from the pages it used, so later questions can build on it. sources = knowledge-base-relative page paths the answer used (e.g. "people/dana-ruiz.md").',
+    description: 'Save a good answer into a workspace knowledge base as a wiki page (answers/<date>-<question>.md), linked from the pages it used, so later questions can build on it. sources = knowledge-base-relative page paths the answer used (e.g. "people/dana-ruiz.md"). The answer is checked against the pages it cites first; one that cites a missing page or makes claims its pages do not back up is saved but kept out of search until a person reviews it (check = "held").',
     inputSchema: {
       type: 'object',
       required: ['workspace', 'question', 'answer'],
@@ -763,8 +766,66 @@ export const MCP_TOOLS: McpTool[] = [
     run: async (a, rest) => {
       const sources = Array.isArray(a.sources) ? a.sources.filter((s): s is string => typeof s === 'string') : []
       const r = await rest('POST', '/api/kb-wiki/answers', { workspace: strArg(a, 'workspace', true), question: strArg(a, 'question', true), answer: strArg(a, 'answer', true), sources })
-      return { confirmation: `Saved the answer as ${r.rel}.`, path: r.rel, title: r.title }
+      const check = r.check as { status?: string; reason?: string } | undefined
+      const held = check?.status === 'held'
+      return {
+        confirmation: held ? `Saved the answer as ${r.rel}, but it is kept out of search until someone reviews it: ${check?.reason ?? ''}`.trim() : `Saved the answer as ${r.rel}.`,
+        path: r.rel, title: r.title, check: check?.status ?? null, ...(held ? { reason: check?.reason ?? null } : {}),
+      }
     },
+  },
+
+  // ── knowledge-gap flags (obj 901767) ──
+  {
+    name: 'flag_knowledge',
+    access: 'write',
+    scope: 'vault:write',
+    description: 'Report that something in a workspace knowledge base is MISSING, WRONG or STALE (out of date), with an optional suggested fix and the card or trace it came from. The flag lands on the Knowledge base Cleanup tab and in the curator queue (list_knowledge_flags). It does NOT edit any page: flag instead of quietly rewriting a fact. Filing the same open defect again returns the existing flag with reused=true.',
+    inputSchema: {
+      type: 'object',
+      required: ['workspace', 'kind', 'subject', 'detail'],
+      properties: {
+        workspace: { type: 'string' },
+        kind: { type: 'string', enum: ['missing', 'wrong', 'stale'] },
+        subject: { type: 'string', description: 'What knowledge is affected, in a few words' },
+        detail: { type: 'string', description: 'What is missing / wrong / out of date, and how you noticed' },
+        page: { type: 'string', description: 'Optional knowledge-base-relative page path, e.g. "organizations/acme.md"' },
+        suggested_fix: { type: 'string', description: 'Optional proposed correction; never applied automatically' },
+        objective_id: { type: 'integer', description: 'Optional card number in the same workspace' },
+        trace: { type: 'string', description: 'Optional session id, run id or URL of the trace' },
+      },
+    },
+    run: async (a, rest) => {
+      const body: Record<string, unknown> = { workspace: strArg(a, 'workspace', true), kind: strArg(a, 'kind', true), subject: strArg(a, 'subject', true), detail: strArg(a, 'detail', true) }
+      for (const k of ['page', 'suggested_fix', 'trace'] as const) { const v = strArg(a, k); if (v) body[k] = v }
+      if (a.objective_id !== undefined) body.objective_id = a.objective_id
+      const r = await rest('POST', '/api/kb-wiki/flags', body)
+      return { confirmation: r.reused ? `Flag #${r.flag.id} already open; counted it again.` : `Filed flag #${r.flag.id}. No page was changed.`, flag: r.flag, reused: r.reused }
+    },
+  },
+  {
+    name: 'list_knowledge_flags',
+    access: 'read',
+    scope: 'vault:read',
+    description: 'The knowledge-gap flag queue for one workspace, oldest first: what agents and people reported as missing, wrong or stale, with suggested fixes and the card they came from. Default status=open. Use after_id as a cursor to read only new flags. Returns {flags, total, open}.',
+    inputSchema: {
+      type: 'object',
+      required: ['workspace'],
+      properties: {
+        workspace: { type: 'string' },
+        status: { type: 'string', enum: ['open', 'resolved', 'dismissed', 'all'] },
+        kind: { type: 'string', enum: ['missing', 'wrong', 'stale'] },
+        objective_id: { type: 'integer' },
+        after_id: { type: 'integer', minimum: 0 },
+        limit: { type: 'integer', minimum: 1, maximum: 200, description: 'Default 50' },
+      },
+    },
+    run: async (a, rest) => rest('GET', `/api/kb-wiki/flags${qs({
+      workspace: strArg(a, 'workspace', true), status: strArg(a, 'status'), kind: strArg(a, 'kind'),
+      objective_id: typeof a.objective_id === 'number' ? a.objective_id : undefined,
+      after_id: typeof a.after_id === 'number' ? a.after_id : undefined,
+      limit: limitArg(a, 50, 200),
+    })}`),
   },
 
   // ── knowledge-base link graph (obj 720162) ──

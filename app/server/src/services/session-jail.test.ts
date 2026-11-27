@@ -16,6 +16,9 @@ import {
   buildJailDestroyArgv,
   buildJailAttachCommand,
   renderEnvFile,
+  JAIL_FORBIDDEN_ENV,
+  JAIL_FORBIDDEN_ENV_PREFIXES,
+  isJailForbiddenEnv,
   createSessionJailSync,
   destroyJailSync,
   resolveJailNetwork,
@@ -195,6 +198,45 @@ describe('renderEnvFile', () => {
       CC_SESSION_TOKEN: 'ccs_ok',
     })
     expect(out).toBe('CC_SESSION_TOKEN=ccs_ok\n')
+  })
+})
+
+describe('renderEnvFile — connector credentials never enter a jail (obj 901743, issue #136)', () => {
+  it('drops GitHub, Google and workspace MCP credentials whatever their case, keeps identity + the session token', () => {
+    const out = renderEnvFile({
+      GH_TOKEN: 'ghp_aaaaaaaaaaaaaaaaaaaa',
+      GITHUB_TOKEN: 'ghp_bbbbbbbbbbbbbbbbbbbb',
+      github_token: 'ghp_cccccccccccccccccccc',
+      GOOGLE_REFRESH_TOKEN: '1//refresh',
+      GOOGLE_OAUTH_CLIENT_ID: 'cid.apps.googleusercontent.com',
+      GOOGLE_OAUTH_CLIENT_SECRET: 'GOCSPX-secret',
+      CC_MCP_TOKEN_3: 'mcp-secret-3',
+      cc_mcp_token_44: 'mcp-secret-44',
+      GIT_AUTHOR_EMAIL: 'o@users.noreply.github.com',
+      USER_GOOGLE_EMAIL: 'o@example.com',
+      GOOGLE_WORKSPACE_CONNECTION: 'user',
+      CC_GITHUB_BROKER: '1',
+      CC_SESSION_TOKEN: 'ccs_ok',
+    })
+    expect(out).toBe(
+      'GIT_AUTHOR_EMAIL=o@users.noreply.github.com\nUSER_GOOGLE_EMAIL=o@example.com\nGOOGLE_WORKSPACE_CONNECTION=user\nCC_GITHUB_BROKER=1\nCC_SESSION_TOKEN=ccs_ok\n',
+    )
+    for (const secret of ['ghp_', '1//refresh', 'GOCSPX', 'mcp-secret', 'googleusercontent']) expect(out).not.toContain(secret)
+  })
+  it('the forbidden list names every connector credential and the MCP prefix', () => {
+    for (const k of ['GH_TOKEN', 'GITHUB_TOKEN', 'GOOGLE_REFRESH_TOKEN', 'GOOGLE_OAUTH_CLIENT_ID', 'GOOGLE_OAUTH_CLIENT_SECRET']) {
+      expect(JAIL_FORBIDDEN_ENV).toContain(k)
+      expect(isJailForbiddenEnv(k)).toBe(true)
+    }
+    expect(JAIL_FORBIDDEN_ENV_PREFIXES).toContain('CC_MCP_TOKEN_')
+    expect(isJailForbiddenEnv('CC_MCP_TOKEN_12')).toBe(true)
+    expect(isJailForbiddenEnv('CC_SESSION_TOKEN')).toBe(false)
+    expect(isJailForbiddenEnv('GIT_AUTHOR_EMAIL')).toBe(false)
+  })
+  it('stays in sync with the shared list in lib/connector-credential-env.ts (session-jail.ts may not import it)', async () => {
+    const shared = await import('../lib/connector-credential-env.js')
+    for (const k of shared.CONNECTOR_CREDENTIAL_ENV) expect(JAIL_FORBIDDEN_ENV).toContain(k)
+    expect(JAIL_FORBIDDEN_ENV_PREFIXES).toContain(shared.MCP_TOKEN_ENV_PREFIX)
   })
 })
 

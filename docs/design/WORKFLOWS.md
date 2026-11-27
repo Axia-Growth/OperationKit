@@ -343,6 +343,9 @@ MCP) creates a **builder card**: a normal objective whose brief is the goal, the
 
 1. Proposes the `goal.end_condition` if the human did not write one. The human confirms it
    (this is the contract; the builder cannot change it afterwards without the human).
+   *Implemented in obj 901766 (`services/flow-contract.ts`, see `docs/wiki/Goal-Defined-Workflows.md`):
+   the person may give "Done when" in plain words, an agent draft that changes pinned checks is refused
+   `end_condition_changed`, and publish asks the person to confirm builder-written checks.*
 2. Writes a draft version via `POST /api/flows/:id/versions`. The validator answers
    synchronously with every error at once.
 3. Runs the **self-test** (§5.2) and iterates on validation/self-test failures, up to

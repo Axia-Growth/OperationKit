@@ -64,6 +64,8 @@ interface AskResult {
   question?: string
   answer: string
   sources: Array<{ rel: string; title: string }>
+  /** obj 901746 / issue #153: what the answer's own [[citations]] point at. */
+  grounding?: { cited: string[]; unknown: string[]; uncited: boolean }
 }
 
 const STATUS_LABEL: Record<FileStatus, { label: string; tone: 'neutral' | 'info' | 'verify' | 'alarm' | 'amber' }> = {
@@ -377,6 +379,13 @@ export function KnowledgeImportPanel({ workspace, onClose }: { workspace: string
                     onClick={onProseClick('')}
                     dangerouslySetInnerHTML={{ __html: renderMarkdown(citationsToLinks(answer.answer, answer.sources)) }}
                   />
+                  {answer.grounding && (answer.grounding.unknown.length > 0 || answer.grounding.uncited) && (
+                    <Alert tone="amber" className="mt-4" title={answer.grounding.unknown.length > 0 ? 'This answer cites pages it was not given' : 'This answer does not cite its pages'}>
+                      {answer.grounding.unknown.length > 0
+                        ? `It points at ${answer.grounding.unknown.map(r => r.replace(/\.md$/, '')).join(', ')}, which ${answer.grounding.unknown.length === 1 ? 'was' : 'were'} not among the notes it read. Check it before relying on it.`
+                        : 'The notes below are the closest matches, not citations. Check it before relying on it.'}
+                    </Alert>
+                  )}
                   {answer.sources.length > 0 && (
                     <div className="mt-4 flex flex-wrap gap-2">
                       {answer.sources.map(s => (

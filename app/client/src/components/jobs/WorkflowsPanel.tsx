@@ -416,6 +416,7 @@ function FlowDetail({
       <FlowAboutSection
         flow={flow}
         goal={detail?.definition?.goal?.statement || detail?.builder?.goal || null}
+        doneWhen={detail?.builder?.done_when ?? detail?.publish?.end_condition?.contract.done_when ?? null}
         onSaved={() => onDetailsSaved?.()}
       />
 

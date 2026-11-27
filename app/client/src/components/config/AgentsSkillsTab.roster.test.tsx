@@ -94,7 +94,7 @@ describe('AgentsSkillsTab roster (obj 900684)', () => {
   it('lists sub-skills under their parent', async () => {
     flushSync(() => root.render(<AgentsSkillsTab />))
     await flush()
-    flushSync(() => radioWith('Skills').click())
+    flushSync(() => radioWith('Skill files').click())
     expect(container.textContent).toContain('Sub-skill')
   })
 

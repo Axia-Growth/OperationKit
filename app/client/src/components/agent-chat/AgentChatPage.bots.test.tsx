@@ -178,7 +178,9 @@ describe('bots terminology (obj 900327)', () => {
     await mount('/chat')
     await settle()
     expect(host.textContent).toContain('No bots yet')
-    expect(host.textContent).toContain('A bot is one file in the agents folder on the server')
+    expect(host.textContent).toContain('Tell it the outcome you want and it hands bigger jobs to the board')
+    // obj 901763: the empty state never tells a new user to start by writing an agent file.
+    expect(host.textContent).not.toMatch(/agent file|agents folder|skill/i)
     expect(byText('Turn on the demo bot')).toBeDefined()
   })
 

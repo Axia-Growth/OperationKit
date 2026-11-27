@@ -239,6 +239,16 @@ export function initFlowSchema(db: Database.Database): void {
   // they are not part of the versioned definition (editing them needs no re-publish).
   addColumn(db, 'flow_definitions', 'notes', 'TEXT')
   addColumn(db, 'flow_definitions', 'tools_json', 'TEXT')
+  // obj 901766 — the end-condition CONTRACT of a goal-defined workflow
+  // (services/flow-contract.ts). `done_when` = the person's plain words;
+  // `end_condition_json` = the pinned machine-checkable end condition;
+  // `end_condition_confirmed_by` = `user:<id>` once a person gave or confirmed it
+  // (NULL = an agent gave it and nobody has confirmed it). An agent draft may not
+  // change a pinned end condition; publish asks a person to confirm one they have not.
+  addColumn(db, 'flow_definitions', 'done_when', 'TEXT')
+  addColumn(db, 'flow_definitions', 'end_condition_json', 'TEXT')
+  addColumn(db, 'flow_definitions', 'end_condition_confirmed_by', 'TEXT')
+  addColumn(db, 'flow_definitions', 'end_condition_confirmed_at', 'TEXT')
   // One row per draft an AGENT submitted (builder card session or agent key),
   // accepted or refused by the validator. This is what the builder iteration cap
   // counts (services/flow-builder.ts); a human's drafts are never capped.

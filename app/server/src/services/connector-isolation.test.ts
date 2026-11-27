@@ -9,6 +9,14 @@
  *
  * Two users throughout: USER_A and USER_B, both ordinary. ADMIN is a third
  * account with the admin role, present only to prove the role buys nothing.
+ *
+ * obj 901743 (public issue #136): a session env never holds a connector
+ * credential VALUE any more. A session that may use a person's GitHub carries
+ * CC_GITHUB_BROKER=1 plus that person's git identity; one that may use their
+ * Google carries CC_GOOGLE_BROKER=1 plus USER_GOOGLE_EMAIL. So "the env holds
+ * A's credential" reads as "the broker is on, with A's identity", and every
+ * session-env check also proves no token value appears anywhere in the env
+ * (JSON.stringify, not just top-level values).
  */
 import { describe, it, expect, beforeAll, beforeEach, afterAll } from 'vitest'
 import fs from 'fs'
@@ -194,9 +202,16 @@ describe('a card does not lend out the assignee credential', () => {
 
   it("a session for A's own card never contains B's credentials", () => {
     const env = buildSpawnEnv({ objective: cardFor(USER_A), homeDir: '/home/session', sessionKind: 'worker' })
-    expect(env.GH_TOKEN).toBe(A_PAT)
-    expect(Object.values(env)).not.toContain(B_PAT)
-    expect(Object.values(env)).not.toContain(B_REFRESH)
+    // A's own GitHub, brokered: the marker plus A's identity, never A's PAT.
+    expect(env.CC_GITHUB_BROKER).toBe('1')
+    expect(env.GIT_AUTHOR_EMAIL).toBe('user-a@users.noreply.github.test')
+    expect(env.GH_TOKEN).toBeUndefined()
+    expect(JSON.stringify(env)).not.toContain(A_PAT)
+    // Nothing of B's: no Google broker (A has no Google), no B identity or values.
+    expect(env.CC_GOOGLE_BROKER).toBeUndefined()
+    expect(JSON.stringify(env)).not.toContain('user-b@')
+    expect(JSON.stringify(env)).not.toContain(B_PAT)
+    expect(JSON.stringify(env)).not.toContain(B_REFRESH)
   })
 
   it("a card A filed and assigned to B runs as B WITHOUT B's credentials", () => {
@@ -207,10 +222,13 @@ describe('a card does not lend out the assignee credential', () => {
     })
     expect(env.CC_ACTING_USER_ID).toBe(String(USER_B))
     expect(env.GOOGLE_WORKSPACE_CONNECTION).toBe('absent')
-    expect(Object.values(env)).not.toContain(B_PAT)
-    expect(Object.values(env)).not.toContain(B_REFRESH)
+    expect(env.CC_GITHUB_BROKER).toBeUndefined()
+    expect(env.CC_GOOGLE_BROKER).toBeUndefined()
+    expect(JSON.stringify(env)).not.toContain('user-b@')
+    expect(JSON.stringify(env)).not.toContain(B_PAT)
+    expect(JSON.stringify(env)).not.toContain(B_REFRESH)
     // Nor does it quietly fall back to the person who filed it.
-    expect(Object.values(env)).not.toContain(A_PAT)
+    expect(JSON.stringify(env)).not.toContain(A_PAT)
   })
 
   it('an ADMIN assigning the card changes nothing — the role is not consent', () => {
@@ -220,7 +238,9 @@ describe('a card does not lend out the assignee credential', () => {
       sessionKind: 'worker',
     })
     expect(env.GOOGLE_WORKSPACE_CONNECTION).toBe('absent')
-    expect(Object.values(env)).not.toContain(B_REFRESH)
+    expect(env.CC_GOOGLE_BROKER).toBeUndefined()
+    expect(env.CC_GITHUB_BROKER).toBeUndefined()
+    expect(JSON.stringify(env)).not.toContain(B_REFRESH)
   })
 
   it('B opting in is what unlocks it, per connector', () => {
@@ -230,9 +250,16 @@ describe('a card does not lend out the assignee credential', () => {
       homeDir: '/home/session',
       sessionKind: 'worker',
     })
-    expect(env.GOOGLE_REFRESH_TOKEN).toBe(B_REFRESH)
+    // B's Google, brokered: B's email plus the marker, never B's refresh token.
+    expect(env.GOOGLE_WORKSPACE_CONNECTION).toBe('user')
+    expect(env.USER_GOOGLE_EMAIL).toBe('user-b@example.test')
+    expect(env.CC_GOOGLE_BROKER).toBe('1')
+    expect(env.GOOGLE_REFRESH_TOKEN).toBeUndefined()
+    expect(JSON.stringify(env)).not.toContain(B_REFRESH)
+    expect(JSON.stringify(env)).not.toContain('test-client-secret')
     // GitHub was not opted in, so it stays withheld.
-    expect(env.GH_TOKEN).toBeUndefined()
+    expect(env.CC_GITHUB_BROKER).toBeUndefined()
+    expect(JSON.stringify(env)).not.toContain(B_PAT)
   })
 })
 
@@ -377,7 +404,7 @@ describe('per-agent-key connector allow-list', () => {
       homeDir: '/home/session',
       sessionKind: 'worker',
     })
-    expect(env.GH_TOKEN).toBeUndefined()
+    expect(env.CC_GITHUB_BROKER).toBeUndefined()
 
     updateAgentKeyConnectors(key.key.id, ['github'], USER_A)
     const after = buildSpawnEnv({
@@ -385,7 +412,9 @@ describe('per-agent-key connector allow-list', () => {
       homeDir: '/home/session',
       sessionKind: 'worker',
     })
-    expect(after.GH_TOKEN).toBe(A_PAT)
+    expect(after.CC_GITHUB_BROKER).toBe('1')
+    expect(after.GH_TOKEN).toBeUndefined()
+    expect(JSON.stringify(after)).not.toContain(A_PAT)
   })
 
   it('refuses a malformed list rather than storing something it will mis-read later', () => {
@@ -583,8 +612,15 @@ describe('obj 900331: inherit-owner keys, verified end to end', () => {
   it("P1: a session for a card filed by A's inheriting key carries A's credentials only", () => {
     const key = mint(USER_A, 'member')
     const env = buildSpawnEnv({ objective: cardFiledBy(key, USER_A), homeDir: '/home/session', sessionKind: 'worker' })
-    expect(env.GH_TOKEN).toBe(A_PAT)
-    for (const v of [B_PAT, B_REFRESH, ADMIN_PAT]) expect(Object.values(env)).not.toContain(v)
+    // A's GitHub and Google, both brokered, both with A's identity.
+    expect(env.CC_GITHUB_BROKER).toBe('1')
+    expect(env.GIT_AUTHOR_EMAIL).toBe('user-a@users.noreply.github.test')
+    expect(env.CC_GOOGLE_BROKER).toBe('1')
+    expect(env.USER_GOOGLE_EMAIL).toBe('user-a@example.test')
+    // No credential value at all — A's own included — and nothing of B's or the admin's.
+    for (const v of [A_PAT, A_REFRESH, B_PAT, B_REFRESH, ADMIN_PAT, 'user-b@', 'admin-user@']) {
+      expect(JSON.stringify(env)).not.toContain(v)
+    }
   })
 
   // Property 2 ───────────────────────────────────────────────────────────────
@@ -601,8 +637,9 @@ describe('obj 900331: inherit-owner keys, verified end to end', () => {
       expect(useKey(key.token)!.connectors).toEqual([])
     }
     const env = buildSpawnEnv({ objective: cardFiledBy(key, USER_A), homeDir: '/home/session', sessionKind: 'worker' })
-    expect(env.GH_TOKEN).toBeUndefined()
-    expect(Object.values(env)).not.toContain(A_REFRESH)
+    expect(env.CC_GITHUB_BROKER).toBeUndefined()
+    expect(env.CC_GOOGLE_BROKER).toBeUndefined()
+    expect(JSON.stringify(env)).not.toContain(A_REFRESH)
   })
 
   it('P2: an explicit list narrows, survives reads and updates, and is distinct from inherit', () => {
@@ -675,14 +712,18 @@ describe('obj 900331: inherit-owner keys, verified end to end', () => {
   it('P4: a card filed by a key that was later REVOKED gets no connector at its next spawn', () => {
     const key = mint(USER_A, 'member')
     const card = cardFiledBy(key, USER_A)
-    expect(buildSpawnEnv({ objective: card, homeDir: '/home/session', sessionKind: 'worker' }).GH_TOKEN).toBe(A_PAT)
+    const before = buildSpawnEnv({ objective: card, homeDir: '/home/session', sessionKind: 'worker' })
+    expect(before.CC_GITHUB_BROKER).toBe('1')
+    expect(before.CC_GOOGLE_BROKER).toBe('1')
+    expect(JSON.stringify(before)).not.toContain(A_PAT)
 
     revokeAgentKey(USER_A, key.id)
     const after = buildSpawnEnv({ objective: card, homeDir: '/home/session', sessionKind: 'worker' })
     // Same reading as a deleted key: the grant is gone.
-    expect(after.GH_TOKEN).toBeUndefined()
-    expect(Object.values(after)).not.toContain(A_PAT)
-    expect(Object.values(after)).not.toContain(A_REFRESH)
+    expect(after.CC_GITHUB_BROKER).toBeUndefined()
+    expect(after.CC_GOOGLE_BROKER).toBeUndefined()
+    expect(JSON.stringify(after)).not.toContain(A_PAT)
+    expect(JSON.stringify(after)).not.toContain(A_REFRESH)
     expect(after.GOOGLE_WORKSPACE_CONNECTION).toBe('absent')
   })
 
@@ -697,23 +738,28 @@ describe('obj 900331: inherit-owner keys, verified end to end', () => {
     github.deleteForUser(USER_A)
     expect(github.getDecryptedForUser(USER_A, useKey(key.token)!)).toBeNull()
     const env = buildSpawnEnv({ objective: card, homeDir: '/home/session', sessionKind: 'worker' })
-    expect(env.GH_TOKEN).toBeUndefined()
+    expect(env.CC_GITHUB_BROKER).toBeUndefined()
+    expect(env.CC_GOOGLE_BROKER).toBeUndefined()
     expect(env.GOOGLE_WORKSPACE_CONNECTION).toBe('absent')
   })
 
   it('P4: narrowing an inheriting key applies to the next spawn of a card it already filed', () => {
     const key = mint(USER_A, 'member')
     const card = cardFiledBy(key, USER_A)
-    expect(buildSpawnEnv({ objective: card, homeDir: '/home/session', sessionKind: 'worker' }).GH_TOKEN).toBe(A_PAT)
+    const before = buildSpawnEnv({ objective: card, homeDir: '/home/session', sessionKind: 'worker' })
+    expect(before.CC_GITHUB_BROKER).toBe('1')
+    expect(JSON.stringify(before)).not.toContain(A_PAT)
     updateAgentKeyConnectors(key.id, [], USER_A)
-    expect(buildSpawnEnv({ objective: card, homeDir: '/home/session', sessionKind: 'worker' }).GH_TOKEN).toBeUndefined()
+    const after = buildSpawnEnv({ objective: card, homeDir: '/home/session', sessionKind: 'worker' })
+    expect(after.CC_GITHUB_BROKER).toBeUndefined()
+    expect(after.CC_GOOGLE_BROKER).toBeUndefined()
   })
 
   it("P4: the owner's per-connector rule still applies to an inheriting key's card session", () => {
     const key = mint(USER_A, 'member')
     setAccess('github', USER_A, { agents: ['some-other-agent'], workspaces: null, allow_delegated: false })
     const env = buildSpawnEnv({ objective: cardFiledBy(key, USER_A), homeDir: '/home/session', sessionKind: 'worker' })
-    expect(env.GH_TOKEN).toBeUndefined()
+    expect(env.CC_GITHUB_BROKER).toBeUndefined()
     expect(denials().some(d => d.reason === 'access_rule')).toBe(true)
   })
 
@@ -726,7 +772,9 @@ describe('obj 900331: inherit-owner keys, verified end to end', () => {
       sessionKind: 'worker',
     })
     expect(env.CC_ACTING_USER_ID).toBe(String(USER_B))
-    for (const v of [A_PAT, A_REFRESH, B_PAT, B_REFRESH, ADMIN_PAT]) expect(Object.values(env)).not.toContain(v)
+    expect(env.CC_GITHUB_BROKER).toBeUndefined()
+    expect(env.CC_GOOGLE_BROKER).toBeUndefined()
+    for (const v of [A_PAT, A_REFRESH, B_PAT, B_REFRESH, ADMIN_PAT]) expect(JSON.stringify(env)).not.toContain(v)
     expect(denials().some(d => d.reason === 'delegated_card')).toBe(true)
   })
 

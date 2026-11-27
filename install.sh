@@ -101,6 +101,9 @@ step "2. Install folder $OK_DIR"
 run install -d -m 755 "$OK_DIR" "$OK_STATE" "$OK_STATE/data" "$OK_STATE/home" "$OK_STATE/data/branding"
 run install -d -m 1777 "$OK_STATE/tmp"
 run install -d -m 700 "$OK_SECRETS"
+# The Docker policy sidecar's audit log (obj 901741). Host-only: no app or
+# sandbox mount reaches it, so a compromised app cannot rewrite its own trail.
+run install -d -m 750 "$OK_DIR/logs/docker-proxy"
 # Sandboxes run as uid 1000 and write into session folders under these roots.
 for d in projects ai-workspace second-brain transcripts assistant; do run install -d -m 777 "$OK_STATE/home/$d"; done
 # Project registry the server resolves session workdirs from. Repos registered in
@@ -185,11 +188,17 @@ OK_DOMAIN=${DOMAIN:-localhost}
 OK_LOCAL_ONLY=$SKIP_CF
 OK_GIT_SHA=$(repo_sha)
 OK_BRAND_NAME=$(conf BRAND_NAME OperationKit)
+OK_FALLBACK_GIT_NAME=$(conf FALLBACK_GIT_NAME)
+OK_FALLBACK_GIT_EMAIL=$(conf FALLBACK_GIT_EMAIL)
 OK_TIMEZONE=$(conf TIMEZONE UTC)
 OK_SESSION_ISOLATION=$(conf SESSION_ISOLATION docker)
 OK_JAIL_TMP_SIZE=$(conf JAIL_TMP_SIZE 2g)
 OK_JAIL_CLAUDE_TMPDIR=$(conf JAIL_CLAUDE_TMPDIR)
 OK_DOCKER_BRIDGE_IP=$BRIDGE_IP
+OK_DOCKER_PROXY_LOG_DIR=$OK_DIR/logs/docker-proxy
+OK_DOCKER_PROXY_HOST_RUNNER=$(conf HOST_RUNNER off)
+OK_REPO_DIR=$OK_REPO_DIR
+OK_CONFIG_FILE=$CONFIG
 OK_BROWSER_SANDBOX=$(conf BROWSER_SANDBOX on)
 OK_BROWSER_EGRESS_GUARD=$(conf BROWSER_EGRESS_GUARD on)
 OK_BROWSER_ALLOWED_ORIGINS=$(conf BROWSER_ALLOWED_ORIGINS)

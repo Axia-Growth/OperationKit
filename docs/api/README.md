@@ -54,7 +54,7 @@ The key above is the **legacy full-access key**: it acts as you everywhere and k
   | `board:cancel` | `PATCH …/status {"status":"cancelled"}` — retire a duplicate (obj 718417: split out of `board:done`) |
   | `board:done` | `PATCH …/status {"status":"done"}` — the human signature. A key that holds it still needs a passing AI review or an `override_reason` to close a card with a pull request (see [Closing a card with an agent key](#closing-a-card-with-an-agent-key)) |
   | `board:delete` | `DELETE /api/objectives/:id` |
-  | `vault:read` / `vault:write` | `GET /api/docs/*` + `GET /api/files/search\|stat\|download` / `PUT /api/docs/file`, `POST /api/kb-wiki/answers` |
+  | `vault:read` / `vault:write` | `GET /api/docs/*` + `GET /api/files/search\|stat\|download` / `PUT /api/docs/file`, `POST /api/kb-wiki/answers`, `GET`/`POST /api/kb-wiki/flags` (read / file + close) |
   | `secrets:use` | `GET /api/secrets-broker/list` + `POST /api/secrets-broker/http` — use a named secret without seeing it (obj 900749). **Never in the default set.** See [Secrets: use without reveal](#secrets-use-without-reveal-obj-715532) |
 
   New keys default to **everything except `board:done` and `board:delete`** — done is a human signature. A call the key is not scoped for returns `403 { "error": "…", "missing_scope": "board:done" }`. Anything outside this surface (admin, the secrets store, internal, key management) returns `403` with `missing_scope: null` — an agent key can never mint itself another key.
@@ -187,6 +187,8 @@ Over MCP the loop is the same with typed tools: `whoami` → `get_attention` →
 | GET | `/api/docs/file?path=` | Read a vault markdown file |
 | PUT | `/api/docs/file` | Write a `.md` file |
 | POST | `/api/kb-wiki/answers` | Save an answer into a workspace knowledge base as a wiki page `{workspace, question, answer, sources}` |
+| GET · POST | `/api/kb-wiki/flags` | Knowledge-gap flags (obj 901767): the queue (`?workspace=&status=&kind=&after_id=`) · report something `missing` / `wrong` / `stale` `{workspace, kind, subject, detail, page?, suggested_fix?, objective_id?, trace?}`. Never edits a page |
+| POST | `/api/kb-wiki/flags/:id/status` | Close (`resolved` / `dismissed`) or reopen a flag `{workspace, status, note?}` |
 | GET | `/api/files/search?q=&ext=&type=&path_prefix=&modified_after=` | Find non-markdown files (pptx, pdf, key, images…) — read-only, workspace-scoped |
 | GET | `/api/files/stat?path=&sha256=1` | One file's size, mime, mtime, created, optional sha256 |
 | GET | `/api/files/download?path=` | Stream one file (`Range` supported; 413 over the cap, default 200 MB) |
@@ -370,7 +372,7 @@ format is §3, the build loop §5.1). Everything below works for an agent key, a
 signed-in owner alike, **except publish**.
 
 **New workflow is a goal, not JSON.** `POST /api/flows` with
-`{ "workspace": "acme", "goal": "…", "name"?: "…", "end_condition"?: { "assert": [{ "expr": "…" }] }, "builder"?: { "max_iterations": 6 } }`
+`{ "workspace": "acme", "goal": "…", "done_when"?: "…", "name"?: "…", "end_condition"?: { "assert": [{ "expr": "…" }] }, "builder"?: { "max_iterations": 6 } }`
 creates the workflow (no version yet) and its **builder card** — a normal card (`origin: "workflow"`, status
 `queue`) whose brief carries the goal, the end condition (or a request to propose one for the owner to confirm),
 the Tool registry the engine can run, the workspace's enabled MCP connectors and the exact loop below. Start the
@@ -386,6 +388,16 @@ cannot self-test yet. The same action is **New workflow** on the board header an
 3. `POST /api/flows/:id/test {version, mode: "dry"}` — the engine's verdict: `self_test.status` `passed` | `failed`
    with `failures[]`, `failing_asserts[]`, `uncovered_nodes[]`. `dry` calls nothing outside.
 4. Repeat 2–3 until `passed`. Then the owner publishes from Jobs → Workflows.
+
+**The end condition is a contract (obj 901766).** Give the goal with `done_when` (how you will know it worked, in
+plain words) and/or an exact `end_condition`. Every self-test and live run is graded against `goal.end_condition`,
+so the server pins it: an `end_condition` given at create is pinned as written; with only `done_when`, the
+builder's FIRST accepted draft pins the end condition it proposed. An **agent** draft (agent key or card session)
+whose end condition differs from the pinned one is `409 { reason: "end_condition_changed", pinned_end_condition }`
+(it still counts as an iteration). The owner's own drafts may change it. At publish, an agent-written end condition
+that no person has confirmed needs `"confirm_end_condition": true` from the owner (else
+`409 end_condition_unconfirmed` with the end condition and `done_when`); publishing pins it as confirmed.
+`GET /api/flows/:id` shows it as `publish.end_condition { value, confirmation_required, reason, contract }`.
 
 **`builder.max_iterations`** (default 6, per workflow 1–20, install default `settings.flow_builder_max_iterations`):
 every draft an **agent** submits (agent key or card session) counts, accepted or refused. After that many since
@@ -528,6 +540,8 @@ surface with the tool's scope, in the OpenAPI spec, and the only call the tool m
 | Knowledge base read | `GET /api/docs/file` | `read_file(path)` (`.md`) | vault:read |
 | Knowledge base write | `PUT /api/docs/file` | `write_doc(path, content)` | vault:write |
 | Save an answer to the wiki | `POST /api/kb-wiki/answers` | `file_answer(workspace, question, answer, sources?)`: becomes `answers/<date>-<question>.md`, linked from the pages it used | vault:write |
+| Flag a knowledge gap | `POST /api/kb-wiki/flags` | `flag_knowledge(workspace, kind, subject, detail, page?, suggested_fix?, objective_id?, trace?)`: kind `missing` / `wrong` / `stale`; lands on the Cleanup tab; edits no page. The same open defect again returns `reused: true` | vault:write |
+| Knowledge-gap queue | `GET /api/kb-wiki/flags` | `list_knowledge_flags(workspace, status?, kind?, objective_id?, after_id?, limit?)`: oldest first; `after_id` is a curator cursor | vault:read |
 | Knowledge-base graph | `GET /api/kb-wiki/graph` | (REST only) every page plus one link per connected pair (`kinds`, `label`), page degrees and counts by kind; `limit` ≤ 2000 keeps the best connected. The Knowledge base page draws this as its default graph view (obj 900674) | vault:read |
 | Knowledge-base connections | `GET /api/kb-wiki/graph/related` | `kb_related(workspace, page, depth?)`: pages linked to one page (path or name), each with kind (`related` / `mentions` / `cited_by` / `answer_used`) and label (`works for` …); depth ≤ 2 | vault:read |
 | Who knows about a topic | `GET /api/kb-wiki/graph/who-knows` | `kb_who_knows(workspace, topic, limit?)`: people linked to a topic, ranked by number of citing sources then recency | vault:read |
@@ -539,7 +553,7 @@ surface with the tool's scope, in the OpenAPI spec, and the only call the tool m
 | Delete a card | `DELETE /api/objectives/:id` | **none on purpose** | board:delete (REST only) |
 | List workflows | `GET /api/flows` | `list_workflows(workspace?)` | board:read |
 | Read a workflow | `GET /api/flows/:id` | `get_workflow(id, version?)`: definition, Mermaid text, versions, recent runs, publish state | board:read |
-| New workflow from a goal | `POST /api/flows` | `create_workflow(workspace, goal, name?, end_condition?, max_iterations?)`: files the builder card | board:write |
+| New workflow from a goal | `POST /api/flows` | `create_workflow(workspace, goal, done_when?, name?, end_condition?, max_iterations?)`: files the builder card | board:write |
 | Draft a version | `POST /api/flows/:id/versions` | `draft_workflow_version(id, definition)`: a refusal lists every validator issue | board:write |
 | Validate without saving | `POST /api/flows/validate` | `validate_workflow(definition)` (free) | board:write |
 | Self-test | `POST /api/flows/:id/test` | `test_workflow(id, version?, mode?, fixtures?)` | board:start |

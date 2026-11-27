@@ -3,6 +3,8 @@ import path from 'path'
 import { FOLDER_FOR, parseNote } from './notes.js'
 import type { LlmCall } from './llm.js'
 import { extraNoteDirs } from '../kb-wiki/hooks.js'
+import { citedTargets } from '../kb-wiki/answer-check.js'
+import { isHeldAnswerText } from '../../lib/kb-answer-hold.js'
 
 /**
  * "Ask the files" (obj 719936): find the notes that matter for a question and
@@ -32,6 +34,9 @@ export function listNotes(kbRoot: string): NoteDoc[] {
       const rel = `${d}/${n}`
       try {
         const text = fs.readFileSync(path.join(kbRoot, rel), 'utf8')
+        // A saved answer that failed its check (or whose pages changed) waits for a
+        // person; until then Ask must not read it, or it gets cited again (obj 901746).
+        if (isHeldAnswerText(text)) continue
         out.push({ rel, title: parseNote(text).fm?.title || n.replace(/\.md$/, ''), text })
       } catch { /* skip unreadable */ }
     }
@@ -75,9 +80,32 @@ export function buildAskPrompt(question: string, notes: NoteDoc[]): string {
   return parts.join('\n')
 }
 
+export interface AskGrounding {
+  /** Notes the answer cites that were among the notes it was given. */
+  cited: string[]
+  /** Pages the answer cites that it was NOT given (made up, or a wrong path). */
+  unknown: string[]
+  /** The answer cites none of the notes it was given; `sources` are then only the best-matching notes, not citations. */
+  uncited: boolean
+}
+
 export interface AskResult {
   answer: string
   sources: Array<{ rel: string; title: string }>
+  /**
+   * What the answer's own citations say (obj 901746, public issue #153). The
+   * model writes the [[citations]], so they are checked against the notes it
+   * was actually given. Saving the answer runs the full check against the pages.
+   */
+  grounding?: AskGrounding
+}
+
+/** Split an answer's [[citations]] into notes it was given and pages it was not (pure). */
+export function groundingFor(answer: string, given: NoteDoc[]): AskGrounding {
+  const rels = new Set(given.map(n => n.rel))
+  const targets = citedTargets(answer)
+  const cited = targets.filter(t => rels.has(t))
+  return { cited, unknown: targets.filter(t => !rels.has(t)), uncited: cited.length === 0 }
 }
 
 export async function askKnowledgeBase(kbRoot: string, question: string, llm: LlmCall, systemPrompt: string): Promise<AskResult> {
@@ -86,7 +114,8 @@ export async function askKnowledgeBase(kbRoot: string, question: string, llm: Ll
     return { answer: 'Nothing in the uploaded files matches that question yet. Try different words, or upload the file that covers it.', sources: [] }
   }
   const answer = (await llm(systemPrompt, buildAskPrompt(question, hits))).trim()
-  const cited = new Set([...answer.matchAll(/\[\[([^\]]+)\]\]/g)].map(m => m[1]))
+  const grounding = groundingFor(answer, hits)
+  const cited = new Set(grounding.cited)
   const sources = hits.filter(h => cited.has(h.rel)).map(h => ({ rel: h.rel, title: h.title }))
-  return { answer, sources: sources.length ? sources : hits.slice(0, 5).map(h => ({ rel: h.rel, title: h.title })) }
+  return { answer, sources: sources.length ? sources : hits.slice(0, 5).map(h => ({ rel: h.rel, title: h.title })), grounding }
 }

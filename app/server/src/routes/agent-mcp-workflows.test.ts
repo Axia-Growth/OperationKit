@@ -352,7 +352,7 @@ describe('mcp-e2e: create → draft → validate → test is green for a sample 
     const rest = await call('GET', `/api/flows/${created.flow_id}`, { bearer: botKey })
     expect(rest.status).toBe(200)
     expect(rest.json).toMatchObject({ version: null, definition: null, versions: [], publish: null })
-    expect(rest.json.builder).toEqual({ goal: 'Versionless probe', objective_id: created.objective_id, used: 0, max: 3, remaining: 3, exhausted: false })
+    expect(rest.json.builder).toEqual({ goal: 'Versionless probe', objective_id: created.objective_id, used: 0, max: 3, remaining: 3, exhausted: false, done_when: null })
     const shown = await tool('get_workflow', { id: created.flow_id })
     expect(shown.version).toBeNull()
     expect(shown.publish.published).toBe(false)

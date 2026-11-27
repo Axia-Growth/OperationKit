@@ -16,7 +16,25 @@ import { Alert, Badge, Button } from '../ui'
  * and, when the version sends or spends, the owner ticking exactly those nodes.
  * The server enforces all of it (and that the publisher is a signed-in
  * owner/admin); the button never decides anything on its own.
+ *
+ * obj 901766 — the panel also shows the END CONDITION this version is graded
+ * against ("How we know it worked": the person's own words + each check). When
+ * the builder wrote those checks and no person has confirmed them, publishing
+ * needs the owner to tick "These checks match what I meant by done"; the server
+ * refuses (`end_condition_unconfirmed`) otherwise.
  */
+
+interface ShownAssert { expr: string; why?: string }
+function assertsOf(ec: unknown): ShownAssert[] {
+  const a = (ec as { assert?: unknown } | null)?.assert
+  return Array.isArray(a)
+    ? a.filter((x): x is ShownAssert => !!x && typeof (x as ShownAssert).expr === 'string').map((x) => ({ expr: x.expr, ...(typeof x.why === 'string' ? { why: x.why } : {}) }))
+    : []
+}
+function judgeOf(ec: unknown): string | null {
+  const j = (ec as { judge?: { rubric?: unknown } } | null)?.judge
+  return j && typeof j.rubric === 'string' ? j.rubric : null
+}
 
 const SIM_LABEL: Record<string, string> = {
   would_send: 'would send',
@@ -42,11 +60,14 @@ export function FlowSelfTestPanel({
   const [busy, setBusy] = useState<'dry' | 'test' | 'publish' | null>(null)
   const [message, setMessage] = useState<{ tone: 'alarm' | 'verify'; text: string } | null>(null)
   const [approved, setApproved] = useState<Set<string>>(new Set())
+  const [endConfirmed, setEndConfirmed] = useState(false)
+  const ec = publish.end_condition ?? null
+  const needEndConfirm = !!ec?.confirmation_required
   const st: FlowSelfTest | null = publish.self_test
   const need = publish.nodes_requiring_approval
   const isPublished = publishedVersion === publish.version
 
-  useEffect(() => { setApproved(new Set()); setMessage(null) }, [publish.version])
+  useEffect(() => { setApproved(new Set()); setEndConfirmed(false); setMessage(null) }, [publish.version])
 
   const test = async (mode: 'dry' | 'test') => {
     setBusy(mode)
@@ -60,7 +81,9 @@ export function FlowSelfTestPanel({
   const doPublish = async () => {
     setBusy('publish')
     setMessage(null)
-    const r = await publishFlow(flowId, { version: publish.version, approve: [...approved].sort() })
+    const r = await publishFlow(flowId, {
+      version: publish.version, approve: [...approved].sort(), ...(needEndConfirm ? { confirm_end_condition: true as const } : {}),
+    })
     setBusy(null)
     setMessage(r.ok
       ? { tone: 'verify', text: `v${publish.version} published${r.approvals?.nodes.length ? ` — you approved ${r.approvals.nodes.join(', ')}` : ''}.` }
@@ -75,8 +98,9 @@ export function FlowSelfTestPanel({
     : !st ? 'Run a self-test of this version first.'
       : st.status === 'running' ? 'The self-test is still running.'
         : !green ? 'The latest self-test of this version failed.'
-          : need.length && !allTicked ? 'Tick every send/spend node to approve it.'
-            : null
+          : needEndConfirm && !endConfirmed ? 'Confirm the end condition first.'
+            : need.length && !allTicked ? 'Tick every send/spend node to approve it.'
+              : null
 
   return (
     <section className="space-y-2 rounded-md border border-line p-3" data-testid="flow-self-test">
@@ -149,6 +173,28 @@ export function FlowSelfTestPanel({
         </div>
       )}
 
+      {ec && ec.value != null && (
+        <div className="space-y-1 border-t border-line pt-2 text-xs" data-testid="flow-end-condition">
+          <div className="font-medium text-fg-1">How we know it worked</div>
+          {ec.contract.done_when && <p className="text-fg-1">“{ec.contract.done_when}”</p>}
+          <ul className="ml-4 list-disc">
+            {assertsOf(ec.value).map((a, i) => (
+              <li key={i} className="text-fg-2"><code className="font-mono text-fg-0">{a.expr}</code>{a.why ? ` — ${a.why}` : ''}</li>
+            ))}
+            {judgeOf(ec.value) && <li className="text-fg-2">AI judge: {judgeOf(ec.value)}</li>}
+          </ul>
+          <p className="text-fg-3">
+            {needEndConfirm
+              ? ec.reason === 'differs_from_confirmed'
+                ? 'This version changes the checks you confirmed before.'
+                : 'The builder wrote these checks from your goal. Every self-test and every run is graded against them.'
+              : ec.contract.confirmed_by
+                ? `Confirmed by ${ec.contract.confirmed_by}. The builder and the repair agent cannot change them on their own.`
+                : 'Every self-test and every run is graded against these checks.'}
+          </p>
+        </div>
+      )}
+
       <div className="space-y-1.5 border-t border-line pt-2 text-xs">
         {isPublished && publish.approvals ? (
           <div className="inline-flex items-center gap-1.5 text-fg-2" data-testid="flow-approval-record">
@@ -158,6 +204,12 @@ export function FlowSelfTestPanel({
           </div>
         ) : (
           <>
+            {needEndConfirm && (
+              <label className="flex items-center gap-2 text-fg-0">
+                <input type="checkbox" data-testid="flow-confirm-end-condition" checked={endConfirmed} onChange={(e) => setEndConfirmed(e.target.checked)} />
+                These checks match what I meant by done
+              </label>
+            )}
             {need.length > 0 && (
               <fieldset className="space-y-1">
                 <legend className="text-fg-2">This version sends or spends through these nodes. Approve exactly these to publish:</legend>

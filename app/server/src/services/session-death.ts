@@ -397,7 +397,7 @@ export function handleSessionDeath(sessionId: string): SessionDeathResult {
   }
 
   // obj 900038 — the per-session jail HOME holds the wrapper script (with an
-  // `export KEY="value"` line per injected secret) and, before this, the docker
+  // `export KEY='value'` line per injected secret) and, before this, the docker
   // --env-file too. On a clean exit the wrapper rm'd its own files; on an EARLY
   // death — the exact failure this objective was filed for — it never reached
   // that line, so a world-readable plaintext credential dump outlived the

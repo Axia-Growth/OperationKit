@@ -19,6 +19,12 @@
  * an Agents / Skills underline pair). Now there is ONE tab row; the roster's
  * Agents / Skills choice is a filter (SegmentedControl), and the create guide
  * can be collapsed.
+ *
+ * obj 901765 demoted skills to a harness internal: the page is "Bot setup", the
+ * roster tab is "Bots", and the skill graph is the LAST tab, labelled advanced.
+ * A new install gets work done with no SKILL.md at all — sessions take their
+ * procedure from the card, the repo's own docs and Context. Skill files stay as
+ * an escape hatch, so `?tab=graph` still opens the same graph.
  */
 import type { Workspace } from '@operationkit/shared'
 import { SkillGraphTab } from '../SkillGraph'
@@ -30,19 +36,20 @@ import { SettingsAgents } from '../settings/SettingsAgents'
 import { AGENTS_TABS, type AgentsTab } from '../../lib/routes'
 import { CreateAgentGuide } from './CreateAgentGuide'
 
-const TABS: TabItem[] = [
-  { key: 'registry', label: 'Registry' },
-  { key: 'assignments', label: 'Assignments' },
-  { key: 'graph', label: 'Skill graph' },
-  { key: 'board', label: 'By project' },
+/** Order is the order of importance: skill files are the advanced, last tab (obj 901765). */
+export const TABS: TabItem[] = [
+  { key: 'registry', label: 'Bots' },
   { key: 'templates', label: 'Templates' },
+  { key: 'board', label: 'By project' },
+  { key: 'assignments', label: 'Assignments' },
+  { key: 'graph', label: 'Skills (advanced)' },
 ]
 
 const COPY: Record<AgentsTab, string> = {
-  registry: 'Every bot and skill on this install — including built-in and starter-pack bots — who can use them, and how they connect.',
-  assignments: 'Narrow a bot or skill to one workspace, project or user instead of it applying everywhere.',
-  graph: 'How bots, skills and tools connect.',
-  board: 'Which bot, skill and tool files a project’s cards actually run on.',
+  registry: 'Every bot on this install — including built-in and starter-pack bots — and who can use them.',
+  assignments: 'Narrow a bot to one workspace, project or user instead of it applying everywhere.',
+  graph: 'Advanced. Skill files are optional: bots work out how to do a task from the card, your project’s docs and Context. Add a skill file only for a rare procedure that must be followed exactly.',
+  board: 'Which bot and tool files a project’s cards actually run on.',
   templates: 'Add a starter bot, or import and export bot files.',
 }
 
@@ -64,10 +71,10 @@ export function AgentsHub({ workspace }: { workspace: Workspace }) {
 
   return (
     <PageContainer width="wide">
-      <PageHeader title="Bots & skills" description={COPY[tab]} />
+      <PageHeader title="Bot setup" description={COPY[tab]} />
       {/* One clear way in to creating something, on every tab (obj 900672). */}
       <CreateAgentGuide />
-      <Tabs items={TABS} value={tab} onChange={select} label="Bots and skills sections" panelClassName="mt-5">
+      <Tabs items={TABS} value={tab} onChange={select} label="Bot setup sections" panelClassName="mt-5">
         {tab === 'registry' && <SettingsAgents showSetupPrompt={false} view="roster" />}
         {tab === 'assignments' && <SettingsAgents showSetupPrompt={false} view="assignments" />}
         {tab === 'graph' && (

@@ -11,7 +11,13 @@
 #     comment on the line above a finding marks it suppressed in the SARIF, and
 #     advanced-security/dismiss-alerts dismisses it on main ("won't fix",
 #     "Suppressed via SARIF"). Removing the comment re-opens the alert. Every
-#     suppression must state WHY (see app/server/src/routes/auth-email-link.ts).
+#     suppression must state WHY (see app/server/src/routes/auth-email-link.ts;
+#     enforced by app/server/src/lib/codeql-suppressions.test.ts).
+#     On PR runs the suppressed results are removed from the SARIF before
+#     upload instead (scripts/codeql-drop-suppressed.mjs), so the sync PR does
+#     not report them as new alerts. Nothing is dismissed from a PR run.
+#   * None of this applies while the repo is on GitHub DEFAULT setup: default
+#     setup reads no config file and no suppression comment (obj 901854).
 #
 # OPT-IN: runs only when the repo variable CODEQL_ADVANCED_SETUP == 'true'.
 # GitHub refuses advanced-setup uploads while default setup is enabled, so the
@@ -86,6 +92,24 @@ jobs:
         with:
           category: /language:${{ matrix.language }}
           output: sarif-results
+          # PR runs upload in the two steps below, after suppressed results are removed.
+          upload: ${{ github.event_name == 'pull_request' && 'never' || 'always' }}
+
+      # PR runs only. GitHub does not act on SARIF `suppressions`, and a PR run must
+      # not dismiss alerts (the code is not merged), so without this a justified
+      # `// codeql[<rule>] -- <reason>` finding shows as a NEW alert on the sync PR
+      # until it merges. Drops ONLY results CodeQL's AlertSuppression query marked
+      # suppressed in source and logs each one (scripts/codeql-drop-suppressed.mjs).
+      - name: Remove results suppressed in source (PR runs)
+        if: github.event_name == 'pull_request'
+        run: node scripts/codeql-drop-suppressed.mjs sarif-results
+
+      - name: Upload SARIF (PR runs)
+        if: github.event_name == 'pull_request'
+        uses: github/codeql-action/upload-sarif@v4
+        with:
+          sarif_file: sarif-results
+          category: /language:${{ matrix.language }}
 
       # Only on the default branch: PR runs report, main runs dismiss/re-open.
       - name: Dismiss alerts suppressed with a justified codeql[...] comment

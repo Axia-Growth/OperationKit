@@ -27,9 +27,15 @@ import {
   getForUser as getGoogleConnectionForUser,
   getDecryptedRefreshToken as getGoogleRefreshToken,
   getOAuthClientById as getGoogleOAuthClientById,
-  writeIsolatedGoogleCredsDir,
   writeEmptyGoogleCredsDir,
 } from './user-google-connections.js'
+import {
+  GITHUB_BROKER_ENV,
+  GOOGLE_BROKER_ENV,
+  connectorBrokerBaseUrl,
+  stripConnectorCredentials,
+} from '../lib/connector-credential-env.js'
+import { WORKSPACE_MCP_ENV, type WorkspaceMcpSpawnServer } from './workspace-mcp-servers.js'
 import { resolveSecrets } from './secrets-store.js'
 import { allowlistedKeys, getSessionEnvMode, sessionKeyFilter, sessionSubjects } from './secret-env-policy.js'
 import {
@@ -205,47 +211,60 @@ export function resolveSpawnTier(objective: Objective): 'admin' | 'member' {
   }
 }
 
-/** Durable Vercel COMMIT_AUTHOR_REQUIRED guard (obj-701130).
+/** Install-level fallback git identity (obj-701130, moved to install config).
  *
- *  The GitHub-LINKED identity every env-less spawn falls back to so its commits
- *  are always attributable. This is the GitHub `noreply` address for the
- *  `m1keluka` account (`255270713+m1keluka@users.noreply.github.com`): it is
- *  guaranteed linked to a real GitHub account, leaks no private email, and is
- *  already the identity example2 deploys under.
- *
- *  WHY this exists: git resolves a commit's author by precedence
+ *  WHY a fallback exists at all: git resolves a commit's author by precedence
  *  (GIT_AUTHOR_* env > repo-local > --global HOME/.gitconfig > --system
- *  /etc/gitconfig). On this MULTI-USER box `/etc/gitconfig` is root-owned (no
- *  sudo) and POISONED with an UNLINKED identity (`Command Center
- *  <dev@example.com>`). When an objective owner has no linked GitHub token,
- *  `userGitIdentityEnv` returns `{}` and the spawn carries NO GIT_AUTHOR_* env
- *  — so a commit made in a fresh worktree with no repo-local user.* falls all
- *  the way through to that poisoned /etc/gitconfig, and Vercel Pro then blocks
- *  the pre-build with COMMIT_AUTHOR_REQUIRED ("No GitHub account was found
- *  matching the commit author email address"). Per-home ~/.gitconfig seeding
- *  mitigates it but is fragile (a container rebuild resets homes; a NEW ccuser
- *  home gets no identity). Injecting this identity as the GIT_AUTHOR / GIT_COMMITTER
- *  env vars — the TOP of git's precedence chain — makes EVERY spawn attributable
- *  regardless of HOME/.gitconfig/system state. */
-export const SAFE_FALLBACK_GIT_IDENTITY = {
-  name: 'm1keluka',
-  email: '255270713+m1keluka@users.noreply.github.com',
-} as const
+ *  /etc/gitconfig). When a card owner has no linked GitHub token,
+ *  `userGitIdentityEnv` returns `{}`, and a commit in a fresh worktree falls all
+ *  the way through to whatever ~/.gitconfig or /etc/gitconfig the host happens to
+ *  carry — often an UNLINKED identity that Vercel Pro then rejects with
+ *  COMMIT_AUTHOR_REQUIRED. Env is the TOP of git's precedence chain, so setting
+ *  GIT_AUTHOR_* / GIT_COMMITTER_* in the spawn env makes the result predictable.
+ *
+ *  WHO it is: the install's OWN bot or operator account, set at install time as
+ *  FALLBACK_GIT_NAME / FALLBACK_GIT_EMAIL in client.conf (written to the app as
+ *  OK_FALLBACK_GIT_NAME / OK_FALLBACK_GIT_EMAIL). It used to be a hard-coded
+ *  vendor account, which put a third party's GitHub identity on every client's
+ *  commits; the product no longer ships any default identity.
+ *
+ *  Not configured (or malformed) ⇒ `null`, and buildSpawnEnv blanks the git
+ *  identity so a commit FAILS instead of silently borrowing someone else's
+ *  (see GIT_IDENTITY_MISSING_MESSAGE). */
+export function resolveFallbackGitIdentity(
+  env: NodeJS.ProcessEnv = process.env,
+): { name: string; email: string } | null {
+  const name = (env.OK_FALLBACK_GIT_NAME || '').trim()
+  const email = (env.OK_FALLBACK_GIT_EMAIL || '').trim()
+  if (!name || !email) return null
+  // git rejects '<', '>' and newlines in an ident; a bare "x@y" is all we need.
+  if (/[<>\r\n]/.test(name) || /[<>\s]/.test(email) || !/^[^@]+@[^@]+$/.test(email)) return null
+  return { name, email }
+}
 
-/** Per-user GitHub PR attribution (obj-2221 / W4).
+/** Shown to a session (env + prompt) whose owner has no linked GitHub account on
+ *  an install with no fallback identity configured. */
+export const GIT_IDENTITY_MISSING_MESSAGE =
+  'No git identity for this session, so git commit will fail: the card owner should connect GitHub in Settings → Connectors → GitHub, ' +
+  'or ask an admin to set FALLBACK_GIT_NAME / FALLBACK_GIT_EMAIL in the install config.'
+/** Per-user GitHub PR attribution (obj-2221 / W4), brokered since obj 901743.
  *
  *  Resolves the env that makes a session's commits AND opened PR attribute to the
  *  OBJECTIVE OWNER (`ownerId` = objective.created_by) on GitHub, per the PRD
  *  ("Per-User GitHub Token & PR Attribution", Part B0/B4). GitHub decides a PR's
- *  attribution from two INDEPENDENT levers, so we set both:
- *    - the PR "opened by" actor   ← the token that runs `gh pr create`  → GH_TOKEN
+ *  attribution from two INDEPENDENT levers:
+ *    - the PR "opened by" actor   ← the token that runs `gh pr create`
  *    - the commit author/committer ← the commit's author/committer email → GIT_*
  *  The SSH push transport (GIT_SSH_COMMAND, shared deploy key) is irrelevant to
  *  attribution and is left untouched by this hook.
  *
- *  We ALSO export GITHUB_TOKEN (alias of GH_TOKEN): `gh` prefers GH_TOKEN, but
- *  some git/CI tooling reads GITHUB_TOKEN — setting both guarantees every caller
- *  in the spawn authenticates as the user.
+ *  obj 901743 (public issue #136): the token itself is NO LONGER put in the env
+ *  (it used to be GH_TOKEN + GITHUB_TOKEN). The env carries the identity plus the
+ *  `CC_GITHUB_BROKER=1` marker; the spawn installs a git credential helper and a
+ *  `gh` shim that fetch the credential per request from the host-side broker
+ *  (routes/session-broker.ts), which re-checks the card, the repo and the
+ *  owner's connector rules every time. The PAT is still decrypted here once, to
+ *  confirm the connection is readable (a session is told up front when it is not).
  *
  *  Fallback contract (NEVER block work): if the owner has no linked token, or
  *  anything goes wrong resolving it, return {} — the spawn then falls back to the
@@ -254,8 +273,7 @@ export const SAFE_FALLBACK_GIT_IDENTITY = {
  *  scoped-Doppler cutover (USE_SCOPED_DOPPLER_TOKENS).
  *
  *  Invariants honored: stays PURE (only DB reads), MUST NOT throw, and NEVER logs
- *  the raw PAT — the decrypted token flows only into the returned env, which goes
- *  straight into the spawned child's process env. */
+ *  or returns the raw PAT. */
 export function userGitIdentityEnv(
   ownerId: number | null | undefined,
   actor: ConnectorActor,
@@ -267,7 +285,7 @@ export function userGitIdentityEnv(
     const summary = getForUser(ownerId)
     if (!summary || !summary.github_login || !summary.github_email) return {}
 
-    // Server-only seam: decrypt the PAT. Only reached when a row exists.
+    // Server-only seam: decrypt the PAT to confirm it is readable, then drop it.
     // Owner-scoped: refused (and audited) unless this principal is the owner
     // and, when it is an agent key's session, holds the connector on its list.
     const token = getDecryptedForUser(ownerId, actor)
@@ -276,8 +294,7 @@ export function userGitIdentityEnv(
     const name = summary.github_login
     const email = summary.github_email
     return {
-      GH_TOKEN: token,
-      GITHUB_TOKEN: token,
+      [GITHUB_BROKER_ENV]: '1',
       GIT_AUTHOR_NAME: name,
       GIT_AUTHOR_EMAIL: email,
       GIT_COMMITTER_NAME: name,
@@ -289,7 +306,7 @@ export function userGitIdentityEnv(
   }
 }
 
-/** Per-user Google Workspace credential for a spawn (obj-706070).
+/** Per-user Google Workspace connection for a spawn (obj-706070), brokered since obj 901743.
  *
  *  Command Center's Google access was ONE shared credential (Operator's), so a
  *  session doing Workspace work for Casey wrote Docs as Operator. This resolver makes
@@ -297,11 +314,12 @@ export function userGitIdentityEnv(
  *  gets Casey's refresh token; Operator's gets Operator's. There is no cross-user path —
  *  the lookup is keyed on `ownerId` and nothing else.
  *
- *  Connected ⇒ inject the owner's grant:
+ *  Connected ⇒ the owner's IDENTITY only, never the grant (obj 901743):
  *    GOOGLE_WORKSPACE_CONNECTION = 'user'
  *    USER_GOOGLE_EMAIL           = the connected Google account
- *    GOOGLE_REFRESH_TOKEN        = the owner's decrypted refresh token
- *    GOOGLE_OAUTH_CLIENT_ID/SECRET = the client the grant belongs to
+ *    CC_GOOGLE_BROKER            = '1' — the session's google-workspace MCP server
+ *                                  is the host broker's endpoint; the refresh
+ *                                  token and OAuth client stay on the host
  *
  *  NOT connected (or the OAuth client is unconfigured, or anything throws) ⇒
  *  EXPLICIT ABSENCE, never a silent fallback to another user's credential:
@@ -313,8 +331,8 @@ export function userGitIdentityEnv(
  *  connected branch like everyone else.
  *
  *  Invariants, mirroring userGitIdentityEnv: PURE (DB reads only), MUST NOT
- *  throw, and NEVER logs token material — the decrypted refresh token flows only
- *  into the returned env, which goes straight into the spawned child's env. */
+ *  throw, and NEVER logs or returns token material. The refresh token is
+ *  decrypted only to confirm the grant is readable. */
 export function userGoogleCredentialEnv(
   ownerId: number | null | undefined,
   actor: ConnectorActor,
@@ -342,9 +360,7 @@ export function userGoogleCredentialEnv(
     return {
       GOOGLE_WORKSPACE_CONNECTION: 'user',
       USER_GOOGLE_EMAIL: summary.google_email,
-      GOOGLE_REFRESH_TOKEN: refreshToken,
-      GOOGLE_OAUTH_CLIENT_ID: client.clientId,
-      GOOGLE_OAUTH_CLIENT_SECRET: client.clientSecret,
+      [GOOGLE_BROKER_ENV]: '1',
     }
   } catch {
     // Any failure (DB, decrypt) ⇒ explicit absence. Never block a spawn, and
@@ -413,24 +429,30 @@ export function buildSpawnEnv(opts: {
     Object.assign(env, userGitIdentityEnv(actingUserId, actor))
   }
 
-  // Durable Vercel COMMIT_AUTHOR_REQUIRED guard (obj-701130). If the block above
-  // injected NO commit-author identity (the owner has no linked GitHub token ⇒
-  // userGitIdentityEnv returned {}), the spawn would otherwise fall through git's
-  // author-precedence chain to the spawn HOME's ~/.gitconfig and finally the
-  // root-owned, POISONED /etc/gitconfig (Command Center <dev@example.com>,
-  // UNLINKED to any GitHub account) → Vercel Pro blocks the pre-build with
-  // COMMIT_AUTHOR_REQUIRED. Fill GIT_AUTHOR_*/GIT_COMMITTER_* with the known-good
-  // GitHub-LINKED m1keluka noreply identity so EVERY spawn commits under an
-  // attributable author regardless of HOME/.gitconfig/system state. Env is the TOP
-  // of git's precedence chain, so this is bulletproof. Per-user identity (when the
-  // owner IS linked) already set GIT_AUTHOR_EMAIL above and MUST take precedence —
-  // we only fill when it is absent. See SAFE_FALLBACK_GIT_IDENTITY for the why.
-  if (!env.GIT_AUTHOR_EMAIL) {
-    env.GIT_AUTHOR_NAME = SAFE_FALLBACK_GIT_IDENTITY.name
-    env.GIT_AUTHOR_EMAIL = SAFE_FALLBACK_GIT_IDENTITY.email
-    env.GIT_COMMITTER_NAME = SAFE_FALLBACK_GIT_IDENTITY.name
-    env.GIT_COMMITTER_EMAIL = SAFE_FALLBACK_GIT_IDENTITY.email
-  }
+  // Fallback git identity (obj-701130). If the block above injected NO
+  // commit-author identity (the owner has no linked GitHub token ⇒
+  // userGitIdentityEnv returned {}), a commit would fall through git's precedence
+  // chain to whatever HOME/.gitconfig or /etc/gitconfig the host carries. Use the
+  // install's own configured identity when there is one; otherwise set the
+  // identity env to EMPTY strings, which git refuses ("empty ident name not
+  // allowed"), so the commit fails loudly instead of borrowing another person's
+  // identity. GIT_IDENTITY tells the session which case it is in (prompt-builder).
+  // Per-user identity (when the owner IS linked) MUST take precedence — we only
+  // fill when it is absent.
+  if (env.GIT_AUTHOR_EMAIL) {
+    env.GIT_IDENTITY = 'user'
+  } else {
+    const fallback = resolveFallbackGitIdentity()
+    env.GIT_AUTHOR_NAME = fallback?.name ?? ''
+    env.GIT_AUTHOR_EMAIL = fallback?.email ?? ''
+    env.GIT_COMMITTER_NAME = fallback?.name ?? ''
+    env.GIT_COMMITTER_EMAIL = fallback?.email ?? ''
+    if (fallback) {
+      env.GIT_IDENTITY = 'install'
+    } else {
+      env.GIT_IDENTITY = 'absent'
+      env.GIT_IDENTITY_HELP = GIT_IDENTITY_MISSING_MESSAGE
+    }  }
 
   // obj-706070 per-user Google Workspace credential. ALWAYS adds at least
   // GOOGLE_WORKSPACE_CONNECTION ('user' | 'absent') so a session can always tell
@@ -447,12 +469,10 @@ export function buildSpawnEnv(opts: {
   // Always isolate the Google MCP credential dir. The shared folder
   // `/home/operator/assistant/google-credentials` holds every user's JSON; workspace-mcp
   // reads the whole directory, which is how Casey's session sent as Operator.
-  if (env.GOOGLE_WORKSPACE_CONNECTION === 'user' && actingUserId != null) {
-    env.WORKSPACE_MCP_CREDENTIALS_DIR =
-      writeIsolatedGoogleCredsDir(actingUserId, actor) || writeEmptyGoogleCredsDir(String(actingUserId))
-  } else {
-    env.WORKSPACE_MCP_CREDENTIALS_DIR = writeEmptyGoogleCredsDir(String(actingUserId ?? 'none'))
-  }
+  // obj 901743: the dir is now ALWAYS empty. It used to receive the owner's
+  // refresh token as a file the session could read; Google is brokered instead
+  // (the session's google-workspace MCP server is the host endpoint, wired below).
+  env.WORKSPACE_MCP_CREDENTIALS_DIR = writeEmptyGoogleCredsDir(String(actingUserId ?? 'none'))
   if (actingUserId != null) env.CC_ACTING_USER_ID = String(actingUserId)
 
   // Native secrets store. ON by default. Set USE_SCOPED_SECRETS=0 to skip.
@@ -475,37 +495,46 @@ export function buildSpawnEnv(opts: {
     }
   }
 
-  // obj-716719: the store's GLOBAL GOOGLE_OAUTH_CLIENT_ID/SECRET (the primary
-  // web client) clobbered the per-user grant's issuing client above. A refresh
-  // token only works against the client that minted it, so Casey's session got
-  // her legacy-client refresh token paired with the primary client → 401
-  // unauthorized_client. A connected user's grant must win as one unit.
+  // obj-716719: a connected user's Google identity must win as one unit over
+  // anything the Secrets store set above.
   if (googleEnv.GOOGLE_WORKSPACE_CONNECTION === 'user') Object.assign(env, googleEnv)
 
   // obj 900620 — remote MCP servers connected in Settings → Integrations for
-  // THIS card's workspace only: their access tokens as CC_MCP_TOKEN_<id> plus a
-  // secret-free descriptor spawnInTmux renders into the engine's MCP config.
-  // Keyed on objective.workspace, so a card in workspace A never receives
-  // workspace B's servers or tokens; a card with no workspace receives none.
-  // Never blocks a spawn.
+  // THIS card's workspace only, as a secret-free descriptor spawnInTmux renders
+  // into the engine's MCP config. Keyed on objective.workspace, so a card in
+  // workspace A never receives workspace B's servers; a card with no workspace
+  // receives none. obj 901743: each server is reached through the broker's relay
+  // (the server's token is added on the host), so no CC_MCP_TOKEN_<id> is in the
+  // env. Never blocks a spawn.
   try {
-    Object.assign(env, workspaceMcpSpawnEnv(objective.workspace, botScope ? { allowSlug: slug => botScope.mcpServers.has(slug) } : undefined))
+    Object.assign(env, workspaceMcpSpawnEnv(objective.workspace, {
+      ...(botScope ? { allowSlug: (slug: string) => botScope.mcpServers.has(slug) } : {}),
+      relayBaseUrl: connectorBrokerBaseUrl(),
+    }))
   } catch (err) {
     console.warn('[session-manager] workspace MCP injection failed (env unchanged):', (err as Error).message)
   }
 
-  // obj 900208 — `git push` over https with the GitHub connection. GH_TOKEN alone
-  // only authenticates `gh`; plain git asks a credential helper, and a session
-  // (above all a jailed one, whose checkout carries no repo-local helper) has
-  // none, so the push died with "could not read Username" and the worker asked
-  // for a GH_TOKEN secret it was already holding. Applied AFTER the secrets
-  // store so a Settings → Secrets GH_TOKEN override is used the same way.
-  Object.assign(env, githubPushHelperEnv(env))
+  // obj 901743 (public issue #136) — connector credentials never reach the
+  // session's process env, whatever their source: the owner's connection (no
+  // longer emitted above), a Settings → Secrets row (GH_TOKEN / GITHUB_TOKEN /
+  // GOOGLE_OAUTH_CLIENT_*), or a stale descriptor. A store GH_TOKEN still works:
+  // the broker applies the same override per request, so its presence turns the
+  // GitHub broker on for this session.
+  if (env.GH_TOKEN || env.GITHUB_TOKEN) env[GITHUB_BROKER_ENV] = '1'
+  stripConnectorCredentials(env)
+  if (env[GOOGLE_BROKER_ENV] === '1') addGoogleBrokerMcpServer(env)
 
   // Markers so a scoped worker can tell what it holds and why (names only).
   if (botScope) Object.assign(env, botScopeEnv(botScope))
 
   applySessionTrustEnv(env, objective, actingUserId, opts.sessionKind)
+  // The brokers authenticate with CC_SESSION_TOKEN; without one they cannot
+  // work, so say so instead of leaving a dangling marker.
+  if (!env.CC_SESSION_TOKEN) {
+    delete env[GITHUB_BROKER_ENV]
+    delete env[GOOGLE_BROKER_ENV]
+  }
 
   // obj 901458 — a coding session that starts with no GitHub login says so on the
   // card now, naming the reason, instead of failing silently at `git push`. Side
@@ -568,30 +597,34 @@ export function safeBotScope(objective: Objective): BotScope | null {
   }
 }
 
-/** git config key for the github.com https credential helper (obj 900208). */
-export const GITHUB_HELPER_CONFIG_KEY = 'credential.https://github.com.helper'
-/** `gh` answers git's credential `get` from GH_TOKEN / GITHUB_TOKEN in its env.
- *  Deliberately contains no `$`: the tmux wrapper exports values inside double
- *  quotes, which would expand a shell variable at export time. The token itself
- *  is never written into git config or onto disk — `gh` reads it from the env. */
-export const GITHUB_HELPER_CONFIG_VALUE = '!gh auth git-credential'
+/** MCP server key the broker's Google endpoint is registered under. Same key as
+ *  the old in-session workspace-mcp, so it overrides any ambient entry. */
+export const GOOGLE_BROKER_MCP_KEY = 'google-workspace'
 
 /**
- * Env-scoped git config that lets plain `git push/fetch` to github.com use the
- * session's GitHub token. Only when one is present; {} otherwise, so a spawn
- * with no GitHub token is unchanged. Uses GIT_CONFIG_COUNT/KEY_n/VALUE_n
- * (git ≥ 2.31), the env equivalent of `git -c`, so nothing is written to the
- * session's HOME or the checkout. Appends after any GIT_CONFIG_* already set.
+ * Register the broker's Google endpoint as the session's `google-workspace`
+ * MCP server (obj 901743). The descriptor holds no credential: the only header
+ * is a reference to the session's own CC_SESSION_TOKEN, resolved by the engine.
  */
-export function githubPushHelperEnv(env: Record<string, string>): Record<string, string> {
-  if (!env.GH_TOKEN && !env.GITHUB_TOKEN) return {}
-  const existing = Number.parseInt(env.GIT_CONFIG_COUNT || '0', 10)
-  const n = Number.isFinite(existing) && existing > 0 ? existing : 0
-  return {
-    GIT_CONFIG_COUNT: String(n + 1),
-    [`GIT_CONFIG_KEY_${n}`]: GITHUB_HELPER_CONFIG_KEY,
-    [`GIT_CONFIG_VALUE_${n}`]: GITHUB_HELPER_CONFIG_VALUE,
+export function addGoogleBrokerMcpServer(env: Record<string, string>, baseUrl = connectorBrokerBaseUrl()): void {
+  let servers: WorkspaceMcpSpawnServer[] = []
+  try {
+    const parsed = env[WORKSPACE_MCP_ENV] ? (JSON.parse(env[WORKSPACE_MCP_ENV]) as unknown) : []
+    if (Array.isArray(parsed)) servers = parsed as WorkspaceMcpSpawnServer[]
+  } catch {
+    servers = []
   }
+  servers = servers.filter(s => s && s.key !== GOOGLE_BROKER_MCP_KEY)
+  servers.unshift({
+    key: GOOGLE_BROKER_MCP_KEY,
+    name: 'Google Workspace (brokered)',
+    url: `${baseUrl}/google/mcp`,
+    type: 'http',
+    headers: { 'X-CC-Session-Token': '${CC_SESSION_TOKEN}' },
+    env_headers: { 'X-CC-Session-Token': 'CC_SESSION_TOKEN' },
+    disabled_tools: [],
+  })
+  env[WORKSPACE_MCP_ENV] = JSON.stringify(servers)
 }
 
 /** Why a session does or does not hold its owner's GitHub connection. */
@@ -657,7 +690,10 @@ export function applySessionTrustEnv(
   // grant — the token only unlocks /api/files + /api/docs scoped to this card's
   // workspace; the broker/needs-secret routes still require `session_secret_access`.
   const kbAccess = sessionKbAccessEnabled()
-  if (!stamps && !secretAccess && !kbAccess) return
+  // obj 901743: the connector broker and the workspace MCP relay authenticate
+  // with this same card-scoped token, so a session that uses them always gets one.
+  const brokered = env[GITHUB_BROKER_ENV] === '1' || env[GOOGLE_BROKER_ENV] === '1' || !!env[WORKSPACE_MCP_ENV]
+  if (!stamps && !secretAccess && !kbAccess && !brokered) return
   // Mandatory whenever a derived token exists: a session holding JWT_SECRET
   // could mint its own token for ANY workspace and defeat the scoping entirely.
   stripServerSigningSecrets(env)
@@ -667,7 +703,7 @@ export function applySessionTrustEnv(
   // self-declared from_objective_id. KB access defaults ON, so every default
   // spawn carries it; with both flags off a /message caller falls back to the
   // recorded, unverified self-declared path.
-  if (secretAccess || kbAccess) {
+  if (secretAccess || kbAccess || brokered) {
     try {
       env.CC_OBJECTIVE_ID = String(objective.id)
       env.CC_SESSION_TOKEN = mintSessionToken({
@@ -719,15 +755,15 @@ export const GITHUB_UNAVAILABLE_NOTE_KIND = 'github_unavailable_at_start'
 
 /**
  * The start-time note for a session that holds no GitHub login, or null when
- * none is due: GH_TOKEN/GITHUB_TOKEN is in the env (connection or a Secrets
- * override), or the card is not on a repo project (it never needs to push).
+ * none is due: the GitHub broker is on for the session (connection or a Secrets
+ * override — obj 901743), or the card is not on a repo project (it never needs to push).
  * PURE apart from the non-auditing access read. Never throws.
  */
 export function githubStartNote(
   objective: Objective,
   env: Record<string, string>,
 ): { reason: GithubUnavailableReason; line: string } | null {
-  if (env.GH_TOKEN || env.GITHUB_TOKEN) return null
+  if (env[GITHUB_BROKER_ENV] === '1') return null
   if (!String(objective.project ?? '').trim()) return null
   const access = githubSessionAccess(objective)
   const reason: GithubUnavailableReason = access.state === 'connected' ? 'token_unreadable' : access.reason

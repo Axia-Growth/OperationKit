@@ -105,7 +105,11 @@ export type HostRunner = (image: string, runnerArgs: string[], opts: HostRunOpti
 export function hostDockerArgs(image: string, runnerArgs: string[], opts: HostRunOptions, script: string): string[] {
   const mode = opts.detached ? ['-d', ...(opts.name ? ['--name', opts.name] : [])] : ['-i']
   return [
-    'run', '--rm', ...mode, '--privileged', '--pid=host', '--network=host', '--entrypoint', 'nsenter', image,
+    // ok.host-runner=1: the Docker policy sidecar (install/docker-proxy, obj 901741)
+    // allows this privileged call only with that label, this exact nsenter
+    // prefix, the shipped script bytes and the install's own paths, and only
+    // when the install set HOST_RUNNER=on.
+    'run', '--rm', ...mode, '--label', 'ok.host-runner=1', '--privileged', '--pid=host', '--network=host', '--entrypoint', 'nsenter', image,
     '-t', '1', '-m', '-u', '-i', '-n', '-p', '--',
     'bash', '-c', script, 'ok-dev-ops', ...runnerArgs,
   ]

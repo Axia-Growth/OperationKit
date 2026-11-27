@@ -288,7 +288,7 @@ describe('2. a card that ends settles its asks at once; the stack never shows a 
     expect(decisionQueueCount(getDb(), viewer)).toBe(before)
   })
 
-  it('a done card closed by a person, or replaced by a newer wake, drops out; a newer wake retires the old ask', async () => {
+  it('a done card closed by a person drops out; a newer wake that is still working does NOT retire the old ask; a newer wake that itself asked does', async () => {
     const old = wake({ job_disposition: 'needs_review' })
     const d = raiseDecision(getDb(), { objective_id: old, workspace: 'ws', source: 'job_disposition', agent_slug: BOT, briefing })
     if (!d.ok) throw new Error('raise failed')
@@ -297,6 +297,12 @@ describe('2. a card that ends settles its asks at once; the stack never shows a 
     expect(queueIds()).toContain(d.decision.id) // ended BY asking, with a real briefing
     const routine = (getDb().prepare('SELECT routine_id FROM objectives WHERE id = ?').get(old) as { routine_id: number }).routine_id
     getDb().prepare(`INSERT INTO objectives (title, agent_context, workspace, created_by, status, routine_id) VALUES ('next wake', ?, 'ws', 1, 'working', ?)`).run(BOT, routine)
+    // obj 901675: a later run that is still working did not replace the ask — it stays pending.
+    expect(queueIds()).toContain(d.decision.id)
+    const nextId = (getDb().prepare(`SELECT id FROM objectives WHERE title = 'next wake'`).get() as { id: number }).id
+    getDb().prepare(`UPDATE objectives SET status = 'done', job_disposition = 'needs_review' WHERE id = ?`).run(nextId)
+    raiseDecision(getDb(), { objective_id: nextId, workspace: 'ws', source: 'job_disposition', agent_slug: BOT, briefing })
+    // Only once that later run itself finished BY ASKING (its own decision row) is the older one retired.
     expect(queueIds()).not.toContain(d.decision.id)
     await handleCardEnded(getDb(), old, sink)
     expect(getDecision(getDb(), d.decision.id)!.withdrawn_reason).toMatch(/newer run/)

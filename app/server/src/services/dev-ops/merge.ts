@@ -65,6 +65,7 @@ import {
 } from '../grant-merge-github-auth.js'
 import { ciGreenForMerge, loadReservedPrs, reservedPrMatch, type CiGreenResult, type ReservedPr } from '../grant-merge.js'
 import { isMoneyPath } from '../merge-lane.js'
+import { isProductionIssueCard } from '../../lib/production-issue.js'
 import { writeDevOpsAudit } from './audit.js'
 import { mergeShaAfterMerge } from './end-state.js'
 import { DEV_OPS_BOT_SLUG, getDevOpsSwitch } from './switch.js'
@@ -80,6 +81,7 @@ export type DevMergeCode =
   | 'not_dev_card'
   | 'strategy'
   | 'money_path'
+  | 'production_issue'
   | 'card_still_running'
   | 'card_cancelled'
   | 'review_failed'
@@ -96,7 +98,7 @@ export type DevMergeCode =
 export type DevMergeCard = Pick<
   Objective,
   'id' | 'title' | 'description' | 'status' | 'type' | 'workspace' | 'project' | 'pr_url' | 'pr_number' | 'is_strategy'
-> & { ai_review_verdict?: string | null; owner_bot?: string | null; agent_context?: string | null }
+> & { ai_review_verdict?: string | null; owner_bot?: string | null; agent_context?: string | null; origin?: string | null }
 
 export interface DevMergeResult {
   ok: boolean
@@ -156,6 +158,8 @@ export function precheckDevMerge(card: DevMergeCard, reserved: readonly Reserved
   if (hit) {
     return no('reserved_pr', `PR #${hit.number}${hit.repo ? ` (${hit.repo})` : ''} is reserved: only the owner merges it. Nothing was merged.`)
   }
+  // obj 901771: before the Dev-card check, so no ownership read can open it.
+  if (isProductionIssueCard(card)) return no('production_issue', `Card #${card.id} fixes a production issue; a person merges it in GitHub. Nothing was merged.`)
   if (!isDevCard(card)) return no('not_dev_card', `Card #${card.id} is not a Dev bot card (not owned or filed by the Dev bot), so Dev may not merge it.`)
   if (card.is_strategy) return no('strategy', `Card #${card.id} is a Strategy; only the owner closes a Strategy.`)
   if (isMoneyPath(card)) return no('money_path', `Card #${card.id} is on the money path (billing/payments); the owner merges it.`)

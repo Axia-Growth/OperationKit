@@ -709,7 +709,18 @@ export const WORKSPACE_MCP_ENV = 'CC_WORKSPACE_MCP_SERVERS'
  */
 export function spawnEnvFor(
   workspace: string | null | undefined,
-  opts: { allowSlug?: (slug: string) => boolean } = {},
+  opts: {
+    allowSlug?: (slug: string) => boolean
+    /**
+     * obj 901743: route every server through the host-side relay at
+     * `<relayBaseUrl>/mcp/<slug>` (routes/session-broker.ts). The session then
+     * holds NO server credential: its only header is a reference to its own
+     * CC_SESSION_TOKEN, and the relay adds the server's token on the host. A
+     * legacy-SSE server cannot be relayed (its POST endpoint is announced by the
+     * server itself), so in relay mode it is left out and logged.
+     */
+    relayBaseUrl?: string
+  } = {},
 ): Record<string, string> {
   const env: Record<string, string> = {}
   const servers: WorkspaceMcpSpawnServer[] = []
@@ -719,6 +730,25 @@ export function spawnEnvFor(
     if (opts.allowSlug && !opts.allowSlug(row.slug)) continue
     if (row.status !== 'connected') continue
     const type: 'http' | 'sse' = (row.detected_transport ?? row.transport) === 'sse' ? 'sse' : 'http'
+    if (opts.relayBaseUrl) {
+      if (type === 'sse') {
+        console.warn(`[workspace-mcp] ${row.slug}: legacy SSE transport cannot go through the credential relay; not offered to card sessions.`)
+        continue
+      }
+      let signedIn = row.auth_type === 'none'
+      try { signedIn = signedIn || hasSecret(row, 'ACCESS_TOKEN') } catch { signedIn = false }
+      if (!signedIn) continue
+      servers.push({
+        key: row.slug,
+        name: row.name,
+        url: `${opts.relayBaseUrl.replace(/\/+$/, '')}/mcp/${row.slug}`,
+        type: 'http',
+        headers: { 'X-CC-Session-Token': '${CC_SESSION_TOKEN}' },
+        env_headers: { 'X-CC-Session-Token': 'CC_SESSION_TOKEN' },
+        disabled_tools: disabledToolsOf(row),
+      })
+      continue
+    }
     const spawn: WorkspaceMcpSpawnServer = { key: row.slug, name: row.name, url: row.url, type, headers: {}, disabled_tools: disabledToolsOf(row) }
     if (row.auth_type !== 'none') {
       let token: string | null = null

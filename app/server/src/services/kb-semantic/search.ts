@@ -29,6 +29,7 @@ import { countExact, exactTokens, fuseRankings } from './fusion.js'
 import type { EmbeddingProvider } from './providers.js'
 import { docVectors, knnChunks, vecReady, type ChunkHit } from './store.js'
 import { activeProvider, semanticAvailability, type SemanticAvailability } from './service.js'
+import { withoutHeldAnswers } from '../../lib/kb-answer-hold.js'
 
 export type SearchMode = 'hybrid' | 'keyword' | 'semantic'
 export const SEARCH_MODES: SearchMode[] = ['hybrid', 'keyword', 'semantic']
@@ -134,7 +135,8 @@ export async function searchKnowledgeBase(query: string, opts: SearchOptions = {
   const mode = opts.mode ?? 'hybrid'
   const limit = Math.max(1, Math.min(opts.limit ?? 8, 50))
   const workspace = opts.workspace || null
-  const allow = opts.allow ?? (() => true)
+  // A saved answer held for review (obj 901746) never takes a slot or shows a snippet.
+  const allow = withoutHeldAnswers(opts.allow)
   const scope: Scope = { allow, scoped: !!opts.allow }
   // realpath when the root exists (macOS /var → /private/var); a missing root stays
   // lexical so the rankers below degrade to empty results instead of throwing ENOENT.
@@ -179,7 +181,7 @@ export async function searchKnowledgeBase(query: string, opts: SearchOptions = {
   if (mode === 'hybrid') {
     const tokens = exactTokens(q)
     if (tokens.length) {
-      const phrase = exactPhraseMatches(tokens, workspace, 30, opts.allow)
+      const phrase = exactPhraseMatches(tokens, workspace, 30, opts.allow ? allow : undefined)
       const candidates = new Set([...kw.slice(0, 30), ...sem.paths.slice(0, 30), ...phrase.keys()])
       for (const p of candidates) {
         if (!allow(p)) continue
@@ -241,9 +243,9 @@ export async function relatedDocs(docPath: string, opts: { workspace?: string | 
   for (let i = 0; i < mean.length; i++) n += mean[i] * mean[i]
   n = Math.sqrt(n) || 1
   for (let i = 0; i < mean.length; i++) mean[i] /= n
-  const allow = opts.allow ?? (() => true)
+  const allow = withoutHeldAnswers(opts.allow)
   const root = opts.root ?? knowledgeBaseRoot()
-  let chunks = knnChunks(db, mean, 120, provider.modelId, opts.workspace ? [opts.workspace] : undefined, inScope(opts.workspace, opts.allow, root))
+  let chunks = knnChunks(db, mean, 120, provider.modelId, opts.workspace ? [opts.workspace] : undefined, inScope(opts.workspace, opts.allow ? allow : undefined, root))
   // issue #134: same floor as search — "related" should mean actually related.
   chunks = chunks.filter(c => 1 - c.distance >= DEFAULT_MIN_SIMILARITY)
   if (opts.workspace) chunks = filterToWorkspaceScope(chunks, opts.workspace, root)

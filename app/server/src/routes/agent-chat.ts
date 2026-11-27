@@ -90,6 +90,7 @@ import sidebarRouter from './agent-chat-sidebar.js'
 import delegationsRouter from './agent-chat-delegations.js'
 import botMessagesRouter from './agent-chat-bot-messages.js'
 import botWorkRouter from './agent-chat-bot-work.js'
+import outcomeIntakeRouter from './agent-chat-outcome-intake.js'
 import { cancelFollowup, followupInfo, followupLog, followupsByIds, followupsEnabled, type FollowupInfo } from '../services/agent-chat/followups.js'
 import { markFeedMessage } from '../services/agent-chat/bot-attention.js'
 import { resolveNeedsYouMessages } from '../services/decision-queue.js'
@@ -121,6 +122,7 @@ import { listDevOpsAudit, writeDevOpsAudit } from '../services/dev-ops/audit.js'
  *   PUT    /drafts/:id                 edit a draft before sending
  *   POST   /drafts/:id/send            the person's Send / Add to calendar click
  *   POST   /drafts/:id/discard
+ *   /outcome-proposals/*, /outcome-rules  outcome-first intake (obj 901764, routes/agent-chat-outcome-intake.ts)
  *   PUT    /settings                   admin: demo on/off, install default provider
  *   PUT    /agents/:slug/config        admin: this bot's default model / provider / tools / all tools (obj 900671)
  *   DELETE /agents/:slug/config        admin: reset the bot to exactly what its agent file says
@@ -184,6 +186,8 @@ router.use(botMessagesRouter)
 router.use(fullAccessRouter)
 // obj 900947: per-bot Work tab, High Agency Activity feed, sidebar live line — read-only.
 router.use(botWorkRouter)
+// obj 901764: outcome-first intake — proposed breakdowns the person approves, and standing outcome rules.
+router.use(outcomeIntakeRouter)
 
 /** What the bot list shows about a bot's workspace access; workspace names only where the caller may see them. */
 interface WorkspaceAccessSummary { mode: 'restricted' | 'unrestricted'; workspaces: string[]; count: number }

@@ -31,6 +31,7 @@ import { fullAccessPromptLine, withFullAccess } from './full-access-tools.js'
 import { openLoopsPromptBlock } from './open-loops.js'
 import { APP_ROUTES_PROMPT_LINE, APP_ROUTES_TOOL } from './app-routes-tool.js'
 import { botMemoryPromptBlock } from './bot-memory.js'
+import { OUTCOME_INTAKE_PROMPT_LINE } from '../outcome-intake.js'
 import { dropLaneFollowups, FOLLOWUP_PROMPT_LINE, FOLLOWUP_WAKE_TOOL_NAME, followupToolSpecs } from './followups.js'
 import { mcpToolSetFor, runMcpTool, type McpToolSet } from './mcp-tools.js'
 import { botReplyForModel, earlierActionForModel, toolResultForModel } from './tool-result-framing.js'
@@ -449,6 +450,8 @@ export function systemPromptFor(agent: ChatAgent, ctx: { username: string; now: 
     agentHasTool(agent, 'raise_decision')
       ? ['- ' + decisionBriefingSummary(), ...decisionFeedbackForPrompt(ctx.workspace ?? null, ctx.username).map(l => `  ${l}`)].join('\n')
       : '',
+    // obj 901764: outcome-first intake. The person states the outcome; the bot proposes the breakdown and the person approves it.
+    agentHasTool(agent, 'propose_outcome') ? OUTCOME_INTAKE_PROMPT_LINE : '',
     // obj 900797: where this bot may work. Enforced by the tools; said here so the model does not guess.
     allow === undefined
       ? ''
@@ -614,6 +617,7 @@ export async function runModelLoop(p: {
             ...(r.bot_conversation_id ? { bot_conversation_id: r.bot_conversation_id } : {}),
             ...(r.decision_id ? { decision_id: r.decision_id } : {}),
             ...(r.followup_id ? { followup_id: r.followup_id } : {}),
+            ...(r.outcome_proposal_id ? { outcome_proposal_id: r.outcome_proposal_id } : {}),
           },
         }, r.images)
         done.push({ name: c.function.name, summary: r.summary, ok: true })

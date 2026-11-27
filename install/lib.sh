@@ -156,6 +156,12 @@ conf_validate() {
   [ -z "$bt" ] || [[ "$bt" =~ ^(s3|b2):[^[:space:]]+$ ]] \
     || die "BACKUP_TARGET must look like s3:https://<endpoint>/<bucket>/<folder> or b2:<bucket>:<folder> (got '$bt')"
   case "$(conf BACKUP_HOME archive)" in archive|offsite) ;; *) die "BACKUP_HOME must be archive or offsite (got '$(conf BACKUP_HOME)')" ;; esac
+  # obj 901741: the docker-proxy sidecar reads exactly "on" or "off".
+  case "$(conf HOST_RUNNER off)" in
+    off) ;;
+    on) log "  NOTE: HOST_RUNNER is on — the Docker policy sidecar allows the Operation Kit Dev host runner (privileged, pinned to this checkout's script)." ;;
+    *) die "HOST_RUNNER must be on or off (got '$(conf HOST_RUNNER)')" ;;
+  esac
 }
 
 # other_backup_jobs — print one line per backup job on this server that is NOT

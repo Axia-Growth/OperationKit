@@ -58,8 +58,8 @@ interface PreviewBoardProps {
 /** Empty-column copy (polish F8): a calm line about what lands here, instead
  *  of a blank strip under the column header. */
 const COLUMN_EMPTY: Record<ObjectiveStatus, { title: string; description: string }> = {
-  planning: { title: 'Nothing in planning', description: 'Cards being scoped land here.' },
-  queue: { title: 'Queue is empty', description: 'New cards wait here until a session starts.' },
+  planning: { title: 'Nothing in planning', description: 'Project cards get a plan here for you to approve.' },
+  queue: { title: 'Queue is empty', description: 'Press New and describe the outcome you want. It waits here until a session starts.' },
   working: { title: 'Nothing running', description: 'Cards with a live session show up here.' },
   ai_review: { title: 'Nothing in AI review', description: 'Finished work is checked here before it reaches you.' },
   review: { title: 'Nothing needs you', description: 'Cards waiting on your decision land here.' },

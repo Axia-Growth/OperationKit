@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeAll, beforeEach, afterAll } from 'vitest'
+import fs from 'fs'
 import os from 'os'
 import path from 'path'
 import type { Objective } from '@operationkit/shared'
@@ -15,6 +16,14 @@ const SERVER_ACTOR = { kind: 'server' as const }
 // spawns with Casey's refresh token and Operator's with Operator's — and neither env can
 // ever contain the other's. When the owner has no grant the resolver emits an
 // EXPLICIT absence marker rather than silently falling back to anyone.
+//
+// obj 901743 (public issue #136): the env no longer carries the grant itself
+// (GOOGLE_REFRESH_TOKEN / GOOGLE_OAUTH_CLIENT_*). A connected owner's env holds
+// the IDENTITY (USER_GOOGLE_EMAIL) plus CC_GOOGLE_BROKER=1, and the session's
+// google-workspace MCP server is the host broker, which applies the owner's
+// grant per request. So "gets X's credential" below reads as "CC_GOOGLE_BROKER=1
+// with X's email", and every such case also proves the plaintext refresh token
+// and OAuth client secret appear nowhere in the env.
 //
 // Encryption key + isolated DB must be set BEFORE importing the modules that read
 // them at import/first-use time (mirrors session-user-git-identity.test.ts).
@@ -48,6 +57,19 @@ function seedUser(id: number, username: string): void {
   getDb()
     .prepare(`INSERT INTO users (id, username, password_hash, role) VALUES (?, ?, 'x', 'member')`)
     .run(id, username)
+}
+
+const CLIENT_SECRET = process.env.GOOGLE_OAUTH_CLIENT_SECRET as string
+
+/** No Google grant material (either user's refresh token, the client secret) anywhere in the env. */
+function expectNoGrantMaterial(env: Record<string, string>): void {
+  const blob = JSON.stringify(env)
+  expect(blob).not.toContain(OPERATOR.refresh)
+  expect(blob).not.toContain(CASEY.refresh)
+  expect(blob).not.toContain(CLIENT_SECRET)
+  expect(env.GOOGLE_REFRESH_TOKEN).toBeUndefined()
+  expect(env.GOOGLE_OAUTH_CLIENT_ID).toBeUndefined()
+  expect(env.GOOGLE_OAUTH_CLIENT_SECRET).toBeUndefined()
 }
 
 /** Store a real (encrypted) connection for a user exactly as the callback would. */
@@ -87,15 +109,16 @@ afterAll(() => {
 })
 
 describe('userGoogleCredentialEnv — resolves the ACTING USER, two distinct connected users', () => {
-  it('owner 1 (operator) gets operator’s token + email, marked as a user connection', () => {
+  it('owner 1 (operator) gets operator’s email + the broker marker, marked as a user connection', () => {
     connect(OPERATOR)
     connect(CASEY)
     const env = userGoogleCredentialEnv(OPERATOR.id, SERVER_ACTOR)
-    expect(env.GOOGLE_WORKSPACE_CONNECTION).toBe('user')
-    expect(env.GOOGLE_REFRESH_TOKEN).toBe(OPERATOR.refresh)
-    expect(env.USER_GOOGLE_EMAIL).toBe(OPERATOR.email)
-    expect(env.GOOGLE_OAUTH_CLIENT_ID).toBe(process.env.GOOGLE_OAUTH_CLIENT_ID)
-    expect(env.GOOGLE_OAUTH_CLIENT_SECRET).toBe(process.env.GOOGLE_OAUTH_CLIENT_SECRET)
+    expect(env).toEqual({
+      GOOGLE_WORKSPACE_CONNECTION: 'user',
+      USER_GOOGLE_EMAIL: OPERATOR.email,
+      CC_GOOGLE_BROKER: '1',
+    })
+    expectNoGrantMaterial(env)
   })
 
   it('owner 2 (casey) gets casey’s token + email from the same DB', () => {
@@ -103,8 +126,9 @@ describe('userGoogleCredentialEnv — resolves the ACTING USER, two distinct con
     connect(CASEY)
     const env = userGoogleCredentialEnv(CASEY.id, SERVER_ACTOR)
     expect(env.GOOGLE_WORKSPACE_CONNECTION).toBe('user')
-    expect(env.GOOGLE_REFRESH_TOKEN).toBe(CASEY.refresh)
+    expect(env.CC_GOOGLE_BROKER).toBe('1')
     expect(env.USER_GOOGLE_EMAIL).toBe(CASEY.email)
+    expectNoGrantMaterial(env)
   })
 })
 
@@ -114,11 +138,14 @@ describe('buildSpawnEnv — CROSS-USER ISOLATION PROOF (the whole point of obj-7
     connect(CASEY)
     const env = envFor(OPERATOR.id)
     expect(env.GOOGLE_WORKSPACE_CONNECTION).toBe('user')
-    expect(env.GOOGLE_REFRESH_TOKEN).toBe(OPERATOR.refresh)
+    expect(env.CC_GOOGLE_BROKER).toBe('1')
     expect(env.USER_GOOGLE_EMAIL).toBe(OPERATOR.email)
-    // The isolation assertion: casey's material is nowhere in operator's env.
-    expect(env.GOOGLE_REFRESH_TOKEN).not.toBe(CASEY.refresh)
-    expect(JSON.stringify(env)).not.toContain(CASEY.refresh)
+    // The session reaches Google through the broker, authenticated as this card.
+    expect(env.CC_SESSION_TOKEN).toBeTruthy()
+    expect(env.CC_WORKSPACE_MCP_SERVERS).toContain('/google/mcp')
+    // No grant material at all — not even operator's own refresh token.
+    expectNoGrantMaterial(env)
+    // The isolation assertion: casey's identity is nowhere in operator's env.
     expect(JSON.stringify(env)).not.toContain(CASEY.email)
   })
 
@@ -127,11 +154,10 @@ describe('buildSpawnEnv — CROSS-USER ISOLATION PROOF (the whole point of obj-7
     connect(CASEY)
     const env = envFor(CASEY.id)
     expect(env.GOOGLE_WORKSPACE_CONNECTION).toBe('user')
-    expect(env.GOOGLE_REFRESH_TOKEN).toBe(CASEY.refresh)
+    expect(env.CC_GOOGLE_BROKER).toBe('1')
     expect(env.USER_GOOGLE_EMAIL).toBe(CASEY.email)
-    // …and operator's (the OLD shared credential) is nowhere in casey's env.
-    expect(env.GOOGLE_REFRESH_TOKEN).not.toBe(OPERATOR.refresh)
-    expect(JSON.stringify(env)).not.toContain(OPERATOR.refresh)
+    expectNoGrantMaterial(env)
+    // …and operator's (the OLD shared credential) identity is nowhere in casey's env.
     expect(JSON.stringify(env)).not.toContain(OPERATOR.email)
   })
 
@@ -140,15 +166,20 @@ describe('buildSpawnEnv — CROSS-USER ISOLATION PROOF (the whole point of obj-7
     connect(CASEY)
     const a = envFor(OPERATOR.id)
     const b = envFor(CASEY.id)
-    const perUser = ['GOOGLE_REFRESH_TOKEN', 'USER_GOOGLE_EMAIL', 'WORKSPACE_MCP_CREDENTIALS_DIR', 'CC_ACTING_USER_ID', 'GOOGLE_OAUTH_CLIENT_ID', 'GOOGLE_OAUTH_CLIENT_SECRET']
+    // obj 901743: the per-user Google keys are now just the email; the
+    // card-scoped session token is minted per acting user, so it differs too.
+    const perUser = ['USER_GOOGLE_EMAIL', 'WORKSPACE_MCP_CREDENTIALS_DIR', 'CC_ACTING_USER_ID', 'CC_SESSION_TOKEN']
     const strip = (e: Record<string, string>) => {
       const c = { ...e }
       for (const k of perUser) delete c[k]
       return c
     }
     expect(strip(a)).toEqual(strip(b))
-    expect(a.GOOGLE_REFRESH_TOKEN).not.toBe(b.GOOGLE_REFRESH_TOKEN)
+    expect(a.CC_GOOGLE_BROKER).toBe('1')
+    expect(b.CC_GOOGLE_BROKER).toBe('1')
     expect(a.USER_GOOGLE_EMAIL).not.toBe(b.USER_GOOGLE_EMAIL)
+    expectNoGrantMaterial(a)
+    expectNoGrantMaterial(b)
   })
 
   // A card one person files and assigns to ANOTHER runs as the assignee — but
@@ -165,10 +196,11 @@ describe('buildSpawnEnv — CROSS-USER ISOLATION PROOF (the whole point of obj-7
     })
     expect(env.CC_ACTING_USER_ID).toBe(String(CASEY.id))
     expect(env.GOOGLE_WORKSPACE_CONNECTION).toBe('absent')
+    expect(env.CC_GOOGLE_BROKER).toBeUndefined()
     expect(env.GOOGLE_REFRESH_TOKEN).toBeUndefined()
     // Emphatically not a fallback to the person who filed the card, either.
     expect(env.USER_GOOGLE_EMAIL).toBeUndefined()
-    expect(Object.values(env)).not.toContain(OPERATOR.refresh)
+    expectNoGrantMaterial(env)
   })
 
   it('the same card DOES get the credential once the assignee allows delegated work', () => {
@@ -181,17 +213,21 @@ describe('buildSpawnEnv — CROSS-USER ISOLATION PROOF (the whole point of obj-7
       sessionKind: 'worker',
     })
     expect(env.USER_GOOGLE_EMAIL).toBe(CASEY.email)
-    expect(env.GOOGLE_REFRESH_TOKEN).toBe(CASEY.refresh)
-    expect(env.GOOGLE_REFRESH_TOKEN).not.toBe(OPERATOR.refresh)
-    expect(env.WORKSPACE_MCP_CREDENTIALS_DIR).toContain(`/google-creds/${CASEY.id}`)
+    expect(env.CC_GOOGLE_BROKER).toBe('1')
+    expectNoGrantMaterial(env)
+    // obj 901743: the credentials dir is always the EMPTY one now — the refresh
+    // token is no longer written to a file the session can read.
+    expect(env.WORKSPACE_MCP_CREDENTIALS_DIR).toContain(`/google-creds/absent-${CASEY.id}`)
+    expect(fs.readdirSync(env.WORKSPACE_MCP_CREDENTIALS_DIR)).toEqual([])
   })
 
   it('attribution follows the OWNER across all 5 spawn kinds', () => {
     connect(CASEY)
     for (const k of ['worker', 'arena', 'followup', 'planner', 'reviewer'] as const) {
       const env = buildSpawnEnv({ objective: objectiveOwnedBy(CASEY.id), homeDir: '/home/ccuser-a', sessionKind: k })
-      expect(env.GOOGLE_REFRESH_TOKEN).toBe(CASEY.refresh)
+      expect(env.CC_GOOGLE_BROKER).toBe('1')
       expect(env.USER_GOOGLE_EMAIL).toBe(CASEY.email)
+      expectNoGrantMaterial(env)
     }
   })
 })
@@ -201,6 +237,7 @@ describe('EXPLICIT ABSENCE — no silent fallback to the old shared (Operator) c
     connect(OPERATOR) // operator IS connected — casey must still not inherit him
     const env = envFor(CASEY.id)
     expect(env.GOOGLE_WORKSPACE_CONNECTION).toBe('absent')
+    expect(env.CC_GOOGLE_BROKER).toBeUndefined()
     expect(env.GOOGLE_REFRESH_TOKEN).toBeUndefined()
     expect(env.USER_GOOGLE_EMAIL).toBeUndefined()
     expect('GOOGLE_REFRESH_TOKEN' in env).toBe(false)
@@ -235,6 +272,7 @@ describe('EXPLICIT ABSENCE — no silent fallback to the old shared (Operator) c
       expect(userGoogleCredentialEnv(OPERATOR.id, SERVER_ACTOR)).toEqual({ GOOGLE_WORKSPACE_CONNECTION: 'absent' })
       const env = envFor(OPERATOR.id)
       expect(env.GOOGLE_WORKSPACE_CONNECTION).toBe('absent')
+      expect(env.CC_GOOGLE_BROKER).toBeUndefined()
       expect(env.GOOGLE_REFRESH_TOKEN).toBeUndefined()
       // A connected user still gets a working spawn env — just without Google.
       expect(env.HOME).toBe('/home/ccuser-a')

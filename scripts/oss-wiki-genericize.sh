@@ -23,6 +23,18 @@ if [ -z "$TREE_DIR" ] || [ ! -d "$TREE_DIR" ]; then
   exit 1
 fi
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# obj 901801: the public repo's owner/name (scripts/oss-public-repo.txt), kept
+# verbatim in source / issue links. Same file and shape rule as oss-genericize.sh.
+PUBLIC_REPO=""
+PUBLIC_REPO_TOKEN="Axia-Growth/OperationKit"
+if [ -f "$SCRIPT_DIR/oss-public-repo.txt" ]; then
+  while IFS= read -r line; do
+    case "$line" in "repo: "*) PUBLIC_REPO="${line#repo: }" ;; esac
+  done < "$SCRIPT_DIR/oss-public-repo.txt"
+fi
+[[ "$PUBLIC_REPO" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || PUBLIC_REPO=""
+
 cd "$TREE_DIR"
 
 FILELIST=$(mktemp)
@@ -98,6 +110,8 @@ apply "dev@example.com" "dev@example.com"
 apply "dev@example.com"   "dev@example.com"
 apply "@example.com"     "@example.com"
 apply "example.com"      "example.com"
+# obj 901801: shield the public repo's owner/name before the Example rules (restored last).
+if [ -n "$PUBLIC_REPO" ]; then apply_exact "$PUBLIC_REPO" "$PUBLIC_REPO_TOKEN"; fi
 apply "your-org"         "your-org"
 apply "example"          "example"
 apply "example"                "example"
@@ -119,6 +133,9 @@ apply "Example" "Example"
 apply "operationkit"             "operationkit"
 apply "OperationKit"             "OperationKit"
 apply "your-org/operationkit" "your-org/operationkit"
+
+# obj 901801: restore the shielded public repo owner/name (see PUBLIC_REPO above).
+if [ -n "$PUBLIC_REPO" ]; then apply_exact "$PUBLIC_REPO_TOKEN" "$PUBLIC_REPO"; fi
 
 rm -f "$FILELIST"
 echo "=== oss-wiki-genericize: done ==="

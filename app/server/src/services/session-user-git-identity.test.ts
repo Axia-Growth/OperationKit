@@ -17,7 +17,11 @@ const SERVER_ACTOR = { kind: 'server' as const }
 //
 // This is the payoff test for the W1+W3 integration: once a user links a GitHub
 // token (W1), an objective they OWN must spawn a session whose commits AND opened
-// PR attribute to THEM (W3's userGitIdentityEnv hook, filled by W4). When the
+// PR attribute to THEM (W3's userGitIdentityEnv hook, filled by W4). Since obj
+// 901743 (public issue #136) the PAT itself is never in the spawn env: the env
+// carries CC_GITHUB_BROKER=1 and the broker applies the owner's token per
+// request, so "gets the owner's token" below reads as "the broker is on" plus
+// "the plaintext PAT appears nowhere in the env". When the
 // owner has no linked token, the hook must return nothing so the spawn falls back
 // to the shared bot identity — work is NEVER blocked.
 //
@@ -40,7 +44,6 @@ process.env.CC_SESSION_KB_ACCESS = '0'
 const { initDb, getDb } = await import('../db/index.js')
 const tokens = await import('./user-github-tokens.js')
 const { userGitIdentityEnv, buildSpawnEnv } = await import('./session-manager.js')
-const { SAFE_FALLBACK_GIT_IDENTITY } = await import('./session-spawn-env.js')
 const { setAccess } = await import('../connectors/access.js')
 
 function seedUser(id: number, username: string): void {
@@ -78,22 +81,25 @@ beforeEach(() => {
 })
 
 describe('userGitIdentityEnv — linked owner injects full per-user GitHub identity', () => {
-  it('returns GH_TOKEN + GITHUB_TOKEN + GIT_AUTHOR_*/GIT_COMMITTER_* derived from the user', () => {
+  it('returns CC_GITHUB_BROKER + GIT_AUTHOR_*/GIT_COMMITTER_* derived from the user — never the PAT', () => {
     seedUser(7, 'eva')
     linkEva(7)
 
     const env = userGitIdentityEnv(7, SERVER_ACTOR)
-    // PR "opened by" actor lever — the token that runs `gh pr create`.
-    expect(env.GH_TOKEN).toBe(RAW_PAT)
-    expect(env.GITHUB_TOKEN).toBe(RAW_PAT)
+    // PR "opened by" actor lever — the token that runs `gh pr create` — is now
+    // applied by the broker; the env only says the broker is on.
+    expect(env.CC_GITHUB_BROKER).toBe('1')
+    expect(env.GH_TOKEN).toBeUndefined()
+    expect(env.GITHUB_TOKEN).toBeUndefined()
+    expect(JSON.stringify(env)).not.toContain(RAW_PAT)
     // Commit author + committer lever — must be the user, both author AND committer.
     expect(env.GIT_AUTHOR_NAME).toBe(EVA_LOGIN)
     expect(env.GIT_AUTHOR_EMAIL).toBe(EVA_EMAIL)
     expect(env.GIT_COMMITTER_NAME).toBe(EVA_LOGIN)
     expect(env.GIT_COMMITTER_EMAIL).toBe(EVA_EMAIL)
-    // Exactly these six keys, nothing else.
+    // Exactly these five keys, nothing else.
     expect(Object.keys(env).sort()).toEqual([
-      'GH_TOKEN', 'GITHUB_TOKEN',
+      'CC_GITHUB_BROKER',
       'GIT_AUTHOR_EMAIL', 'GIT_AUTHOR_NAME',
       'GIT_COMMITTER_EMAIL', 'GIT_COMMITTER_NAME',
     ].sort())
@@ -129,7 +135,9 @@ describe('buildSpawnEnv — attribution rides on the spawn env, flags OFF (decou
     const linked = buildSpawnEnv({ objective: objectiveOwnedBy(7), homeDir: '/home/ccuser-a', sessionKind: 'worker' })
 
     // The additive keys are present and correct…
-    expect(linked.GH_TOKEN).toBe(RAW_PAT)
+    expect(linked.CC_GITHUB_BROKER).toBe('1')
+    expect(linked.GH_TOKEN).toBeUndefined()
+    expect(JSON.stringify(linked)).not.toContain(RAW_PAT)
     expect(linked.GIT_AUTHOR_EMAIL).toBe(EVA_EMAIL)
     expect(linked.GIT_COMMITTER_EMAIL).toBe(EVA_EMAIL)
 
@@ -139,16 +147,21 @@ describe('buildSpawnEnv — attribution rides on the spawn env, flags OFF (decou
     expect(linked.GIT_SSH_COMMAND).toBeDefined()
     expect(linked.GH_CONFIG_DIR).toBe('/etc/gh')
 
-    // obj-701130: an unlinked owner now ALSO carries a git-author identity — the
-    // m1keluka noreply FALLBACK (not EVA's per-user id, and not a GH_TOKEN). So the
-    // two envs share the same base ONCE each side's git-author keys are stripped:
-    // the linked side loses its 6 per-user keys, the unlinked side loses its 4
-    // fallback keys, and what remains is byte-identical.
+    // obj-701130: an unlinked owner also carries git-author keys — the install
+    // fallback, or blanked values when none is configured (never EVA's per-user
+    // id, and never a GH_TOKEN). So the two envs share the same base ONCE each
+    // side's git-identity keys are stripped, and what remains is byte-identical.
     const unlinked = buildSpawnEnv({ objective: objectiveOwnedBy(8), homeDir: '/home/ccuser-a', sessionKind: 'worker' })
-    // obj 900208: a linked owner's spawn also carries the env-scoped github.com
-    // https credential helper (GIT_CONFIG_*), so plain `git push` uses the token.
-    const perUser = ['GH_TOKEN', 'GITHUB_TOKEN', 'GIT_AUTHOR_NAME', 'GIT_AUTHOR_EMAIL', 'GIT_COMMITTER_NAME', 'GIT_COMMITTER_EMAIL', 'CC_ACTING_USER_ID', 'WORKSPACE_MCP_CREDENTIALS_DIR', 'GIT_CONFIG_COUNT', 'GIT_CONFIG_KEY_0', 'GIT_CONFIG_VALUE_0']
-    const fallbackKeys = ['GIT_AUTHOR_NAME', 'GIT_AUTHOR_EMAIL', 'GIT_COMMITTER_NAME', 'GIT_COMMITTER_EMAIL', 'CC_ACTING_USER_ID', 'WORKSPACE_MCP_CREDENTIALS_DIR']
+    // obj 901743: a linked owner's spawn carries the broker marker and, because
+    // the broker authenticates with it, the card-scoped session token (plus the
+    // signing-secret strip marker and objective id that always come with it).
+    // The git credential helper is wired by session-tmux.ts, not buildSpawnEnv.
+    const perUser = [
+      'CC_GITHUB_BROKER', 'CC_SESSION_TOKEN', 'CC_OBJECTIVE_ID', 'CC_STRIP_SIGNING_SECRETS',
+      'GIT_AUTHOR_NAME', 'GIT_AUTHOR_EMAIL', 'GIT_COMMITTER_NAME', 'GIT_COMMITTER_EMAIL',
+      'CC_ACTING_USER_ID', 'WORKSPACE_MCP_CREDENTIALS_DIR', 'GIT_IDENTITY',
+    ]
+    const fallbackKeys = ['GIT_AUTHOR_NAME', 'GIT_AUTHOR_EMAIL', 'GIT_COMMITTER_NAME', 'GIT_COMMITTER_EMAIL', 'GIT_IDENTITY', 'GIT_IDENTITY_HELP', 'CC_ACTING_USER_ID', 'WORKSPACE_MCP_CREDENTIALS_DIR']
     const strippedLinked = { ...linked }
     for (const k of perUser) delete strippedLinked[k]
     const strippedUnlinked = { ...unlinked }
@@ -156,23 +169,25 @@ describe('buildSpawnEnv — attribution rides on the spawn env, flags OFF (decou
     expect(strippedLinked).toEqual(strippedUnlinked)
   })
 
-  it('UNLINKED owner: spawn env carries the m1keluka noreply git-author FALLBACK, no token, never cc@ (obj-701130)', () => {
+  it('UNLINKED owner, no install fallback: git identity is blanked, no token, never cc@ (obj-701130)', () => {
     seedUser(8, 'unlinked')
     const env = buildSpawnEnv({ objective: objectiveOwnedBy(8), homeDir: '/home/ccuser-a', sessionKind: 'worker' })
     // No PR-actor token for an unlinked owner (PR auth rides the shared /etc/gh).
     expect(env.GH_TOKEN).toBeUndefined()
     expect(env.GITHUB_TOKEN).toBeUndefined()
-    // Commit author/committer = the GitHub-linked m1keluka noreply fallback — the
-    // durable guard against Vercel COMMIT_AUTHOR_REQUIRED. NEVER dev@example.com.
-    expect(env.GIT_AUTHOR_EMAIL).toBe('255270713+m1keluka@users.noreply.github.com')
-    expect(env.GIT_AUTHOR_NAME).toBe('m1keluka')
-    expect(env.GIT_COMMITTER_EMAIL).toBe('255270713+m1keluka@users.noreply.github.com')
-    expect(env.GIT_COMMITTER_NAME).toBe('m1keluka')
-    expect(env.GIT_AUTHOR_EMAIL).not.toBe('dev@example.com')
+    // No install fallback configured ⇒ the identity is present but EMPTY, so git
+    // refuses to commit rather than falling through to a host gitconfig (and
+    // never a vendor's identity). GIT_IDENTITY tells the session why.
+    expect(env.GIT_AUTHOR_EMAIL).toBe('')
+    expect(env.GIT_AUTHOR_NAME).toBe('')
+    expect(env.GIT_COMMITTER_EMAIL).toBe('')
+    expect(env.GIT_COMMITTER_NAME).toBe('')
+    expect(env.GIT_IDENTITY).toBe('absent')
     expect(Object.keys(env)).toEqual([
       'HOME', 'USER', 'TERM', 'PATH', 'GIT_SSH_COMMAND', 'GH_CONFIG_DIR',
       'SUPABASE_ACCESS_TOKEN',
       'GIT_AUTHOR_NAME', 'GIT_AUTHOR_EMAIL', 'GIT_COMMITTER_NAME', 'GIT_COMMITTER_EMAIL',
+      'GIT_IDENTITY', 'GIT_IDENTITY_HELP',
       // obj-706070 — the per-user Google resolver ALWAYS appends an explicit
       // connection marker. This owner has no google connection row, so it is
       // 'absent' and contributes no token keys (no silent fallback to a shared
@@ -191,9 +206,10 @@ describe('buildSpawnEnv — attribution rides on the spawn env, flags OFF (decou
     // The per-user identity from userGitIdentityEnv must NOT be overwritten by the
     // fallback — obj-701130 only fills GIT_AUTHOR_EMAIL when it is absent.
     expect(env.GIT_AUTHOR_EMAIL).toBe(EVA_EMAIL)
-    expect(env.GIT_AUTHOR_EMAIL).not.toBe('255270713+m1keluka@users.noreply.github.com')
+    expect(env.GIT_IDENTITY).toBe('user')
     expect(env.GIT_COMMITTER_EMAIL).toBe(EVA_EMAIL)
-    expect(env.GH_TOKEN).toBe(RAW_PAT)
+    expect(env.CC_GITHUB_BROKER).toBe('1')
+    expect(JSON.stringify(env)).not.toContain(RAW_PAT)
   })
 
   // See the Google twin of this test: a card assigned by somebody else runs as
@@ -209,7 +225,10 @@ describe('buildSpawnEnv — attribution rides on the spawn env, flags OFF (decou
     })
     expect(env.CC_ACTING_USER_ID).toBe('7')
     expect(env.GH_TOKEN).toBeUndefined()
-    expect(env.GIT_AUTHOR_EMAIL).toBe(SAFE_FALLBACK_GIT_IDENTITY.email)
+    expect(env.CC_GITHUB_BROKER).toBeUndefined()
+    // Falls back to the install identity — none configured here, so blanked.
+    expect(env.GIT_AUTHOR_EMAIL).toBe('')
+    expect(env.GIT_IDENTITY).toBe('absent')
   })
 
   it('and DOES once the assignee allows delegated work', () => {
@@ -222,7 +241,8 @@ describe('buildSpawnEnv — attribution rides on the spawn env, flags OFF (decou
       homeDir: '/home/ccuser-a',
       sessionKind: 'worker',
     })
-    expect(env.GH_TOKEN).toBe(RAW_PAT)
+    expect(env.CC_GITHUB_BROKER).toBe('1')
+    expect(JSON.stringify(env)).not.toContain(RAW_PAT)
     expect(env.GIT_AUTHOR_EMAIL).toBe(EVA_EMAIL)
   })
 
@@ -232,7 +252,8 @@ describe('buildSpawnEnv — attribution rides on the spawn env, flags OFF (decou
     const kinds = ['worker', 'arena', 'followup', 'planner', 'reviewer'] as const
     for (const k of kinds) {
       const env = buildSpawnEnv({ objective: objectiveOwnedBy(7), homeDir: '/home/ccuser-a', sessionKind: k })
-      expect(env.GH_TOKEN).toBe(RAW_PAT)
+      expect(env.CC_GITHUB_BROKER).toBe('1')
+      expect(JSON.stringify(env)).not.toContain(RAW_PAT)
       expect(env.GIT_AUTHOR_EMAIL).toBe(EVA_EMAIL)
     }
   })
@@ -251,14 +272,15 @@ describe('E2E ATTRIBUTION PROOF (deterministic harness; live-push limitation sta
   const mask = (v: string | undefined) =>
     typeof v === 'string' && v.length > 8 ? `${v.slice(0, 11)}…${v.slice(-4)} (len ${v.length})` : String(v)
 
-  it('builds the exact GH_TOKEN + GIT_AUTHOR_*/GIT_COMMITTER_* env for a linked owner', () => {
+  it('builds the exact CC_GITHUB_BROKER + GIT_AUTHOR_*/GIT_COMMITTER_* env for a linked owner (no PAT in env)', () => {
     seedUser(7, 'eva')
     linkEva(7)
     const env = buildSpawnEnv({ objective: objectiveOwnedBy(7), homeDir: '/home/ccuser-a', sessionKind: 'worker' })
 
     /* eslint-disable no-console */
     console.log('\n=== W4 E2E ATTRIBUTION PROOF — linked owner (user 7 = Eva) ===')
-    console.log('  PR opened-by actor lever:')
+    console.log('  PR opened-by actor lever (brokered, obj 901743):')
+    console.log('    CC_GITHUB_BROKER    =', env.CC_GITHUB_BROKER)
     console.log('    GH_TOKEN            =', mask(env.GH_TOKEN))
     console.log('    GITHUB_TOKEN        =', mask(env.GITHUB_TOKEN))
     console.log('  commit author+committer lever:')
@@ -270,8 +292,10 @@ describe('E2E ATTRIBUTION PROOF (deterministic harness; live-push limitation sta
     console.log('  LIVE-PUSH LIMITATION: no real 2nd-user PAT in sandbox ⇒ no live `gh pr create`; operator step in SPAWN-ENV-SCOPING-CUTOVER.md')
     /* eslint-enable no-console */
 
-    expect(env.GH_TOKEN).toBe(RAW_PAT)
-    expect(env.GITHUB_TOKEN).toBe(RAW_PAT)
+    expect(env.CC_GITHUB_BROKER).toBe('1')
+    expect(env.GH_TOKEN).toBeUndefined()
+    expect(env.GITHUB_TOKEN).toBeUndefined()
+    expect(JSON.stringify(env)).not.toContain(RAW_PAT)
     expect(env.GIT_AUTHOR_NAME).toBe(EVA_LOGIN)
     expect(env.GIT_AUTHOR_EMAIL).toBe(EVA_EMAIL)
     expect(env.GIT_COMMITTER_NAME).toBe(EVA_LOGIN)
@@ -286,22 +310,25 @@ describe('E2E ATTRIBUTION PROOF (deterministic harness; live-push limitation sta
 // person's GitHub identity. No rule = allowed (above); a rule that leaves this
 // agent/workspace out withholds it and the spawn falls back to the bot identity.
 describe('buildSpawnEnv — Connectors access rules', () => {
-  it('withholds the GitHub token from an agent or workspace the person left out', async () => {
+  it('withholds the GitHub broker from an agent or workspace the person left out', async () => {
     seedUser(42, 'eva')
     linkEva(42)
     const obj = { ...objectiveOwnedBy(42), agent_context: 'operator' } as Objective
 
     setAccess('github', 42, { agents: ['operator'], workspaces: null })
-    expect(buildSpawnEnv({ objective: obj, homeDir: '/tmp/h', sessionKind: 'worker' }).GH_TOKEN).toBe(RAW_PAT)
+    const allowed = buildSpawnEnv({ objective: obj, homeDir: '/tmp/h', sessionKind: 'worker' })
+    expect(allowed.CC_GITHUB_BROKER).toBe('1')
+    expect(JSON.stringify(allowed)).not.toContain(RAW_PAT)
 
     setAccess('github', 42, { agents: ['librarian'], workspaces: null })
     const env = buildSpawnEnv({ objective: obj, homeDir: '/tmp/h', sessionKind: 'worker' })
     expect(env.GH_TOKEN).toBeUndefined()
     expect(env.GITHUB_TOKEN).toBeUndefined()
+    expect(env.CC_GITHUB_BROKER).toBeUndefined()
     expect(env.GIT_AUTHOR_EMAIL).not.toBe(EVA_EMAIL)
 
     setAccess('github', 42, { agents: null, workspaces: ['some-other-workspace'] })
-    expect(buildSpawnEnv({ objective: obj, homeDir: '/tmp/h', sessionKind: 'worker' }).GH_TOKEN).toBeUndefined()
+    expect(buildSpawnEnv({ objective: obj, homeDir: '/tmp/h', sessionKind: 'worker' }).CC_GITHUB_BROKER).toBeUndefined()
     setAccess('github', 42, { agents: null, workspaces: null })
   })
 })

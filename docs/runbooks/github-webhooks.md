@@ -19,7 +19,7 @@ Only `config.url` was changed, through `PATCH …/hooks/<id>/config`, which leav
 `content_type` (json), `insecure_ssl` (0), events and `active` as they were. Path kept: the code
 still mounts `/api/webhooks/github`.
 
-Public repo `m1keluka/OperationKit` has **no** repo-level hook (`GET /repos/m1keluka/OperationKit/hooks` → `[]`),
+Public repo `Axia-Growth/OperationKit` has **no** repo-level hook (`GET /repos/Axia-Growth/OperationKit/hooks` → `[]`),
 but the org hook above already delivers its `pull_request` events.
 
 ## 2. Delivery status — HTTP 200, but the app does NOT receive it yet
@@ -64,10 +64,10 @@ merge. After the bypass, redeliver the last ping:
 - `401 {"ok":false,"error":"invalid signature"}` → secret mismatch. Rotating needs the owner's
   approval (set the same new value in the hooks AND in Settings → Secrets, then restart).
 
-## 3. Proposal: public `m1keluka/OperationKit` webhook
+## 3. Proposal: public `Axia-Growth/OperationKit` webhook
 
 **The live server runs public code.** `/api/health` on the live host reports commit
-`eb19e1a74581`, which is `m1keluka/OperationKit` public sync #125
+`eb19e1a74581`, which is `Axia-Growth/OperationKit` public sync #125
 ("chore: sync from upstream (gated)") and does not exist in `operationkit`. So the merge that
 should move production is the **public** sync merge, not the private one.
 
@@ -83,7 +83,7 @@ Recommendation:
    seeded as `your-org/operationkit` in `lib/install-defaults.ts`) and the
    base is `main`, and only deploys when `settings.auto_deploy_enabled='1'`. With the flag `0` a
    public merge is logged as `WOULD auto-deploy` (a notification), nothing runs.
-   - Notify only (recommended first step): set `HARNESS_REPO=m1keluka/OperationKit` on the live
+   - Notify only (recommended first step): set `HARNESS_REPO=Axia-Growth/OperationKit` on the live
      host if it is not already, leave `auto_deploy_enabled='0'`. Each public sync merge shows in the
      log and on the changelog.
    - Auto-deploy (needs Operator's explicit OK): flip `auto_deploy_enabled='1'`. Also check
@@ -95,7 +95,7 @@ Recommendation:
    it through the public sync PR. **Watch out:** if the live host still has the seeded harness repo
    (`your-org/operationkit`), a PRIVATE merge is the one that matches `selfRepo()`, and
    with auto-deploy armed it would redeploy the public checkout at the wrong moment (before the public
-   sync merges). Setting `HARNESS_REPO=m1keluka/OperationKit` fixes both this and step 2.
+   sync merges). Setting `HARNESS_REPO=Axia-Growth/OperationKit` fixes both this and step 2.
 
 ## 4. How to re-check
 

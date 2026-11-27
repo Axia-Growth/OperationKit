@@ -22,10 +22,13 @@ still needs the person:
 | deleted | cleared: `no longer needed (card deleted)` |
 | done, closed by a person (`terminal_by_human`) | cleared: `no longer needed (card closed by a person)` |
 | done, job did not end with `needs_review` | cleared: `no longer needed (card finished)` |
-| done, job ended with `needs_review`, but a newer run of the same routine exists | cleared: `no longer needed (a newer run of this job replaced it)` |
+| done, job ended with `needs_review`, but a newer run of the same routine itself finished BY ASKING (done + `needs_review` + its own decision row) | cleared: `no longer needed (a newer run of this job replaced it)` |
+| done, job ended with `needs_review`, and a newer run of the same routine exists but is still working, or finished with disposition `complete` | **live** — that later run did not replace the ask (obj 901675: with hourly High Agency wakes, "any later run exists" cleared every ask within the hour, losing two unanswered asks on 2026-11-20) |
 | done, job ended with `needs_review` (it finished BY asking) | **live**: the one case that shows **Reopen and apply** |
 
 An already-answered `card_done` decision carries `can_reopen` (GET routes and the decide reply): it turns false once the same rule calls the ask stale, the button disappears, and a `reopen:true` on it is a `409 decision_stale` that leaves the card closed.
+
+**A wake sees its own still-pending asks (obj 901675).** `pendingWakeDecisions(db, agentSlug, workspace)` in `services/decision-queue.ts` lists the bot's own open, briefed decisions in its workspace that `staleReasonFor` would still keep. `buildHighAgencyBrief` (`services/agent-chat/high-agency.ts`) renders them in step 1 of the wake brief ("Your own still-pending asks") so an hourly wake checks on an earlier ask instead of raising the same question again now that it survives past one hour.
 
 Clearing = `state='withdrawn'` with that reason, plus a line in the decision's
 thread ("Cleared automatically: … nothing was sent"). Nothing is sent to the card.

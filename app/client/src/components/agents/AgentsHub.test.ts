@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { resolveAgentsTab } from './AgentsHub'
+import { TABS, resolveAgentsTab } from './AgentsHub'
 
 describe('one Agents page — tab resolution (obj 900495)', () => {
   it('defaults to the registry', () => {
@@ -18,5 +18,17 @@ describe('one Agents page — tab resolution (obj 900495)', () => {
   })
   it('ignores an unknown tab', () => {
     expect(resolveAgentsTab(new URLSearchParams('tab=nope'))).toBe('registry')
+  })
+})
+
+describe('skills are an advanced escape hatch, not the primary surface (obj 901765)', () => {
+  it('the roster tab is "Bots" and comes first; skills are the LAST tab, labelled advanced', () => {
+    expect(TABS[0]).toEqual({ key: 'registry', label: 'Bots' })
+    expect(TABS[TABS.length - 1]).toEqual({ key: 'graph', label: 'Skills (advanced)' })
+    // No other tab label sells skills.
+    expect(TABS.slice(0, -1).some(t => /skill/i.test(t.label))).toBe(false)
+  })
+  it('the old skill-graph link still opens it — existing installs keep their skills', () => {
+    expect(resolveAgentsTab(new URLSearchParams('tab=graph'))).toBe('graph')
   })
 })

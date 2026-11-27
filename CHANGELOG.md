@@ -8,6 +8,42 @@ Notable operator-facing changes. Newest first.
 
 ## Unreleased
 
+### Client installs: the app no longer holds the Docker socket (obj 901741, public issue #97)
+
+**Needs `install/update.sh`** (new service, new settings; it re-runs `install.sh`). No database
+change. `install/docker-compose.yml` drops the `/var/run/docker.sock` mount from the app and adds
+`ok-docker-proxy`, a policy sidecar that owns the socket and serves a filtered Docker API to the
+app on a private network (`DOCKER_HOST=tcp://docker-proxy:2375`). It allows only sandbox creates
+(non-root, all capabilities dropped, `no-new-privileges`, read-only root, binds only inside
+`$INSTALL_DIR/state`) and only acts on containers with the `ok.objective` label. Every call is
+logged to `$INSTALL_DIR/logs/docker-proxy/audit.jsonl`. `install/verify.sh` has a new check 11.
+
+**Behaviour change for the Operation Kit Dev bot:** `dev_deploy`, `dev_deploy_status`'s source
+read and the `cloudflare_*` tools run a privileged host helper, which the sidecar refuses unless
+`client.conf` says `HOST_RUNNER="on"` (default `"off"`). On a server where you use those tools, add
+`HOST_RUNNER="on"` before running `install/update.sh`; the sidecar then allows only the exact
+host runner script that checkout ships, with that install's own paths. The preview-spool host kick
+(operator layout only) is switched off on client installs.
+
+### Agent commits no longer fall back to a vendor GitHub identity (obj-701130)
+
+No database change. **Behaviour change** for sessions whose card owner has not
+connected GitHub (Settings → Connectors → GitHub):
+
+- Before: their commits were signed as a hard-coded vendor GitHub account.
+- Now: they use the install's own identity, set as `FALLBACK_GIT_NAME` /
+  `FALLBACK_GIT_EMAIL` in `client.conf` (written to the app as
+  `OK_FALLBACK_GIT_NAME` / `OK_FALLBACK_GIT_EMAIL`). Use the client's bot or
+  operator account and its GitHub noreply address so Vercel's commit-author check
+  still passes.
+- With neither set, the git identity is left empty, so `git commit` fails instead
+  of using someone else's identity. The session sees `GIT_IDENTITY=absent` and a
+  `GIT_IDENTITY_HELP` message telling the user to connect GitHub.
+
+**To keep the old behaviour on an existing install**, add the two settings to
+`client.conf` and re-run `install.sh`. An install that sets the app env directly
+needs `OK_FALLBACK_GIT_NAME` / `OK_FALLBACK_GIT_EMAIL` instead.
+
 ### Bot chat: a reply that runs out of steps still answers; Stop holds queued messages; repeats never run twice (obj 901488)
 
 No database change. Three things an operator will notice on the Bots page:

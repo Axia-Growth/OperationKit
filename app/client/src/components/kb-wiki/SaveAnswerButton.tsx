@@ -2,9 +2,14 @@ import { useEffect, useState } from 'react'
 import { BookmarkPlus, Check } from 'lucide-react'
 import { Alert, Button } from '../ui'
 import { wikiApi } from './wikiApi'
+import type { AnswerCheckResult } from '../../lib/kbWiki'
+
+type SavedAnswer = { rel: string; title: string; check?: AnswerCheckResult }
 
 /* SaveAnswerButton (obj 720117) — files an Ask answer back into the wiki as its
-   own page, linked from every page it used. POST /api/kb-wiki/answers. */
+   own page, linked from every page it used. POST /api/kb-wiki/answers.
+   obj 901746: the server first checks the answer against the pages it cites;
+   one they do not back up is saved but kept out of search, and we say why. */
 export function SaveAnswerButton({
   workspace,
   question,
@@ -21,7 +26,7 @@ export function SaveAnswerButton({
   onSaved?: (page: { rel: string; title: string }) => void
 }) {
   const [saving, setSaving] = useState(false)
-  const [saved, setSaved] = useState<{ rel: string; title: string } | null>(null)
+  const [saved, setSaved] = useState<SavedAnswer | null>(null)
   const [error, setError] = useState<string | null>(null)
 
   // A new answer gets a fresh button.
@@ -31,12 +36,12 @@ export function SaveAnswerButton({
     setSaving(true)
     setError(null)
     try {
-      const page = await wikiApi<{ rel: string; title: string }>('/answers', {
+      const page = await wikiApi<SavedAnswer>('/answers', {
         method: 'POST',
         json: { workspace, question, answer, sources: sources.map(s => s.rel) },
       })
       setSaved(page)
-      onSaved?.(page)
+      onSaved?.({ rel: page.rel, title: page.title })
     } catch (e) {
       setError((e as Error).message)
     } finally {
@@ -54,7 +59,7 @@ export function SaveAnswerButton({
           disabled={!!saved || !question.trim()}
           leftIcon={saved ? <Check className="h-4 w-4 text-success" aria-hidden="true" /> : <BookmarkPlus className="h-4 w-4" aria-hidden="true" />}
         >
-          {saved ? 'Saved to Context' : 'Save to Context'}
+          {saved ? 'Saved to Context' : saving ? 'Checking against its pages…' : 'Save to Context'}
         </Button>
         {saved ? (
           <span className="flex min-w-0 flex-wrap items-center gap-2 text-sm text-fg-2" aria-live="polite">
@@ -65,6 +70,11 @@ export function SaveAnswerButton({
           <span className="text-xs text-fg-3">Keeps this answer as a page, linked from the pages it used.</span>
         )}
       </div>
+      {saved?.check?.status === 'held' && (
+        <Alert tone="amber" title="Saved, but kept out of search until someone checks it">
+          {saved.check.reason ?? 'The pages it cites do not back it up.'} You can approve it on the Cleanup tab.
+        </Alert>
+      )}
       {error && <Alert tone="alarm" title="Couldn't save the answer">{error}</Alert>}
     </div>
   )

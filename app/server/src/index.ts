@@ -28,10 +28,12 @@ import docsRouter from './routes/docs.js'
 import filesRouter from './routes/files.js'
 import cardBrowserSessionRouter from './routes/card-browser-session.js'
 import secretsBrokerRouter from './routes/secrets-broker.js'
+import sessionBrokerRouter from './routes/session-broker.js'
 import agentMcpRouter from './routes/agent-mcp.js'
 import briefingRouter from './routes/briefing.js'
 import systemRouter from './routes/system.js'
 import webhooksRouter from './routes/webhooks.js'
+import productionIntakeRouter from './routes/production-intake.js'
 import costsRouter from './routes/costs.js'
 import adminRouter from './routes/admin.js'
 import n8nRouter from './routes/n8n.js'
@@ -49,6 +51,7 @@ import { buildCommit, initBuildInfo } from './lib/build-info.js'
 import kbIngestRouter, { internalKbIngestRouter } from './routes/kb-ingest.js'
 import { resumeAfterRestart as resumeDocIngest } from './services/doc-ingest/service.js'
 import kbWikiRouter, { internalKbWikiRouter, resumeKbWiki } from './routes/kb-wiki.js'
+import kbFlagsRouter from './routes/kb-flags.js'
 import kbSetupRouter from './routes/kb-setup.js'
 import { resumeSetupRunsAfterRestart } from './services/kb-setup/service.js'
 import { getWorkspaceSlugs } from './services/workspaces.js'
@@ -107,6 +110,7 @@ import { prewarmSessionOutputs } from './services/stream-parser.js'
 import { startDreamCycleScheduler } from './services/dream-cycle.js'
 import { startRoutineScheduler } from './services/routine-scheduler.js'
 import { resyncHighAgencyRoutines, startHighAgencyCronRefresh } from './services/agent-chat/high-agency.js'
+import { resyncCodeHealthRoutines } from './services/code-health.js'
 import { startBotMessageDelivery } from './services/agent-chat/bot-wake.js'
 import { startCardWakeDelivery } from './services/agent-chat/card-wakes.js'
 import { notifyBotMessage } from './services/agent-chat/sidebar-live.js'
@@ -286,10 +290,12 @@ app.use('/api/docs', docsRouter)  // /api/docs/tree, /api/docs/file
 app.use('/api/files', filesRouter)  // read-only workspace-scoped search/stat/download of non-markdown files (obj 715485)
 app.use('/api/card-browser', cardBrowserSessionRouter)  // POST /session: a card's browser gets a short-lived, read-only sign-in to the public site (CC_SESSION_TOKEN only; obj 901106)
 app.use('/api/secrets-broker', secretsBrokerRouter)  // use-without-reveal: list secret names + host-allowlisted HTTPS proxy (obj 715532)
+app.use('/api/session-broker', sessionBrokerRouter)  // card sessions reach GitHub / Google / workspace MCP without holding the credential (obj 901743)
 app.use('/api', agentMcpRouter)  // POST /api/mcp — unified MCP server: knowledge (obj 716490) + board control (obj 714092/718417); tools forward to the REST routes over loopback
 app.use('/api/briefing', briefingRouter)  // /api/briefing/briefing — board briefing for the Agent API/MCP (the assistant chat itself was removed, obj 720115)
 app.use('/api/system', systemRouter)  // /api/system/disk — host-disk state for the dashboard low-disk banner (auth)
 app.use('/api/webhooks', webhooksRouter)  // /api/webhooks/uptimerobot
+app.use('/api/production-intake', productionIntakeRouter)  // obj 901771: production signal → bug card (intake token / pasted report); never merges or deploys
 app.use('/api/admin', adminRouter)  // /api/admin/accounts, /system, /agents, /dream-cycle, etc.
 app.use('/api/n8n', n8nRouter)      // n8n watchdog: /health, /refresh, /restart
 app.use('/api/projects', projectsRouter)  // /api/projects — board project CRUD (obj 708808)
@@ -315,6 +321,7 @@ app.use('/api/starter-packs', starterPacksRouter)  // admin: list / enable / dis
 app.use('/api/kb-ingest', kbIngestRouter)  // knowledge-base file import: upload → read → organized notes, ask (obj 719936)
 app.use('/api/internal/kb-wiki', internalKbWikiRouter)  // board sessions file answers into a KB (localhost; obj 720117)
 app.use('/api/kb-setup', kbSetupRouter)  // knowledge base setup agent: drop files/folders → tagged KB pages + open questions (obj 900556)
+app.use('/api/kb-wiki/flags', kbFlagsRouter)  // knowledge-gap flags: workers (CC_SESSION_TOKEN), bots, agents, people (obj 901767); ahead of kb-wiki's requireAuth
 app.use('/api/kb-wiki', kbWikiRouter)  // knowledge-base wiki: pages, saved answers, chat/call imports, cleanup (obj 720117)
 app.use('/api/internal/pr-health', prHealthRouter)         // read-only PR-health surface: / (JSON) + /digest (markdown)
 app.use('/api/internal/operationkit', internalOperationkitRouter)  // OperationKit authoring: registry / validate / scaffold (localhost-only)
@@ -537,6 +544,14 @@ if (scratchVerdict.scratch) {
   // scheduler matches cron in server time, so re-derive each wake cron every
   // few minutes (moves it with a DST change; touches cron_expr only).
   startHighAgencyCronRefresh()
+  // obj 901770: refresh each repo's code-health routine brief + schedule from
+  // the current code (a paused routine stays paused; a removed repo's is switched off).
+  try {
+    const ch = resyncCodeHealthRoutines()
+    if (ch.synced || ch.disabled) console.log(`[code-health] resynced ${ch.synced} routine(s), switched off ${ch.disabled} for removed/unlinked repos`)
+  } catch (err) {
+    console.warn('[code-health] boot resync failed:', err instanceof Error ? err.message : err)
+  }
   startRoutineScheduler()
   // High Agency supervisor (obj 900795): once a day, review every High Agency
   // bot's cards for orphaned / duplicate / stalled / over-budget work and route

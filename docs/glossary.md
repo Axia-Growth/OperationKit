@@ -14,7 +14,7 @@ Owner: polish F7 (obj 900808). Source: product polish audit (obj 900799).
 | Concept | Say | Do not say on screen | Notes |
 |---|---|---|---|
 | A unit of work on the Board | **card** | objective, task (on its own), ticket, sub-objective | A card inside another card is a "sub-card". "Task" only appears as "scheduled task". The code type stays `Objective`. |
-| An AI teammate in this app (you chat with it, it works cards) | **bot** | agent, worker, assistant | The admin page that holds bot instructions, skills and tools is **Bots & skills**. |
+| An AI teammate in this app (you chat with it, it works cards) | **bot** | agent, worker, assistant | The admin page that holds bot files, templates and assignments is **Bot setup** (avatar menu). Skill files are an advanced tab there, not a product noun: do not present skills as a way to add capability. |
 | A third-party AI program that calls our API with a key | **outside agent** | bot | Only on the API / connect-your-agent pages and API key screens ("agent key"). |
 | A goal card that owns sub-cards and scheduled tasks, with a budget. It does not run by itself. | **strategy** | strategy workflow, strategy job | A strategy is not a workflow with a schedule: the strategy is the goal, the scheduled tasks under it do the recurring work. |
 | One instruction that repeats on a schedule (e.g. "research competitors every Monday") | **scheduled task** | routine, job, cron job, strategy workflow, recurring research workflow | A bot task opens a card per run; a script task runs a command. A task can belong to a strategy or stand alone. Listed under Workflows → Runs. |
@@ -28,7 +28,7 @@ Owner: polish F7 (obj 900808). Source: product polish audit (obj 900799).
 ## Formatting rules
 
 - **Sentence case** for every title, button, tab, menu item and form label:
-  "Edit card", "Assign to", "Attach files", "New integration", "Skill graph".
+  "Edit card", "Assign to", "Attach files", "New integration", "Bot setup".
   Proper nouns and acronyms keep their capitals ("AI review", "GitHub", "API key").
 - **Time:** `formatDateTime()` from `app/client/src/lib/format.ts` — a relative label
   ("5 minutes ago") with the absolute local time in the tooltip, in the viewer's own

@@ -91,6 +91,9 @@ const BENIGN_SKIP_PREFIXES = [
   // obj 900797: a High Agency wake for a workspace its bot is not granted. A
   // refusal by policy — nothing ran — so it must not count toward auto-pause.
   'bot workspace guard',
+  // obj 901770: a code-health run refused because an earlier PR still waits for a
+  // person, or its repo is unlinked. Nothing ran.
+  'code-health guard',
 ]
 
 export type FireClassification = 'failure' | 'neutral'

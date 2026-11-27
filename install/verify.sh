@@ -39,6 +39,11 @@
 #  10. the card-browser sandbox image ok-jail-browser:local exists and the
 #      Playwright / @playwright/mcp installed in it equal the pins in
 #      app/jail/Dockerfile (docker isolation only).
+#  11. the app does NOT hold the host Docker socket (obj 901741, issue #97):
+#      no docker.sock mount on the app container, the docker-proxy sidecar is
+#      running, and — asked live from inside the app — a privileged create, a
+#      bind of / and an exec into an unlabelled container are refused while
+#      `docker ps` still works. The refusals are in the sidecar's audit log.
 # --local-only skips 4-5 (installs made with --skip-cloudflare). --skip-card
 # skips 8 (it still asks the app for its Claude seat status, read-only, to say why). Secrets are read from files, sent in
 # header files, and never printed.
@@ -416,6 +421,25 @@ else
     *)       fail "$jb_img is out of date — $jb_state; re-run install.sh / install/update.sh" ;;
   esac
 fi
+
+# 11. the Docker socket is behind the policy sidecar (obj 901741, issue #97)
+log "11. Docker API policy sidecar"
+app_mounts=$(docker inspect -f '{{range .Mounts}}{{.Source}} {{end}}' command-center 2>/dev/null || true)
+if grep -q 'docker.sock' <<<"$app_mounts"; then fail "the app container mounts the host Docker socket (= host root)"
+else pass "the app container has no Docker socket mount"; fi
+[ "$(docker inspect -f '{{.State.Running}}' ok-docker-proxy 2>/dev/null)" = true ] && pass "docker-proxy sidecar running" || fail "docker-proxy sidecar not running (docker logs ok-docker-proxy)"
+in_app() { docker exec command-center sh -lc "$1" 2>&1; }
+if in_app 'docker ps -q >/dev/null'; then pass "the app reaches Docker through the sidecar (docker ps)"
+else fail "the app cannot list its sandboxes through the sidecar: $(in_app 'docker ps' | tail -1)"; fi
+out=$(in_app 'docker run --rm --name ok-jail-verify --label ok.objective=verify --privileged ok-jail:local true' || true)
+grep -q 'docker-proxy:' <<<"$out" && pass "a privileged container is refused" || fail "a privileged container was NOT refused: $(tail -1 <<<"$out")"
+out=$(in_app 'docker run --rm --name ok-jail-verify --label ok.objective=verify -v /:/host ok-jail:local true' || true)
+grep -q 'docker-proxy:' <<<"$out" && pass "a bind of / is refused" || fail "a bind of / was NOT refused: $(tail -1 <<<"$out")"
+out=$(in_app 'docker exec ok-docker-proxy true' || true)
+grep -q 'docker-proxy:' <<<"$out" && pass "exec into an unlabelled container is refused" || fail "exec into an unlabelled container was NOT refused: $(tail -1 <<<"$out")"
+proxy_log=$OK_DIR/logs/docker-proxy/audit.jsonl
+if [ -s "$proxy_log" ] && grep -q '"decision":"deny"' "$proxy_log"; then pass "the sidecar's audit log records the refusals ($proxy_log)"
+else fail "no refusals in the sidecar's audit log $proxy_log"; fi
 
 printf '\n%d pass, %d fail\n' "$PASS_COUNT" "$FAIL_COUNT"
 [ "$FAIL_COUNT" -eq 0 ]

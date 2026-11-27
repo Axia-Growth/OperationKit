@@ -467,6 +467,23 @@ export interface WorkspaceRepo {
   /** When true, the daily docs-breathe Job may open a PR here. */
   docs_enabled: boolean
   created_at: string
+  /** obj 901770 — the repo's recurring code-health Job (GET …/repos only). */
+  code_health?: CodeHealthJobStatus
+}
+
+/** obj 901770 — state of a repo's recurring code-health Job (off by default). */
+export interface CodeHealthJobStatus {
+  repo_id: number
+  enabled: boolean
+  cadence: 'weekly' | 'daily'
+  routine_id: number | null
+  /** Switched on, but the routine is paused or auto-paused on the Jobs page. */
+  paused: boolean
+  next_run_at: string | null
+  /** A PR over these limits is never auto-merged; a person merges it. */
+  limits: { maxFiles: number; maxLines: number }
+  /** Why it cannot be switched on (e.g. no GitHub repo linked), else null. */
+  unavailable: string | null
 }
 
 // ── Workspace integrations (GitHub org + PostHog, connected per workspace) ──

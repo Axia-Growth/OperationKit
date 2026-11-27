@@ -9,6 +9,7 @@ import { parseSearchMode, relatedDocs, searchKnowledgeBase } from '../services/k
 import { noteKbChanged, semanticAvailability } from '../services/kb-semantic/service.js'
 import { allWorkspaceKbRoots, knowledgeBaseRoot, workspaceKbRoot } from '../services/doc-ingest/kb-paths.js'
 import { pathWorkspaceResolver, workspaceOfPath, type PathWorkspace } from '../lib/doc-path-workspace.js'
+import { heldAnswerReleaseRefusal } from '../lib/kb-answer-hold.js'
 
 const router = Router()
 // obj 900204: card sessions authenticate with their objective-scoped
@@ -516,6 +517,11 @@ router.put('/file', (req: AuthRequest, res) => {
   if (!resolved.toLowerCase().endsWith('.md')) {
     res.status(400).json({ error: 'Only .md files may be written' })
     return
+  }
+  // obj 901746: only a person releases a held saved answer; a bot rewriting the file cannot.
+  if (req.agentKey || req.authVia !== 'session') {
+    const refusal = heldAnswerReleaseRefusal(resolved, content)
+    if (refusal) { res.status(403).json({ error: refusal, code: 'answer_held_for_review' }); return }
   }
   try {
     const dir = path.dirname(resolved)

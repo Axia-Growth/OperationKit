@@ -105,7 +105,7 @@ export interface AccountMenuItem {
 export const ACCOUNT_MENU: AccountMenuItem[] = [
   { href: '/settings',   label: 'Settings', icon: 'config',    aliases: [],                          section: 'account' },
   { href: SYSTEM_ROUTE,  label: 'System',   icon: 'dashboard', aliases: [...LEGACY_SYSTEM_ROUTES],    section: 'admin' },
-  { href: AGENTS_ROUTE,  label: 'Bots & skills', icon: 'system',    aliases: ['/agent-templates'],         section: 'admin' },
+  { href: AGENTS_ROUTE,  label: 'Bot setup', icon: 'system',    aliases: ['/agent-templates'],         section: 'admin' },
 ]
 
 
@@ -123,7 +123,7 @@ const PALETTE_KEYWORDS: Record<string, string[]> = {
   [JOBS_ROUTE]: ['jobs', 'routines', 'runs'],
   '/settings': ['preferences', 'models', 'api', 'mcp', 'branding'],
   [SYSTEM_ROUTE]: ['health', 'status'],
-  [AGENTS_ROUTE]: ['agents', 'skills', 'registry'],
+  [AGENTS_ROUTE]: ['agents', 'bots & skills', 'skills', 'registry'],
 }
 
 /** One row per label: the first one wins (the gated nav order). */

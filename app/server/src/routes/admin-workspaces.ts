@@ -20,9 +20,12 @@ import {
 import {
   createWorkspaceRepo,
   deleteWorkspaceRepo,
+  getWorkspaceRepo,
   listWorkspaceRepos,
   updateWorkspaceRepo,
 } from '../services/workspace-repos.js'
+import { codeHealthStatus, disableCodeHealthForRepo, setCodeHealthJob } from '../services/code-health.js'
+import { authenticatedViaCookie } from '../lib/message-provenance.js'
 import {
   connectGithub,
   connectPosthog,
@@ -253,7 +256,8 @@ router.get('/:slug/repos', (req: AuthRequest, res) => {
     res.status(404).json({ error: 'Workspace not found' })
     return
   }
-  res.json(listWorkspaceRepos(slug))
+  // obj 901770: each repo carries its code-health Job state (off unless switched on).
+  res.json(listWorkspaceRepos(slug).map(r => ({ ...r, code_health: codeHealthStatus(r) })))
 })
 
 // POST /api/admin/workspaces/:slug/repos — attach a repo/project
@@ -326,7 +330,63 @@ router.delete('/:slug/repos/:id', (req: AuthRequest, res) => {
     res.status(404).json({ error: 'Repo not found' })
     return
   }
+  // obj 901770: a removed repo's code-health Job stops (history is kept).
+  try { disableCodeHealthForRepo(id) } catch (err) {
+    console.warn('[code-health] disable on repo removal failed:', (err as Error).message)
+  }
   res.json({ ok: true, id })
+})
+
+// ── Code-health Job per repo (obj 901770, services/code-health.ts) ──
+
+function repoInWorkspace(req: AuthRequest, res: import('express').Response) {
+  const slug = String(req.params.slug)
+  if (!getWorkspace(slug)) {
+    res.status(404).json({ error: 'Workspace not found' })
+    return null
+  }
+  const id = parseInt(typeof req.params.id === 'string' ? req.params.id : '', 10)
+  const repo = Number.isNaN(id) ? undefined : getWorkspaceRepo(id)
+  if (!repo || repo.workspace !== slug) {
+    res.status(404).json({ error: 'Repo not found' })
+    return null
+  }
+  return repo
+}
+
+// GET /api/admin/workspaces/:slug/repos/:id/code-health — the repo's Job state
+router.get('/:slug/repos/:id/code-health', (req: AuthRequest, res) => {
+  const repo = repoInWorkspace(req, res)
+  if (!repo) return
+  res.json(codeHealthStatus(repo))
+})
+
+// PUT /api/admin/workspaces/:slug/repos/:id/code-health {enabled?, cadence?}
+// Switching a recurring Job on is an admin's click in the browser: an API key
+// or bearer token can never schedule runs (same rule as High Agency).
+router.put('/:slug/repos/:id/code-health', (req: AuthRequest, res) => {
+  if (req.agentKey || !authenticatedViaCookie(req)) {
+    res.status(403).json({ error: 'Only an admin signed in to the app in the browser can switch a code-health Job on or off.', code: 'cookie_admin_only' })
+    return
+  }
+  const repo = repoInWorkspace(req, res)
+  if (!repo) return
+  const body = (req.body ?? {}) as Record<string, unknown>
+  if (body.enabled !== undefined && typeof body.enabled !== 'boolean') {
+    res.status(400).json({ error: 'enabled must be true or false' })
+    return
+  }
+  const result = setCodeHealthJob(
+    repo,
+    { enabled: body.enabled as boolean | undefined, cadence: body.cadence },
+    { userId: req.user?.id ?? null, label: req.user?.username ? `user:${req.user.username}` : `user:${req.user?.id ?? '?'}` },
+  )
+  if (!result.ok) {
+    res.status(400).json({ error: result.error, code: result.code })
+    return
+  }
+  console.log(`[code-health] repo #${repo.id} (${repo.name}) → ${result.status.enabled ? `on, ${result.status.cadence}` : 'off'} by user ${req.user?.id ?? '?'}`)
+  res.json(result.status)
 })
 
 // ── Workspace integrations (GitHub org + PostHog, per workspace) ──

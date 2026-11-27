@@ -19,24 +19,31 @@ import { agentsTabRoute } from '../../lib/routes'
  * The Dev bot is a built-in an install can switch off (AGENT_CHAT_BUILTINS=0),
  * so path 1 is existence-gated on the live bot list. Without it, the panel
  * offers the copy-paste prompt for an outside assistant instead.
+ *
+ * obj 901765: skills are no longer a way in. The panel is "Make a new bot";
+ * "Skill" left the noun list and the "Create a skill" button became a small
+ * advanced line under the tiles, because a bot works out HOW to do a task from
+ * the card, the project's docs and Context. Writing a SKILL.md is the escape
+ * hatch for a rare procedure that must be followed exactly, not the growth path.
  */
 
 export const DEV_BOT_SLUG = 'operation-kit-dev'
 
 export const CREATE_PROMPTS = {
   bot: 'Help me create a new bot I can chat with and assign cards to. Ask me what it is for, then write its file for me and tell me how to add it.',
-  skill: 'Help me create a new skill for a task we repeat. Ask me what the task is, then write the SKILL.md and tell me how to add it.',
+  skill: 'I have a rare procedure a bot must follow exactly, step by step. Before writing a skill file, check whether the card, our project docs or Context already cover it. If they do not, write the SKILL.md and tell me how to add it.',
 } as const
 
 export const SETUP_PROMPT =
-  `Configure a new bot, skill, and (if it needs non-default scoping) an assignment on this platform, for me:\n\n` +
+  `Configure a new bot and (if it needs non-default scoping) an assignment on this platform, for me:\n\n` +
   `- Bot: an AI teammate people chat with and assign cards to — a named profile with a model, effort level, and default workspace.\n` +
-  `- Skill: how-to steps a bot follows for a kind of task.\n` +
   `- Tool: an integration a bot can reach (see Settings → Integrations) — connect it there, then reference ` +
-  `it from the skill or bot.\n` +
-  `- Assignment (only if needed): scopes a bot or skill to one workspace, project, or user instead of ` +
+  `it from the bot.\n` +
+  `- Assignment (only if needed): scopes a bot to one workspace, project, or user instead of ` +
   `applying globally.\n\n` +
-  `Ask me what the bot or skill is for, then use the platform API (docs/api/README.md, GET /api/openapi.json) ` +
+  `Do not write skill files: a bot takes its procedure from the card, the project's own docs and the ` +
+  `workspace's Context. A SKILL.md is only for a rare procedure that must be followed exactly.\n\n` +
+  `Ask me what the bot is for, then use the platform API (docs/api/README.md, GET /api/openapi.json) ` +
   `to set it up rather than describing steps for me to click through.`
 
 export function devBotLink(kind: keyof typeof CREATE_PROMPTS): string {
@@ -45,8 +52,7 @@ export function devBotLink(kind: keyof typeof CREATE_PROMPTS): string {
 
 const NOUNS: Array<{ term: string; text: string }> = [
   { term: 'Bot', text: 'an AI teammate you chat with and assign cards to.' },
-  { term: 'Skill', text: 'how-to steps a bot follows for one recurring task.' },
-  { term: 'Tool', text: 'a connection to another app or service that a skill lets a bot use.' },
+  { term: 'Tool', text: 'a connection to another app or service that a bot can use.' },
   { term: 'Outside agent', text: 'a third-party AI program that uses this board through an agent key.' },
 ]
 
@@ -96,7 +102,7 @@ export function CreateAgentGuide() {
   return (
     <section aria-labelledby="create-agent-guide" className={cn('mb-6 rounded-xl border border-line bg-surface-0', collapsed ? 'px-4 py-2.5 sm:px-5' : 'p-4 sm:p-5')}>
       <div className="flex items-center justify-between gap-3">
-        <h2 id="create-agent-guide" className="font-display text-lg font-semibold text-fg-0">Make a new bot or skill</h2>
+        <h2 id="create-agent-guide" className="font-display text-lg font-semibold text-fg-0">Make a new bot</h2>
         <button
           type="button"
           onClick={toggle}
@@ -135,7 +141,6 @@ export function CreateAgentGuide() {
               </p>
               <div className="flex flex-wrap gap-2" aria-busy={hasDevBot === null}>
                 <Link to={devBotLink('bot')} className={linkBtn}>Create a bot</Link>
-                <Link to={devBotLink('skill')} className={linkBtn}>Create a skill</Link>
               </div>
             </>
           )}
@@ -153,6 +158,18 @@ export function CreateAgentGuide() {
           <div><Link to={`${agentsTabRoute('templates')}&paste=1`} className={linkBtn}>Paste a bot file</Link></div>
         </li>
       </ol>
+      <p className="mt-3 max-w-prose text-xs leading-relaxed text-fg-3" data-testid="skills-escape-hatch">
+        You do not need skill files. A bot works out how to do a task from the card, your project’s docs and
+        Context. For a rare procedure that must be followed exactly, see{' '}
+        <Link to={agentsTabRoute('graph')} className="text-accent underline-offset-2 hover:underline">Skills (advanced)</Link>
+        {hasDevBot && (
+          <>
+            {' '}or{' '}
+            <Link to={devBotLink('skill')} className="text-accent underline-offset-2 hover:underline">ask {devBotName} to write one</Link>
+          </>
+        )}
+        .
+      </p>
       {hasDevBot && (
         <div className="mt-3 flex flex-wrap items-center justify-between gap-2 text-xs text-fg-3">
           <span>Using an outside assistant instead? Copy the setup prompt.</span>

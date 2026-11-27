@@ -257,10 +257,39 @@ export function WorkspacesTab() {
       })
       setRepos(prev => ({
         ...prev,
-        [slug]: (prev[slug] || []).map(r => (r.id === repo.id ? updated : r)),
+        [slug]: (prev[slug] || []).map(r => (r.id === repo.id ? { ...updated, code_health: r.code_health } : r)),
       }))
     } catch (e) {
       alert(e instanceof Error ? e.message : 'Failed to update living docs')
+    }
+  }
+
+  // obj 901770 — the repo's recurring code-health Job. Off by default; switching
+  // it on is this admin's click (the server refuses an API key or bearer token).
+  async function setCodeHealth(slug: string, repo: WorkspaceRepo, next: { enabled: boolean; cadence?: 'weekly' | 'daily' }) {
+    if (next.enabled && !repo.code_health?.enabled) {
+      const limits = repo.code_health?.limits
+      if (!(await confirm({
+        title: 'Turn on code health?',
+        message:
+          `${next.cadence === 'daily' ? 'Every day' : 'Every Monday'} an agent looks at ${repo.github ?? repo.name} and opens at most one small pull request ` +
+          `that cleans up one piece of tech debt (or reports that nothing needed doing). An independent AI review checks every pull request. ` +
+          `A small one (up to ${limits?.maxFiles ?? 8} files and ${limits?.maxLines ?? 200} lines, no database, dependency or CI changes) ` +
+          `merges itself only when green auto-merge is on; anything bigger waits in Needs You. Nothing is deployed.`,
+        confirmLabel: 'Turn on',
+      }))) return
+    }
+    try {
+      const status = await api.put<NonNullable<WorkspaceRepo['code_health']>>(
+        `/admin/workspaces/${slug}/repos/${repo.id}/code-health`,
+        next,
+      )
+      setRepos(prev => ({
+        ...prev,
+        [slug]: (prev[slug] || []).map(r => (r.id === repo.id ? { ...r, code_health: status } : r)),
+      }))
+    } catch (e) {
+      alert(e instanceof Error ? e.message : 'Failed to update code health')
     }
   }
 
@@ -496,6 +525,11 @@ export function WorkspacesTab() {
                             )}
                             {repo.stack.map(s => <Badge key={s} tone="neutral">{s}</Badge>)}
                             {repo.docs_enabled && <Badge tone="verify">living docs</Badge>}
+                            {repo.code_health?.enabled && (
+                              <Badge tone={repo.code_health.paused ? 'neutral' : 'verify'}>
+                                {`code health · ${repo.code_health.cadence}${repo.code_health.paused ? ' · paused' : ''}`}
+                              </Badge>
+                            )}
                           </div>
                           {repo.description && <p className="mt-0.5 text-xs text-fg-3">{repo.description}</p>}
                           {repo.repo_path && (
@@ -507,6 +541,18 @@ export function WorkspacesTab() {
                             label={`Actions for ${repo.name}`}
                             actions={[
                               { label: repo.docs_enabled ? 'Pause docs' : 'Live docs', onSelect: () => void toggleDocs(key, repo) },
+                              ...(repo.code_health?.enabled
+                                ? [
+                                    repo.code_health.cadence === 'weekly'
+                                      ? { label: 'Code health daily', onSelect: () => void setCodeHealth(key, repo, { enabled: true, cadence: 'daily' }) }
+                                      : { label: 'Code health weekly', onSelect: () => void setCodeHealth(key, repo, { enabled: true, cadence: 'weekly' }) },
+                                    { label: 'Stop code health', onSelect: () => void setCodeHealth(key, repo, { enabled: false }) },
+                                  ]
+                                : [{
+                                    label: 'Code health weekly',
+                                    disabled: !!repo.code_health?.unavailable,
+                                    onSelect: () => void setCodeHealth(key, repo, { enabled: true, cadence: 'weekly' }),
+                                  }]),
                               { label: 'Remove repo', icon: <Trash2 className="h-3.5 w-3.5" />, danger: true, onSelect: () => void removeRepo(key, repo) },
                             ]}
                           />

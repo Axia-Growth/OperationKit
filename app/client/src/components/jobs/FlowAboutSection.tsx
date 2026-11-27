@@ -16,11 +16,14 @@ import { FLOW_FIELD, FLOW_LABEL, FlowToolsInput, FlowToolsList } from './FlowToo
 export function FlowAboutSection({
   flow,
   goal,
+  doneWhen,
   onSaved,
 }: {
   flow: Pick<FlowSummary, 'id' | 'name' | 'notes' | 'tools'> & { workspace?: string }
   /** The goal statement (shown version's definition, else the builder's goal). */
   goal: string | null
+  /** obj 901766 — how the person will know it worked, in their own words. */
+  doneWhen?: string | null
   onSaved?: (flow: FlowSummary) => void
 }) {
   const ids = useId()
@@ -67,6 +70,13 @@ export function FlowAboutSection({
         <div>
           <div className={FLOW_LABEL}>Goal</div>
           <p className="text-sm leading-snug text-fg-1">{goal}</p>
+        </div>
+      )}
+
+      {doneWhen && (
+        <div data-testid="flow-about-done-when">
+          <div className={FLOW_LABEL}>Done when</div>
+          <p className="text-sm leading-snug text-fg-1">{doneWhen}</p>
         </div>
       )}
 

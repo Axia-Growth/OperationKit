@@ -96,6 +96,12 @@ Cloudflare, and the server's firewall only lets SSH in.
    (see "One login" below).
 4. **Sandboxes.** Every AI session runs in its own locked-down container that
    can only see its own work folder.
+5. **The Docker socket stays out of the app.** The app starts those sandboxes
+   through a small policy sidecar (`ok-docker-proxy`), not through
+   `/var/run/docker.sock`. The sidecar only lets it create locked-down
+   sandboxes and manage containers that carry the sandbox label, and logs
+   every call to `/opt/operationkit/logs/docker-proxy/audit.jsonl`. See
+   "The Docker policy sidecar" under "After the install".
 
 ---
 
@@ -203,7 +209,7 @@ code** option needs none of this. Use it unless the client asks otherwise.
 
 ```bash
 ssh SERVER 'sudo apt-get update -qq && sudo apt-get install -y -qq git && \
-  sudo git clone https://github.com/m1keluka/OperationKit.git /opt/operationkit-src'
+  sudo git clone https://github.com/Axia-Growth/OperationKit.git /opt/operationkit-src'
 ```
 
 (As `root`, the `sudo`s are harmless.) Keep the code in `/opt/operationkit-src`:
@@ -234,6 +240,7 @@ every setting is explained there in plain words.
 | `CLIENT_SLUG` | (make it from the name: lowercase, dashes) | `example-capital` |
 | `DOMAIN` / `ZONE` | What web address should it live at? | `ops.example-capital.com` / `example-capital.com` |
 | `BRAND_NAME` / `BRAND_LOGO` | What name (and logo file) should people see? | `Example Capital OS` |
+| `FALLBACK_GIT_NAME` / `FALLBACK_GIT_EMAIL` | Which GitHub account (the client's own bot or operator, with its noreply email) should sign agent commits when the card owner has not connected GitHub? Empty = no fallback: those commits fail with a "connect GitHub" message | `acme-bot` / `12345+acme-bot@users.noreply.github.com` |
 | `ADMIN_USERNAME` | Username for the first admin? | `admin` |
 | `ADMIN_EMAIL` | The first admin's email (signs them in through Cloudflare). Empty = the first address in `ACCESS_ALLOWED_EMAILS` | `alex.partner@example-capital.com` |
 | `ACCESS_ALLOWED_EMAILS` / `ACCESS_ALLOWED_EMAIL_DOMAIN` | Who may open the site? A name-by-name list of addresses is the default; the domain field is optional and stays empty unless the client asks for it | `alex.partner@example-capital.com` |
@@ -409,6 +416,11 @@ Every line must say **PASS**. It checks that:
   usual cause: the only seat was made by signing in to the Claude CLI on the
   server, which the sandbox cannot use. Connect Claude with step 7 (or
   **Settings → Seats → Add Claude seat**) and re-run verify.
+- **the app does not hold the Docker socket**: the app container has no
+  `/var/run/docker.sock` mount, the `ok-docker-proxy` sidecar is running, and,
+  asked from inside the app, a privileged container, a bind of `/` and an exec
+  into a container without the sandbox label are all refused while
+  `docker ps` still works. The refusals are in the sidecar's audit log
 - **the browser sandbox image is current**: `ok-jail-browser:local`, the sandbox
   every card runs in (it carries a locked-down Chromium), exists and the Playwright versions inside
   it match the ones pinned in the code. The installer and `install/update.sh`
@@ -907,7 +919,7 @@ kept.
 
 **Updates are manual: nothing pulls new Operation Kit code by itself.** The automatic updates the
 installer switches on are Ubuntu's security patches for the operating system only. To hear about new
-versions, watch <https://github.com/m1keluka/OperationKit> on GitHub and read
+versions, watch <https://github.com/Axia-Growth/OperationKit> on GitHub and read
 [CHANGELOG.md](CHANGELOG.md). To see what is waiting:
 `ssh SERVER 'cd /opt/operationkit-src && sudo git -c safe.directory="*" fetch -q origin main && git -c safe.directory="*" log --oneline HEAD..origin/main'`.
 
@@ -1143,6 +1155,43 @@ off-site copy, empty `BACKUP_TARGET` and re-run `backup.sh install-cron`.
 5. **Day-to-day running** (updates, backups, settings changes):
    [docs/product/06-operating.md](docs/product/06-operating.md).
 
+### The Docker policy sidecar
+
+Mounting `/var/run/docker.sock` into a container gives that container root on
+the server: one `docker run --privileged -v /:/host` and it owns the host. So
+the app does not get the socket. The `ok-docker-proxy` container does, and the
+app reaches Docker only through it (`DOCKER_HOST=tcp://docker-proxy:2375`, on a
+private network that no sandbox joins). The rules live in
+`install/docker-proxy/policy.mjs`:
+
+- **Only what the app uses**: ping, version, image inspect, list containers,
+  create, and on a container start / stop / kill / wait / attach / logs /
+  inspect / exec / remove. Pulls, builds, volumes, networks, `docker cp`,
+  `docker commit`, swarm, plugins: refused.
+- **Every new container is a sandbox**: named `ok-jail-<id>`, labelled
+  `ok.objective`, an allowed image (`ok-jail:local`, `ok-jail-browser:local`),
+  a non-root user, all capabilities dropped, `no-new-privileges`, a read-only
+  root filesystem. Refused: `--privileged`, `--cap-add`, host network / pid /
+  ipc / uts / user namespace, devices, published ports, named volumes, a bind
+  of anything outside `$INSTALL_DIR/state` (symlinks are followed before
+  deciding), any seccomp profile other than the browser sandbox's, a request
+  body on any call except create / exec, Docker API versions below 1.41, and
+  any setting the sidecar does not know yet.
+- **Only labelled containers**: exec, remove, logs, inspect and the rest work
+  only on containers with the `ok.objective` label. `docker ps` lists only those.
+- **Audit**: one JSON line per call (allowed or refused, with the reason) in
+  `$INSTALL_DIR/logs/docker-proxy/audit.jsonl` (rotated at 50 MB) and in
+  `docker logs ok-docker-proxy`. The app has no mount that reaches that folder.
+
+**One opt-in exception: `HOST_RUNNER`.** The Operation Kit Dev bot's
+`dev_deploy` and Cloudflare tools run `install/update.sh` on the host through a
+privileged helper container. With the default `HOST_RUNNER="off"` the sidecar
+refuses that helper and those tools answer with the refusal. Set
+`HOST_RUNNER="on"` in `client.conf` and re-run `install.sh` (or
+`install/update.sh`) only on a server where you use those tools. Even then the
+sidecar allows exactly the script this checkout ships, byte for byte, with this
+install's own source folder, config file and data folder, and nothing else.
+
 ## Re-running a demo (reset)
 
 ```bash
@@ -1198,6 +1247,7 @@ They are harmless, and they make the next install faster.
 | `/opt/operationkit/state/` | database, files, session work folders | the app |
 | `/opt/operationkit/backups/` | nightly, pre-update and manual backups | root only (mode 700) |
 | `/opt/operationkit/logs/` | build logs, `backup.log` | root |
+| `/opt/operationkit/logs/docker-proxy/` | the Docker policy sidecar's audit log, one JSON line per Docker call | root only (mode 750) |
 | `/opt/operationkit/install-timing.log` | how long each install took | root |
 
 Everything that matters is in `/opt/operationkit/`; see

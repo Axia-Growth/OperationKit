@@ -231,6 +231,8 @@ export interface ChatMessage {
     action?: string | null
     /** obj 901059: the decision this row is about (a needs-you post or a raise_decision tool line). */
     decision_id?: number
+    /** obj 901764: the breakdown a propose_outcome call proposed (or an approval line points at). */
+    outcome_proposal_id?: number
     question?: string
     /** obj 901084: set at read time when the ask is over (card ended / decision cleared) — the post collapses to one line. */
     resolved?: { text: string; reason: string }

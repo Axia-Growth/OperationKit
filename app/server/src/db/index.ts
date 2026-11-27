@@ -38,11 +38,13 @@ import { initBotCardWakesSchema } from './schema/bot-card-wakes.js'
 import { initBotSecretAccessSchema } from './schema/bot-secret-access.js'
 import { initChatTurnJobsSchema } from './schema/chat-turn-jobs.js'
 import { initBotFollowupsSchema } from './schema/bot-followups.js'
+import { initOutcomeIntakeSchema } from './schema/outcome-intake.js'
 import { initDevOpsSchema } from './schema/dev-ops.js'
 import { initAgentWebhooksSchema } from './schema/agent-webhooks.js'
 import { initEmailSchema } from './schema/email.js'
 import { initAccountabilitySchema } from './schema/accountability.js'
 import { initSupervisorSchema } from './schema/supervisor.js'
+import { initKbFlagsSchema } from './schema/kb-flags.js'
 import { initStallWatchdogSchema } from './schema/stall-watchdog.js'
 import { initMcpServersSchema } from './schema/mcp-servers.js'
 import { initQueueAutostartSchema } from './schema/queue-autostart.js'
@@ -54,6 +56,7 @@ import { initChatDeploysSchema } from './schema/chat-deploys.js'
 import { initBotAttentionSchema } from './schema/bot-attention.js'
 import { initDecisionSchema } from './schema/decisions.js'
 import { initBoardTriageSchema } from './schema/board-triage.js'
+import { initProductionIntakeSchema } from './schema/production-intake.js'
 import { installWriteScrubber } from './write-scrubber.js'
 import { redactForStorage } from '../services/secret-redaction.js'
 import { carryLegacyInstallDefaults, dbHadObjectivesTable } from '../lib/install-defaults.js'
@@ -1128,6 +1131,8 @@ export function initDb(): Database.Database {
   initChatTurnJobsSchema(db)
   // One-off follow-up wakes a chat bot sets for itself (obj 901392). Additive only.
   initBotFollowupsSchema(db)
+  // Outcome-first intake (obj 901764): proposed breakdowns + standing outcome rules. Additive only.
+  initOutcomeIntakeSchema(db)
   // Operation Kit Dev operator tools (obj 901424): switch, audit, pending merges, deploys.
   initDevOpsSchema(db)
   // One-time email sign-in links (obj 900497). Additive CREATE TABLE only.
@@ -1142,6 +1147,8 @@ export function initDb(): Database.Database {
   initAccountabilitySchema(db)
   // High Agency supervisor run log (obj 900795). Additive CREATE TABLE only.
   initSupervisorSchema(db)
+  // Knowledge-gap flags (obj 901767). Additive CREATE TABLE only.
+  initKbFlagsSchema(db)
   // Sprint 7.8 (obj 900620): workspace MCP servers. Additive table only.
   initMcpServersSchema(db)
   // Workflow engine tables (obj 900638, docs/design/WORKFLOWS.md §4.3). Additive
@@ -1174,6 +1181,8 @@ export function initDb(): Database.Database {
   initBotAttentionSchema(db)
   // Decision briefings + Q&A threads + learning log (obj 901059). Additive tables only.
   initDecisionSchema(db)
+  // Production issue intake (obj 901771): webhook sources + received signals. Additive tables only.
+  initProductionIntakeSchema(db)
   // ── Secret scrubbing on persistence (obj 715532) ──────────────────────────
   // Installed LAST so migrations above run unwrapped. From here on, writes to
   // activity_log / objectives / session_events / … have known secret values and

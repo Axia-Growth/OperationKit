@@ -266,7 +266,14 @@ do_restore() {
 
   install -d -m 755 "$OK_STATE/data"; install -d -m 700 "$OK_SECRETS"
   tar -C "$OK_STATE/data" -xzf "$src/data.tar.gz"
+  # A -wal/-shm that landed from data.tar.gz (an older backup taken before that tarball
+  # excluded them) must never survive to be paired with the database below — clear them
+  # first, so a backup with no -wal of its own never restores over a stale one.
+  rm -f "$DB-wal" "$DB-shm"
   install -m 644 "$src/command-center.db" "$DB"
+  # A backup taken with the app stopped and no sqlite3 on the host is a file copy
+  # (snapshot_db): its newest committed changes are still in the -wal file.
+  [ ! -f "$src/command-center.db-wal" ] || install -m 644 "$src/command-center.db-wal" "$DB-wal"
   tar -C "$OK_SECRETS" -xzf "$src/secrets.tar.gz"; chmod 700 "$OK_SECRETS"; chmod 600 "$OK_SECRETS"/* 2>/dev/null || true
   case "$home_src" in
     archive) install -d -m 777 "$OK_STATE/home"; tar -C "$OK_STATE/home" -xzf "$src/home.tar.gz" ;;
